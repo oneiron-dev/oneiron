@@ -557,7 +557,7 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         bytes[8..].copy_from_slice(&n.to_be_bytes());
         EntityId::from_bytes(bytes).unwrap()
     };
-    for n in 0..1005 {
+    for n in 0..1030 {
         let subject = make_id(n);
         server
             .vault()
@@ -576,24 +576,19 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
             let receipt = memory
                 .claim_upsert(&ClaimInput {
                     id: Some(id.to_hex()),
-                    predicate: if n % 3 == 1 {
-                        "view.other"
-                    } else {
-                        "view.target"
-                    }
-                    .into(),
+                    predicate: if n == 2 { "view.target" } else { "view.other" }.into(),
                     subject_ref: subject.to_hex(),
                     value: json!("unrelated"),
                     confidence: 1.0,
                     source: "user_stated".into(),
-                    world_ref: (n % 3 == 2).then(|| other_world.into()),
+                    world_ref: (n == 2).then(|| other_world.into()),
                     relationship_ref: None,
                     scope: None,
                     valid_from: None,
                     valid_to: None,
                     occurred_at: Some(AT),
                     learned_at: Some(AT),
-                    salience: None,
+                    salience: Some(0.9),
                 })
                 .unwrap();
             assert_eq!(receipt.approval, "auto");
@@ -602,17 +597,21 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         server
             .vault()
             .batch()
-            .text(&id, &[("body", "viewneedle viewneedle viewneedle")])
+            .text(&id, &[("body", "viewneedle")])
             .commit()
             .unwrap();
     }
     let mut expected = Vec::new();
     for (n, subject, text) in [
-        (5000, ACTOR, "viewneedle"),
+        (
+            5000,
+            ACTOR,
+            "viewneedle extra words make this result less relevant",
+        ),
         (
             5001,
             MACHINE,
-            "viewneedle extra words make this result less relevant",
+            "viewneedle extra words make this result much less relevant than the first",
         ),
     ] {
         let id = make_id(n);
@@ -644,7 +643,10 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
         let revision = server.vault().indexed_revision(&id).unwrap().unwrap();
         expected.push(format!("{}@{}", receipt.claim_short_id, revision.to_hex()));
     }
-    // All 1,005 unrelated hits outrank both matches in the old pre-filter top-k.
+    // More than 1,000 base-scope decoys outrank both targets even when
+    // Light widens lexical admission for its temporal anchor and blends
+    // recency, salience and confidence. One world-scoped target-predicate
+    // decoy separately proves that the filtered view excludes other worlds.
     let old = memory
         .recall(
             "viewneedle",
@@ -658,7 +660,10 @@ async fn view_filters_before_top_k_past_one_thousand_unrelated_records() {
     assert!(
         !old.items
             .iter()
-            .any(|item| expected.contains(&item.short_id))
+            .any(|item| expected.contains(&item.short_id)),
+        "unfiltered recall returned a filtered match among {} items ({} candidates)",
+        old.items.len(),
+        old.retrieval_meta.total_candidates,
     );
     let source = BoundSource::new(
         Arc::downgrade(&server),
