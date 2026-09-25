@@ -1,4 +1,5 @@
 //! Seeded single-vault, in-process agent-swarm baseline. No engine internals.
+use std::io::Write;
 use std::process::ExitCode;
 use std::sync::Barrier;
 use std::time::Instant;
@@ -30,7 +31,7 @@ impl Mode {
     }
 
     fn writes(self, index: usize) -> bool {
-        self == Self::Write || (self == Self::Mixed && index % 5 == 0)
+        self == Self::Write || (self == Self::Mixed && index.is_multiple_of(5))
     }
 }
 
@@ -114,7 +115,11 @@ fn parse(args: &[String]) -> Result<(Mode, usize, usize, u64), String> {
         }
     }
     let agents = agents.ok_or("missing --agents")?;
-    if ![1, 10, 100, 300].contains(&agents) || ops == 0 || ops % agents != 0 || ops % 5 != 0 {
+    if ![1, 10, 100, 300].contains(&agents)
+        || ops == 0
+        || !ops.is_multiple_of(agents)
+        || !ops.is_multiple_of(5)
+    {
         return Err(
             "agents must be 1|10|100|300; ops must be positive and divisible by agents and 5"
                 .into(),
@@ -167,7 +172,6 @@ fn run_matrix() -> ExitCode {
                                 "report": report,
                             })
                         );
-                        use std::io::Write;
                         std::io::stdout().flush().expect("flush JSONL row");
                     }
                     Err(error) => {
