@@ -719,10 +719,10 @@ fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
             .expect_err("a changed option cannot be an idempotent replay");
         assert_eq!(
             error.code,
-            if option == Some("unknown") {
-                crate::memory::MEMORY_CODE_BAD_REQUEST
-            } else {
+            if option == Some("no") {
                 crate::memory::MEMORY_CODE_INVALID_STATE
+            } else {
+                crate::memory::MEMORY_CODE_BAD_REQUEST
             }
         );
         assert_eq!(
