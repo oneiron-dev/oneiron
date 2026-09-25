@@ -1,7 +1,8 @@
 # Fork PR admission on persistent runners
 
-Do **not** merge the workflow change or approve a fork run until the organization
-runner group is active and every repository-scoped runner is removed. A job-level
+Do **not** approve a fork run until the organization runner group is active,
+every repository-scoped runner is removed, and the trusted base workflow is
+live. A job-level
 `if` alone is not a trust boundary: a fork can change its submitted workflow.
 
 ## Organization setting to apply
@@ -99,9 +100,15 @@ select persistent runners independently of any workflow
 text a fork submits. A maintainer tests fork code by pushing it to an internal
 branch and opening an internal PR; no fork code is checked out by admission.
 
-After the settings are applied, verify with an approved disposable fork PR
-that changes `.github/workflows/ci.yml` to add a self-hosted job and removes
-the local guard. Confirm no job from its `refs/pull/*/merge` workflow allocates
+Cutover order matters. Apply and read back both server-side policies, migrate
+all runners, and provision the App secrets **before** merging this PR. The
+`pull_request_target` workflow is loaded from `main`, so it cannot be tested
+live on this PR before merge. The restricted group may stop existing internal
+PR CI during that short cutover; the owner must arrange an explicitly approved
+admin merge after reviewing the branch, not silently bypass the gate. Do not
+approve or run any outside fork in this interval. Immediately after merge,
+verify with an approved disposable fork PR that changes `.github/workflows/ci.yml`
+to add a self-hosted job and removes the local guard. Confirm no job from its `refs/pull/*/merge` workflow allocates
 an organization runner. Confirm the trusted target admission posts `failure`
 statuses from the dedicated App on the fork's head and test-merge SHAs for both
 `Checks` and `Test`, and that the required ruleset does **not** permit merging.
@@ -109,7 +116,7 @@ Repeat with a SHA-like fork branch name: if admission does not fire, required
 App statuses must be absent and merging must still be denied. Separately,
 open an internal PR and verify it runs the real jobs against the merge ref and
 reports success only
-when both pass; verify a `main` push retains the existing checks. Keep the
-branch unmerged until this server-side acceptance has been witnessed. The
-Python fixture tests are a local policy simulation, not proof that the live
-runner-group setting exists.
+when both pass; verify a `main` push retains the existing checks. If live
+acceptance fails, stop outside-fork approvals, take the group runners offline,
+and repair before restoring persistent CI. The Python fixture tests are a
+local policy simulation, not proof that the live runner-group setting exists.
