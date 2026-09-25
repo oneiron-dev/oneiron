@@ -381,10 +381,12 @@ fn esign_event_selector_excludes_injected_aliases_and_stale_local_identity() -> 
 #[test]
 fn withheld_carriers_read_the_snapshot_they_are_given() -> Result<()> {
     let f = Fixture::new()?;
+    let later_id = EntityId::now();
     let doc = create_window_doc("snapshot", &f.key);
+    // This stale ordinary body makes the stored-first identity check decisive.
     map_insert_bytes(
         &doc.get_map("entities"),
-        &f.ordinary.to_hex(),
+        &later_id.to_hex(),
         &f.ordinary_raw,
     )?;
     let esign_body = f.vault.get_claim(&f.event)?.unwrap();
@@ -392,7 +394,7 @@ fn withheld_carriers_read_the_snapshot_they_are_given() -> Result<()> {
     let mut wtxn = f.vault.store.env.write_txn()?;
     f.vault.put_reserved_claim_in_txn(
         &mut wtxn,
-        &f.ordinary,
+        &later_id,
         &esign_body,
         TimeRange {
             start: f.now,
@@ -410,7 +412,7 @@ fn withheld_carriers_read_the_snapshot_they_are_given() -> Result<()> {
         &doc.get_map("edges"),
     )?;
     assert!(keys.is_empty());
-    assert!(!ids.contains(&f.ordinary));
+    assert!(!ids.contains(&later_id));
     drop(rtxn);
 
     let current = f.vault.store.env.read_txn()?;
@@ -420,6 +422,6 @@ fn withheld_carriers_read_the_snapshot_they_are_given() -> Result<()> {
         &doc.get_map("entities"),
         &doc.get_map("edges"),
     )?;
-    assert!(current_ids.contains(&f.ordinary));
+    assert!(current_ids.contains(&later_id));
     Ok(())
 }
