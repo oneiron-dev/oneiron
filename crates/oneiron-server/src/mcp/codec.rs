@@ -49,10 +49,19 @@ where
 /// it.
 ///
 /// It is deliberately SCHEMA-DIRECTED rather than a blanket sweep: a free-form
-/// caller payload (`value`, `evidence`, `data`, `spec`, …) is typed `{}` and is
-/// never rewritten, so a claim that says `1.0` still stores `1.0`.
+/// caller payload (`value`, `evidence`, `data`, or an untyped `spec`) is
+/// typed `{}` (or has no property schema) and stays untouched; typed `spec`
+/// positions such as `tasks.ask.spec.until` are normalized.
+fn advertises_integer(schema: &Value) -> bool {
+    match schema.get("type") {
+        Some(Value::String(kind)) => kind == "integer",
+        Some(Value::Array(kinds)) => kinds.iter().any(|kind| kind == "integer"),
+        _ => false,
+    }
+}
+
 fn normalize_advertised_integers(schema: &Value, value: &mut Value) {
-    if schema.get("type").and_then(Value::as_str) == Some("integer")
+    if advertises_integer(schema)
         && let Some(integral) = integral_json_number(value)
     {
         *value = integral;
@@ -403,7 +412,7 @@ impl McpRawJsonScanner<'_> {
 ///
 /// It visits exactly the positions [`normalize_advertised_integers`] visits —
 /// the same schema-directed discipline, so a free-form `{}` payload such as a
-/// caller's `spec` is still never rewritten — but decides from the caller's own
+/// caller's untyped payload stays untouched — but decides from the caller's own
 /// token TEXT instead of from a number that already went through `f64`.
 fn collect_advertised_integer_tokens(
     schema: &Value,
@@ -411,7 +420,7 @@ fn collect_advertised_integer_tokens(
     text: &str,
     rewrites: &mut Vec<(Range<usize>, String)>,
 ) {
-    if schema.get("type").and_then(Value::as_str) == Some("integer")
+    if advertises_integer(schema)
         && matches!(node.kind, McpRawJsonKind::Number)
         && let Some(integral) = integral_json_token(&text[node.span.clone()])
     {

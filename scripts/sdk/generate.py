@@ -245,16 +245,20 @@ def mcp_dispatch():
 def outputs():
     facade_rows = [r for r in ROWS if r.get("context", "memory") == "memory"]
     core = HEADER
-    core += "pub fn input_schema(verb: &str) -> Option<serde_json::Value> { Some(match verb {\n"
+    core += "pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {\n"
+    core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
     for r in ROWS:
-        core += f'{json.dumps(r["name"])} => crate::code_run::vault_read::request_schema::<{r["input"]}>(),\n'
-    core += '_ => return None, }) }\n'
-    core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { let schema = input_schema(verb)?; let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
+        core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
+    core += "])); SCHEMAS.get(verb) }\n"
+    core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
+    core += "pub fn mcp_arguments_schema_from_input(verb: &str, schema: &serde_json::Value) -> Option<serde_json::Value> { let mut properties = serde_json::Map::new(); let required: &[&str] = match verb {\n"
     for r in ROWS:
         if r['mcp'] == 'none': continue
         core += f'{json.dumps(r["name"])} => {{\n'
         for field, path in r['mcp_fields'].items():
             pointer = '' if path == '$' else ''.join('/properties/' + part for part in path.removeprefix('=').split('.'))
+            if path == '$':
+                core += f'if schema == &serde_json::Value::Bool(false) {{ return None; }}\n'
             core += f'properties.insert({json.dumps(field)}.to_owned(), schema.pointer({json.dumps(pointer)})?.clone());\n'
         core += '&' + json.dumps(list(r.get('mcp_required_fields', r['mcp_fields']))) + '},\n'
     core += '_ => return None, }; Some(serde_json::json!({"type": "object", "additionalProperties": false, "required": required, "properties": properties})) }\n'

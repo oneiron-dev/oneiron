@@ -127,15 +127,7 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
             .and_then(|typed| typed.get("properties"))
             .and_then(|properties| properties.get(*field))
         {
-            Some(input) => {
-                let mut input = input.clone();
-                if let (Some(input), Some(constraints)) =
-                    (input.as_object_mut(), schema.as_object())
-                {
-                    input.extend(constraints.clone());
-                }
-                input
-            }
+            Some(input) => merge_verb_argument_schema(input.clone(), schema),
             None => schema,
         };
         properties.insert((*field).to_owned(), schema);
@@ -166,6 +158,22 @@ pub(super) fn verb_tool_schema(tool: McpGeneratedVerbTool) -> Value {
         }),
         required,
     )
+}
+
+pub(super) fn merge_verb_argument_schema(input: Value, constraints: Value) -> Value {
+    if let (Some(mut typed), Some(mut envelope)) =
+        (input.as_object().cloned(), constraints.as_object().cloned())
+    {
+        // Typed inputs own their type (including nullable types); the envelope
+        // still narrows them with its pattern and other constraints.
+        if typed.contains_key("type") {
+            envelope.remove("type");
+        }
+        typed.extend(envelope);
+        Value::Object(typed)
+    } else {
+        json!({ "allOf": [input, constraints] })
+    }
 }
 
 fn verb_argument_field_schema(field: &str) -> Value {
