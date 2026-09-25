@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.ci.check_deny_policy import ROOT, find_stale_ignores
+from scripts.ci.check_deny_policy import ROOT, find_stale_ignores, requirement_matches
 
 
 class DenyPolicyTests(unittest.TestCase):
@@ -32,6 +32,47 @@ class DenyPolicyTests(unittest.TestCase):
             # A new lock version also makes the old acceptance stale.
             lock.write_text('[[package]]\nname = "proc-macro-error"\nversion = "1.0.5"\n')
             self.assertEqual(find_stale_ignores(deny, lock, root / "db"), [advisory_id])
+
+    def test_locked_but_unaffected_version_is_stale(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            advisory_id = "RUSTSEC-2099-0001"
+            advisory = root / "db" / "crates" / "example" / f"{advisory_id}.md"
+            advisory.parent.mkdir(parents=True)
+            deny = root / "deny.toml"
+            deny.write_text(
+                '[advisories]\ndb-path = "db"\nignore = '
+                '[{id = "RUSTSEC-2099-0001", reason = "example@1.2.3 reviewed"}]\n'
+            )
+            lock = root / "Cargo.lock"
+            lock.write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            for ranges in (
+                'patched = [">= 1.2.3"]',
+                'patched = []\nunaffected = [">= 1.2.3"]',
+            ):
+                with self.subTest(ranges=ranges):
+                    advisory.write_text(
+                        f'```toml\n[advisory]\nid = "{advisory_id}"\n'
+                        f'package = "example"\n[versions]\n{ranges}\n```\n'
+                    )
+                    self.assertEqual(
+                        find_stale_ignores(deny, lock, root / "db"), [advisory_id]
+                    )
+            advisory.write_text(
+                f'```toml\n[advisory]\nid = "{advisory_id}"\n'
+                'package = "example"\n[versions]\npatched = [">= 1.2.4"]\n```\n'
+            )
+            self.assertEqual(find_stale_ignores(deny, lock, root / "db"), [])
+
+    def test_advisory_semver_ranges(self):
+        self.assertTrue(requirement_matches("1.2.3", ">= 1.2.3, < 2.0.0"))
+        self.assertFalse(requirement_matches("1.2.3", "> 1.2.3"))
+        self.assertTrue(requirement_matches("0.9.10", "^0.9.9"))
+        self.assertFalse(requirement_matches("0.10.0", "^0.9.9"))
+        self.assertTrue(requirement_matches("1.2.3-beta", ">=1.2.3-alpha, <1.2.3"))
+        self.assertFalse(requirement_matches("1.2.4-beta", ">=1.2.3-alpha"))
+        with self.assertRaises(ValueError):
+            requirement_matches("1.2.3", "unsupported syntax")
 
 
 if __name__ == "__main__":
