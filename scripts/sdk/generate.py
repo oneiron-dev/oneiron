@@ -314,12 +314,14 @@ def outputs():
                 result = f'facade_readable_task_rows(&server.vault, &auth, oneiron::task_verb::sdk::{method}(&server.vault.memory(actor,class), facade_input(value)?)?)?'
             else:
                 guard += f'facade_admit_readable_ref(&server.vault, &auth, &value, "{readable}")?;'
+        # The typed result path consumes facade_input; invoke decodes its own input.
+        validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
+                      if 'rows' in r.get('admission', {}).get('readable', []) else '')
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
         {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}
         let value = facade_json(payload)?;
-        {f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;' if 'admission' in r else ''}
-        let (actor, class) = facade_actor(&auth)?;{guard}
+         {validation}let (actor, class) = facade_actor(&auth)?;{guard}
         Ok(Json({result}))
         }}\n'''
     remote = HEADER + 'use super::*;\n'
@@ -331,6 +333,22 @@ def outputs():
         match &self.backend {
             Backend::Embedded(client) => oneiron::task_verb::sdk::invoke(&client.memory(), verb, input),
             Backend::Remote(client) => client.call(verb, &input),
+        }
+    }
+'''
+    remote += '''fn typed_agent_verb<R: serde::de::DeserializeOwned>(&self, verb: &str, input: serde_json::Value) -> Result<R, MemoryError> {
+        match &self.backend {
+            Backend::Remote(client) => {
+                self.ensure_dispatch_pid()?;
+                oneiron::task_verb::sdk::validate_input(verb, &input)?;
+                client.call(verb, &input)
+            }
+            Backend::Embedded(_) => {
+                let result = self.agent_verb(verb, input)?;
+                serde_json::from_value(result).map_err(|error| crate::error::transport_error(
+                    format!("the embedded SDK answered {verb} with a body this verb could not decode: {error}")
+                ))
+            }
         }
     }
 '''
@@ -347,8 +365,7 @@ def outputs():
         remote += f'''pub fn {method}(&self, {declaration}) -> Result<{out}, MemoryError> {{
             {input_value}{checks}
             let value = serde_json::to_value({value_input}).map_err(|_| crate::error::bad_request("SDK input encoding failed", &["Send the documented typed SDK input."]))?;
-            let result = self.agent_verb("{r["name"]}", value)?;
-            serde_json::from_value(result).map_err(|_| crate::error::bad_request("SDK output decoding failed", &["Report this SDK response mismatch."]))
+            self.typed_agent_verb("{r["name"]}", value)
         }}\n'''
     remote += '}\n'
     napi = HEADER + 'use super::*;\n#[napi]\nimpl NativeClient {\n'

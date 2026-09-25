@@ -9,6 +9,19 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class AgentSdkProjectionTests(unittest.TestCase):
+    def test_facade_handler_decodes_each_call_once(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        server = generator.outputs()["crates/oneiron-server/src/api/facade/agent_verbs.rs"]
+        handlers = server.split("async fn ")[1:]
+        self.assertTrue(any("sdk::invoke(" in handler for handler in handlers))
+        for handler in handlers:
+            if "sdk::invoke(" in handler:
+                self.assertNotIn("sdk::validate_input(", handler, handler.split("(", 1)[0])
+        # describe uses facade_input instead of invoke; it still needs admission.
+        self.assertIn('sdk::validate_input("describe", &value)?;', server)
+
     def test_manifest_removal_suppresses_facade_bindings(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
@@ -118,7 +131,7 @@ class AgentSdkProjectionTests(unittest.TestCase):
         for path, spelling in [
             (catalog, '=> "describe"'), (catalog, '=> "tasks.update"'), (catalog, '=> "cancel"'),
             (routes, '"/describe"'), (routes, '"/tasks.update"'), (routes, '"/cancel"'),
-            (remote, 'agent_verb("describe"'), (remote, 'agent_verb("tasks.update"'), (remote, 'agent_verb("cancel"'),
+            (remote, 'typed_agent_verb("describe"'), (remote, 'typed_agent_verb("tasks.update"'), (remote, 'typed_agent_verb("cancel"'),
             (napi, 'agent_verb("describe"'), (napi, 'agent_verb("tasks.update"'), (napi, 'agent_verb("cancel"'),
             (pyo3, 'agent_verb("describe"'), (pyo3, 'agent_verb("tasks.update"'), (pyo3, 'agent_verb("cancel"'),
             (python, "def describe(self, task_ref: str | None = None)"), (python_tasks, '"tasks_update"'), (python, "def cancel(self, task_ref: str)"),
