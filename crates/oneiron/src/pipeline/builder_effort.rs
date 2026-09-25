@@ -1,7 +1,8 @@
 //! Shared five-level stage selection for the raw pipeline and memory facade.
-use super::{DEFAULT_RECENCY_HALF_LIFE_DAYS, PipelineBuilder};
+use super::PipelineBuilder;
 use crate::entity_id::EntityId;
 use crate::memory::Effort;
+use crate::pipeline::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::retrieval_depth::RetrievalDeadline;
 
 impl<'a> PipelineBuilder<'a> {
