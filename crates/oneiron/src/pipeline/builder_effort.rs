@@ -1,5 +1,5 @@
 //! Shared five-level stage selection for the raw pipeline and memory facade.
-use super::PipelineBuilder;
+use super::{DEFAULT_RECENCY_HALF_LIFE_DAYS, PipelineBuilder};
 use crate::entity_id::EntityId;
 use crate::memory::Effort;
 use crate::retrieval_depth::RetrievalDeadline;
@@ -45,7 +45,10 @@ impl<'a> PipelineBuilder<'a> {
         if effort != Effort::Light {
             self = self.search_ppr(seeds, 1);
         }
-        self = self.boost_salience().boost_confidence();
+        self = self
+            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+            .boost_salience()
+            .boost_confidence();
         if effort.requires_rerank() {
             self = self.expand_ppr(seeds, effort.graph_depth());
         }

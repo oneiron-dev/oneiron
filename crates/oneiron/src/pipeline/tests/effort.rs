@@ -42,7 +42,10 @@ fn five_effort_stage_sets_match_explicit_plans() -> Result<()> {
         if depth > 0 {
             explicit = explicit.search_ppr(&[seed], 1);
         }
-        explicit = explicit.boost_salience().boost_confidence();
+        explicit = explicit
+            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+            .boost_salience()
+            .boost_confidence();
         if depth > 1 {
             explicit = explicit.expand_ppr(&[seed], depth);
         }
@@ -76,5 +79,30 @@ fn five_effort_stage_sets_match_explicit_plans() -> Result<()> {
         assert_eq!(actual.fork_hash, expected.fork_hash, "{effort:?}");
         assert_eq!(actual.per_channel, expected.per_channel, "{effort:?}");
     }
+    Ok(())
+}
+
+#[test]
+fn raw_light_effort_ranks_newer_identical_text_first() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let older = entity_id(0x10);
+    let newer = entity_id(0x20);
+    let now = crate::unix_seconds_now();
+    for (id, learned_at) in [(older, now - 56 * 86_400), (newer, now - 28 * 86_400)] {
+        put_text_at(&vault, id, "effortrecencyneedle", learned_at)?;
+    }
+
+    let baseline = vault.query().search_text("effortrecencyneedle", 10).run()?;
+    assert_eq!(baseline[0].id, older, "equal text scores break ties by id");
+
+    // The effort-generated now anchor is not a host-supplied temporal window.
+    let ranked = vault
+        .query()
+        .search_text("effortrecencyneedle", 10)
+        .with_temporal_now(now)
+        .retrieval_effort(Effort::Light, &[])
+        .run()?;
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].id, newer);
     Ok(())
 }
