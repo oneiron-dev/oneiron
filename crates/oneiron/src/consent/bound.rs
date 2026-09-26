@@ -259,7 +259,7 @@ impl DisclosureEnvelope {
 
     /// Builds a Scope-valued contact clearance envelope. Facets are masks,
     /// not authorization axes; they are normalized out of consent authority.
-    pub fn from_scope(mut scope: Scope) -> Result<Self> {
+    pub(super) fn from_scope(mut scope: Scope) -> Result<Self> {
         scope.facets = ScopeAxis::All;
         if !scope.admits("read", &scope, &Scope::top()) {
             return Err(invalid_bound("contact Scope grants no readable records"));
@@ -279,7 +279,7 @@ impl DisclosureEnvelope {
 
     /// The typed Scope when this envelope represents contact clearance.
     #[must_use]
-    pub fn scope(&self) -> Option<&Scope> {
+    pub(super) fn scope(&self) -> Option<&Scope> {
         self.scope.as_deref()
     }
 

@@ -10187,9 +10187,9 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 4,
-      "fn": 35,
+      "fn": 33,
       "struct": 7
      }
     },
