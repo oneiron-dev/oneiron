@@ -24,7 +24,15 @@ if [ "$modules" != ALL ] && [ -n "$modules" ]; then
   filter="test(/^($(echo "$modules" | tr ' ' '|'))::/)"
 fi
 
-run() { echo "+ $*"; "$@"; }
+# Keep each test command's vault/temp files isolated and clean them even on failure.
+run() {
+  echo "+ $*"
+  if [ "$mode" = test ] || [ "$mode" = featureless ]; then
+    RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" scripts/ci/with-test-tmpdir.sh "$@"
+  else
+    "$@"
+  fi
+}
 
 case "$mode" in
 clippy)
@@ -32,7 +40,7 @@ clippy)
     run cargo clippy --workspace --all-targets --all-features -- -D warnings
     run cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
     run cargo clippy -p oneiron-server --all-features -- -D warnings
-    run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
     exit 0
   fi
   pk=(); for p in $packages $dependents; do pk+=(-p "$p"); done
