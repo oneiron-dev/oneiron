@@ -1,5 +1,5 @@
 //! Validated exact source trees. Parsing never edits the bytes that determine identity.
-use super::{PackAdapter, PackManifest, invalid};
+use super::{PackAdapter, PackKind, PackManifest, invalid};
 use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
 use crate::skill_hub::{
@@ -59,13 +59,24 @@ impl PackSource {
             return Err(invalid("declared adapter script is absent"));
         }
         for file in &files {
+            if manifest.kind == PackKind::Agent && file.path.starts_with("scripts/") {
+                return Err(invalid("agent pack cannot contain executable scripts"));
+            }
             if file.path != "PACK.md"
+                && !(manifest.kind == PackKind::Agent
+                    && matches!(
+                        file.path.as_str(),
+                        "identity.md" | "policy.md" | "skills.json"
+                    ))
                 && !["skills/", "knowledge/", "scripts/"]
                     .iter()
                     .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
             }
+        }
+        if let Some(facets) = &manifest.agent_facets {
+            facets.validate_files(&manifest, &files)?;
         }
         Ok(Self {
             files,

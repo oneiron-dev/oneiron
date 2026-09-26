@@ -1,9 +1,11 @@
 //! Exact, inert PACK.md source catalogs. A source blob is never an install grant.
+mod agent_facets;
 mod codec;
 mod doors;
 mod manifest;
 mod source;
 
+pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use source::PackSource;

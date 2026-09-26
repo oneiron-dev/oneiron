@@ -1,7 +1,7 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
 use std::collections::BTreeSet;
 
-use super::invalid;
+use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum PackKind {
     Capability,
     Connector,
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub struct PackManifest {
     pub license: Option<String>,
     pub kind: PackKind,
     pub adapter: Option<PackAdapter>,
+    /// Named, typed facet paths for the inert agent-pack container.
+    pub agent_facets: Option<AgentPackFacets>,
     /// Predicate declarations are byteless. They never allocate a type byte.
     pub predicates: BTreeSet<String>,
     /// Runtime structural shapes, by global name; handles are local, never in PACK.md.
@@ -62,6 +65,7 @@ impl PackManifest {
                     | "kinds"
                     | "grants"
                     | "wakes"
+                    | "facets"
             ) {
                 return Err(invalid("unknown PACK.md field"));
             }
@@ -69,11 +73,11 @@ impl PackManifest {
                 return Err(invalid("duplicate PACK.md field"));
             }
         }
-        let required = |key| {
+        let required = |key, allow_controls| {
             fields
                 .get(key)
                 .ok_or_else(|| invalid("missing manifest field"))
-                .and_then(|value| scalar(value))
+                .and_then(|value| scalar(value, allow_controls))
         };
         let list = |key| -> Result<BTreeSet<String>> {
             let Some(value) = fields.get(key) else {
@@ -96,15 +100,16 @@ impl PackManifest {
             }
             Ok(set)
         };
-        let kind = match required("kind")?.as_str() {
+        let kind = match required("kind", false)?.as_str() {
             "capability" => PackKind::Capability,
             "connector" => PackKind::Connector,
+            "agent" => PackKind::Agent,
             _ => return Err(invalid("unsupported pack kind")),
         };
         let adapter = fields
             .get("adapter")
             .map(|value| -> Result<_> {
-                let value = scalar(value)?;
+                let value = scalar(value, false)?;
                 if let Some(name) = value.strip_prefix("built-in:") {
                     if name.is_empty()
                         || name.len() > 256
@@ -130,8 +135,40 @@ impl PackManifest {
         if kind == PackKind::Connector && adapter.is_none() {
             return Err(invalid("connector pack requires an adapter"));
         }
-        let name = required("name")?;
-        validate_name(&name)?;
+        let agent_facets = fields
+            .get("facets")
+            .map(|value| {
+                serde_json::from_str::<AgentPackFacets>(value)
+                    .map_err(|_| invalid("agent facets must be a typed JSON object"))
+            })
+            .transpose()?;
+        if kind == PackKind::Agent {
+            agent_facets
+                .as_ref()
+                .ok_or_else(|| invalid("agent pack requires a facet map"))?
+                .validate_paths()?;
+            if adapter.is_some()
+                || ["predicates", "kinds", "grants", "wakes"]
+                    .iter()
+                    .any(|key| fields.contains_key(key))
+            {
+                return Err(invalid("agent pack cannot declare runtime powers"));
+            }
+        } else if agent_facets.is_some() {
+            return Err(invalid("only agent packs declare agent facets"));
+        }
+        let name = required("name", kind == PackKind::Agent)?;
+        if kind == PackKind::Agent {
+            validate_agent_text(&name, 256)?;
+        } else {
+            validate_name(&name)?;
+        }
+        let description = required("description", kind == PackKind::Agent)?;
+        let version = required("version", kind == PackKind::Agent)?;
+        if kind == PackKind::Agent {
+            validate_agent_text(&description, 4096)?;
+            validate_agent_text(&version, 128)?;
+        }
         let predicates = list("predicates")?;
         let kinds = list("kinds")?;
         for declaration in predicates.iter().chain(&kinds) {
@@ -145,11 +182,15 @@ impl PackManifest {
         }
         Ok(Self {
             name,
-            description: required("description")?,
-            version: required("version")?,
-            license: fields.get("license").map(|v| scalar(v)).transpose()?,
+            description,
+            version,
+            license: fields
+                .get("license")
+                .map(|v| scalar(v, false))
+                .transpose()?,
             kind,
             adapter,
+            agent_facets,
             predicates,
             kinds,
             requested_grants: list("grants")?,
@@ -157,7 +198,7 @@ impl PackManifest {
         })
     }
 }
-fn scalar(value: &str) -> Result<String> {
+fn scalar(value: &str, allow_controls: bool) -> Result<String> {
     let text: String = if value.starts_with('"') {
         serde_json::from_str(value).map_err(|_| invalid("invalid quoted scalar"))?
     } else {
@@ -169,10 +210,21 @@ fn scalar(value: &str) -> Result<String> {
         }
         value.to_owned()
     };
-    if text.is_empty() || text.len() > 4096 || text.chars().any(char::is_control) {
+    if text.is_empty()
+        || text.len() > 4096
+        || (!allow_controls && text.chars().any(char::is_control))
+    {
         return Err(invalid("invalid manifest scalar"));
     }
     Ok(text)
+}
+fn validate_agent_text(value: &str, max_bytes: usize) -> Result<()> {
+    if value.trim().is_empty() || value.len() > max_bytes {
+        return Err(invalid(
+            "agent manifest text is blank or exceeds the native bound",
+        ));
+    }
+    Ok(())
 }
 fn validate_name(name: &str) -> Result<()> {
     if name.len() > 256
