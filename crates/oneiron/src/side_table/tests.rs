@@ -132,6 +132,41 @@ fn unhex(text: &str) -> Vec<u8> {
         .collect()
 }
 
+fn fixture_rows() -> Vec<(SideDb, Vec<u8>, Vec<u8>)> {
+    PRE_MOVE_ROWS
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .map(|line| {
+            let mut columns = line.split('\t');
+            let db = match columns.next() {
+                Some("vm") => SideDb::VaultMeta,
+                Some("ss") => SideDb::SyncState,
+                other => panic!("fixture database {other:?}"),
+            };
+            let key = unhex(columns.next().expect("key"));
+            let value = unhex(columns.next().expect("value"));
+            assert_eq!(columns.next(), None, "fixture has exactly three columns");
+            (db, key, value)
+        })
+        .collect()
+}
+
+fn plant_fixture_rows(vault: &Vault, rows: &[(SideDb, Vec<u8>, Vec<u8>)]) -> crate::Result<()> {
+    vault.with_write_txn(|txn| {
+        for (db, key, value) in rows {
+            match db {
+                SideDb::VaultMeta => vault.store.vault_meta.put(txn, key, value)?,
+                SideDb::SyncState => vault.store.sync_state.put(
+                    txn,
+                    std::str::from_utf8(key).expect("sync key"),
+                    value,
+                )?,
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Decodes one stored value with its table's declared codec and encodes it again: the bytes a
 /// typed table writes back for the value it read.
 fn reencode(decl: &SideTableDecl, value: &[u8]) -> Vec<u8> {
@@ -170,38 +205,12 @@ fn reencode(decl: &SideTableDecl, value: &[u8]) -> Vec<u8> {
 #[test]
 fn a_vault_written_before_the_move_reads_back_unchanged() -> crate::Result<()> {
     let (_dir, vault) = open_vault();
-    let rows: Vec<(SideDb, Vec<u8>, Vec<u8>)> = PRE_MOVE_ROWS
-        .lines()
-        .filter(|line| !line.starts_with('#'))
-        .map(|line| {
-            let mut columns = line.split('\t');
-            let db = match columns.next() {
-                Some("vm") => SideDb::VaultMeta,
-                Some("ss") => SideDb::SyncState,
-                other => panic!("fixture database {other:?}"),
-            };
-            let key = unhex(columns.next().expect("key"));
-            let value = unhex(columns.next().expect("value"));
-            (db, key, value)
-        })
-        .collect();
+    let rows = fixture_rows();
     assert!(
         rows.len() > 500,
         "the fixture carries a row per written table"
     );
-    vault.with_write_txn(|wtxn| {
-        for (db, key, value) in &rows {
-            match db {
-                SideDb::VaultMeta => vault.store.vault_meta.put(wtxn, key, value)?,
-                SideDb::SyncState => vault.store.sync_state.put(
-                    wtxn,
-                    std::str::from_utf8(key).expect("sync_state keys are text"),
-                    value,
-                )?,
-            }
-        }
-        Ok(())
-    })?;
+    plant_fixture_rows(&vault, &rows)?;
 
     let rtxn = vault.store.env.read_txn()?;
     let mut stored = std::collections::BTreeMap::new();
@@ -260,6 +269,281 @@ fn a_vault_written_before_the_move_reads_back_unchanged() -> crate::Result<()> {
         stored.len(),
         vault_meta_rows + sync_state_rows,
         "every row of both side tables belongs to a declared table"
+    );
+    Ok(())
+}
+
+/// Pins both the fixture's actual reach and the tables it never sampled. A table with no
+/// pre-move row is not evidence of a successful round trip (an empty prefix scan passes).
+#[test]
+fn pre_move_fixture_coverage_is_explicit() {
+    use std::collections::BTreeSet;
+
+    let declarations: Vec<_> = declared().collect();
+    let mut covered = BTreeSet::new();
+    let rows = fixture_rows();
+    for (db, key, _) in &rows {
+        let owners: Vec<_> = declarations
+            .iter()
+            .filter(|decl| decl.db == *db && key.starts_with(decl.prefix))
+            .collect();
+        assert_eq!(
+            owners.len(),
+            1,
+            "fixture row needs exactly one declaration: {key:?}"
+        );
+        covered.insert(owners[0].name);
+    }
+    assert_eq!(rows.len(), 535, "the sampled pre-move rows changed");
+    assert_eq!(covered.len(), 526, "the sampled table count changed");
+    let uncovered: BTreeSet<_> = declarations
+        .iter()
+        .filter(|decl| !covered.contains(decl.name))
+        .map(|decl| decl.name)
+        .collect();
+    let expected: BTreeSet<_> = [
+        "ACCESS_REQUEST",
+        "AFFECT_VAD_ANNOTATION_META",
+        "AGENT_DEF_BIRTH_CUSTODY_OWNED",
+        "AGENT_DEF_RESERVED_ACTOR_CENSUS_V2",
+        "AGENT_WORKFLOW_RECORD",
+        "AUTHORITY_HOST_ROOT_SLIP_CACHE",
+        "AUTH_REVOKED_TOKEN_JTI",
+        "BOOKING_EVENT_TYPE_CONFIG_SHORTCUT",
+        "BOOKING_PUBLICATION_WRITE_STAGE",
+        "BOOKING_PUBLIC_PAGE_TOKEN_INDEX",
+        "BOOKING_TOKEN",
+        "CAMPAIGN_COMPLIANCE_ACTIVE",
+        "CAMPAIGN_COMPLIANCE_PENDING",
+        "CLAIM_CONFLICT_PACKET",
+        "CODE_DOCUMENT_HEAD",
+        "CODE_RUN_REPLAY",
+        "CONNECTOR_GRANT_SLATE",
+        "CONSENT_WIDEN_PROPOSAL",
+        "CONVERSATION_DAG_APPEND_PERMIT",
+        "CRITIC_REVIEW_RESULT",
+        "DELETION_PENDING_TOMBSTONE",
+        "DREAMER_CONSOLIDATION_KEY_RULES",
+        "EMERGENCY_ITEM",
+        "EMERGENCY_PLAN",
+        "ENTITY_REVISION_PENDING_PHONETIC",
+        "ESIGN_CAPABILITY_TOKEN",
+        "ESIGN_RECIPIENT_CAPABILITY_INDEX",
+        "GATE_AUTO_SIGNALS_WINDOW",
+        "IDENTITY_DEVICE_PK",
+        "IDENTITY_DEVICE_SK",
+        "LINEAR_SYNC_LINK",
+        "LLM_MANIFEST",
+        "MANAGED_CANARY_MARKER",
+        "MANAGED_DEK_MAC",
+        "MANAGED_LEASE_SCOPE",
+        "NOTE_PIN_REQUEST_CITING",
+        "NOTE_PIN_REQUEST_CLAIM",
+        "NOTE_PIN_REQUEST_SOURCE",
+        "ORIGIN_LFS_GC_QUEUE",
+        "ORIGIN_LFS_UPLOAD_JOURNAL",
+        "OUTBOUND_AUTHORIZED_RECOVERY_LEASE",
+        "SECRET_CUSTODY_NAME_INDEX",
+        "SECRET_EXHAUST_TAINT",
+        "SECRET_LEASE",
+        "SECRET_LOCAL_REGISTRATION",
+        "SECRET_MATERIALIZATION_RECEIPT",
+        "SECRET_ROTATION_RECEIPT",
+        "SECRET_SNAPSHOT_CODEBASE_CUSTODY",
+        "SKILL_ATTRIBUTION_SWEEP_SCAN_CURSOR",
+        "SKILL_HUB_CAPABILITY",
+        "SKILL_HUB_SOURCE_CUSTODY",
+        "SYNC_CALENDAR_ORIGIN_PENDING",
+        "TEST_API_SLIP_CACHE",
+        "TEST_MCP_PAIRED_CACHE",
+        "VAULT_CLEANUP_ATTEMPT_ARCHIVE",
+        "VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE",
+        "VAULT_CLEANUP_TEST_BLOCKERS_CLOSED",
+        "VOICE_OWNER_REF",
+        "VOICE_OWNER_REF_OWNER_INDEX",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        uncovered, expected,
+        "update coverage only with genuine fixture rows"
+    );
+}
+
+/// A fixture adapter takes the production `SideTable<K, V, C>` binding, rather than
+/// reparsing values as generic JSON/MessagePack or trusting raw database reads.
+fn check_typed_fixture<K: SideKey, V, C: SideCodec<V>>(
+    table: SideTable<K, V, C>,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    rows: &[(SideDb, Vec<u8>, Vec<u8>)],
+) -> crate::Result<usize> {
+    let matches: Vec<_> = rows
+        .iter()
+        .filter(|(db, key, _)| *db == table.decl().db && key.starts_with(table.decl().prefix))
+        .collect();
+    assert!(
+        !matches.is_empty(),
+        "{}: the fixture must contain a row for this production binding",
+        table.decl().name
+    );
+    for (_, full_key, stored_value) in &matches {
+        let suffix = full_key
+            .strip_prefix(table.decl().prefix)
+            .expect("the fixture row matched this prefix");
+        let key = K::decode_key(suffix).ok_or_else(|| {
+            table
+                .decl()
+                .row_error(crate::error::SideTableRowProblem::KeyShape)
+        })?;
+        assert_eq!(
+            table.key_bytes(&key),
+            *full_key,
+            "{}: typed key binding changes the stored key",
+            table.decl().name
+        );
+        let value = table
+            .get(&vault.store, txn, &key)?
+            .expect("the planted fixture row must be present");
+        assert_eq!(
+            table.encode_value(&value)?,
+            *stored_value,
+            "{}: typed value binding changes the stored bytes",
+            table.decl().name
+        );
+        assert_eq!(
+            table.get_bytes(&vault.store, txn, &key)?.as_deref(),
+            Some(stored_value.as_slice()),
+            "{}: the typed table reads the exact planted bytes",
+            table.decl().name
+        );
+    }
+    Ok(matches.len())
+}
+
+#[test]
+fn pre_move_rows_use_reachable_production_bindings() -> crate::Result<()> {
+    let (_dir, vault) = open_vault();
+    let rows = fixture_rows();
+    plant_fixture_rows(&vault, &rows)?;
+    let txn = vault.store.env.read_txn()?;
+    let mut checked = 0;
+    macro_rules! adapter {
+        ($($table:expr),+ $(,)?) => {
+            $(checked += check_typed_fixture($table, &vault, &txn, &rows)?;)+
+        };
+    }
+    // These are the bindings the side_table test module can name without widening
+    // any owning module's private surface. Each must have a nonempty fixture.
+    adapter!(
+        crate::critic::CRITIQUE_ARTIFACT,
+        crate::authority::AUTHORITY_FIRST_SEEN_BACKFILLED,
+    );
+    #[cfg(feature = "sync")]
+    adapter!(
+        crate::identity_topology::IDENTITY_TOPOLOGY_SEQ,
+        crate::sync::window_rows::WINDOW_SNAPSHOT,
+        crate::sync::window_rows::WINDOW_STATE_VECTOR,
+        crate::sync::window_rows::WINDOW_SHALLOW_FENCE,
+        crate::sync::window_rows::HISTORY_FREE_WINDOW,
+        crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER,
+        crate::sync::window_rows::BULK_TRANSFER_MARKER,
+        crate::sync::window_rows::WINDOW_UPDATE,
+        crate::sync::window_rows::ROOT_SNAPSHOT,
+        crate::sync::window_rows::ROOT_STATE_VECTOR,
+        crate::sync::window_rows::ROOT_SHALLOW_FENCE,
+        crate::sync::window_rows::ROOT_UPDATE,
+        crate::sync::window_rows::LAST_SYNC,
+        crate::sync::window_rows::REASSERT_MARKER,
+        crate::sync::window_rows::REMAT_MARKER,
+        crate::sync::window_rows::REPLAY_REMAT_MARKER_PROVENANCE,
+        // The same prefix also has a window-only key binding, but this fixture
+        // sampled only the entity key; do not count it as window-only coverage.
+        crate::sync::window_rows::OFF_RECORD_PROMOTE_PICKUP,
+        crate::sync::documents::DS_E,
+        crate::sync::documents::QD_E,
+        crate::sync::documents::AD_E,
+    );
+    assert!(
+        checked >= if cfg!(feature = "sync") { 22 } else { 2 },
+        "every compiled adapter must exercise at least one fixture row"
+    );
+    Ok(())
+}
+
+/// The captured pre-move suite deliberately wrote a damaged three-byte
+/// `m:u_seq:w:` counter. It is not a successful codec round trip: the actual
+/// production binding requires four little-endian bytes and refuses this row.
+#[cfg(feature = "sync")]
+#[test]
+fn pre_move_fixture_corrupt_window_sequence_is_refused() -> crate::Result<()> {
+    let table = crate::sync::window_rows::WINDOW_UPDATE_SEQ;
+    let rows = fixture_rows();
+    let matching: Vec<_> = rows
+        .iter()
+        .filter(|(db, key, _)| *db == table.decl().db && key.starts_with(table.decl().prefix))
+        .collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "the damaged counter must be explicitly sampled"
+    );
+    let (_, full_key, stored_value) = matching[0];
+    assert_eq!(
+        stored_value.as_slice(),
+        &[1, 2, 3],
+        "the fixture is a damaged counter"
+    );
+    let key = String::from_utf8(full_key[table.decl().prefix.len()..].to_vec())
+        .expect("the window counter key is UTF-8");
+    assert_eq!(table.key_bytes(&key), *full_key);
+
+    let (_dir, vault) = open_vault();
+    plant_fixture_rows(&vault, &rows)?;
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(
+        table.get_bytes(&vault.store, &txn, &key)?.as_deref(),
+        Some(stored_value.as_slice())
+    );
+    assert_eq!(
+        table
+            .get(&vault.store, &txn, &key)
+            .expect_err("the production codec must refuse a three-byte counter")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    assert_eq!(
+        check_typed_fixture(table, &vault, &txn, &rows)
+            .expect_err("a damaged fixture cannot pass typed round-trip coverage")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
+
+#[test]
+fn fixture_key_and_value_binding_mutations_are_rejected() -> crate::Result<()> {
+    // The `ds:e:` key is ASCII hex, not a binary EntityId; the artifact body
+    // is a Named struct, not a Named u64. Both mutations must be refused.
+    const WRONG_KEY: SideTable<crate::EntityId, Vec<u8>, Raw> = SideTable::new(&SYNC_DS_E);
+    const WRONG_VALUE: SideTable<Vec<u8>, u64, Named> = SideTable::new(&CRITIC_ARTIFACT);
+    let (_dir, vault) = open_vault();
+    let rows = fixture_rows();
+    plant_fixture_rows(&vault, &rows)?;
+    let txn = vault.store.env.read_txn()?;
+
+    assert_eq!(
+        check_typed_fixture(WRONG_KEY, &vault, &txn, &rows)
+            .expect_err("a binary EntityId cannot decode the hex key")
+            .kind(),
+        ErrorKind::SideTableRow
+    );
+
+    assert_eq!(
+        check_typed_fixture(WRONG_VALUE, &vault, &txn, &rows)
+            .expect_err("a u64 cannot decode the artifact")
+            .kind(),
+        ErrorKind::SideTableRow
     );
     Ok(())
 }
