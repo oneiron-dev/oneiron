@@ -28141,6 +28141,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentPackFacets"
+     ],
+     "path": "src/skill_hub/pack_catalog/agent_facets.rs",
+     "purpose": "Typed, inert AGENT_PACK facets on the common pack source path",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
@@ -28193,7 +28206,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -28220,12 +28233,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/tests.rs",
      "purpose": "Source custody tests: exact bytes, inert imports, generic/replay parity and rollback",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -34834,7 +34849,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35039,7 +35054,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2069,
+   "source_files": 2070,
    "test_files": 710
   },
   "oneiron-android": {
