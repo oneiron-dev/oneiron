@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use zeroize::Zeroize;
+
 use crate::error::{Error, Result};
 
 use super::journal::JournalEntry;
@@ -110,6 +112,41 @@ pub(super) enum KeyspaceState {
     },
 }
 
+fn scrub_single_row(key: &mut Vec<u8>, value: &mut OverlayValue) {
+    key.zeroize();
+    if let OverlayValue::Present(bytes) = value {
+        bytes.zeroize();
+    }
+}
+
+// A COW keyspace is scrubbed only when its last Arc owner drops it. A close
+// must not mutate a keyspace borrowed by a still-live snapshot or a registry
+// taint check. BTreeMap/BTreeSet keys cannot be mutated in place, so take the
+// collection and wipe each owned allocation before freeing it.
+impl Drop for KeyspaceState {
+    fn drop(&mut self) {
+        match self {
+            Self::Single { rows, .. } => {
+                for (mut key, mut value) in std::mem::take(rows) {
+                    scrub_single_row(&mut key, &mut value);
+                }
+            }
+            Self::DupSort { rows, .. } => {
+                for (mut key, delta) in std::mem::take(rows) {
+                    key.zeroize();
+                    for (mut identity, mut value) in delta.present {
+                        identity.zeroize();
+                        value.zeroize();
+                    }
+                    for mut value in delta.deleted {
+                        value.zeroize();
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl KeyspaceState {
     fn empty(keyspace: OverlayKeyspace) -> Self {
         if keyspace.is_dupsort() {
@@ -126,15 +163,16 @@ impl KeyspaceState {
     }
 
     fn cleared(keyspace: OverlayKeyspace) -> Self {
-        match Self::empty(keyspace) {
-            Self::Single { rows, .. } => Self::Single {
+        if keyspace.is_dupsort() {
+            Self::DupSort {
                 clear_base: true,
-                rows,
-            },
-            Self::DupSort { rows, .. } => Self::DupSort {
+                rows: BTreeMap::new(),
+            }
+        } else {
+            Self::Single {
                 clear_base: true,
-                rows,
-            },
+                rows: BTreeMap::new(),
+            }
         }
     }
 
@@ -212,6 +250,21 @@ pub(super) enum OverlayMutation {
     Clear {
         keyspace: OverlayKeyspace,
     },
+}
+
+// Segment mutations (including failed preflights and aborts) have their own
+// allocations. Wipe those independently of the published COW keyspaces.
+impl Drop for OverlayMutation {
+    fn drop(&mut self) {
+        match self {
+            Self::Put { key, value, .. } | Self::DeleteDuplicate { key, value, .. } => {
+                key.zeroize();
+                value.zeroize();
+            }
+            Self::Delete { key, .. } => key.zeroize(),
+            Self::Clear { .. } => {}
+        }
+    }
 }
 
 /// Removes one PRESENT overlay row outright, leaving no base mask.
@@ -323,4 +376,18 @@ fn apply_mutation(state: &mut OverlayState, mutation: &OverlayMutation) -> Resul
 
 pub(super) fn duplicate_identity(value: &[u8]) -> Vec<u8> {
     value.get(..16).unwrap_or(value).to_vec()
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+
+    #[test]
+    fn owned_row_scrub_erases_key_and_value() {
+        let mut key = b"entity-secret".to_vec();
+        let mut value = OverlayValue::Present(b"body-secret".to_vec());
+        scrub_single_row(&mut key, &mut value);
+        assert!(key.is_empty());
+        assert!(matches!(value, OverlayValue::Present(ref bytes) if bytes.is_empty()));
+    }
 }

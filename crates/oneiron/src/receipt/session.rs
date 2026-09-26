@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use super::kernel::ReceiptRecord;
 use crate::error::{ClaimError, Error, Result};
@@ -76,18 +77,51 @@ impl SessionLocalReceiptLog {
     /// Closes the session log. On-record sessions retain their emit
     /// receipts; off-record sessions delete them with the transcript.
     #[must_use]
-    pub fn close(self) -> SessionReceiptClose {
-        let (retained, deleted) = if self.off_record {
-            (Vec::new(), self.receipts.len())
+    pub fn close(mut self) -> SessionReceiptClose {
+        let deleted = if self.off_record {
+            self.receipts.len()
         } else {
-            (self.receipts, 0)
+            0
+        };
+        let retained = if self.off_record {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.receipts)
         };
         SessionReceiptClose {
-            session_ref: self.session_ref,
+            session_ref: std::mem::take(&mut self.session_ref),
             off_record: self.off_record,
             retained,
             deleted,
         }
+    }
+}
+
+// Off-record close (and an abandoned log) must not leave emit-context
+// strings in allocator memory. On-record receipts move into the close result.
+impl Drop for SessionLocalReceiptLog {
+    fn drop(&mut self) {
+        if !self.off_record {
+            return;
+        }
+        self.session_ref.zeroize();
+        for receipt in &mut self.receipts {
+            zeroize_receipt(receipt);
+        }
+    }
+}
+
+fn zeroize_receipt(receipt: &mut ReceiptRecord) {
+    receipt.receipt_id.zeroize();
+    receipt.actor.zeroize();
+    receipt.on_behalf_of.zeroize();
+    receipt.outcome.zeroize();
+    receipt.job_ref.zeroize();
+    receipt.trigger_ref.zeroize();
+    receipt.policy_trace.iter_mut().for_each(Zeroize::zeroize);
+    for (mut key, mut value) in std::mem::take(&mut receipt.fields) {
+        key.zeroize();
+        value.zeroize();
     }
 }
 
@@ -101,4 +135,50 @@ pub struct SessionReceiptClose {
     pub retained: Vec<ReceiptRecord>,
     /// Count of emit receipts deleted with the transcript.
     pub deleted: usize,
+}
+
+// The off-record close result carries a short-lived session reference; scrub
+// it as well when its caller has consumed the close counts. On-record result
+// receipts remain caller-owned and must not be cleared here.
+impl Drop for SessionReceiptClose {
+    fn drop(&mut self) {
+        if self.off_record {
+            self.session_ref.zeroize();
+            for receipt in &mut self.retained {
+                zeroize_receipt(receipt);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+    use crate::receipt::ReceiptKind;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn scrub_close_buffer_erases_emit_context_and_identifiers() {
+        let mut record = ReceiptRecord {
+            receipt_id: "private-receipt".into(),
+            receipt_kind: ReceiptKind::Outbound,
+            occurred_at: 1,
+            actor: Some("actor-private".into()),
+            on_behalf_of: Some("principal-private".into()),
+            outcome: "outcome-private".into(),
+            job_ref: Some("job-private".into()),
+            trigger_ref: Some("trigger-private".into()),
+            policy_trace: vec!["trace-private".into()],
+            fields: BTreeMap::from([("context".into(), "private-memory".into())]),
+        };
+        zeroize_receipt(&mut record);
+        assert!(record.receipt_id.is_empty());
+        assert!(record.actor.is_none());
+        assert!(record.on_behalf_of.is_none());
+        assert!(record.outcome.is_empty());
+        assert!(record.job_ref.is_none());
+        assert!(record.trigger_ref.is_none());
+        assert!(record.policy_trace[0].is_empty());
+        assert!(record.fields.is_empty());
+    }
 }
