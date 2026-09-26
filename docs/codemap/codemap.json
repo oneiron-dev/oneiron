@@ -1887,6 +1887,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshMachineAddress",
+      "MeshMachineAddressEnvelope"
+     ],
+     "path": "src/authority/mesh_machine.rs",
+     "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -1894,7 +1909,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -2051,7 +2066,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 15,
       "struct": 1
      }
@@ -33654,7 +33669,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34888,7 +34903,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2061,
+   "source_files": 2062,
    "test_files": 705
   },
   "oneiron-android": {
@@ -37128,7 +37143,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -37136,7 +37151,7 @@
      "path": "src/iroh_transport.rs",
      "purpose": "Private iroh data plane",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -37145,26 +37160,38 @@
      "kind": "src",
      "notable": [
       "AcceptPolicy",
-      "MachineAddress",
-      "MachineAddressEnvelope",
       "MachineGrants",
       "MachineRoster",
       "MeshConnection",
       "MeshError",
       "MeshStream",
       "MeshTransport",
+      "VaultMachineGrants",
       "VaultMachineRoster"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 3,
-      "mod": 1,
-      "struct": 4,
+      "fn": 2,
+      "mod": 2,
+      "re-export": 1,
+      "struct": 3,
       "trait": 5,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TransportKey"
+     ],
+     "path": "src/transport_key.rs",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -37188,14 +37215,21 @@
     "iroh_transport": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Private iroh data plane"
+    },
+    "transport_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 2
   },
   "oneiron-napi": {

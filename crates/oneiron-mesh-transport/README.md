@@ -1,4 +1,4 @@
-# Mesh transport (ONE-2648, first slice)
+# Mesh transport (ONE-2648, binding and grant cut)
 
 This crate keeps the engine's connection seam separate from storage and the read plane.
 `MeshTransport` dials a MACHINE by entity id, accepts a connection, and opens bounded
@@ -10,43 +10,51 @@ remain separate. There is no automatic production migration to the mesh.
 
 ## Trust boundary
 
-An endpoint is bound with an explicitly supplied iroh Ed25519 `SecretKey`.
-`iroh_transport::IrohTransport::bind` uses only `presets::Minimal`, a private
-`AddressLookup`, and a disabled relay unless a **caller-supplied** relay map is
-provided. A roster relay URL must belong to that supplied map. Loopback tests
-bind only a loopback IP transport and disable port-mapping and network probes. It neither publishes to nor queries n0 DNS/pkarr. A relay has no say
-in admission. Each incoming TLS-authenticated key is checked against the live
-roster and a mandatory `MachineGrants` implementation for its ALPN before
-any stream is dispatched. Queued connections and newly opened streams are
-rechecked, so a revoke does not leave a queued accept as an admission bypass.
-No 0-RTT application traffic is exposed.
+The device holds its pairing signing seed in platform protected custody. A
+`TransportKey` derives a distinct Ed25519 seed using
+`oneiron/mesh-transport-ed25519/v1`, zeroizes the derived seed on drop, and
+provides the EndpointId and possession proofs for the paired MACHINE binding.
+The host never stores that seed in a MACHINE or grant record; on restart the
+device re-derives it from its protected signing seed. `bind_paired` consumes the
+derived key. The raw `bind` seam remains for the conformance lab and explicit
+transport hosts, but cannot itself grant admission.
 
-`VaultMachineRoster` reads only explicitly tagged/versioned MACHINE address
-envelopes. Existing MACHINE entities have varied unrelated bodies, so an
-ordinary MACHINE row must not silently become a mesh peer. Address hints are
-**not authority**: production hosts must provide a trusted `MachineGrants`
-implementation that verifies the current, separately granted
-MACHINE/key/ALPN tuple and revocation. There is no canonical MACHINE transport
-record writer or per-ALPN grant record in the engine today. The bundled
-conformance test grants are in-memory fixtures, not a production grant source.
-Until a trusted grant provider is wired, the adapter cannot be used to admit
-production peers. Authentication at this transport layer also does not replace
-the existing sync/federation authorization check on each request.
+`Vault::bind_mesh_machine` requires a live pairing slip naming this MACHINE,
+plus signatures from both the paired device key and its transport key over the
+same domain-separated MACHINE/EndpointId transcript. It atomically writes the
+public MACHINE address envelope and a host-signed local binding projection with
+no ALPN grants. `set_mesh_alpn_grant` requires the live host authority root,
+appends a scoped `SlipMint` or `SlipRevoke` to AUTHORITY_LOG and updates its
+local pointer in the same transaction. `revoke_mesh_machine` revokes every
+listed grant and seals the local binding. The live read checks the current
+MACHINE key, the host signature and roster, live pairing slip, and exact
+MACHINE/key/ALPN grant **from the authority fold** in one snapshot. The local
+projection is not an independent trust root, nor is it portable authorization:
+peers need their own admitted authority history and local binding before they
+can serve this ALPN. A public MACHINE rewrite or stale address hint cannot
+mint a grant.
+
+`VaultMachineRoster` reads type, liveness and body from one vault snapshot.
+Other MACHINE actors are not automatically transport peers. `VaultMachineGrants`
+implements the mandatory live `MachineGrants` verifier. The iroh adapter uses
+`presets::Minimal` and a private `AddressLookup`, never public DNS/pkarr. A
+relay is disabled unless the caller supplies a private relay map, and the
+MACHINE relay URL must be in that map. Incoming TLS keys, queued accepts, new
+streams and stream messages recheck the grant. The lab tests both transports
+against queued and established revocation and the exact/over 1 MiB boundary.
+No 0-RTT application traffic is exposed. The managed WebSocket sync path and
+federation request-grant revalidation remain independent: a mesh ALPN grant
+never authorizes a federation request or widens its scope.
 
 ## Next cuts
 
-1. Pairing-derived transport key: derive a distinct Ed25519 seed using a domain-
-   separated KDF over device-key material at pairing; securely store it and
-   cryptographically bind its EndpointId to the MACHINE/authority record. Add a
-   single-snapshot, typed MACHINE roster/ALPN grant read door and a signed
-   admission/write door. The transport adapter must not invent this authority.
-2. Path receipt: observe iroh `Connection::paths` / `path_events`, classify the
+1. Path receipt: observe iroh `Connection::paths` / `path_events`, classify the
    selected path as direct or relayed, and persist a per-connection receipt with
    the MACHINE, ALPN, endpoint keys, time and outcome. Include refused attempts.
-3. Entry-node relay: deploy our pinned `iroh-relay` with owned TLS hostname,
+2. Entry-node relay: deploy our pinned `iroh-relay` with owned TLS hostname,
    network/abuse policy, health checks and outbound address distribution. The
    relay forwards encrypted packets only; locker and mobile push remain separate.
-4. Fork upkeep/fleet job: pin tested fork commits, automate each upstream-tag
+3. Fork upkeep/fleet job: pin tested fork commits, automate each upstream-tag
    refresh on a staging branch, run the conformance lab across tag/version pairs
    and LAN/hotspot/relay-only hosts, then review and send narrowly scoped patches
    upstream. Keep the final bump human-reviewed before changing Cargo.lock.

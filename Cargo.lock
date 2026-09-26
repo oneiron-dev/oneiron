@@ -7381,6 +7381,8 @@ dependencies = [
 name = "oneiron-mesh-transport"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "ed25519-dalek 2.2.0",
  "futures-util",
  "iroh",
  "n0-error",
@@ -7390,6 +7392,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

@@ -79,3 +79,68 @@ fn vault_roster_ignores_other_machine_actors_and_reads_live_addresses() {
         .unwrap();
     assert!(roster.by_endpoint(key).unwrap().is_none());
 }
+
+#[test]
+fn paired_machine_grants_are_independent_of_address_hints() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use oneiron::{
+        authority::{HostSlipIssuer, pairing_binding_transcript},
+        federation::Scope,
+    };
+    use oneiron_mesh_transport::{
+        AcceptPolicy, MachineGrants, VaultMachineGrants, transport_key::TransportKey,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::default()).unwrap());
+    let host = HostSlipIssuer::from_secret(b"roster integration host key").unwrap();
+    vault.ensure_host_root_slip(&host).unwrap();
+    let machine = EntityId::now();
+    let device = SigningKey::from_bytes(&[73; 32]);
+    let transport = TransportKey::derive(&device);
+    let key = transport.endpoint_key();
+    let link = vault.issue_pairing_link(&host, Scope::top(), 3600).unwrap();
+    let device_key = device.verifying_key().to_bytes();
+    let proof = device
+        .sign(&pairing_binding_transcript(&link.code, &device_key, &machine.to_hex()).unwrap())
+        .to_bytes();
+    let pair = vault
+        .redeem_pairing_link(&host, &link.code, &machine.to_hex(), device_key, &proof)
+        .unwrap();
+    let address = MachineAddress {
+        endpoint_key: key,
+        direct_addrs: vec![],
+        relay_url: None,
+    };
+    let (device_proof, transport_proof) = transport.binding_proofs(&device, machine);
+    vault
+        .bind_mesh_machine(
+            &host,
+            machine,
+            address,
+            device_key,
+            pair.claims.slip_id,
+            [&device_proof, &transport_proof],
+        )
+        .unwrap();
+    let grants = VaultMachineGrants(Arc::clone(&vault));
+    let policy = AcceptPolicy {
+        roster: Arc::new(VaultMachineRoster(Arc::clone(&vault))),
+        grants: Arc::new(grants.clone()),
+    };
+    assert!(matches!(
+        policy.inbound(key, b"mesh/test"),
+        Err(MeshError::Refused)
+    ));
+    vault
+        .set_mesh_alpn_grant(&host, machine, key, b"mesh/test", true)
+        .unwrap();
+    assert_eq!(policy.inbound(key, b"mesh/test").unwrap(), machine);
+    assert!(!grants.permits(machine, key, b"mesh/other").unwrap());
+    vault
+        .set_mesh_alpn_grant(&host, machine, key, b"mesh/test", false)
+        .unwrap();
+    assert!(matches!(
+        policy.inbound(key, b"mesh/test"),
+        Err(MeshError::Refused)
+    ));
+}
