@@ -1,7 +1,9 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
 use super::{SkillLifecycle, SkillRecord};
-use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ManifestEntry, ManifestKind,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -31,33 +33,67 @@ impl Vault {
         skill: &EntityId,
         at: u64,
     ) -> Result<LoadedSkillPack> {
+        self.with_write_txn(|txn| self.load_skill_pack_in_txn(txn, attempt, skill, at))
+    }
+
+    /// The callable door checks the caller's live lease generation in the
+    /// SAME transaction that loads and stamps the source. A stale worker
+    /// cannot append a manifest entry on a re-leased or terminal attempt.
+    pub(crate) fn load_leased_callable_skill_pack(
+        &self,
+        leased: &AttemptRecord,
+        skill: &EntityId,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
         self.with_write_txn(|txn| {
-            if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
-                return Err(Error::EntityNotFound);
-            }
-            let record = self.read_skill_record_in_txn(txn, skill)?;
-            if record.lifecycle_status != SkillLifecycle::Active
-                || !matches!(
-                    record.approval_status,
-                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                )
+            let current = AttemptQueue::new(self)
+                .get_in_txn(txn, leased.id)?
+                .ok_or(Error::EntityNotFound)?;
+            if current.state != AttemptState::Leased
+                || current.lease_owner.is_none()
+                || current.lease_owner != leased.lease_owner
+                || current.attempt_count != leased.attempt_count
             {
                 return Err(Error::InvalidClaimBody(
-                    "pack load requires an active approved skill",
+                    "callable execution requires the caller's live attempt lease",
                 ));
             }
-            let source_files = self
-                .runtime_skill_package_in_txn(txn, skill, &record)?
-                .map(|package| package.files);
-            AttemptQueue::new(self).append_manifest_entry_in_txn(
-                txn,
-                attempt,
-                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
-            )?;
-            Ok(LoadedSkillPack {
-                record,
-                source_files,
-            })
+            self.load_skill_pack_in_txn(txn, leased.id, skill, at)
+        })
+    }
+
+    fn load_skill_pack_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        skill: &EntityId,
+        at: u64,
+    ) -> Result<LoadedSkillPack> {
+        if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
+            return Err(Error::EntityNotFound);
+        }
+        let record = self.read_skill_record_in_txn(txn, skill)?;
+        if record.lifecycle_status != SkillLifecycle::Active
+            || !matches!(
+                record.approval_status,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        {
+            return Err(Error::InvalidClaimBody(
+                "pack load requires an active approved skill",
+            ));
+        }
+        let source_files = self
+            .runtime_skill_package_in_txn(txn, skill, &record)?
+            .map(|package| package.files);
+        AttemptQueue::new(self).append_manifest_entry_in_txn(
+            txn,
+            attempt,
+            ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
+        )?;
+        Ok(LoadedSkillPack {
+            record,
+            source_files,
         })
     }
 

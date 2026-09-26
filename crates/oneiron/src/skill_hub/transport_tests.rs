@@ -435,6 +435,31 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
 }
 
 #[test]
+fn callable_folder_frontmatter_binds_exact_reference_and_schema() -> Result<()> {
+    let front = b"---\nname: fixture.call\ndescription: A callable fixture\nversion: 1\nrole: callable\ncall:\n  reference: scripts/do.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"result\":\"integer\"}\n---\nCall the helper.\n";
+    let files = vec![
+        HubFile::new("SKILL.md", front.to_vec()),
+        HubFile::new(
+            "scripts/do.js",
+            b"finish(JSON.stringify({result:skillArgs.value + 1}));".to_vec(),
+        ),
+    ];
+    let package = super::folder::package_from_files(files.clone())?;
+    assert_eq!(package.record.role, crate::skill::SkillRole::Callable);
+    assert_eq!(
+        package.record.call.as_ref().unwrap().reference,
+        "scripts/do.js"
+    );
+    let record =
+        crate::skill::decode_skill_record(&crate::skill::encode_skill_record(&package.record)?)?;
+    assert_eq!(record.call, package.record.call);
+    let mut missing = files;
+    missing.pop();
+    assert!(super::folder::package_from_files(missing).is_err());
+    Ok(())
+}
+
+#[test]
 fn single_quoted_frontmatter_decodes_without_changing_source_hash() -> Result<()> {
     for (name, description, version, expected_description) in [
         (

@@ -1251,3 +1251,34 @@ fn forged_fork_lineage_rejected_at_local_create() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn callable_role_contract_round_trips_and_noncallable_cannot_smuggle_call() -> Result<()> {
+    let call = SkillCallContract {
+        reference: "scripts/calculate.js".to_owned(),
+        arguments: serde_json::json!({"value": "integer"}),
+        returns: serde_json::json!({"result": "integer"}),
+    };
+    let record = human_skill("2").with_role(SkillRole::Callable, Some(call.clone()));
+    assert_eq!(decode_skill_record(&encode_skill_record(&record)?)?, record);
+    assert_eq!(
+        decode_skill_record(&encode_skill_record(&record)?)?.call,
+        Some(call.clone())
+    );
+    assert!(
+        encode_skill_record(&human_skill("2").with_role(SkillRole::Workflow, Some(call.clone())))
+            .is_err()
+    );
+    assert!(encode_skill_record(&human_skill("2").with_role(SkillRole::Callable, None)).is_err());
+    let mut escaping = call;
+    escaping.reference = "../outside.js".to_owned();
+    assert!(
+        encode_skill_record(&human_skill("2").with_role(SkillRole::Callable, Some(escaping)))
+            .is_err()
+    );
+    assert_eq!(
+        decode_skill_record(&encode_skill_record(&human_skill("1"))?)?.role,
+        SkillRole::Knowledge
+    );
+    Ok(())
+}

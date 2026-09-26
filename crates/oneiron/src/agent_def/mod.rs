@@ -18,6 +18,7 @@ mod types;
 pub mod workflow;
 
 pub use self::codec::{decode_agent_definition, encode_agent_definition};
+pub use self::doors::AgentDefinitionPutDisposition;
 pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,

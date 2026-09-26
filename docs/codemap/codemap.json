@@ -444,10 +444,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "AgentDefinitionPutDisposition"
+     ],
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
+      "crate-vis": 2,
+      "enum": 1,
       "fn": 5
      }
     },
@@ -470,7 +474,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -8151,7 +8155,7 @@
      "purpose": "Code-mode composition: host-bound agents.spawn / tasks.ask / tasks.wait",
      "surface": {
       "crate-vis": 3,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -27523,6 +27527,24 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/call.rs",
+     "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill/call/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -27581,7 +27603,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 7
      }
     },
     {
@@ -27593,6 +27615,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -27608,9 +27631,25 @@
      "purpose": "SKILL record types with pinned wire keys and size bounds",
      "surface": {
       "const": 6,
-      "crate-vis": 16,
-      "fn": 6,
+      "crate-vis": 18,
+      "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillCallContract",
+      "SkillRole"
+     ],
+     "path": "src/skill/role.rs",
+     "purpose": "Skill roles and the bounded executable call contract",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -27963,7 +28002,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/folder.rs",
@@ -27979,7 +28018,7 @@
      "path": "src/skill_hub/fork_source.rs",
      "purpose": "A fork copies real files and edits source identity before hashing the new tree",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28621,6 +28660,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/skill_reliability/executor.rs",
+     "purpose": "Executor-specific callable outcomes over the shared skill Beta posterior",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/skill_reliability/floor.rs",
      "purpose": "The reliability floor dial and the quarantine proposal a floor crossing mints",
      "surface": {
@@ -28648,8 +28698,8 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 7
      }
     },
     {
@@ -34798,7 +34848,7 @@
      "purpose": "Revocable brief read grants"
     },
     "skill": {
-     "files": 9,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34833,7 +34883,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…"
     },
     "skill_reliability": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,8 +35074,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
-   "test_files": 710
+   "source_files": 2071,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [

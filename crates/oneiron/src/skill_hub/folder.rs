@@ -3,7 +3,7 @@ use super::package_codec::invalid;
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::error::Result;
-use crate::skill::{SkillLifecycle, SkillRecord};
+use crate::skill::{SkillCallContract, SkillLifecycle, SkillRecord, SkillRole};
 use std::collections::BTreeMap;
 
 /// Reads the common scalar frontmatter subset. Complex YAML is refused, not guessed.
@@ -12,7 +12,7 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
     validate_source_files(&files)?;
     let front = source_frontmatter(instruction_text(&files)?)?
         .ok_or_else(|| invalid("SKILL.md needs frontmatter"))?;
-    let (fields, caps) = frontmatter_fields(front)?;
+    let (fields, caps, role, call) = frontmatter_fields(front)?;
     let scalar = |key: &str| -> Result<String> {
         let value = *fields
             .get(key)
@@ -62,16 +62,35 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
             rmpv::Value::from("source"),
             rmpv::Value::from("hub-folder"),
         )]),
-    );
+    )
+    .with_role(role, call);
     crate::skill::encode_skill_record(&record)?;
+    if let Some(call) = &record.call
+        && !files
+            .iter()
+            .any(|file| file.path == call.reference && std::str::from_utf8(&file.content).is_ok())
+    {
+        return Err(invalid(
+            "call reference must name a UTF-8 file in the exact skill tree",
+        ));
+    }
     let mut package = HubPackage::new(record, files, caps);
     package.record.content_hash = Some(package.content_hash()?);
     Ok(package)
 }
 
-fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabilitySurface)> {
+type ParsedFrontmatter<'a> = (
+    BTreeMap<&'a str, &'a str>,
+    SkillCapabilitySurface,
+    SkillRole,
+    Option<SkillCallContract>,
+);
+
+fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
     let mut fields = BTreeMap::new();
     let mut caps = SkillCapabilitySurface::default();
+    let mut call_fields = serde_json::Map::new();
+    let mut in_call = false;
     let mut metadata_block = false;
     let mut metadata_keys = std::collections::BTreeSet::new();
     for line in front.lines() {
@@ -79,31 +98,44 @@ fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabil
             continue;
         }
         if line.starts_with(char::is_whitespace) {
-            // The shipped hub uses the plain YAML scalar-map spelling of
-            // metadata. It is inert attribution, not parsed as capabilities.
             let nested = line
                 .strip_prefix("  ")
-                .ok_or_else(|| invalid("invalid metadata indent"))?;
+                .filter(|rest| !rest.starts_with(char::is_whitespace))
+                .ok_or_else(|| invalid("unsupported nested YAML frontmatter"))?;
             let (key, value) = nested
                 .split_once(':')
-                .ok_or_else(|| invalid("invalid metadata field"))?;
-            if !metadata_block
-                || key.is_empty()
-                || !key
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
-                || value.trim().is_empty()
-                || value
-                    .trim_start()
-                    .chars()
-                    .next()
-                    .is_some_and(|c| matches!(c, '[' | '{' | '!' | '&' | '*' | '|' | '>'))
-                || !metadata_keys.insert(key)
-            {
-                return Err(invalid("unsupported metadata scalar"));
+                .ok_or_else(|| invalid("invalid nested frontmatter field"))?;
+            if in_call {
+                if !matches!(key, "reference" | "arguments" | "returns")
+                    || call_fields
+                        .insert(key.to_owned(), call_field_value(value.trim())?)
+                        .is_some()
+                {
+                    return Err(invalid(
+                        "call must have unique reference, arguments and returns fields",
+                    ));
+                }
+            } else if metadata_block {
+                if key.is_empty()
+                    || !key
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                    || value.trim().is_empty()
+                    || value
+                        .trim_start()
+                        .chars()
+                        .next()
+                        .is_some_and(|c| matches!(c, '[' | '{' | '!' | '&' | '*' | '|' | '>'))
+                    || !metadata_keys.insert(key)
+                {
+                    return Err(invalid("unsupported metadata scalar"));
+                }
+            } else {
+                return Err(invalid("nested YAML requires call or metadata block"));
             }
             continue;
         }
+        in_call = false;
         metadata_block = false;
         let (key, value) = line
             .split_once(':')
@@ -113,7 +145,21 @@ fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabil
             return Err(invalid("duplicate frontmatter field"));
         }
         match key {
-            "name" | "description" | "version" | "license" | "compatibility" => {}
+            "name" | "description" | "version" | "license" | "compatibility" | "role" => {}
+            "call" => {
+                if value.is_empty() {
+                    in_call = true;
+                } else {
+                    let serde_json::Value::Object(object) =
+                        serde_json::from_str(value).map_err(|_| {
+                            invalid("call requires a JSON flow-map or three nested fields")
+                        })?
+                    else {
+                        return Err(invalid("call must be a map"));
+                    };
+                    call_fields = object;
+                }
+            }
             "metadata" if value.is_empty() => metadata_block = true,
             "metadata" => {
                 let _: BTreeMap<String, String> = serde_json::from_str(value)
@@ -142,7 +188,53 @@ fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabil
             }
         }
     }
-    Ok((fields, caps))
+    let role = fields
+        .get("role")
+        .map(|value| {
+            SkillRole::parse(value)
+                .ok_or_else(|| invalid("role must be knowledge|workflow|callable"))
+        })
+        .transpose()?
+        .unwrap_or(SkillRole::Knowledge);
+    let call = if fields.contains_key("call") {
+        let value = serde_json::Value::Object(call_fields);
+        Some(
+            serde_json::from_value::<CallFields>(value)
+                .map_err(|_| invalid("call requires reference, arguments and returns only"))?
+                .into_contract(),
+        )
+    } else {
+        None
+    };
+    Ok((fields, caps, role, call))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CallFields {
+    reference: String,
+    arguments: serde_json::Value,
+    returns: serde_json::Value,
+}
+
+impl CallFields {
+    fn into_contract(self) -> SkillCallContract {
+        SkillCallContract {
+            reference: self.reference,
+            arguments: self.arguments,
+            returns: self.returns,
+        }
+    }
+}
+
+fn call_field_value(value: &str) -> Result<serde_json::Value> {
+    if let Ok(parsed) = serde_json::from_str(value) {
+        return Ok(parsed);
+    }
+    if value.is_empty() || value.contains(['#', '\n', '\r']) {
+        return Err(invalid("invalid call field"));
+    }
+    Ok(serde_json::Value::String(value.to_owned()))
 }
 
 /// Reconstructs an untrusted package without changing one byte of its source.
@@ -159,6 +251,8 @@ pub(crate) fn package_from_source(
             if record.skill_id != package.record.skill_id
                 || record.desc != package.record.desc
                 || record.version != package.record.version
+                || record.role != package.record.role
+                || record.call != package.record.call
             {
                 return Err(invalid("source frontmatter differs from native skill"));
             }
@@ -166,16 +260,42 @@ pub(crate) fn package_from_source(
         }
         SkillPackageFormat::Native => {
             validate_source_files(&files)?;
-            let caps = source_frontmatter(instruction_text(&files)?)?
+            let parsed = source_frontmatter(instruction_text(&files)?)?
                 .map(frontmatter_fields)
-                .transpose()?
-                .map(|(_, caps)| caps)
-                .unwrap_or_default();
+                .transpose()?;
+            if record.role == SkillRole::Callable
+                && !parsed.as_ref().is_some_and(|(_, _, role, call)| {
+                    *role == SkillRole::Callable && call == &record.call
+                })
+            {
+                return Err(invalid(
+                    "callable source frontmatter must match its native call contract",
+                ));
+            }
+            if let Some((fields, _, role, call)) = &parsed
+                && ((fields.contains_key("role") && *role != record.role)
+                    || (fields.contains_key("call") && call != &record.call))
+            {
+                return Err(invalid(
+                    "native skill role/call differs from declared frontmatter",
+                ));
+            }
+            let caps = parsed.map(|(_, caps, _, _)| caps).unwrap_or_default();
             let mut package = HubPackage::new(record.clone(), files, caps);
             package.format = SkillPackageFormat::Native;
             package
         }
     };
+    if let Some(call) = &record.call
+        && !package
+            .files
+            .iter()
+            .any(|file| file.path == call.reference && std::str::from_utf8(&file.content).is_ok())
+    {
+        return Err(invalid(
+            "call reference must name a UTF-8 file in the exact skill tree",
+        ));
+    }
     if record.content_hash != Some(package.content_hash()?) {
         return Err(invalid("source tree differs from native skill hash"));
     }

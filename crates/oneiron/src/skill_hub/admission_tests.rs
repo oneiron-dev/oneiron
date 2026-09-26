@@ -746,3 +746,42 @@ fn native_source_metadata_needs_the_same_human_and_held_out_admission() -> Resul
     );
     Ok(())
 }
+
+#[test]
+fn imported_callable_stays_candidate_without_foreign_sandbox_qualification() -> Result<()> {
+    let fixture = Fixture::new();
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let package = super::folder::package_from_files(vec![
+        HubFile::new("SKILL.md", b"---\nname: fixture.callable\ndescription: fixture\nversion: 1\nrole: callable\ncall:\n  reference: scripts/call.js\n  arguments: {\"value\":\"integer\"}\n  returns: {\"result\":\"integer\"}\n---\ncheck result\n".to_vec()),
+        HubFile::new("scripts/call.js", b"finish(JSON.stringify({result:skillArgs.value+1}));".to_vec()),
+    ])?;
+    let source = HubRef::new(
+        source.hub_id,
+        "fixture.callable",
+        HubPin::ContentHash(package.content_hash()?.to_hex()),
+    )?;
+    let id = fixture
+        .vault
+        .import_skill_from_hub(&source, &package, at(20), 20)?;
+    let ask =
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &source, &publisher, fixture.baseline)?;
+    fixture
+        .vault
+        .approve_marketplace_activation(&ask, &fixture.owner)?;
+    let error = fixture
+        .vault
+        .admit_marketplace_skill(&ask, &Replay::new(true), at(31), 31)
+        .expect_err("text replay does not qualify foreign code execution");
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody);
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}

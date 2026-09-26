@@ -3949,3 +3949,127 @@ fn the_longest_queue_accepted_run_id_still_names_a_cycle() -> Result<()> {
     assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
     Ok(())
 }
+
+#[test]
+fn context_recipe_workflow_keeps_manifest_attribution_after_improver_edit() -> Result<()> {
+    struct RecipeScorer;
+    impl HeldOutReplayScorer for RecipeScorer {
+        fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
+            Ok(if case.instructions == DRAFTED_DESC {
+                0.75
+            } else {
+                0.40
+            })
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let skill = EntityId::now();
+    let mut recipe = record(
+        "fixture.context-recipe",
+        Some(SkillGovernanceTier::Standard),
+        None,
+    )
+    .with_role(crate::skill::SkillRole::Workflow, None);
+    recipe.desc = "Load task index, then the matched sources; shed examples first.".into();
+    let files = vec![
+        HubFile::new(
+            "SKILL.md",
+            format!(
+                "---\nname: {}\ndescription: {}\nversion: {}\nrole: workflow\n---\n{}\n",
+                recipe.skill_id, recipe.desc, recipe.version, recipe.desc
+            )
+            .into_bytes(),
+        ),
+        HubFile::new("references/ordering.txt", b"context order fixture".to_vec()),
+    ];
+    recipe.content_hash = Some(crate::skill::canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?);
+    let mut package = HubPackage::new(recipe.clone(), files, SkillCapabilitySurface::default());
+    package.format = crate::skill_hub::SkillPackageFormat::Native;
+    vault.with_write_txn(|txn| {
+        vault.put_skill_record_in_txn(txn, &skill, &recipe, t(10), 11)?;
+        vault.persist_hub_package_in_txn(txn, &skill, &package)
+    })?;
+    let mut before = recipe;
+    before.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&skill, &before, t(12), 13)?;
+    let evidence = attribute_defects(&vault, &skill, &before.skill_id, 5);
+    let outcome = run(&vault, &StubAuthor::editing()).expect("recipe improver");
+    let proposal_id = outcome.proposal.expect("improver drafts a recipe edit");
+    let proposed = stored(&vault, &proposal_id);
+    assert_eq!(proposed.role, crate::skill::SkillRole::Workflow);
+    assert_eq!(proposed.lifecycle_status, SkillLifecycle::Candidate);
+    assert_eq!(proposed.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(proposed.skill_id, before.skill_id);
+    assert!(
+        matches!(&proposed.provenance, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some(PROVENANCE_OPTIMIZE_RECEIPTS_KEY)
+        && value.as_array().is_some_and(|rows| rows.iter().any(|row| evidence.iter().any(|r| row.as_str() == Some(r))))))
+    );
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal_id,
+        &RecipeScorer,
+        wake(&vault, "recipe-wake", 10),
+        900,
+    )
+    .expect("recipe held-out score");
+    admit_optimized_skill_revision(&vault, &proposal_id, t(400), 401).expect("recipe admission");
+    vault.supersede_skill_record(&skill, &proposal_id, t(404), 405)?;
+    let queue = AttemptQueue::new(&vault);
+    let EnqueueOutcome::Enqueued(attempt) = queue.enqueue(EnqueueAttempt {
+        kind: "recipe.attempt".into(),
+        payload: vec![],
+        dedupe_key: None,
+        run_id: None,
+        now: 500,
+    })?
+    else {
+        panic!("fresh recipe attempt")
+    };
+    let loaded = vault.load_attempt_skill_pack(attempt.id, &proposal_id, 500)?;
+    let source = loaded
+        .source_files
+        .expect("source-backed recipe stays source-backed");
+    assert!(source.iter().any(|file| file.path == "SKILL.md"
+        && String::from_utf8_lossy(&file.content).contains(DRAFTED_DESC)));
+    assert!(
+        source
+            .iter()
+            .any(|file| file.path == "references/ordering.txt"
+                && file.content == b"context order fixture")
+    );
+    let ClaimOutcome::Claimed(leased) = queue.claim(ClaimAttempt {
+        lease_owner: "recipe-worker".into(),
+        now: 501,
+    })?
+    else {
+        panic!("leased recipe attempt")
+    };
+    assert!(matches!(
+        queue.complete(CompleteAttempt {
+            id: attempt.id,
+            lease_owner: "recipe-worker".into(),
+            attempt_count: leased.attempt_count,
+            now: 502,
+        })?,
+        CompleteOutcome::Completed(_)
+    ));
+    let receipt = attempt_pack_receipt_id(&attempt.id);
+    record_skill_contributing_win(&vault, &proposal_id, &receipt, 503)?;
+    assert!(crate::skill_reliability::skill_reliability_posterior(&vault, &proposal_id)?.is_none());
+    // The attributed outcome is held under the NEW skill entity and exact
+    // revision, never copied from the previous recipe's receipt history.
+    assert_eq!(
+        crate::skill_reliability::attributed_outcome_receipts(
+            &vault,
+            &vault.store.env.read_txn()?,
+            &proposal_id
+        )?,
+        vec![receipt]
+    );
+    Ok(())
+}
