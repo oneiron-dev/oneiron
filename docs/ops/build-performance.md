@@ -106,8 +106,9 @@ own workspace wrapper; the scoped runner only sets this wrapper for rustdoc
 and the test commands, not Clippy. The macOS dispatch test job also uses the
 wrapper. On Linux, `scripts/ci/with-test-tmpdir.sh` checks `/dev/shm` before
 each test command. With at least 12 GiB free it makes a per-command
-`/dev/shm/ci-<runner>-*` directory and cleans it even on failure. Otherwise it
-leaves the disk `TMPDIR` unchanged. The scope and test selection do not change.
+`/dev/shm/ci-<runner>-*` directory and cleans it even on failure. It also executes a small probe in the new
+directory; a `noexec` mount falls back to disk so test-created hooks still run.
+If the space or execution check fails, it leaves the disk `TMPDIR` unchanged. The scope and test selection do not change.
 
 Clean 16-core Arch box, main `97bb7049`, rustc 1.96.1: core test edit rebuild
 **84 s incremental vs 236 s** under `CARGO_INCREMENTAL=0`. Core-only parallel

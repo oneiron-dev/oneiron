@@ -52,6 +52,9 @@ class SpeedHelperTests(unittest.TestCase):
                 "df": "print('Filesystem 1024-blocks Used Available Capacity Mounted on')\n"
                       "print('/dev/shm 20000000 0 ' + os.environ['FAKE_AVAILABLE'] + ' 0% /dev/shm')\n",
                 "mktemp": "print(tempfile.mkdtemp(prefix='ci-test-', dir=os.environ['FAKE_ROOT']))\n",
+                "chmod": "import subprocess, sys\n"
+                         "sys.exit(0 if os.environ.get('FAKE_NOEXEC') == '1' else "
+                         "subprocess.call(['/bin/chmod', *sys.argv[1:]]))\n",
             }.items():
                 imports = "import os, tempfile\n"
                 stub = tools / name
@@ -64,19 +67,22 @@ class SpeedHelperTests(unittest.TestCase):
                        "import json,os,pathlib,sys; pathlib.Path(sys.argv[1]).write_text(json.dumps(os.environ.get('TMPDIR'))); sys.exit(int(sys.argv[2]))",
                        str(output)]
             script = ROOT / "with-test-tmpdir.sh"
-            for available, code in ((str(12 * 1024 * 1024 - 1), 0), (str(12 * 1024 * 1024), 7)):
+            cases = ((str(12 * 1024 * 1024 - 1), 0, False, False),
+                     (str(12 * 1024 * 1024), 7, False, True),
+                     (str(12 * 1024 * 1024), 0, True, False))
+            for available, code, noexec, use_tmpfs in cases:
                 result = subprocess.run([str(script), *command, str(code)],
                     env=os.environ | {"PATH": f"{tools}:{os.environ['PATH']}",
                                       "FAKE_AVAILABLE": available, "FAKE_ROOT": str(root),
+                                      "FAKE_NOEXEC": "1" if noexec else "0",
                                       "TMPDIR": str(disk), "RUNNER_NAME": "test runner"},
                     capture_output=True, text=True)
                 self.assertEqual(result.returncode, code, result.stderr)
                 used = Path(json.loads(output.read_text()))
-                if code == 0:
-                    self.assertEqual(used, disk)
-                else:
-                    self.assertNotEqual(used, disk)
+                self.assertEqual(used != disk, use_tmpfs)
+                if use_tmpfs:
                     self.assertFalse(used.exists(), "step temp must be removed on failure")
+                self.assertEqual(list(root.glob("ci-test-*")), [], "probe/temp directory leaked")
 
 
 if __name__ == "__main__":

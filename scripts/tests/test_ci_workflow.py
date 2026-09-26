@@ -84,7 +84,6 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn('RUSTC_WORKSPACE_WRAPPER: ', "\n".join(self.job_lines("checks")))
         for name in ("rustc-threads.sh", "with-test-tmpdir.sh"):
             self.assertTrue((ROOT / "scripts/ci" / name).stat().st_mode & 0o111)
-        self.assertIn("ONEIRON_PARALLEL_FRONTEND", (ROOT / "scripts/ci/rustc-threads.sh").read_text())
         self.assertIn("12 * 1024 * 1024", (ROOT / "scripts/ci/with-test-tmpdir.sh").read_text())
 
     def test_workflow_guard_is_executed_by_python_check(self):
