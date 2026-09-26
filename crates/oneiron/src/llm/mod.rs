@@ -130,6 +130,7 @@ use std::time::Duration;
 /// Typed question and outcome contracts.
 pub mod decision;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
+    RsiSettlement, RsiSpendPurpose,
 };
 pub(crate) use step::resume_peer_result_steps;
