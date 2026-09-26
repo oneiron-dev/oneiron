@@ -181,10 +181,12 @@ fn rule_on_proposal(
                         "no evidence is reserved for this skill, so there is nothing to score",
                     ));
                 }
+                let outcomes = held_out_outcome_results_in_txn(vault, &*wtxn, &target)?;
                 let basis = ScoredBasis::of(
                     &staged,
                     &current,
                     &held_out,
+                    &outcomes,
                     tier_verdict_in_txn(vault, &*wtxn, proposal, &staged)?.tier(),
                 )?;
                 // Idempotence, before the LLM tier rather than after it. A gate
@@ -198,6 +200,7 @@ fn rule_on_proposal(
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
                 Ok(Prepared::Score(Box::new(ScoreInputs {
+                    outcomes,
                     proposal: staged,
                     target,
                     target_record: current,
@@ -215,20 +218,32 @@ fn rule_on_proposal(
         Prepared::Score(inputs) => *inputs,
     };
 
-    let before = validate_score(scorer.score(&HeldOutReplayCase {
+    let current_case = HeldOutReplayCase {
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.target_record.version,
         instructions: &inputs.target_record.desc,
         held_out_receipts: &inputs.held_out,
-    })?)?;
-    let after = validate_score(scorer.score(&HeldOutReplayCase {
+    };
+    let proposed_case = HeldOutReplayCase {
         skill: inputs.target,
         skill_id: &inputs.target_record.skill_id,
         version: &inputs.proposal.version,
         instructions: &inputs.proposal.desc,
         held_out_receipts: &inputs.held_out,
-    })?)?;
+    };
+    // Freeze the response-only preference before ANY rubric-aware callback.
+    // The same frozen sample is used to measure both instruction versions.
+    let blind = scorer.blind_preference(current_case.skill_id, &inputs.held_out)?;
+    let measurements = measure(
+        scorer,
+        &current_case,
+        &proposed_case,
+        &inputs.outcomes,
+        &blind,
+    )?;
+    let before = validate_score(scorer.score(&current_case)?)?;
+    let after = validate_score(scorer.score(&proposed_case)?)?;
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -251,6 +266,7 @@ fn rule_on_proposal(
         let mut verdict = HeldOutVerdict {
             before,
             after,
+            measurements: Some(measurements),
             accepted: false,
             id: vault.store.clock.entity_id()?,
             proposal: *proposal,
@@ -303,6 +319,7 @@ struct ScoreInputs {
     target: EntityId,
     target_record: SkillRecord,
     held_out: Vec<String>,
+    outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
 }
 
@@ -475,6 +492,12 @@ fn decide_in_txn(
             "the reserved evidence moved while the scorer was thinking",
         ));
     }
+    let world_now = held_out_outcome_results_in_txn(vault, wtxn, &target_of(staged)?)?;
+    if world_labels_digest(&world_now) != basis.world_digest {
+        return Err(retry(
+            "world outcome labels moved while the judge was measuring",
+        ));
+    }
     // Strict improvement, and evaluated BEFORE the tier and cap arms so a
     // regression is reported as the regression it is rather than as whatever
     // else was also wrong. No epsilon (blueprint note: the anti-Goodhart
@@ -618,6 +641,7 @@ fn refusal(
     HeldOutVerdict {
         before: 0.0,
         after: 0.0,
+        measurements: None,
         accepted: false,
         id,
         proposal: *proposal,

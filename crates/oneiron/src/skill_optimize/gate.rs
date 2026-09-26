@@ -121,10 +121,10 @@ use crate::receipt::{
     FIELD_SKILL_EDIT_ACCEPTED_VERDICT, FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION,
     FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
     FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS, FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED,
-    FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL, FIELD_SKILL_EDIT_PROPOSAL_DIGEST,
-    FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE, FIELD_SKILL_EDIT_SKILL,
-    FIELD_SKILL_EDIT_TARGET_DIGEST, ReceiptKind, ReceiptQuery, ReceiptRecord,
-    retain_newest_receipt,
+    FIELD_SKILL_EDIT_MEASUREMENTS, FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL,
+    FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE,
+    FIELD_SKILL_EDIT_SKILL, FIELD_SKILL_EDIT_TARGET_DIGEST, ReceiptKind, ReceiptQuery,
+    ReceiptRecord, retain_newest_receipt,
 };
 use crate::skill::{
     SkillGovernanceTier, SkillLifecycle, SkillRecord, encode_skill_record, validate_skill_update,
@@ -137,6 +137,7 @@ mod admission;
 mod basis;
 mod decision;
 mod ledger;
+mod measurement;
 mod verdict;
 
 pub use admission::admit_optimized_skill_revision;
@@ -152,6 +153,9 @@ pub use decision::{
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal,
+};
+pub use measurement::{
+    AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
 };
 pub use verdict::{HeldOutVerdict, SkillEditDisposition};
 
@@ -173,11 +177,12 @@ use admission::{
     bounded_receipts, provenance_str, require_open_optimizer_proposal, target_is_current, target_of,
 };
 use basis::{
-    ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_receipts_in_txn, host_replay_scorer,
-    validate_score,
+    ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
+    held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
 use decision::{close_answered_proposal_in_txn, readable_target, standing_verdict_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
+use measurement::{measure, validate_measurements, world_labels_digest};
 
 // ---------------------------------------------------------------------------
 // Dials + pinned strings
@@ -219,7 +224,8 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped by the MATERIAL-10 repair (v1 → v2: a v1 row carries no binding
+/// Bumped by OF-214 (v3 → v4: audited measurements and bound world labels).
+/// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
 /// nobody can check the body of) and again by the MATERIAL-6 repair (v2 → v3: a
 /// v2 row binds no PROPOSAL tier, so an owner's identity mark on the proposal
@@ -227,9 +233,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2 row decodes as
+/// rather than to grow a second code path for it: every v1/v2/v3 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 3;
+const VERDICT_SCHEMA_VERSION: u64 = 4;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -247,6 +253,7 @@ const KEY_PROPOSAL_TIER: &str = "proposal_tier";
 const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
+const KEY_MEASUREMENTS: &str = "measurements";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

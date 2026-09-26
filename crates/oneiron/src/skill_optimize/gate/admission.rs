@@ -182,7 +182,8 @@ fn admission_refusal_in_txn(
     // "proposal X was accepted" would let any of the three be swapped after the
     // fact, which makes the strict gate a formality.
     let committed = held_out_receipts_in_txn(vault, wtxn, target)?;
-    if !ScoredBasis::of(staged, current, &committed, proposal_tier)?.matches(accepted) {
+    let outcomes = held_out_outcome_results_in_txn(vault, wtxn, target)?;
+    if !ScoredBasis::of(staged, current, &committed, &outcomes, proposal_tier)?.matches(accepted) {
         return Ok(refused(SkillEditDisposition::RefusedBindingMismatch));
     }
     // ONE-1447's gap, closed at the door that owns it: the stale sweep

@@ -171,6 +171,9 @@ pub struct HeldOutVerdict {
     pub before: f32,
     /// Score of the PROPOSED instructions over the same reserved evidence.
     pub after: f32,
+    /// Both receipt-only audits and judge agreement with available world labels.
+    /// None only when a terminal refusal happened before any judging.
+    pub measurements: Option<JudgeMeasurements>,
     /// `after > before`, and nothing refused or deferred it.
     pub accepted: bool,
     /// Ledger row id; the receipt's id is derived from it.
