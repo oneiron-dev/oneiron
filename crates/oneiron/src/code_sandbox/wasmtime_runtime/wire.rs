@@ -2,7 +2,7 @@
 
 use super::{Bridge, failure};
 use crate::code_run::{
-    SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
+    SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
     SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
 };
 use crate::code_sandbox::{
@@ -198,9 +198,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 args.limit.unwrap_or(20),
             ))
         }
-        "self.ask_human" | "self.askHuman" => {
-            SelfCall::AskHuman(SelfAskHumanCall::new(parse::<Ask>(input)?.prompt))
-        }
+        "ask" => SelfCall::Ask(SelfAskCall::new(parse::<Ask>(input)?.prompt)),
         "self.speak" => SelfCall::Speak(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
         "self.think" => SelfCall::Think(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
         "self.express" => SelfCall::Express(SelfSpeechCall::new(parse::<Speech>(input)?.text)),

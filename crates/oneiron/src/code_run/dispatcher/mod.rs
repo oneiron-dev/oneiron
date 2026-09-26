@@ -86,7 +86,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Creates the canonical dispatcher for a workflow step waiting on a real,
     /// human-assigned TASK. The task body remains authoritative for responder
-    /// identity; dispatch resolves it when `self.ask_human` mints the wait.
+    /// identity; dispatch resolves it when `ask` mints the wait.
     ///
     /// # Errors
     ///
@@ -240,7 +240,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
+            SelfCall::Ask(call) => self.dispatch_ask(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
                 SelfEffect::DestructiveFixture,
                 SelfDurableWaitReason::DestructiveEffect,

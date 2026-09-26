@@ -49,7 +49,7 @@ pub(crate) use self::storage::{
     canonical_speech_conversation_id_for_run, executor_speech_message_id,
 };
 pub use self::types::{
-    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall,
+    SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskCall, SelfCall, SelfContextCall,
     SelfContextResult, SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfDurableWait,
     SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
     SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,

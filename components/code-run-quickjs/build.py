@@ -95,7 +95,7 @@ def main():
         if tier == "foreign":
             # Same package/world and export types. This is the tier's import
             # projection, not a new world or a second protocol.
-            stage_wit = re.sub(r"    // @js self\.[^\n]*\n    import [^\n]*\n", "", wit)
+            stage_wit = re.sub(r"    // @js (?:self\.[^\n]*|ask)\n    import [^\n]*\n", "", wit)
         (stage / "code-run.wit").write_text(stage_wit)
         run(["wit-bindgen", "c", "--world", "guest", "--out-dir", stage, stage / "code-run.wit"])
         run(["python3", HERE / "generate_bridge.py", ROOT / "crates/oneiron/wit/generated/code-run.mjs", stage / "bridge.h"])

@@ -405,6 +405,11 @@ export type TaskAskDefault = "proceed" | "hold" | "ask_me";
 export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
 export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
 export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+export interface TaskCanAskRequest { ask: TaskAskSpec }
+export interface TaskAskPreflightRecipient { who: string; face: string | null; channel: string | null; word_required: boolean }
+export interface TaskAskPreflight { recipients: TaskAskPreflightRecipient[] }
+export type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
+export interface TaskAskPersonEvidence {who: string; answer: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source: string | null}
 export interface TaskAskHandle { group_ref: string }
 export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
 export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}

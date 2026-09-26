@@ -16,7 +16,7 @@
 import { OneironError, translateNativeError } from "./error.js"
 import { NativeClient } from "./native.js"
 import { agentVerbs } from "./agent-verbs.js"
-import type { TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"
+import type { TaskCancelReceipt, TaskDescription, TaskCanAskRequest, TaskAskPreflight, TaskAskHandle, TaskAskPersonEvidence } from "./agent-verbs.js"
 
 import { itemFromWire, keyedJson } from "./key-value.js"
 import type { WireItem } from "./key-value.js"
@@ -153,6 +153,10 @@ export class Oneiron {
   keyValueSearch(request: KeyValueSearch): KeyValueItem[] { return this.#call(() => { const { namespacePrefix = [], ...rest } = request; const result = JSON.parse(this.#client.keyValueSearch(keyedJson({ ...rest, namespace_prefix: namespacePrefix }))) as WireItem[]; return result.map(item => itemFromWire(item)) }) }
   /** Exact segment namespace enumeration. Empty namespaces are not retained. */
   keyValueNamespaces(request: KeyValueNamespaces): string[][] { return this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.keyValueNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }) }
+  /** Read-only ask routing or attributed partial answers. */
+  can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
+  /** Read-only ask routing or attributed partial answers. */
+  peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
 
 // END GENERATED FACADE VERBS
 
@@ -169,4 +173,4 @@ export class Oneiron {
 export { OneironError }
 export type * from "./types.js"
 
-export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait, TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"
+export type { OutcomeBinding, CalibrationPair, TaskAssignee, ConsultPayloadRef, TaskAskOptionId, TaskAskTarget, TaskAskQuestion, TaskAskElectorate, TaskAskNeed, TaskAskDecide, TaskAskDefault, TaskAskDisagree, TaskAskClass, TaskAskSpec, TaskAskHandle, TaskAskReceipt, TaskCanAskRequest, TaskAskPreflight, TaskAskPreflightRecipient, TaskAskPersonKind, TaskAskPersonEvidence, TaskAskWord, TaskAskAnswer, TaskAskCoverage, TaskAskDecision, TaskAskFallback, TaskAskEvidence, TaskAskSettlement, TaskAskResult, TaskAskStatus, TaskAskWait, TaskCancelReceipt, TaskDescription } from "./agent-verbs.js"

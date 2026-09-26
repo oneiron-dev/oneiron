@@ -3,6 +3,13 @@ use super::TaskAskHandle;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
 
+/// `can(ask(...))`: one read-only preflight for a typed ask spec.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCanAskRequest {
+    pub ask: super::TaskAskSpec,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWaitRequest {

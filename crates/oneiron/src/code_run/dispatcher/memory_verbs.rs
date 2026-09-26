@@ -78,7 +78,7 @@ impl HostSelfDispatcher<'_> {
             // they evaporate with it. Refusing them here would make an
             // off-record room mute rather than private.
             SelfEffect::MemorySearch
-            | SelfEffect::AskHuman
+            | SelfEffect::Ask
             | SelfEffect::DestructiveFixture
             | SelfEffect::OutboundFixture
             | SelfEffect::Context

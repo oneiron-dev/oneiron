@@ -432,6 +432,20 @@ impl TaskAskSpec {
     }
 }
 
+/// Live ask routing. `None` means no native channel, not a promise of delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAskPreflightRecipient {
+    pub who: EntityId,
+    pub face: Option<String>,
+    pub channel: Option<String>,
+    pub word_required: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskAskPreflight {
+    pub recipients: Vec<TaskAskPreflightRecipient>,
+}
+
 /// The group is an engine-authored TASK fact, not a local queue id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -513,6 +527,28 @@ pub struct TaskAskEvidence {
     pub order: u64,
     pub reason: TaskAskEvidenceReason,
 }
+/// One person's attributed answer at this read. `Unknown` carries no answer;
+/// the agent's cutoff branch is never serialized as a person's default word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAskPersonKind {
+    Word,
+    Companion,
+    Default,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskPersonEvidence {
+    pub who: EntityId,
+    pub answer: Option<TaskAskWord>,
+    pub kind: TaskAskPersonKind,
+    pub at: u64,
+    /// Actual speaker. In particular, a companion hint is not a human word.
+    pub source: Option<EntityId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskCoverage {

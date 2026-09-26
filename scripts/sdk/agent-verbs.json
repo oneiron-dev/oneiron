@@ -471,6 +471,52 @@
       }
     },
     {
+      "name": "can",
+      "input": "crate::task_verb::sdk::TaskCanAskRequest",
+      "output": "crate::task_verb::TaskAskPreflight",
+      "call": "memory.tasks_can_ask(&input.ask)?",
+      "scope": "Read",
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
+          "ts": "/** Read-only ask routing or attributed partial answers. */",
+          "py": "Read-only ask routing or attributed partial answers."
+        }
+      }
+    },
+    {
+      "name": "peek",
+      "input": "crate::task_verb::TaskAskHandle",
+      "output": "Vec<crate::task_verb::TaskAskPersonEvidence>",
+      "call": "memory.tasks_ask_peek(input)?",
+      "scope": "Read",
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "wire": "json",
+        "args": [
+          {
+            "name": "request",
+            "kind": "json"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Read-only ask preflight or partial answer evidence.\n",
+          "ts": "/** Read-only ask routing or attributed partial answers. */",
+          "py": "Read-only ask routing or attributed partial answers."
+        }
+      }
+    },
+    {
       "name": "tasks.ask",
       "input": "crate::task_verb::TaskAskSpec",
       "output": "crate::task_verb::TaskAskReceipt",

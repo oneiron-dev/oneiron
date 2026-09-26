@@ -4,6 +4,7 @@
 //! Sibling files own each ask implementation and its existing admission rules.
 
 mod ask_facade;
+mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_types;
@@ -118,7 +119,8 @@ pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskElectorate, TaskAskEvidence,
     TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle, TaskAskHoldReason, TaskAskNeed,
-    TaskAskOptionId, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
+    TaskAskOptionId, TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult,
     TaskAskSettlement, TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };

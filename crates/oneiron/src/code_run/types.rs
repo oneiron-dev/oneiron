@@ -33,8 +33,8 @@ pub enum SelfCall {
     MemorySupersedeClaim(SelfMemorySupersedeClaimCall),
     /// Public first-party `self.memory.put_edge(...)` trap.
     MemoryPutEdge(SelfMemoryPutEdgeCall),
-    /// Fixture for `self.ask_human(...)`.
-    AskHuman(SelfAskHumanCall),
+    /// Fixture for `ask(...)`.
+    Ask(SelfAskCall),
     /// Fixture for destructive effects, which must park as durable waits.
     DestructiveFixture(SelfFixtureEffectCall),
     /// Fixture for outbound effects, which must park as durable waits.
@@ -69,7 +69,7 @@ impl SelfCall {
             Self::MemoryPutClaim(_) => SelfEffect::MemoryPutClaim,
             Self::MemorySupersedeClaim(_) => SelfEffect::MemorySupersedeClaim,
             Self::MemoryPutEdge(_) => SelfEffect::MemoryPutEdge,
-            Self::AskHuman(_) => SelfEffect::AskHuman,
+            Self::Ask(_) => SelfEffect::Ask,
             Self::DestructiveFixture(_) => SelfEffect::DestructiveFixture,
             Self::OutboundFixture(_) => SelfEffect::OutboundFixture,
             Self::Context(_) => SelfEffect::Context,
@@ -116,7 +116,7 @@ pub enum SelfEffect {
     MemoryPutClaim,
     MemorySupersedeClaim,
     MemoryPutEdge,
-    AskHuman,
+    Ask,
     DestructiveFixture,
     OutboundFixture,
     /// A workflow step handing work to a peer executor over the synced TASK
@@ -148,7 +148,7 @@ impl SelfEffect {
             Self::MemoryPutClaim => "self.memory.put_claim",
             Self::MemorySupersedeClaim => "self.memory.supersede_claim",
             Self::MemoryPutEdge => "self.memory.put_edge",
-            Self::AskHuman => "self.ask_human",
+            Self::Ask => "ask",
             Self::DestructiveFixture => "self.fixture.destructive",
             Self::OutboundFixture => "self.fixture.outbound",
             Self::TaskDelegate => "self.tasks.delegate",
@@ -180,7 +180,7 @@ impl SelfEffect {
             | Self::MemoryPutClaim
             | Self::MemorySupersedeClaim
             | Self::MemoryPutEdge
-            | Self::AskHuman
+            | Self::Ask
             | Self::DestructiveFixture
             | Self::OutboundFixture
             | Self::TaskDelegate
@@ -305,13 +305,13 @@ impl SelfMemoryPutEdgeCall {
     }
 }
 
-/// Arguments for the `self.ask_human` fixture call.
+/// Arguments for the `ask` fixture call.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelfAskHumanCall {
+pub struct SelfAskCall {
     pub prompt: String,
 }
 
-impl SelfAskHumanCall {
+impl SelfAskCall {
     #[must_use]
     pub fn new(prompt: impl Into<String>) -> Self {
         Self {

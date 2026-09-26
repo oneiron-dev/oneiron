@@ -8303,7 +8303,7 @@
      "notable": [
       "SelfAgentSpawnCall",
       "SelfAgentSpawnResult",
-      "SelfAskHumanCall",
+      "SelfAskCall",
       "SelfCall",
       "SelfContextCall",
       "SelfContextResult",
@@ -17586,7 +17586,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/human_task/followup_tests.rs",
@@ -30694,8 +30694,8 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 2,
-      "fn": 6
+      "crate-vis": 4,
+      "fn": 7
      }
     },
     {
@@ -30707,13 +30707,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_preflight.rs",
+     "purpose": "Read-only ask preflight over the exact admission holder and route facts",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -30763,6 +30773,10 @@
       "TaskAskHoldReason",
       "TaskAskNeed",
       "TaskAskOptionId",
+      "TaskAskPersonEvidence",
+      "TaskAskPersonKind",
+      "TaskAskPreflight",
+      "TaskAskPreflightRecipient",
       "TaskAskProvisional",
       "TaskAskQuestion",
       "TaskAskReceipt",
@@ -30781,9 +30795,9 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 14,
+      "enum": 15,
       "fn": 5,
-      "struct": 16
+      "struct": 19
      }
     },
     {
@@ -31144,6 +31158,7 @@
       "RoomEntry",
       "RoomRequest",
       "TaskAnswerRequest",
+      "TaskCanAskRequest",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -31151,7 +31166,7 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 14
+      "struct": 15
      }
     },
     {
@@ -31161,7 +31176,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 30
+      "fn": 32
      }
     },
     {
@@ -34799,7 +34814,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,7 +34935,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {
@@ -37362,7 +37377,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 21
+      "fn": 23
      }
     },
     {
@@ -37646,7 +37661,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 24
      }
     },
     {
