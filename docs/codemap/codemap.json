@@ -35978,6 +35978,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/retrieval_turn_corpus.rs",
+     "purpose": "Offline replay of finalized, turn-indexed retrieval runs",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/swarm.rs",
      "purpose": "Seeded single-vault, in-process agent-swarm baseline",
      "surface": {
@@ -36076,6 +36086,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "retrieval_turn_corpus": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Offline replay of finalized, turn-indexed retrieval runs"
+    },
     "swarm": {
      "files": 1,
      "impl_vault": false,
@@ -36093,7 +36110,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 96,
+   "source_files": 97,
    "test_files": 18
   },
   "oneiron-driver": {
