@@ -342,7 +342,7 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
         "policy-missing-input",
         crate::dreamer_wake::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
     );
-    let report = crate::dreamer_wake::block_on_ready(driver.run_wake_pass(
+    let result = crate::dreamer_wake::block_on_ready(driver.run_wake_pass(
         crate::dreamer_wake::RunWakePass {
             trigger: crate::dreamer_wake::WakeTrigger::Event,
             scope: DreamerConsolidationScope::Micro,
@@ -354,9 +354,19 @@ fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
         },
         &mut NoPartitionExecutor,
         &crate::dreamer_wake::WakeCancellation::new(),
-    ))?;
-    assert_eq!(report.completed, 0);
-    assert_eq!(report.failed, 1);
+    ));
+    assert!(result.is_err(), "a lost recipe handoff cannot complete");
+    let row = AttemptQueue::new(&vault)
+        .list()?
+        .into_iter()
+        .next()
+        .expect("dispatch attempt");
+    assert_ne!(row.state, crate::attempt_queue::AttemptState::Completed);
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(row.id)?
+            .is_some()
+    );
     Ok(())
 }
 
