@@ -20,7 +20,6 @@ use super::constants::{
     KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS, KEY_UPDATED_AT,
     MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN, MAX_DREAMER_PARK_OWNER_LEN,
     MAX_DREAMER_PARK_REASON_LEN,
-
 };
 use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
@@ -682,7 +681,6 @@ pub(super) fn expect_u64(value: &Value, reason: &'static str) -> Result<u64> {
 pub(super) fn pinned_key_index(key: &str, keys: &[&str]) -> Option<usize> {
     keys.iter().position(|known| *known == key)
 }
-
 
 pub(super) fn validate_attempt_type(attempt_type: &str) -> Result<()> {
     if attempt_type.is_empty() {

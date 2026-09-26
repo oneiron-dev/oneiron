@@ -275,7 +275,6 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
         })?;
         if VERSIONS.contains(&self.store, wtxn, &(*artifact_id, next_version))? {
-
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version is already recorded",
             )));

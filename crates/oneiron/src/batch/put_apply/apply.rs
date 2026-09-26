@@ -422,8 +422,8 @@ pub(in crate::batch) fn apply_put(
             .is_some_and(|body| !crate::claim::claim_surfaceable(body));
         let should_deindex_stale_text = body_changed
             && (withdrawn_claim
-                || ((replicated || !options.indexing.later_text_op_covers)
-
+                || replicated
+                || (!options.indexing.later_text_op_covers
                     && !crate::vault::entity_revision::storage_manages_text(
                         store, wtxn, &id, data,
                     )?));

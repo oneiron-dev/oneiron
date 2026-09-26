@@ -148,7 +148,6 @@ impl Vault {
             return Err(Error::CorruptedIndex("lfs cdc zero seed"));
         }
         Ok(LfsChunkParameters { seed })
-
     }
 
     /// Reads and authenticates the manifest before exposing its references.

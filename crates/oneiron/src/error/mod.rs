@@ -298,7 +298,6 @@ pub enum ErrorKind {
     PackPredicateNameCollision,
     SideTableRow,
     SideTableKeyUndeclared,
-
 }
 
 /// Crate error type.

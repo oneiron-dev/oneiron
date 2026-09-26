@@ -5,12 +5,11 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::error::{Error, GateError, Result};
-use crate::side_table::{CodecError, RawValue};
 use crate::federation::{
     Scope,
     scope_codec::{decode_scope_value, encode_scope_value},
 };
-
+use crate::side_table::{CodecError, RawValue};
 
 /// Current contact clearance body schema version (prerelease wire format).
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -162,7 +161,6 @@ impl RawValue for DisclosureScope {
         Ok(decode_disclosure_scope_body(bytes)?)
     }
 }
-
 
 pub(super) fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
     let Value::Map(entries) = value else {

@@ -18,7 +18,6 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use super::claim_authoring::{DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision};
 use super::codec::{
     invalid_dreamer_runner, validate_budget_id, validate_budget_record, validate_budget_reservation,
-
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,

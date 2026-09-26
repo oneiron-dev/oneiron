@@ -50,7 +50,9 @@ impl DreamerRunnerStore<'_> {
         match BUDGET_STEP_CHARGE.get(&self.vault.store, &rtxn, &(attempt_id, *step_hash))? {
             None => Ok(false),
             Some([1]) => Ok(true),
-            Some(_) => Err(invalid_dreamer_runner("invalid checkpoint step charge receipt")),
+            Some(_) => Err(invalid_dreamer_runner(
+                "invalid checkpoint step charge receipt",
+            )),
         }
     }
 

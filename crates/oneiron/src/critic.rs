@@ -22,9 +22,8 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::posterior::{Posterior, beta_mean};
-
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
