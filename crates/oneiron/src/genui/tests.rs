@@ -1,6 +1,7 @@
 use super::*;
 
 mod failure_integrity;
+mod project_proposal;
 
 fn receipt() -> ReceiptRecord {
     ReceiptRecord {
