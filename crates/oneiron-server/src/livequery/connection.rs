@@ -3,6 +3,7 @@
 use super::subscriptions::{LiveQueries, LiveQuerySource, Push};
 use super::*;
 use crate::server::SyncServer;
+use oneiron::memory::{MemorySubscriptionOwner, ScopedView};
 use oneiron::sync::bridge::LiveQueryTee;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -161,6 +162,34 @@ impl Hub {
     }
 }
 
+// The socket keeps channel, cursor and origin; the engine facade supplies the
+// actor-bound subscription verb without taking ownership of socket state.
+struct SocketOwner<'a> {
+    queries: &'a LiveQueries,
+    channel: Channel,
+    cursor: Option<Cursor>,
+    origin: Option<String>,
+}
+
+impl MemorySubscriptionOwner for SocketOwner<'_> {
+    type Delivery = Vec<Push>;
+    type Error = AppError;
+
+    fn open(&self, id: u64, view: ScopedView) -> Result<Self::Delivery, Self::Error> {
+        self.queries.open(
+            id,
+            view,
+            self.channel,
+            self.cursor.as_ref(),
+            self.origin.clone(),
+        )
+    }
+
+    fn close(&self, id: u64) -> Result<(), Self::Error> {
+        self.queries.close(id)
+    }
+}
+
 pub(crate) struct Connection {
     hub: Arc<Hub>,
     conn_id: u32,
@@ -218,7 +247,43 @@ impl Connection {
             return Err(AppError::not_found("subscription", None));
         }
         let closing = matches!(&request, SubRequest::Close { .. });
-        let pushes = session.queries.control(request)?;
+        let pushes = match request {
+            SubRequest::Open {
+                scoped_view,
+                channel,
+                cursor,
+                origin,
+                ..
+            } => {
+                let server = self.hub.server.upgrade().ok_or_else(unavailable)?;
+                let memory = bound_memory(server.vault(), auth)?;
+                memory.subscribe(
+                    &SocketOwner {
+                        queries: &session.queries,
+                        channel,
+                        cursor,
+                        origin,
+                    },
+                    id,
+                    scoped_view,
+                )?
+            }
+            SubRequest::Close { .. } => {
+                let server = self.hub.server.upgrade().ok_or_else(unavailable)?;
+                let memory = bound_memory(server.vault(), auth)?;
+                memory.unsubscribe(
+                    &SocketOwner {
+                        queries: &session.queries,
+                        channel: Channel::View,
+                        cursor: None,
+                        origin: None,
+                    },
+                    id,
+                )?;
+                Vec::new()
+            }
+            request => session.queries.control(request)?,
+        };
         if opening {
             self.active.insert(id);
             self.sent.remove(&id);

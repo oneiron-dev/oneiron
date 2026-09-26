@@ -2322,6 +2322,72 @@ fn dreamer_settle_reconciles_actual_usage_and_refund() -> Result<()> {
 }
 
 #[test]
+fn checkpoint_charge_and_park_are_atomic_and_receipt_retires_on_completion() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_attempt(&runner, "charged-checkpoint", 10)?;
+    let DreamerAdmissionOutcome::Admitted(admitted) = runner.admit_next(AdmitDreamerAttempt {
+        lease_owner: "dreamer-worker".to_owned(),
+        now: 20,
+        budget_id: "wake".to_owned(),
+        budget_total_units: 20,
+        reserve_units: 8,
+        started_milestone: None,
+    })?
+    else {
+        panic!("admitted attempt");
+    };
+    let hash = [0x53; 32];
+    let settlement = SettleDreamerBudget {
+        budget_id: "wake".to_owned(),
+        child_attempt: queued.attempt.id,
+        actual_units: 5,
+        now: 30,
+    };
+    let park = ParkDreamerAttempt {
+        attempt_id: queued.attempt.id,
+        reason: "late terminal".to_owned(),
+        park_owner: "dreamer-worker".to_owned(),
+        now: 30,
+    };
+    let mut invalid = park.clone();
+    invalid.park_owner.clear();
+    assert!(
+        runner
+            .settle_checkpoint_budget(settlement.clone(), &[hash], invalid)
+            .is_err()
+    );
+    assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 12);
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_some()
+    );
+    assert!(runner.parked_attempt(queued.attempt.id)?.is_none());
+    assert!(!runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
+
+    runner.settle_checkpoint_budget(settlement, &[hash], park)?;
+    assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 15);
+    assert!(
+        runner
+            .budget_reservation("wake", queued.attempt.id)?
+            .is_none()
+    );
+    assert!(runner.parked_attempt(queued.attempt.id)?.is_some());
+    assert!(runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
+
+    runner.resume_parked(queued.attempt.id, "dreamer-worker", 40)?;
+    runner.complete(CompleteDreamerAttempt {
+        id: queued.attempt.id,
+        lease_owner: "dreamer-worker".to_owned(),
+        attempt_count: admitted.status.attempt.attempt_count,
+        now: 50,
+    })?;
+    assert!(!runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
+    Ok(())
+}
+
+#[test]
 fn dreamer_settle_rejects_actual_usage_beyond_remaining_budget() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);

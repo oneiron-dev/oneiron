@@ -3,11 +3,9 @@
 use rmpv::Value;
 
 use crate::error::Result;
+use crate::posterior::{Posterior, beta_mean, beta_std_dev};
 
 use super::codec::{invalid, map_f32};
-
-/// One-sided 95% normal quantile, for the posterior lower bound.
-const LOWER_BOUND_Z: f64 = 1.645;
 
 /// Exploration weight of the selection bonus.
 ///
@@ -32,8 +30,7 @@ pub const SKILL_RELIABILITY_SCHEMA_VERSION: u64 = 1;
 
 /// A Beta(α, β) posterior over one skill's success rate.
 ///
-/// Mirrors [`crate::critic::CriticReliability`]'s shape without importing it
-/// (see the module header). Both `alpha` and `beta` stay strictly positive: the
+/// Implements the shared [`Posterior`] interface. Both `alpha` and `beta` stay strictly positive: the
 /// seeded prior is positive and outcomes only add.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SkillReliabilityPosterior {
@@ -67,12 +64,9 @@ impl SkillReliabilityPosterior {
     }
 
     /// Folds one attributed outcome in.
-    pub const fn apply(&mut self, win: bool) {
-        if win {
-            self.alpha += 1.0;
-        } else {
-            self.beta += 1.0;
-        }
+    pub fn apply(&mut self, win: bool) {
+        self.update(win)
+            .expect("a skill outcome update is infallible");
     }
 
     /// Total pseudo-observations: prior weight plus attributed outcomes.
@@ -84,7 +78,7 @@ impl SkillReliabilityPosterior {
     /// Posterior mean — the value the record's `confidence` cache holds.
     #[must_use]
     pub fn mean(&self) -> f32 {
-        self.alpha / self.observations()
+        narrow(beta_mean(f64::from(self.alpha), f64::from(self.beta)))
     }
 
     /// One-sided 95% lower confidence bound: `mean − Z·σ`, clamped to `[0, 1]`,
@@ -100,8 +94,7 @@ impl SkillReliabilityPosterior {
     /// observed ones on this ranking.
     #[must_use]
     pub fn lower_bound(&self) -> f32 {
-        let mean = f64::from(self.mean());
-        narrow((mean - LOWER_BOUND_Z * self.std_dev()).clamp(0.0, 1.0))
+        narrow(Posterior::lower_bound(self))
     }
 
     /// Selection score: posterior mean plus the exploration bonus
@@ -114,18 +107,9 @@ impl SkillReliabilityPosterior {
     /// shadowing is prevented by the bonus, not by a quota.
     #[must_use]
     pub fn ucb(&self, total_pulls: u32) -> f32 {
-        let horizon = (2.0 * f64::from(total_pulls.max(1).saturating_add(1)).ln()).sqrt();
-        let bonus = SELECTION_EXPLORATION * self.std_dev() * horizon;
+        let bonus = self.ucb_bonus(u64::from(total_pulls), SELECTION_EXPLORATION);
         // A ranking key, so no unit clamp — see the doc comment above.
         narrow(f64::from(self.mean()) + bonus)
-    }
-
-    /// Beta standard deviation, in f64 so the square roots keep their digits.
-    fn std_dev(&self) -> f64 {
-        let alpha = f64::from(self.alpha);
-        let beta = f64::from(self.beta);
-        let total = alpha + beta;
-        (alpha * beta / (total * total * (total + 1.0))).sqrt()
     }
 
     pub(super) fn to_value(self) -> Value {
@@ -146,6 +130,29 @@ impl SkillReliabilityPosterior {
             ));
         }
         Ok(Self { alpha, beta })
+    }
+}
+
+impl Posterior for SkillReliabilityPosterior {
+    type Outcome = bool;
+
+    fn update(&mut self, win: bool) -> Result<()> {
+        if win {
+            self.alpha += 1.0;
+        } else {
+            self.beta += 1.0;
+        }
+        Ok(())
+    }
+
+    fn beta_parameters(&self) -> (f64, f64) {
+        (f64::from(self.alpha), f64::from(self.beta))
+    }
+
+    fn ucb_bonus(&self, total_observations: u64, exploration: f64) -> f64 {
+        let horizon = (2.0 * (total_observations.max(1).saturating_add(1) as f64).ln()).sqrt();
+        let (alpha, beta) = self.beta_parameters();
+        exploration * beta_std_dev(alpha, beta) * horizon
     }
 }
 
