@@ -285,7 +285,7 @@ impl Vault {
             txn,
             &HexId(claims.machine),
             &SignedMeshAuthority {
-                claims: claims.clone(),
+                claims,
                 signature: signature.to_vec(),
             },
         )?;
