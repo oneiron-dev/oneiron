@@ -6,7 +6,7 @@ use crate::{
     entity_id::EntityId,
     error::Result,
     skill::SkillLifecycle,
-    skill_hub::{HubFile, SkillPackageFormat},
+    skill_hub::{HubFile, HubPin, HubRef, SkillPackageFormat},
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         source: &PackSource,
+        hub: &HubRef,
         at: u64,
     ) -> Result<Vec<EntityId>> {
         let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
@@ -31,14 +32,23 @@ impl Vault {
                 .push(HubFile::new(relative, file.content.clone()));
         }
         let mut ids = Vec::new();
-        for files in groups.into_values() {
+        for (folder, files) in groups {
             let package = super::super::folder::package_from_files(files)?;
             let hash = package.content_hash()?;
+            let skill_ref = pack_skill_hub_ref(hub, &folder, hash)?;
             if let Some(id) = self.imported_skill_entity_for_content_hash_in_txn(txn, hash)? {
                 let existing = self.stored_hub_package_in_txn(txn, &id)?;
                 if existing.files != package.files {
                     return Err(invalid("pack skill source collision"));
                 }
+                self.append_hub_provenance_in_txn(
+                    txn,
+                    &id,
+                    hash,
+                    &skill_ref,
+                    TimeRange { start: at, end: at },
+                    at,
+                )?;
                 ids.push(id);
                 continue;
             }
@@ -64,8 +74,41 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
+            self.append_hub_provenance_in_txn(
+                txn,
+                &id,
+                hash,
+                &skill_ref,
+                TimeRange { start: at, end: at },
+                at,
+            )?;
             ids.push(id);
         }
         Ok(ids)
     }
+}
+
+/// Distinct skill provenance: the pack source ref itself may contain many
+/// skills, while a hub provenance alias names exactly one skill entity.
+pub(super) fn pack_skill_hub_ref(
+    pack_ref: &HubRef,
+    folder: &str,
+    hash: crate::skill::SkillContentHash,
+) -> Result<HubRef> {
+    // Hash the structured, validated source ref and length-frame the folder:
+    // both are independently bounded, but concatenating them could exceed
+    // HubRef's 4096-byte ref_string limit after the owner approved the pack.
+    let mut source = Vec::new();
+    rmpv::encode::write_value(&mut source, &pack_ref.to_value()?)
+        .map_err(|_| invalid("pack skill source ref encoding"))?;
+    let mut alias = blake3::Hasher::new_derive_key("oneiron.pack-skill.provenance.v1");
+    for part in [source.as_slice(), folder.as_bytes()] {
+        alias.update(&(part.len() as u64).to_be_bytes());
+        alias.update(part);
+    }
+    HubRef::new(
+        pack_ref.hub_id,
+        format!("pack-skill:{}", alias.finalize().to_hex()),
+        HubPin::ContentHash(hash.to_hex()),
+    )
 }
