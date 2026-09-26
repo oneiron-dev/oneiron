@@ -3,6 +3,7 @@ mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;
+mod linkedin_connect;
 mod linkedin_send;
 mod pipeline_contract;
 mod quiet_window;

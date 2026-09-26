@@ -519,7 +519,7 @@ pub(super) fn normalize_whitespace(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn sleep_before_next_linkedin_observation(attempt: usize) {
+pub(super) fn sleep_before_next_linkedin_observation(attempt: usize) {
     let attempt = u64::try_from(attempt).unwrap_or(u64::MAX);
     let delay_ms = LINKEDIN_SEND_VERIFY_BACKOFF_INITIAL_MS
         .saturating_mul(attempt)

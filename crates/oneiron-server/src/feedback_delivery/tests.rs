@@ -14,6 +14,7 @@ fn call(
         OutboundIntentDraft::new("actor", &route.verb, &route.channel, target),
         OutboundIntentTrigger::agent_immediate("approval"),
     );
+    // Non-LinkedIn feedback sends do not carry a LinkedIn seat policy.
     let execution = OutboundExecutionRequest {
         intent_ref: "intent",
         intent: &intent,
@@ -21,6 +22,7 @@ fn call(
         verb_contract: outbound_verb_contract(&route.channel, &route.verb).unwrap(),
         channel_identity_ref: None,
         counterparty_ref: None,
+        linkedin_sandbox_policy: None,
         hygiene_headers: Default::default(),
         apns_interruption_level: None,
         calendar_invite: None,
@@ -67,6 +69,7 @@ fn a_feedback_request_with_a_space_posting_sends_nothing() {
         verb_contract: outbound_verb_contract(&route.channel, &route.verb).unwrap(),
         channel_identity_ref: None,
         counterparty_ref: None,
+        linkedin_sandbox_policy: None,
         hygiene_headers: Default::default(),
         apns_interruption_level: None,
         calendar_invite: None,
