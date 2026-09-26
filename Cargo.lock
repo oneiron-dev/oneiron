@@ -7323,6 +7323,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-image-openrouter"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "oneiron",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-llm-anthropic"
 version = "0.1.0"
 dependencies = [
