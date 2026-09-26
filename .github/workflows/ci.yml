@@ -300,7 +300,7 @@ jobs:
         run: sccache --show-stats
   cache-proof-populate:
     name: Cache proof (baseline and populate)
-    runs-on: [self-hosted, linux, x64, arch]
+    runs-on: [self-hosted, macos, arm64, mini]
     timeout-minutes: 45
     if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
     steps:
@@ -326,7 +326,7 @@ jobs:
   cache-proof-repeat:
     name: Cache proof (repeat)
     needs: cache-proof-populate
-    runs-on: [self-hosted, linux, x64, arch]
+    runs-on: [self-hosted, macos, arm64, mini]
     timeout-minutes: 45
     if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
     steps:

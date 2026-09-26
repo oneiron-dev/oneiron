@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cold-artifact GHA compiler-cache proof on a single approved Linux runner.
+"""Cold-artifact GHA compiler-cache proof on one approved macOS runner.
 
 The two dispatch jobs use the same run-owned target *path* but no retained
 artifacts or compiler daemon. Only the GHA cache can bridge the jobs.

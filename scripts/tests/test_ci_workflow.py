@@ -115,7 +115,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("      cache_proof:", self.lines)
         for job, phase in (("cache-proof-populate", "populate"), ("cache-proof-repeat", "repeat")):
             lines = self.job_lines(job)
-            self.assertIn("    runs-on: [self-hosted, linux, x64, arch]", lines)
+            self.assertIn("    runs-on: [self-hosted, macos, arm64, mini]", lines)
             self.assertIn("    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof", lines)
             self.assertTrue(any("proof-${{ github.run_id }}" in line for line in lines))
             self.assertTrue(any(f"ci_cache_proof.py {phase}" in line for line in lines))

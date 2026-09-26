@@ -10,7 +10,9 @@ post-run statistics.
 
 A scoped workflow-only PR compiles no crates and cannot demonstrate hits. Run
 `gh workflow run ci.yml -R oneiron-dev/oneiron --ref <branch> -f cache_proof=true`
-for a controlled proof on the approved Arch runner. This dispatch skips the
+for a controlled proof on the approved Mac mini runner. The two jobs use
+its unique `mini` capability label so their artifact paths and compiler inputs
+match; the retired Arch runners are offline. This dispatch skips the
 normal full gate; the two dedicated jobs run serially. The first builds
 `oneiron-server` from a fresh run-owned target without sccache (host-target-only
 baseline), then deletes only that run-owned target and populates the shared
