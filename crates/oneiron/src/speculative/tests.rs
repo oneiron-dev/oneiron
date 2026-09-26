@@ -13,6 +13,7 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     config.dimensions = 4;
     config.map_size = 32 * 1024 * 1024;
     config.embedding_model = Some("test/model@v1".to_owned());
+    config.retrieval_telemetry_capture = true;
     let vault = Vault::open(dir.path(), config).expect("open vault");
     (dir, Arc::new(vault))
 }

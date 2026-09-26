@@ -1194,3 +1194,63 @@ fn pipeline_search_fails_closed_on_untrusted_text_index() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn default_search_does_not_persist_retrieval_telemetry() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    let id = entity_id(0xE6);
+    vault
+        .batch()
+        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"entity")
+        .text(&id, &[("name", "amberlantern")])
+        .commit()?;
+    assert!(
+        vault
+            .search_text("amberlantern", 5)?
+            .iter()
+            .any(|hit| hit.id == id)
+    );
+    assert!(vault.retrieval_runs(10)?.is_empty());
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    assert!(reopened.retrieval_runs(10)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn opted_in_search_persists_retrieval_telemetry_across_reopen() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let config = crate::config::VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..crate::config::VaultConfig::default()
+    };
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let id = entity_id(0xE7);
+    vault
+        .batch()
+        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"entity")
+        .text(&id, &[("name", "amberlantern")])
+        .commit()?;
+    let result = vault.search_text_with_telemetry("amberlantern", 5)?;
+    assert!(result.value.iter().any(|hit| hit.id == id));
+    let run_id = result.run_id.expect("explicit capture must persist a run");
+    assert!(
+        vault
+            .retrieval_run(run_id)?
+            .expect("persisted run")
+            .result_ids
+            .contains(id.as_bytes())
+    );
+    drop(vault);
+    let reopened = crate::Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    assert!(reopened.retrieval_run(run_id)?.is_some());
+    assert!(
+        reopened
+            .search_text_with_telemetry("amberlantern", 5)?
+            .run_id
+            .is_none()
+    );
+    assert_eq!(reopened.retrieval_runs(10)?.len(), 1);
+    Ok(())
+}

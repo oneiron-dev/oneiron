@@ -38,6 +38,11 @@ impl SessionRetrievalTelemetry<'_> {
         self.route.target() == RouteTarget::Discard
     }
 
+    /// Even when capture is disabled, a room read must reject a stale route.
+    pub(crate) fn revalidate_without_capture(&self) -> Result<()> {
+        self.route.revalidate()
+    }
+
     /// Registers this assembly's retrieval-run row, provisional or published.
     pub(crate) fn register_run(
         &self,

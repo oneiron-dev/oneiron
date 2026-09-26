@@ -579,7 +579,13 @@ impl GraphFsResolver<'_, '_> {
             0,
             Some(telemetry_reason),
         );
-        if let Err(error) = self.scoped_read.vault().store.record_retrieval_run(&record) {
+        if self
+            .scoped_read
+            .vault()
+            .store
+            .retrieval_telemetry_capture_enabled()
+            && let Err(error) = self.scoped_read.vault().store.record_retrieval_run(&record)
+        {
             tracing::warn!(
                 ?error,
                 command = verb.stable_label(),

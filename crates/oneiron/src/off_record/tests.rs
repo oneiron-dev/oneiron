@@ -15,7 +15,7 @@ use crate::temporal::TimeRange;
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     (tmp, vault)
 }
 
@@ -135,7 +135,7 @@ fn off_record_enter_is_explicit_marked_and_single_shot() {
 #[test]
 fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()> {
     let tmp = tempfile::tempdir()?;
-    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let vault = Vault::open(tmp.path(), telemetry_config())?;
     let base_rows_before = {
         let rtxn = vault.store.env.read_txn()?;
         vault.store.vault_meta.len(&rtxn)?
@@ -155,7 +155,7 @@ fn off_record_registry_evaporates_without_base_residue_on_reopen() -> Result<()>
     drop(session);
     drop(vault);
 
-    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    let reopened = Vault::open(tmp.path(), telemetry_config())?;
     assert!(
         reopened
             .off_record_session("sess-crash-registry")?
@@ -1430,4 +1430,11 @@ fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<(
     assert_eq!(ordinary.mode()?, OffRecordMode::OffRecord);
     ordinary.close()?;
     Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
 }

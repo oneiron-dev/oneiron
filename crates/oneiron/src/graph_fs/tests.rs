@@ -161,7 +161,7 @@ fn resolver<'read, 'vault>(
 
 #[test]
 fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let allowed_world = test_id(0x31);
     let excluded_world = test_id(0x32);
     let subject = test_id(0x33);
@@ -217,7 +217,7 @@ fn worlds_readdir_omits_excluded_worlds_entirely() -> Result<()> {
 
 #[test]
 fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x44);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
     let learned_at = 1_771_027_200;
@@ -290,7 +290,7 @@ fn large_day_shard_returns_first_page_and_more_under_byte_cap() -> Result<()> {
 
 #[test]
 fn same_fork_hash_mount_renders_byte_identical_readdir() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x55);
     let claim = test_id(0x56);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
@@ -336,7 +336,7 @@ fn graph_fs_host_imports_are_read_only() {
 
 #[test]
 fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x61);
     let matching_claim = test_id(0x62);
     let other_claim = test_id(0x63);
@@ -399,7 +399,7 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
 
 #[test]
 fn find_root_under_clamped_actor_is_bounded_and_non_leaking() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let allowed_world = test_id(0x64);
     let excluded_world = test_id(0x65);
     let subject = test_id(0x66);
@@ -430,7 +430,7 @@ fn find_root_under_clamped_actor_is_bounded_and_non_leaking() -> Result<()> {
 
 #[test]
 fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x69);
     let old_claim = test_id(0x6A);
     let new_claim = test_id(0x6B);
@@ -464,7 +464,7 @@ fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
 
 #[test]
 fn wikilink_deeplink_resolves_to_claim_symlink() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x70);
     let claim = test_id(0x71);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
@@ -495,7 +495,7 @@ fn day_shard_date_round_trips() {
 
 #[test]
 fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let initial_claims = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
     let subject = test_id(0x72);
     let old_claim = test_id(0x73);
@@ -563,7 +563,7 @@ fn ls_claims_by_time_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
 
 #[test]
 fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let subject = test_id(0x75);
     let claim = test_id(0x76);
     put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
@@ -624,7 +624,7 @@ fn find_newer_scan_cap_hit_returns_progressing_cursor() -> Result<()> {
 
 #[test]
 fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Result<()> {
-    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (_tmp, vault) = open_test_vault_with(telemetry_config());
     let allowed_world = test_id(0x71);
     let denied_world = test_id(0x72);
     let subject = test_id(0x73);
@@ -673,4 +673,11 @@ fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Resu
     assert!(empty.bytes().is_empty());
     assert_eq!(empty.search_receipt().unwrap().suppressed_count, 0);
     Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
 }

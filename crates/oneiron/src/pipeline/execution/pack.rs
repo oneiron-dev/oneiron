@@ -420,13 +420,20 @@ impl PipelineBuilder<'_> {
         // room has flipped. Canonical entries carry `None` and take the
         // unchanged base path.
         let provisional = telemetry_action == RetrievalAction::ContextPack;
-        let write_result = match self.session {
-            Some(session) => session.register_run(&run_record, provisional),
-            None if provisional => self
-                .vault
-                .store
-                .record_context_pack_provisional_retrieval_run(&run_record),
-            None => self.vault.store.record_retrieval_run(&run_record),
+        let capture = self.vault.store.retrieval_telemetry_capture_enabled();
+        let write_result = if capture {
+            match self.session {
+                Some(session) => session.register_run(&run_record, provisional),
+                None if provisional => self
+                    .vault
+                    .store
+                    .record_context_pack_provisional_retrieval_run(&run_record),
+                None => self.vault.store.record_retrieval_run(&run_record),
+            }
+        } else if let Some(session) = self.session {
+            session.revalidate_without_capture()
+        } else {
+            Ok(())
         };
         let telemetry_run_id = match write_result {
             Ok(())
@@ -436,7 +443,8 @@ impl PipelineBuilder<'_> {
             {
                 None
             }
-            Ok(()) => Some(run_id),
+            Ok(()) if capture => Some(run_id),
+            Ok(()) => None,
             // A retrieval the caller declared to be INSIDE a room owns its
             // registration. Off record the run row is what close consumes, so
             // swallowing the failure would return a successful retrieval whose

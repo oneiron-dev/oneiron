@@ -7,8 +7,9 @@ use crate::{Result, TimeRange};
 
 #[test]
 fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let mut config = crate::test_util::embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     for index in 1..=9 {
         let id = crate::test_util::entity(index);
         let status = if index == 9 {

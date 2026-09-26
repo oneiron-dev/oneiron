@@ -38,7 +38,9 @@ use self::world_access::{
 // decay suite owns its own file but keeps using this module's canonical
 // fixture helpers instead of forking them.
 pub(super) fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(embedding_test_config())
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    crate::test_util::open_test_vault_with(config)
 }
 
 pub(super) fn entity_id(byte: u8) -> EntityId {

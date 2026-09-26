@@ -122,6 +122,7 @@ impl VaultOpenArgs {
     /// gate persists, compares, or reads off disk comes from the flags.
     fn vault_config(&self) -> VaultConfig {
         let mut config = VaultConfig::device();
+        config.retrieval_telemetry_capture = true;
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
         config.embedding_model = self.embedding_model.clone();
