@@ -4,9 +4,7 @@ use std::num::NonZeroU16;
 
 use crate::Vault;
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
-use crate::attempt_queue::{
-    AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt, RetryOutcome,
-};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -148,19 +146,20 @@ fn new_failure(outcome: FailOutcome) -> Result<AttemptRecord> {
 /// comes from the caller's existing typed backoff policy and is forwarded to
 /// the landed `backoff_until` field, which is the new row's `scheduled_at`.
 pub(super) fn retry_once(
-    queue: &AttemptQueue<'_>,
+    vault: &Vault,
     input: HandleAttemptFailure,
     ordinal: NonZeroU16,
 ) -> Result<FailureLadderOutcome> {
     let source_attempt_id = input.attempt_id;
-    let RetryOutcome::Retried(scheduled_attempt) = queue.retry(RetryAttempt {
-        id: source_attempt_id,
-        lease_owner: input.lease_owner,
-        attempt_count: input.attempt_count,
-        backoff_until: input.retry_at,
-        last_error: Some(input.evidence.stable_reason),
-        now: input.now,
-    })?;
+    let scheduled_attempt = crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .retry_agent_dispatch_failure(RetryAttempt {
+            id: source_attempt_id,
+            lease_owner: input.lease_owner,
+            attempt_count: input.attempt_count,
+            backoff_until: input.retry_at,
+            last_error: Some(input.evidence.stable_reason),
+            now: input.now,
+        })?;
     Ok(FailureLadderOutcome::Retried {
         source_attempt_id,
         scheduled_attempt: Box::new(scheduled_attempt),

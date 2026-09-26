@@ -344,6 +344,14 @@ fn first_transient_retry_mints_distinct_scheduled_child() -> Result<()> {
     assert_eq!(scheduled_attempt.state, AttemptState::Scheduled);
     assert_eq!(scheduled_attempt.attempt_count, 0);
     assert_eq!(scheduled_attempt.scheduled_at, Some(RETRY_AT));
+    assert_eq!(
+        DreamerRunnerStore::new(&vault)
+            .run_tree(scheduled_attempt.id)?
+            .unwrap()
+            .attempt_id,
+        scheduled_attempt.id,
+        "a retry must carry its private runner tree in the same transaction"
+    );
     assert_eq!(consecutive_transients.get(), 1);
 
     let queue = AttemptQueue::new(&vault);
@@ -1034,5 +1042,87 @@ fn malformed_healer_scope_cannot_commit_a_failure_or_case() -> Result<()> {
             assert!(vault.store.vault_meta.get(&txn, &key)?.is_none());
         }
     }
+    Ok(())
+}
+
+/// The runner's production typed-evidence door, not a direct policy-unit call.
+#[test]
+fn runner_typed_failure_dispatches_case_bound_propose_only_healer() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let healer = put_scope_agent(&vault, 0x32, "oneiron.agent.healer")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let mut policy = auto_policy(agent);
+    policy.healer_slot = crate::agent_dispatch::HealerSlot::AgentDef {
+        agent_def_ref: healer.to_hex(),
+    };
+    let runner = DreamerRunnerStore::new(&vault);
+    let outcome = runner.fail_agent_dispatch_with_evidence(
+        failure_input(&leased, permanent(), 20),
+        policy.clone(),
+    )?;
+    let FailureLadderOutcome::Healer(result) = outcome else {
+        panic!("permanent evidence must dispatch a healer");
+    };
+    let HealerSlotOutcome::Dispatched(status) = &result.slot else {
+        panic!("configured healer must dispatch");
+    };
+    assert_eq!(status.input.healer_case.as_ref(), Some(&result.case));
+    assert_eq!(status.attempt.run_id, leased.run_id);
+    assert_eq!(status.input.definition.ceiling, AgentCeiling::Proposed);
+    assert_eq!(status.input.depth_remaining, Some(1));
+    assert_eq!(
+        AttemptQueue::new(&vault).get(leased.id)?.unwrap().state,
+        AttemptState::Failed
+    );
+    assert!(
+        runner
+            .fail_agent_dispatch_with_evidence(failure_input(&leased, permanent(), 21), policy,)
+            .is_err(),
+        "a second delivery must not dispatch another healer"
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn runner_typed_failure_refuses_auto_retry_for_classifier_evidence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let outcome = DreamerRunnerStore::new(&vault).fail_agent_dispatch_with_evidence(
+        failure_input(
+            &leased,
+            evidence(
+                TypedFailureVerdict::Retryable,
+                Some(DetectorTier::T2Classifier),
+            ),
+            20,
+        ),
+        auto_policy(agent),
+    )?;
+    assert!(matches!(outcome, FailureLadderOutcome::Human(_)));
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn runner_untyped_failure_cannot_bypass_agent_dispatch_ladder() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    DreamerRunnerStore::new(&vault)
+        .fail(crate::dreamer_runner::FailDreamerAttempt {
+            id: leased.id,
+            lease_owner: LEASE_OWNER.into(),
+            attempt_count: leased.attempt_count,
+            reason: "opaque prose".into(),
+            now: 20,
+        })
+        .expect_err("agent failure requires typed evidence");
+    assert_eq!(
+        AttemptQueue::new(&vault).get(leased.id)?.unwrap().state,
+        AttemptState::Leased
+    );
     Ok(())
 }

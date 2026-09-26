@@ -8,6 +8,7 @@ mod consent_cards;
 mod consent_eval;
 mod failure_card;
 mod failure_card_validation;
+pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
 mod receipt_view;
 

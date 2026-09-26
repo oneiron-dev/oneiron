@@ -75,6 +75,57 @@ pub struct PatchPullRequest {
     #[serde(with = "super::receipt_serde::id")]
     pub approved_by: EntityId,
 }
+/// Trusted host binding, rechecked alongside proposal persistence.
+pub(crate) struct CaseBinding {
+    pub(crate) healer_attempt_id: crate::attempt_queue::AttemptId,
+    pub(crate) lease_owner: String,
+    pub(crate) attempt_count: u32,
+    pub(crate) healer_ref: EntityId,
+    pub(crate) case: crate::failure_ladder::HealerCase,
+}
+
+impl CaseBinding {
+    fn require_in_txn(&self, vault: &Vault, txn: &heed::RwTxn<'_>) -> Result<()> {
+        use crate::attempt_queue::{AttemptQueue, AttemptState};
+        let invalid =
+            || Error::InvalidConfig("healer repair requires a live case-bound lease".into());
+        let record = AttemptQueue::new(vault)
+            .get_in_write_txn(txn, self.healer_attempt_id)?
+            .ok_or_else(invalid)?;
+        if record.state != AttemptState::Leased
+            || record.lease_owner.as_deref() != Some(&self.lease_owner)
+            || record.attempt_count != self.attempt_count
+        {
+            return Err(invalid());
+        }
+        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+            .map_err(|_| invalid())?;
+        if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+            || payload.parent_attempt != Some(self.case.failing_attempt_id)
+        {
+            return Err(invalid());
+        }
+        let dispatch = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)
+            .map_err(|_| invalid())?;
+        if dispatch.healer_case.as_ref() != Some(&self.case)
+            || dispatch.target.agent_definition_ref().ok() != Some(self.healer_ref)
+        {
+            return Err(invalid());
+        }
+        crate::failure_ladder::require_healer_case_in_txn(
+            vault,
+            txn,
+            &self.case,
+            record.run_id.as_deref(),
+        )?;
+        let definition = crate::agent_dispatch::AgentDispatcher::new(vault)
+            .dispatchable_definition_in_txn(txn, &dispatch.target)?;
+        if definition.ceiling != crate::agent_def::AgentCeiling::Proposed {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
 struct Drafts(RepairProposal);
 impl Healer for Drafts {
     fn propose(&self, _: &DiagnosticWorkingSet<'_>, _: &[DiagnosticEvent]) -> Vec<RepairProposal> {
@@ -324,8 +375,48 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
     ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, None)
+    }
+
+    pub(crate) fn submit_case_bound(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        binding: CaseBinding,
+    ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, Some(binding))
+    }
+
+    fn submit_checked(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        binding: Option<CaseBinding>,
+    ) -> Result<RepairBundle> {
         super::validate_ref(run)?;
-        if self.band == HealerBand::Production && !production_intent_allowed(self.vault, &proposal)?
+        if binding
+            .as_ref()
+            .is_some_and(|b| b.case.case_ref != run || b.healer_ref != self.actor.entity_ref())
+        {
+            return Err(Error::InvalidConfig(
+                "healer repair binding mismatch".into(),
+            ));
+        }
+        let case_bound = binding.as_ref().is_some_and(|b| {
+            matches!(
+                &proposal.operation,
+                RepairOperation::FixAgent { case_ref, .. } if *case_ref == b.case.case_ref
+            )
+        });
+        if matches!(proposal.operation, RepairOperation::FixAgent { .. }) && !case_bound {
+            return Err(Error::InvalidConfig(
+                "fix-agent repair requires a case-bound healer".into(),
+            ));
+        }
+        if self.band == HealerBand::Production
+            && !production_intent_allowed(self.vault, &proposal, case_bound)?
         {
             return Err(Error::InvalidConfig(
                 "production healer operation is outside its capability".into(),
@@ -362,6 +453,9 @@ impl HealerRegistration<'_> {
         proposal.source = reviewed.invocation().source();
         let threshold = PROPOSAL_BURST_THRESHOLD;
         self.vault.with_write_txn(|txn| {
+            if let Some(binding) = &binding {
+                binding.require_in_txn(self.vault, txn)?;
+            }
             let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
             if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
                 return Err(Error::InvalidConfig("proposal id already exists".into()));
@@ -441,7 +535,11 @@ fn protected_target(target: &str) -> bool {
                 .any(|reserved| component.eq_ignore_ascii_case(reserved))
         })
 }
-fn production_intent_allowed(vault: &Vault, proposal: &RepairProposal) -> Result<bool> {
+fn production_intent_allowed(
+    vault: &Vault,
+    proposal: &RepairProposal,
+    case_bound: bool,
+) -> Result<bool> {
     if protected_target(&proposal.target_predicate) {
         return Ok(false);
     }
@@ -449,6 +547,7 @@ fn production_intent_allowed(vault: &Vault, proposal: &RepairProposal) -> Result
         RepairOperation::DevPatch { .. }
         | RepairOperation::SchemaPatch { .. }
         | RepairOperation::SkillEdit { .. } => Ok(false),
+        RepairOperation::FixAgent { .. } => Ok(case_bound),
         RepairOperation::Reindex { scope_ref } => Ok(!protected_target(scope_ref)),
         RepairOperation::Rescore { target_ref } => {
             let Some(raw) = vault.get_raw(target_ref)? else {

@@ -12,11 +12,10 @@
 //! agent-definition/skill/prompt/environment mutation, the ARCH-0066 detector
 //! tiers, TASK persistence, and surface rendering.
 //!
-//! DECLARED DEFERRED (OF-418 open integration edge): the production failure
-//! call sites in `dreamer_runner`, `companion`, and `outbound` adopt
-//! [`FailureLadder::handle_attempt_failure`] only once OF-418 lands the typed
-//! detector evidence substrate. This lane ships and composition-tests the
-//! policy and its helpers; it deliberately adds no evidence-less caller.
+//! Agent-dispatch failures with producer-supplied typed detector evidence
+//! enter through `DreamerRunnerStore::fail_agent_dispatch_with_evidence`.
+//! Other queue kinds retain their own terminal doors: no error string can
+//! masquerade as a T1 detector verdict.
 
 mod blocked_reports;
 mod classify;

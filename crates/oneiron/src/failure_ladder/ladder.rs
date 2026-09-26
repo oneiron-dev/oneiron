@@ -205,7 +205,7 @@ impl<'a> FailureLadder<'a> {
         walk: RetryOrdinal,
     ) -> Result<FailureLadderOutcome> {
         match walk {
-            RetryOrdinal::BelowLimit(ordinal) => retry_once(queue, input, ordinal),
+            RetryOrdinal::BelowLimit(ordinal) => retry_once(self.vault, input, ordinal),
             RetryOrdinal::AtLimit(ordinal) => match policy.escalation_mode {
                 FailureEscalationMode::Auto => self.route_healer(
                     queue,

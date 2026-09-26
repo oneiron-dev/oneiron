@@ -395,9 +395,60 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Routes a leased agent-dispatch failure using producer-supplied typed
+    /// detector evidence. The caller supplies the real checkpoint, Q&A thread,
+    /// backoff and scope policy; this door never infers a verdict from prose.
+    /// Other Dreamer jobs retain the ordinary `fail` door.
+    pub fn fail_agent_dispatch_with_evidence(
+        &self,
+        input: crate::failure_ladder::HandleAttemptFailure,
+        policy: crate::failure_ladder::FailureScopePolicy,
+    ) -> Result<crate::failure_ladder::FailureLadderOutcome> {
+        self.ensure_terminal_transition_target(input.attempt_id)?;
+        crate::failure_ladder::FailureLadder::new(self.vault).handle_attempt_failure(input, policy)
+    }
+
+    /// Atomically retries a typed agent failure together with its runner tree
+    /// and authority scope. A generic queue retry alone would orphan these
+    /// Dreamer-owned rows on the newly scheduled attempt.
+    pub(crate) fn retry_agent_dispatch_failure(
+        &self,
+        input: crate::attempt_queue::RetryAttempt,
+    ) -> Result<AttemptRecord> {
+        self.vault.with_write_txn(|txn| {
+            let source = self
+                .attempts
+                .get_in_write_txn(txn, input.id)?
+                .ok_or(invalid_dreamer_runner("agent retry source must exist"))?;
+            let payload = decode_dreamer_attempt_payload(&source.payload)?;
+            if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+                return Err(invalid_dreamer_runner(
+                    "agent retry requires a dispatch attempt",
+                ));
+            }
+            let crate::attempt_queue::RetryOutcome::Retried(record) =
+                self.attempts.retry_in_txn(txn, input)?;
+            super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
+            crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
+            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
+            Ok(record)
+        })
+    }
+
     /// Marks a leased Dreamer attempt terminally failed through the generic queue.
     pub fn fail(&self, input: FailDreamerAttempt) -> Result<FailDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
+        let record = self.attempts.get(input.id)?.ok_or(invalid_dreamer_runner(
+            "dreamer terminal transition attempt must exist",
+        ))?;
+        let payload = decode_dreamer_attempt_payload(&record.payload)?;
+        if payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE {
+            return Err(invalid_dreamer_runner(
+                "agent dispatch failures require typed detector evidence",
+            ));
+        }
         match self.attempts.fail(FailAttempt {
             id: input.id,
             lease_owner: input.lease_owner,

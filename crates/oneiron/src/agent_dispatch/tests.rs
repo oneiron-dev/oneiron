@@ -3092,3 +3092,130 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
 }
 
 mod widen;
+
+#[test]
+fn leased_healer_emits_four_case_bound_review_only_fix_agent_proposals() -> Result<()> {
+    use crate::failure_ladder::HealerRepairRoute;
+    use crate::self_heal::{RepairConsentRoute, RepairOperation};
+    let (_dir, vault) = open_vault();
+    let (agent, _failed, case) = failing_case(&vault)?;
+    let healer = put_row(&vault, 0x39, "oneiron.agent.healer", AgentCeiling::Proposed)?;
+    put_policy_manifest_with_generated_actor(
+        &vault,
+        0x0E,
+        vec![actor_ceiling_row("agent", "auto")],
+        Some(healer),
+    )?;
+    let HealerSlotOutcome::Dispatched(status) =
+        AgentDispatcher::new(&vault).dispatch_healer_slot(heal(
+            HealerSlot::AgentDef {
+                agent_def_ref: healer.to_hex(),
+            },
+            case.clone(),
+            20,
+        ))?
+    else {
+        panic!("healer dispatch");
+    };
+    let crate::attempt_queue::ClaimOutcome::Claimed(lease) =
+        AttemptQueue::new(&vault).claim(crate::attempt_queue::ClaimAttempt {
+            lease_owner: "healer-worker".into(),
+            now: 21,
+        })?
+    else {
+        panic!("healer lease");
+    };
+    assert_eq!(lease.id, status.attempt.id);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let routes = [
+        HealerRepairRoute::SkillEdit {
+            agent_ref: agent.to_hex(),
+            skill_ref: test_id(0x54).to_hex(),
+            patch_ref: test_id(0x55).to_hex(),
+            diagnosis_ref: test_id(0x56).to_hex(),
+        },
+        HealerRepairRoute::PromptInjectAndForkResume {
+            agent_ref: agent.to_hex(),
+            prompt_ref: test_id(0x57).to_hex(),
+            checkpoint_ref: case.pre_fail_checkpoint_ref.clone(),
+            diagnosis_ref: test_id(0x56).to_hex(),
+        },
+        HealerRepairRoute::Environment {
+            agent_ref: agent.to_hex(),
+            environment_ref: test_id(0x58).to_hex(),
+            repair_ref: test_id(0x59).to_hex(),
+            diagnosis_ref: test_id(0x56).to_hex(),
+        },
+        HealerRepairRoute::EscalateWithDiagnosis {
+            agent_ref: agent.to_hex(),
+            diagnosis_ref: test_id(0x56).to_hex(),
+        },
+    ];
+    for (index, route) in routes.into_iter().enumerate() {
+        let id = test_id(0x80 + index as u8);
+        let bundle = dispatcher.propose_healer_repair(
+            lease.id,
+            "healer-worker",
+            lease.attempt_count,
+            id,
+            route.clone(),
+            "heal-session",
+        )?;
+        let reviewed = &bundle.proposals()[0];
+        assert_eq!(reviewed.route(), RepairConsentRoute::HumanReview);
+        assert_eq!(reviewed.invocation().actor().actor_ref, healer);
+        assert_eq!(
+            reviewed.proposal().diagnostic_refs,
+            vec![EntityId::from_hex(&case.evidence_ref)?]
+        );
+        assert!(matches!(&reviewed.proposal().operation,
+            RepairOperation::FixAgent {case_ref, route: actual} if case_ref == &case.case_ref && actual == &route));
+        let stored = vault.healer_proposal(&id)?.expect("durable proposal");
+        assert_eq!(stored.proposal.operation, reviewed.proposal().operation);
+        assert_eq!(
+            stored.state,
+            crate::self_heal::healer_host::ProposalState::Proposed
+        );
+    }
+    assert_eq!(
+        AttemptQueue::new(&vault).list()?.len(),
+        2,
+        "proposals never resume failed work"
+    );
+    let invalid = HealerRepairRoute::EscalateWithDiagnosis {
+        agent_ref: healer.to_hex(),
+        diagnosis_ref: test_id(0x56).to_hex(),
+    };
+    let id = test_id(0x90);
+    assert!(
+        dispatcher
+            .propose_healer_repair(
+                lease.id,
+                "healer-worker",
+                lease.attempt_count,
+                id,
+                invalid,
+                "heal-session",
+            )
+            .is_err()
+    );
+    assert!(vault.healer_proposal(&id)?.is_none());
+    let id = test_id(0x91);
+    assert!(
+        dispatcher
+            .propose_healer_repair(
+                lease.id,
+                "wrong-worker",
+                lease.attempt_count,
+                id,
+                HealerRepairRoute::EscalateWithDiagnosis {
+                    agent_ref: agent.to_hex(),
+                    diagnosis_ref: test_id(0x56).to_hex(),
+                },
+                "heal-session",
+            )
+            .is_err()
+    );
+    assert!(vault.healer_proposal(&id)?.is_none());
+    Ok(())
+}
