@@ -2,6 +2,7 @@
 
 use super::consent_cards::{BundleApproveCard, ConsentAskCard};
 use super::consent_eval::{ConsentActionKind, append_eirispec_actions};
+use super::project_proposal::ProjectProposalCard;
 use super::receipt_view::ReceiptViewComponent;
 use crate::lens::GeneratedLens;
 use crate::{Error, Result};
@@ -41,6 +42,7 @@ pub enum Of336ComponentKind {
     ReceiptView,
     ConsentAsk,
     BundleApprove,
+    ProjectProposal,
 }
 
 impl Of336ComponentKind {
@@ -50,6 +52,7 @@ impl Of336ComponentKind {
             Self::ReceiptView => "receipt_view",
             Self::ConsentAsk => "consent_ask",
             Self::BundleApprove => "bundle_approve",
+            Self::ProjectProposal => "project_proposal",
         }
     }
 }
@@ -82,6 +85,7 @@ pub enum Of336Component {
     ReceiptView(ReceiptViewComponent),
     ConsentAsk(ConsentAskCard),
     BundleApprove(BundleApproveCard),
+    ProjectProposal(ProjectProposalCard),
 }
 
 impl Of336Component {
@@ -91,6 +95,7 @@ impl Of336Component {
             Self::ReceiptView(component) => &component.component_id,
             Self::ConsentAsk(component) => &component.card_id,
             Self::BundleApprove(component) => &component.card_id,
+            Self::ProjectProposal(component) => &component.card_id,
         }
     }
 
@@ -100,6 +105,7 @@ impl Of336Component {
             Self::ReceiptView(_) => Of336ComponentKind::ReceiptView,
             Self::ConsentAsk(_) => Of336ComponentKind::ConsentAsk,
             Self::BundleApprove(_) => Of336ComponentKind::BundleApprove,
+            Self::ProjectProposal(_) => Of336ComponentKind::ProjectProposal,
         }
     }
 
@@ -109,6 +115,7 @@ impl Of336Component {
             Self::ReceiptView(component) => component.fallback_text(),
             Self::ConsentAsk(component) => component.fallback_text(),
             Self::BundleApprove(component) => component.fallback_text(),
+            Self::ProjectProposal(component) => component.fallback_text(),
         }
     }
 
@@ -118,10 +125,14 @@ impl Of336Component {
             Self::ReceiptView(_) => Vec::new(),
             Self::ConsentAsk(component) => component.actions(),
             Self::BundleApprove(component) => component.actions(),
+            Self::ProjectProposal(component) => component.actions(),
         }
     }
 
     pub fn render(&self, adapter: Of336SurfaceAdapter) -> Result<Of336RenderedComponent> {
+        if let Self::ProjectProposal(card) = self {
+            card.validate()?;
+        }
         let tree = match adapter {
             Of336SurfaceAdapter::EiriSpecCareRegister => self.render_eirispec(),
             Of336SurfaceAdapter::DashboardAtomKitAudit => self.render_atom_kit()?,
@@ -215,6 +226,31 @@ impl Of336Component {
                 );
                 append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
             }
+            Self::ProjectProposal(component) => {
+                root_children.push("proposal".to_owned());
+                elements.insert(
+                    "proposal".to_owned(),
+                    json!({
+                        "type": "eiriNote",
+                        "props": {
+                            "title": component.goal.goal,
+                            "body": [
+                                component.goal.why,
+                                component.goal.axes.join(", "),
+                                component.leader_agent_def_ref,
+                                component.board_human_refs.join(", "),
+                                component.budget_share_bps.to_string(),
+                                component.starting_skill_refs.join(", "),
+                                component.source_message_ref
+                            ],
+                            "register": "care"
+                        },
+                        "children": [],
+                        "fallbackText": fallback_text
+                    }),
+                );
+                append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
+            }
         }
 
         elements.insert(
@@ -242,6 +278,7 @@ impl Of336Component {
             Self::ReceiptView(component) => component.atom_kit_root()?,
             Self::ConsentAsk(component) => component.atom_kit_root()?,
             Self::BundleApprove(component) => component.atom_kit_root()?,
+            Self::ProjectProposal(component) => component.atom_kit_root()?,
         };
         serde_json::to_value(GeneratedLens::new(root)?).map_err(|error| {
             Error::InvalidConfig(format!("OF-336 atom-kit render failed: {error}"))
@@ -259,6 +296,7 @@ impl Of336Component {
                 Self::ReceiptView(component) => json!(component),
                 Self::ConsentAsk(component) => json!(component),
                 Self::BundleApprove(component) => json!(component),
+                Self::ProjectProposal(component) => json!(component),
             }
         })
     }

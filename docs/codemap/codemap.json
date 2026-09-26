@@ -16999,11 +16999,29 @@
      "path": "src/genui/mod.rs",
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectGoalDraft",
+      "ProjectMintIntent",
+      "ProjectProposalCard",
+      "ProjectProposalPicks"
+     ],
+     "path": "src/genui/project_proposal.rs",
+     "purpose": "Typed project proposal and owner-confirmed, write-free mint intent (OF-501)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Of336ActionDescriptor",
@@ -17052,6 +17070,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests/failure_integrity.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/genui/tests/project_proposal.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -34225,7 +34251,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 9,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,8 +34925,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
