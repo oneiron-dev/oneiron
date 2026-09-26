@@ -1,9 +1,11 @@
-//! The single escaped Instrument renderer and read-only lens interpreter.
+//! The single escaped Instrument renderer for a validated atom stream.
 
 use super::validate::{LensBudget, validate_lens_collection_len};
-use super::{LensAtom, LensExecutionBoundary, LensHostImport, LensRenderFrame, LensTextSpan};
+use super::{LensAtom, LensRenderFrame, LensTextSpan};
 use crate::claim::ScopedRead;
 use crate::{Error, Result};
+
+const MAX_INSTRUMENT_HTML_BYTES: usize = 1024 * 1024;
 
 /// A validated atom stream. There is no raw HTML, JS, URL, eval or write leaf.
 #[derive(Debug, Clone)]
@@ -71,17 +73,29 @@ pub fn render_instrument(
                             }
                         }
                     }
+                    check_render_size(&html)?;
                 }
             }
             _ => escape(&mut html, atom.default_fallback_text().as_str()),
         }
         html.push_str("</section>");
+        check_render_size(&html)?;
     }
     html.push_str("</article>");
+    check_render_size(&html)?;
     Ok(InstrumentView { html })
 }
 
-fn display_body(bytes: &[u8]) -> String {
+fn check_render_size(html: &str) -> Result<()> {
+    if html.len() > MAX_INSTRUMENT_HTML_BYTES {
+        return Err(Error::InvalidConfig(
+            "instrument render exceeds byte bound".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn display_body(bytes: &[u8]) -> String {
     if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
         return body.value.to_string();
     }
@@ -103,49 +117,5 @@ fn escape(out: &mut String, text: &str) {
             '\'' => out.push_str("&#39;"),
             _ => out.push(ch),
         }
-    }
-}
-
-/// The generated-lens authoring language is an atom stream, not general JS.
-/// Its interpreter has only these three typed imports and no effect callback.
-pub struct LensExecutionRuntime {
-    boundary: LensExecutionBoundary,
-}
-
-impl LensExecutionRuntime {
-    pub fn link(imports: Vec<LensHostImport>) -> Result<Self> {
-        let boundary = LensExecutionBoundary::read_only(imports)?;
-        let expected = [
-            LensHostImport::ScopedRead,
-            LensHostImport::ResolveBackingRef,
-            LensHostImport::EmitAtom,
-        ];
-        if boundary.imports().len() != expected.len()
-            || expected.iter().any(|i| !boundary.imports().contains(i))
-        {
-            return Err(Error::InvalidConfig(
-                "lens must link exactly the read-only imports".into(),
-            ));
-        }
-        Ok(Self { boundary })
-    }
-    pub fn imports(&self) -> &[LensHostImport] {
-        self.boundary.imports()
-    }
-    pub fn run(
-        &self,
-        program: &[u8],
-        frame: &LensRenderFrame,
-        read: &ScopedRead<'_>,
-    ) -> Result<InstrumentView> {
-        if !matches!(
-            frame.world_scope(),
-            crate::pipeline::WorldScope::WorldSet(_) | crate::pipeline::WorldScope::CodebaseSet(_)
-        ) {
-            return Err(Error::InvalidConfig(
-                "lens execution requires a WorldSet frame".into(),
-            ));
-        }
-        render_instrument(&InstrumentAtoms::decode(program)?, frame, read)
     }
 }
