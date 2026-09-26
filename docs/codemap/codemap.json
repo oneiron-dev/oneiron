@@ -13828,7 +13828,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",

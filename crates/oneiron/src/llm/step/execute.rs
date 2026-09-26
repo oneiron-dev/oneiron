@@ -139,7 +139,8 @@ pub async fn call_as_step_with_fallbacks(
 
     // The deadline only gates admission. Once admitted, the provider (and any
     // retries) runs to a terminal response so its lease can settle real usage.
-    let generated = super::schema::generate(backend, &request, &admission.lease, guard).await;
+    let generated =
+        super::schema::generate(backend, &request, &admission.lease, guard, ctx.deadline).await;
     let (generated, failed_usage) = match generated {
         Err(DurableStepError::SpentLlm { source, usage }) => {
             (Err(DurableStepError::Llm(source)), *usage)

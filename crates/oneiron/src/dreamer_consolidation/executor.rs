@@ -70,6 +70,11 @@ enum PartitionRun {
         spent: u64,
     },
     Trapped,
+    /// A terminal step was charged, but the pass expired before its output
+    /// could advance the workflow. Replay the memoized step on a later wake.
+    Checkpoint {
+        spent: u64,
+    },
     Held {
         candidates: Vec<PromotionCandidate>,
         spent: u64,
@@ -122,6 +127,9 @@ impl ConsolidationExecutor<'_> {
             // empty extraction (#485-1).
             StepOutcome::Trapped(_) => return Ok(PartitionRun::Trapped),
         };
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint { spent });
+        }
         let candidates = self.decode_candidates(
             &partition,
             &response,
@@ -155,6 +163,9 @@ impl ConsolidationExecutor<'_> {
                 spent: spent.saturating_add(merge_spent),
             }),
             PartitionRun::Trapped => Ok(PartitionRun::Trapped),
+            PartitionRun::Checkpoint { spent: merge_spent } => Ok(PartitionRun::Checkpoint {
+                spent: spent.saturating_add(merge_spent),
+            }),
             PartitionRun::Held {
                 candidates,
                 spent: merge_spent,
@@ -286,6 +297,9 @@ impl ConsolidationExecutor<'_> {
                 }
             };
 
+            if ctx.deadline.expired() {
+                return Ok(PartitionRun::Checkpoint { spent });
+            }
             match decode_merge_resolution(&response).unwrap_or(MergeResolution::Escalate) {
                 MergeResolution::Accumulate => {} // keep every member
                 MergeResolution::Merge {
@@ -351,6 +365,9 @@ impl ConsolidationExecutor<'_> {
             }
         }
 
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint { spent });
+        }
         if !escalated.is_empty() {
             resources.upsert_gaps(resources.scope(), escalated, ctx.now_ms)?;
         }
@@ -717,12 +734,31 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             .run_partition_attempt(&payload, &resources, ctx, attempt.status.attempt.id, run_id)
             .await
         {
+            Ok(PartitionRun::Completed {
+                candidates: _,
+                spent,
+            }) if ctx.deadline.expired() => Ok(DreamerAttemptExecution::ParkWithSpend {
+                reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                completed_units: spent,
+            }),
             Ok(PartitionRun::Completed { candidates, spent }) => {
                 resources.accept(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: spent,
                 })
             }
+            Ok(PartitionRun::Checkpoint { spent }) => Ok(DreamerAttemptExecution::ParkWithSpend {
+                reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                completed_units: spent,
+            }),
+            Ok(PartitionRun::Held {
+                candidates: _,
+                spent,
+                ..
+            }) if ctx.deadline.expired() => Ok(DreamerAttemptExecution::ParkWithSpend {
+                reason: crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                completed_units: spent,
+            }),
             Ok(PartitionRun::Held {
                 candidates,
                 spent,

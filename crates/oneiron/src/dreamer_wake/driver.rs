@@ -31,9 +31,9 @@ use super::types::{
 /// Park reason stamped on attempts cut at the wake-pass ceiling.
 pub const DREAMER_HARD_CUT_PARK_REASON: &str = "wake-pass hard cut";
 
-/// Park-owner token for deadline hard-cut parks: the step layer parks the
-/// cut attempt under this token (no trap is opened at the ceiling), and only a
-/// resumer presenting it may clear the row.
+/// Park-owner token for a step-layer hard-cut park. Retained for recovery of
+/// existing park rows; admitted LLM calls now finish and settle before the
+/// enclosing executor stops run continuation.
 pub const DREAMER_HARD_CUT_PARK_OWNER: &str = "dreamer.step:hard-cut";
 
 /// Park reason stamped on attempts preempted by a cooperative cancellation
@@ -286,9 +286,8 @@ impl<'a> DreamerWakeDriver<'a> {
             }
             self.maybe_fire_wrap_notice();
             if self.deadline.expired() {
-                // Hard cut, unconditionally: the sequential driver holds no
-                // in-flight leases here (the step layer's deadline race
-                // aborts and parks mid-step losers before returning).
+                // Hard cut at the attempt boundary: any admitted LLM call has
+                // settled before the sequential driver reaches this check.
                 report.stop = WakePassStop::DeadlineHardCut;
                 break;
             }
@@ -504,12 +503,9 @@ impl<'a> DreamerWakeDriver<'a> {
             let execution = match executed {
                 Ok(execution) => execution,
                 Err(error) => {
-                    // A mid-step deadline loss may surface as an executor
-                    // ERROR (a host propagating the step layer's
-                    // DeadlineHardCut instead of mapping it to Park). The
-                    // budget refund, the park bookkeeping, and the
-                    // checkpoint milestone must still run — treat it as the
-                    // hard-cut park it is instead of bailing out.
+                    // An executor may already have parked a hard-cut attempt
+                    // before surfacing an error. The budget refund, park
+                    // bookkeeping, and checkpoint milestone must still run.
                     let step_layer_parked = self
                         .store
                         .parked_attempt(attempt_id)?
@@ -637,6 +633,28 @@ impl<'a> DreamerWakeDriver<'a> {
                         input.now,
                     )?;
                     report.landed += 1;
+                }
+                DreamerAttemptExecution::ParkWithSpend {
+                    reason,
+                    completed_units,
+                } => {
+                    // The in-flight call finished and was charged. Stop the run
+                    // at this boundary without refunding its real spend or
+                    // publishing post-deadline output.
+                    let reason = clamp_park_reason(reason);
+                    self.store.settle_budget(SettleDreamerBudget {
+                        budget_id: self.budget_id.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units,
+                        now: input.now,
+                    })?;
+                    self.park_attempt(attempt_id, reason, input.lease_owner.clone(), input.now)?;
+                    self.write_milestone(
+                        attempt_id,
+                        DreamerMilestoneKind::CheckpointReached,
+                        input.now,
+                    )?;
+                    report.parked += 1;
                 }
                 DreamerAttemptExecution::Park { reason } => {
                     // Executor-authored reasons get the same clamp as the

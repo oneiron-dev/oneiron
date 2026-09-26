@@ -110,6 +110,12 @@ pub enum DreamerAttemptExecution {
     Park {
         reason: String,
     },
+    /// Checkpoint a stopped run after admitted calls have already spent units.
+    /// The driver settles the wake reservation before parking the attempt.
+    ParkWithSpend {
+        reason: String,
+        completed_units: u64,
+    },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {
         completed_units: u64,

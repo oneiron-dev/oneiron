@@ -1205,6 +1205,57 @@ fn admitted_call_finishes_after_deadline_and_refuses_next_step() -> Result<()> {
     Ok(())
 }
 
+/// An invalid JSON response arrives after expiry. The correction would be a
+/// fresh paid call, not a retry on the first call's lease.
+struct ExpireInvalidJsonBackend {
+    clock: Arc<std::sync::atomic::AtomicU64>,
+    calls: AtomicUsize,
+}
+
+impl LlmBackend for ExpireInvalidJsonBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.clock.store(180_001, Ordering::SeqCst);
+        Box::pin(async { Ok(response_fixture("not json")) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    }
+}
+
+#[test]
+fn expired_invalid_json_settles_first_call_without_admitting_correction() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let (elapsed, deadline) = injected_deadline(0, 180_000);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.deadline = Some(&deadline);
+    let guard = guard_with_limit(10_000);
+    let backend = ExpireInvalidJsonBackend {
+        clock: elapsed,
+        calls: AtomicUsize::new(0),
+    };
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    let hash = request.canonical_hash().expect("step hash");
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::FinalizeRefused)
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(guard.read().used_units, 150, "first response was paid");
+    assert_eq!(guard.read().reserved_units, 0, "no second lease");
+    assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none());
+    Ok(())
+}
+
 #[test]
 fn finalize_window_refuses_new_steps_serves_memoized() -> Result<()> {
     let (_dir, vault) = open_vault();
