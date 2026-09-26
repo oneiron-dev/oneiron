@@ -13,11 +13,13 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::http::header::CACHE_CONTROL;
+use axum::http::header::CONTENT_DISPOSITION;
 use axum::http::header::CONTENT_SECURITY_POLICY;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::header::ETAG;
 use axum::http::header::IF_NONE_MATCH;
 use axum::http::header::LOCATION;
+use axum::http::header::X_CONTENT_TYPE_OPTIONS;
 use axum::response::Response;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -25,6 +27,9 @@ use std::sync::Arc;
 pub(crate) const ARTIFACT_POINTER_CACHE_CONTROL: &str = "no-cache, max-age=0, must-revalidate";
 
 pub(crate) const ARTIFACT_IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+pub(crate) const BLOB_POINTER_CACHE_CONTROL: &str = "private, no-cache, max-age=0, must-revalidate";
+pub(crate) const BLOB_IMMUTABLE_CACHE_CONTROL: &str = "private, max-age=31536000, immutable";
 
 pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
     "default-src 'self'; ",
@@ -44,6 +49,7 @@ pub(crate) const ARTIFACT_CONTENT_SECURITY_POLICY: &str = concat!(
 pub(crate) struct ArtifactServeQuery {
     channel: Option<String>,
     fork_hash: Option<String>,
+    blob_version: Option<u64>,
 }
 
 pub(crate) async fn serve_artifact_root(
@@ -92,6 +98,23 @@ pub(crate) fn serve_artifact_file(
 pub(crate) fn artifact_snapshot_selector(
     query: &ArtifactServeQuery,
 ) -> Result<oneiron::ArtifactSnapshotSelector, EnvelopedApiError> {
+    if let Some(version) = query.blob_version {
+        if version == 0 {
+            return Err(ApiError::bad_request(
+                "blobVersion must be greater than zero",
+                Some("blobVersion"),
+            )
+            .into());
+        }
+        if query.channel.is_some() || query.fork_hash.is_some() {
+            return Err(ApiError::bad_request(
+                "blobVersion cannot be combined with channel or forkHash",
+                Some("blobVersion"),
+            )
+            .into());
+        }
+        return Ok(oneiron::ArtifactSnapshotSelector::BlobVersion(version));
+    }
     if query.channel.is_some() && query.fork_hash.is_some() {
         return Err(ApiError::bad_request(
             "channel and forkHash cannot be combined",
@@ -149,13 +172,27 @@ pub(crate) fn artifact_file_response(
     file: oneiron::ArtifactServedFile,
     request_headers: &HeaderMap,
 ) -> Result<Response, EnvelopedApiError> {
-    let cache_control = artifact_cache_control(file.selector);
+    let cache_control = artifact_cache_control(file.selector, file.export);
+    let (content_type, attachment) = match file.media_type.as_deref() {
+        Some(media_type) => match passive_blob_media_type(media_type) {
+            Some(safe_type) => (HeaderValue::from_static(safe_type), false),
+            None => (HeaderValue::from_static("application/octet-stream"), true),
+        },
+        None => (
+            HeaderValue::from_static(artifact_content_type(&file.path)),
+            false,
+        ),
+    };
     let etag = format!("\"{}\"", oneiron::artifact_hex(&file.content_hash));
     if request_etag_matches(request_headers, &etag) {
         let mut response = Response::new(Body::empty());
         *response.status_mut() = StatusCode::NOT_MODIFIED;
         let headers = response.headers_mut();
         headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+        headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        if attachment {
+            headers.insert(CONTENT_DISPOSITION, HeaderValue::from_static("attachment"));
+        }
         headers.insert(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
@@ -170,11 +207,12 @@ pub(crate) fn artifact_file_response(
 
     let mut response = Response::new(Body::from(file.bytes));
     let headers = response.headers_mut();
-    headers.insert(
-        CONTENT_TYPE,
-        HeaderValue::from_static(artifact_content_type(&file.path)),
-    );
+    headers.insert(CONTENT_TYPE, content_type);
     headers.insert(CACHE_CONTROL, HeaderValue::from_static(cache_control));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    if attachment {
+        headers.insert(CONTENT_DISPOSITION, HeaderValue::from_static("attachment"));
+    }
     headers.insert(
         CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(ARTIFACT_CONTENT_SECURITY_POLICY),
@@ -187,10 +225,32 @@ pub(crate) fn artifact_file_response(
     Ok(response)
 }
 
-pub(crate) fn artifact_cache_control(selector: oneiron::ArtifactSnapshotSelector) -> &'static str {
-    match selector {
-        oneiron::ArtifactSnapshotSelector::Channel(_) => ARTIFACT_POINTER_CACHE_CONTROL,
-        oneiron::ArtifactSnapshotSelector::ForkHash(_) => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
+/// Only inert types may render inline on the shared local origin. An active
+/// or unknown blob media type is served as an attachment with nosniff.
+fn passive_blob_media_type(media_type: &str) -> Option<&'static str> {
+    match media_type {
+        "application/pdf" => Some("application/pdf"),
+        "text/plain" => Some("text/plain; charset=utf-8"),
+        "image/png" => Some("image/png"),
+        "image/jpeg" => Some("image/jpeg"),
+        "image/webp" => Some("image/webp"),
+        "image/gif" => Some("image/gif"),
+        _ => None,
+    }
+}
+
+pub(crate) fn artifact_cache_control(
+    selector: oneiron::ArtifactSnapshotSelector,
+    export: oneiron::artifact_hosting::ArtifactExportRef,
+) -> &'static str {
+    match (selector, export) {
+        (
+            oneiron::ArtifactSnapshotSelector::Channel(_),
+            oneiron::artifact_hosting::ArtifactExportRef::BlobVersion { .. },
+        ) => BLOB_POINTER_CACHE_CONTROL,
+        (oneiron::ArtifactSnapshotSelector::BlobVersion(_), _) => BLOB_IMMUTABLE_CACHE_CONTROL,
+        (oneiron::ArtifactSnapshotSelector::Channel(_), _) => ARTIFACT_POINTER_CACHE_CONTROL,
+        (oneiron::ArtifactSnapshotSelector::ForkHash(_), _) => ARTIFACT_IMMUTABLE_CACHE_CONTROL,
         _ => ARTIFACT_POINTER_CACHE_CONTROL,
     }
 }

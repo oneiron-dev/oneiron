@@ -209,7 +209,7 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open published artifact"
   - "preview local app artifact"
   - "serve artifact index"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-published-root-slash - `GET /a/{artifact}/`
 
@@ -218,16 +218,16 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "open artifact root"
   - "serve artifact home page"
   - "preview published artifact"
-- safety: Read-only local artifact serving. Only artifact-class code snapshots can be served; the published pointer selects an immutable fork hash.
+- safety: Read-only local artifact serving. The published pointer pins a code snapshot or a numbered blob export; no public publishing tier is enabled.
 
 #### local-artifact-file - `GET /a/{artifact}/{*path}`
 
-- when-to-use: Serve a specific file from a pinned local artifact snapshot, or select a preview pointer or explicit fork hash for immutable local inspection.
+- when-to-use: Serve a code snapshot file or a blob export, using a preview pointer, an explicit fork hash, or a numbered blob version.
 - trigger phrases:
   - "serve artifact file"
   - "load artifact asset"
   - "open pinned artifact snapshot"
-- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP and immutable cache headers.
+- safety: Read-only local artifact serving. Codebase-class snapshots are rejected; responses use restrictive local CSP, with no-cache headers on channels and immutable headers on direct versions.
 
 #### health - `GET /api/health`
 
@@ -566,24 +566,25 @@ Response:
 
 Method: `GET`
 
-Authentication: None for this local serving endpoint.
+Authentication: configured API bearer credential, unless the server explicitly allows unauthenticated development access.
 
 Path parameters:
 
-- `artifact` required: stable artifact id segment for the local mount.
-- `path` optional: file path within the pinned snapshot. Root requests serve `index.html`.
+- `artifact` required: code project id or canonical lowercase hex blob entity id.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Root requests select `index.html` for code and the export for blobs.
 
 Query parameters:
 
 - `channel` optional: pointer channel to resolve, currently `published` by default or `preview`.
-- `forkHash` optional: 64-character hex immutable snapshot hash. Do not combine with `channel`.
+- `forkHash` optional: 64-character hex immutable code snapshot hash. Do not combine with `channel` or `blobVersion`.
+- `blobVersion` optional: positive numbered blob export version. Do not combine with `channel` or `forkHash`.
 
 Response behavior:
 
-- Resolves the pointer or fork hash to an artifact-class code snapshot and serves bytes from that pinned snapshot only.
-- Repointing a published or preview pointer affects future stable mount reads but does not mutate old fork-hash mounts.
-- Returns `404` when the pointer, snapshot, or file is absent, and `400` for malformed selectors or mutually exclusive selector parameters.
-- Sends `Cache-Control: public, max-age=31536000, immutable`, an ETag derived from the served file content hash, and a restrictive CSP for local artifact assets.
+- Resolves the channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` select immutable exports directly. Codebase-class snapshots are not hostable.
+- Repointing published or preview changes future channel reads, not the pinned versions. Unpublish removes a channel, not direct version reads.
+- Returns `404` when the pointer, version, or file is absent, and `400` for malformed or mutually exclusive selector parameters.
+- Code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; direct code snapshots use `public, max-age=31536000, immutable`. Blob channels use `private, no-cache, max-age=0, must-revalidate` and direct blob versions use `private, max-age=31536000, immutable`. Both kinds send a content-hash ETag and restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`. No public publishing tier is enabled.
 
 ### Core Discovery
 

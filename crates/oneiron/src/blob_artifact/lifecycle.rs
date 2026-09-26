@@ -39,6 +39,7 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
     id: &EntityId,
 ) -> Result<BlobArtifactLifecycleCleanup> {
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
+    crate::artifact_hosting::remove_blob_pointers_in_txn(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     let prefix = blob_artifact_version_prefix(id);
     let mut keys = Vec::new();
