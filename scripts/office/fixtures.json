@@ -7,16 +7,16 @@
       "preservation": "no-op all OPC entries"
     },
     {
-      "id": "repair-prompt",
-      "file": "repair.pptx",
-      "expected_oracle": "repaired",
-      "preservation": "missing referenced slide part; repair must not pass"
-    },
-    {
       "id": "failed-open",
       "file": "failed.pptx",
       "expected_oracle": "failed",
       "preservation": "not a ZIP"
+    },
+    {
+      "id": "damaged-candidate",
+      "file": "damaged.pptx",
+      "expected_oracle": "failed",
+      "preservation": "broken required presentation XML must not settle"
     },
     {
       "id": "timeout",
@@ -25,10 +25,10 @@
       "preservation": "injected stalled scripting process"
     },
     {
-      "id": "damaged-candidate",
-      "file": "damaged.pptx",
-      "expected_oracle": "failed",
-      "preservation": "broken required presentation XML must not settle"
+      "id": "repair-prompt",
+      "file": "repair.pptx",
+      "expected_oracle": "repaired",
+      "preservation": "missing referenced slide part; repair must not pass"
     }
   ]
 }

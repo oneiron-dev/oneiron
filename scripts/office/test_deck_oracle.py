@@ -18,6 +18,8 @@ spec.loader.exec_module(oracle)
 class OfflineContracts(unittest.TestCase):
     def test_dialogs_fail_closed(self):
         self.assertEqual(oracle.dialog_class(['Repair Presentation'], 'candidate'), 'repaired')
+        self.assertEqual(oracle.dialog_class(['PowerPoint found a problem with content in candidate.pptx'],
+                                             'candidate'), 'repaired')
         self.assertEqual(oracle.dialog_class(['Grant File Access'], 'candidate'), 'unsupported')
         self.assertEqual(oracle.dialog_class(['unexpected prompt'], 'candidate'), 'unsupported')
         self.assertIsNone(oracle.dialog_class(['candidate'], 'candidate'))
@@ -79,6 +81,38 @@ class OfflineContracts(unittest.TestCase):
             status, _ = oracle.run_script(ROOT / 'fixtures/clean.pptx', 'open', None, 'cua', 9)
         self.assertEqual(status, 'timed_out')
         proc.terminate.assert_called_once()
+    def test_untitled_repair_dialog_text_is_observed(self):
+        with mock.patch.object(oracle, 'command', return_value=(
+                'PowerPoint found a problem with content in candidate.pptx.\n'
+                'PowerPoint can attempt to repair the presentation.')):
+            lines = oracle.windows('system-events', 123)
+        self.assertEqual(oracle.dialog_class(lines, 'candidate'), 'repaired')
+
+    def test_owned_repair_is_cancelled_before_custody_close(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = {'staged': None}
+            def scripted(source, action, target, observer, deadline):
+                state['staged'] = source
+                return 'repaired', 'repair alert'
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'env_pin', return_value={'test': True}), \
+                 mock.patch.object(oracle, 'app_pid', return_value=123), \
+                 mock.patch.object(oracle, 'presentations', return_value=[]), \
+                 mock.patch.object(oracle, 'launch_hidden'), \
+                 mock.patch.object(oracle, 'hide_powerpoint'), \
+                 mock.patch.object(oracle, 'run_script', side_effect=scripted), \
+                 mock.patch.object(oracle, 'cancel_owned_repair') as cancel, \
+                 mock.patch.object(oracle, 'close_owned', return_value=None) as close:
+                result = oracle.oracle(ROOT / 'fixtures/repair.pptx', root / 'result')
+            self.assertEqual(result['status'], 'repaired')
+            cancel.assert_called_once_with(state['staged'])
+            close.assert_called_once()
+            self.assertFalse(list((root / 'sandbox').iterdir()))
+
     def test_empty_inventory_is_not_missing_value(self):
         with mock.patch.object(oracle, 'command', return_value='') as command:
             self.assertEqual(oracle.presentations(), [])

@@ -92,8 +92,8 @@ def windows(observer: str, pid: int) -> list[str]:
     if observer == 'cua':
         data = json.loads(command(['cua-driver', 'call', 'list_windows', json.dumps({'pid': pid})], 6))
         return [w['title'] for w in data['windows'] if w.get('title')]
-    script = 'tell application "System Events" to tell process "Microsoft PowerPoint" to get name of every window'
-    return [x.strip() for x in command(['osascript', '-e', script], 5).split(',')]
+    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowTitle as text\n            if subrole of w is "AXDialog" then\n                repeat with line in (value of every static text of w)\n                    if line is not missing value then set end of labels to line as text\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 10)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
+    return [x.strip() for x in command(['osascript', '-e', script], 5).splitlines() if x.strip()]
 
 
 def dialog_class(titles: list[str], expected_stem: str) -> str | None:
@@ -182,6 +182,13 @@ def launch_hidden() -> None:
     hide_powerpoint()
 
 
+def cancel_owned_repair(staged: Path) -> None:
+    """Cancel only the observed repair alert naming our staged deck; never repair or grant access."""
+    script = 'on run argv\n    tell application "System Events"\n        tell process "Microsoft PowerPoint"\n            repeat with w in every window\n                if subrole of w is "AXDialog" then\n                    set lines to value of every static text of w\n                    set AppleScript\'s text item delimiters to " "\n                    set messageText to lines as text\n                    set AppleScript\'s text item delimiters to ""\n                    if messageText contains (item 1 of argv) and messageText contains "PowerPoint can attempt to repair" then\n                        click button "Cancel" of w\n                        return "cancelled owned repair alert"\n                    end if\n                end if\n            end repeat\n        end tell\n    end tell\n    error "owned repair alert not found; no UI action taken"\nend run'
+    command(['osascript', '-e', script, str(staged)], 8)
+    hide_powerpoint()
+
+
 def close_owned(allowed: set[str]) -> str | None:
     """Never close a presentation unless custody still identifies only ours."""
     if not app_pid():
@@ -207,10 +214,7 @@ def quit_if_empty() -> None:
     names = presentations()
     if names:
         raise RuntimeError(f'refusing to quit PowerPoint with open presentations: {names}')
-    try:
-        command(['osascript', '-e', 'tell application "Microsoft PowerPoint" to quit'], 10)
-    finally:
-        hide_powerpoint()
+    command(['osascript', '-e', 'tell application "Microsoft PowerPoint" to quit'], 10)
 
 
 def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeout: int = 90) -> dict:
@@ -323,7 +327,13 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                        detail=f'oracle control failure: {exc}')
     finally:
         if opened:
-            warning = close_owned(allowed)
+            warning = None
+            if receipt['status'] == 'repaired':
+                try:
+                    cancel_owned_repair(staged)
+                except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                    warning = f'could not dismiss owned repair alert: {exc}'
+            warning = warning or close_owned(allowed)
             if warning:
                 receipt['cleanup_warning'] = warning
                 receipt.update(status='unsupported', detail=warning)

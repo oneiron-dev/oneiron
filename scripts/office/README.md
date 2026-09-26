@@ -26,7 +26,9 @@ staging directory in `finally`. It launches PowerPoint in the background, never
 activates it, hides it after each call, and closes only the staged presentation.
 It refuses any pre-existing open presentation, including a saved but hidden one.
 The serial fixture runner quits PowerPoint once at the end only when it
-started the app and no presentations remain. It leaves an existing app running. A standalone `run` leaves the app running without its deck.
+started the app and no presentations remain. It leaves an existing app running. A standalone `run` leaves the app running without its deck. A known repair
+alert naming our staged deck is dismissed using **Cancel**, not Repair. The
+harness never clicks a Grant File Access prompt.
 Use a new result directory each time.
 
 From the repository root on the Mac mini, run the live matrix exactly as follows:
@@ -58,7 +60,7 @@ python3 scripts/office/deck_oracle.py classify scripts/office/fixtures.json \
 `fixtures.json` names a safe local clean deck, a missing-slide repair candidate,
 a non-ZIP failed-open file, an invalid-presentation damaged candidate, and an
 injected one-second timeout run (use `--timeout 1` with the clean fixture).
-The repair candidate is expected to trigger a repair prompt; if a PowerPoint
+The repair candidate runs last and is expected to trigger a repair prompt; if a PowerPoint
 build refuses it outright, the matrix must report a failure, not silently
 change the expectation. `test_deck_oracle.py` pins timeout handling without
 requiring a flaky real hang. The local clean source was generated with
