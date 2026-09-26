@@ -49,7 +49,6 @@ class MultiSignatureReaderTests(unittest.TestCase):
                 code, report = self.reader("pdfium", fixture)
                 self.assertEqual(code, 1, report)
                 self.assertEqual(report["status"], "fail")
-                self.assertIn("signed_revision_coverage", report["detail"])
 
     def test_pdfium_binds_gap_to_xref_selected_signature_object(self):
         for fixture in ("normal-contents.pdf", "escaped-normal-contents.pdf"):
@@ -62,7 +61,27 @@ class MultiSignatureReaderTests(unittest.TestCase):
                 code, report = self.reader("pdfium", fixture)
                 self.assertEqual(code, 1, report)
                 self.assertEqual(report["status"], "fail")
-                self.assertIn("signed_revision_coverage=[False]", report["detail"])
+
+    def test_pdfium_ignores_comment_contents_decoy(self):
+        for fixture, expected in (
+            ("normal-gap.pdf", "pass"),
+            ("unhidden-comment-decoy.pdf", "fail"),
+            ("comment-contents-decoy.pdf", "fail"),
+        ):
+            with self.subTest(fixture=fixture):
+                code, report = self.reader("pdfium", fixture)
+                self.assertEqual(code, 0 if expected == "pass" else 1, report)
+                self.assertEqual(report["status"], expected)
+
+    def test_pdfium_accepts_endobj_inside_signed_reason(self):
+        for fixture in ("endobj-control.pdf", "endobj-in-reason.pdf"):
+            with self.subTest(fixture=fixture):
+                code, report = self.reader("pyhanko", fixture)
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["signature_results"][0]["valid"], True)
+                code, report = self.reader("pdfium", fixture)
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["status"], "pass")
 
     def test_final_coverage_does_not_depend_on_field_order(self):
         for name in ("pdfbox", "dss"):

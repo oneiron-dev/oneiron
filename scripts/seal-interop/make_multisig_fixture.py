@@ -147,3 +147,80 @@ contents_binding_fixture('normal-contents.pdf', False, False)
 contents_binding_fixture('escaped-normal-contents.pdf', True, False)
 contents_binding_fixture('literal-duplicate.pdf', False, True)
 contents_binding_fixture('escaped-contents-decoy.pdf', True, True)
+
+# A comment between the real key and value is legal whitespace; a second
+# /Contents text in a comment is not a dictionary entry. Exercise both.
+def comment_binding_fixture(name, comment_between, comment_decoy):
+    real_key = (b'/Contents % a legal PDF comment before the value\n'
+                if comment_between else b'/Contents ')
+    sig_dict = (b'<< /Type /Sig /Filter /Adobe.PPKLite '
+                b'/SubFilter /adbe.pkcs7.detached ' + real_key + hex_contents
+                + b' /ByteRange ' + placeholder)
+    if comment_decoy:
+        sig_dict += b'\n% /Contents ' + hex_contents + b'\n'
+    sig_dict += b' >>'
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>',
+        b'<< /Fields [5 0 R] /SigFlags 3 >>',
+        b'<< /FT /Sig /T (ProbeSignature) /V 6 0 R >>', sig_dict,
+    ]
+    data = bytearray(b'%PDF-1.7\n')
+    offsets = [0]
+    for index, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f'{index} 0 obj\n'.encode() + obj + b'\nendobj\n'
+    xref = len(data)
+    data += b'xref\n0 7\n0000000000 65535 f \n'
+    for offset in offsets[1:]:
+        data += f'{offset:010d} 00000 n \n'.encode()
+    data += f'trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    end = len(data)
+    actual_b = data.index(hex_contents, offsets[6])
+    gap_b = data.index(hex_contents, actual_b + len(hex_contents)) if comment_decoy else actual_b
+    gap_c = gap_b + len(hex_contents)
+    values = [0, gap_b, gap_c, end - gap_c]
+    data = data.replace(placeholder, b'[' + b' '.join(f'{v:010d}'.encode() for v in values) + b']')
+    assert len(data) == end
+    info = len(data)
+    data += b'7 0 obj\n<< /Producer (unsigned metadata revision) >>\nendobj\n'
+    next_xref = len(data)
+    data += (f'xref\n7 1\n{info:010d} 00000 n \ntrailer\n'
+             f'<< /Size 8 /Root 1 0 R /Info 7 0 R /Prev {xref} >>\n'
+             f'startxref\n{next_xref}\n%%EOF\n').encode()
+    (out.parent / name).write_bytes(data)
+
+comment_binding_fixture('normal-gap.pdf', False, False)
+comment_binding_fixture('unhidden-comment-decoy.pdf', False, True)
+comment_binding_fixture('comment-contents-decoy.pdf', True, True)
+
+# Dictionary order is not semantic. Sign with /Reason before /Contents, then
+# include the word endobj inside that *signed* literal string in one case.
+from pyhanko.pdf_utils.generic import pdf_name
+from pyhanko.sign.signers.pdf_byterange import SignatureObject
+original_init = SignatureObject.__init__
+def reason_first(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    reason = self.raw_get('/Reason')
+    items = list(self.items())
+    self.clear()
+    self[pdf_name('/Reason')] = reason
+    self.update(items)
+SignatureObject.__init__ = reason_first
+try:
+    for filename, reason in (
+        ('endobj-control.pdf', 'harmless signing reason'),
+        ('endobj-in-reason.pdf', 'harmless endobj text'),
+    ):
+        with TemporaryDirectory() as td:
+            key_path = Path(td) / 'probe.p12'
+            key_path.write_bytes(p12)
+            signer = signers.SimpleSigner.load_pkcs12(key_path, passphrase=b'probe-pass')
+            writer = IncrementalPdfFileWriter(BytesIO(source), strict=True)
+            output = BytesIO()
+            PdfSigner(PdfSignatureMetadata(field_name='BoundarySignature', reason=reason),
+                      signer=signer).sign_pdf(writer, output=output)
+            (out.parent / filename).write_bytes(output.getvalue())
+finally:
+    SignatureObject.__init__ = original_init

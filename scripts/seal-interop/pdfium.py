@@ -38,42 +38,93 @@ def contents_name(name):
   return bytes.fromhex(match.group(1).decode("ascii"))
  return re.sub(rb"#([0-9A-Fa-f]{2})",unescape,name)==b"Contents"
 
+PDF_SPACE=b" \t\n\f\r\x00"
+PDF_DELIMITERS=b"()<>[]{}/%"
+
+def pdf_token(data,pos,limit):
+ # Narrow PDF lexer for an xref-selected, direct signature dictionary.
+ # Comments and literal strings are consumed as whole tokens, so neither
+ # /Contents in a comment nor endobj in a string is structural syntax.
+ while pos<limit:
+  if data[pos] in PDF_SPACE:
+   pos+=1; continue
+  if data[pos]==37:  # % comment ends at the next line ending
+   while pos<limit and data[pos] not in b"\r\n": pos+=1
+   continue
+  break
+ if pos>=limit: return None
+ start=pos
+ if data.startswith(b"<<",pos): return ("dict_open",b"<<",start,pos+2)
+ if data.startswith(b">>",pos): return ("dict_close",b">>",start,pos+2)
+ ch=data[pos]
+ if ch==40:  # balanced literal string, including escaped parentheses
+  depth=1;pos+=1
+  while pos<limit and depth:
+   if data[pos]==92: pos+=2; continue
+   if data[pos]==40: depth+=1
+   elif data[pos]==41: depth-=1
+   pos+=1
+  return ("literal",data[start:pos],start,pos) if depth==0 else None
+ if ch==60:  # hex string, not a dictionary
+  close=data.find(b">",pos+1,limit)
+  return ("hex",data[start:close+1],start,close+1) if close>=0 else None
+ if ch==47:
+  pos+=1
+  while pos<limit and data[pos] not in PDF_SPACE+PDF_DELIMITERS: pos+=1
+  return ("name",data[start+1:pos],start,pos)
+ if ch in PDF_DELIMITERS:
+  return ("delimiter",data[start:start+1],start,start+1)
+ while pos<limit and data[pos] not in PDF_SPACE+PDF_DELIMITERS: pos+=1
+ return ("word",data[start:pos],start,pos)
+
+def signature_contents_span(data,offset,end,obj,gen):
+ if not isinstance(offset,int) or not 0<=offset<end<=len(data): return None
+ header=re.match(rb"[ \t\n\f\r]*"+str(obj).encode()+rb"[ \t\n\f\r]+"
+                 +str(gen).encode()+rb"[ \t\n\f\r]+obj\b",data[offset:end])
+ if not header: return None
+ pos=offset+header.end()
+ token=pdf_token(data,pos,end)
+ if token is None or token[0]!="dict_open": return None
+ pos=token[3];stack=["dict"];found=[]
+ while stack:
+  token=pdf_token(data,pos,end)
+  if token is None: return None
+  kind,value,begin,pos=token
+  if kind=="dict_open": stack.append("dict")
+  elif kind=="dict_close":
+   if stack[-1]!="dict": return None
+   stack.pop()
+  elif kind=="delimiter" and value==b"[": stack.append("array")
+  elif kind=="delimiter" and value==b"]":
+   if stack[-1]!="array": return None
+   stack.pop()
+  elif stack==["dict"] and kind=="name" and contents_name(value):
+   token=pdf_token(data,pos,end)
+   if token is None or token[0]!="hex": return None
+   found.append(token)
+   pos=token[3]
+ # A stream or unrelated token is not a direct signature dictionary end.
+ terminator=pdf_token(data,pos,end)
+ if terminator is None or terminator[:2]!=("word",b"endobj") or len(found)!=1:
+  return None
+ return found[0][2:4],found[0][1]
+
 def gap_is_signature_contents(data,b,c,end,values,sig,raw,sources):
  size=raw.FPDFSignatureObj_GetContents(sig,None,0)
- if not size:
-  return False
+ if not size: return False
  contents=(ctypes.c_ubyte*size)()
- if raw.FPDFSignatureObj_GetContents(sig,contents,size)!=size:
-  return False
+ if raw.FPDFSignatureObj_GetContents(sig,contents,size)!=size: return False
  decoded=bytes(contents)
- # An equal blob elsewhere in the file cannot stand in for this signature.
  owners=[(obj,gen,offset) for rng,blob,obj,gen,offset in sources
          if rng==tuple(values) and blob==decoded]
- if len(owners)!=1:
-  return False
+ if len(owners)!=1: return False
  obj,gen,offset=owners[0]
- if not isinstance(offset,int) or not 0<=offset<b<c<=end:
-  return False  # E.g. an object stream has no raw dictionary span here.
- header=re.match(rb"[ \t\n\f\r]*"+str(obj).encode()+rb"[ \t\n\f\r]+"
-                 +str(gen).encode()+rb"[ \t\n\f\r]+obj\b",data[offset:])
- if not header:
-  return False
- tail=re.search(rb"\bendobj\b",data[offset:end])
- if not tail or c>offset+tail.start():
-  return False
- # Inspect only the xref-selected signature dictionary, never global text.
- # Accept a single direct hex value named /Contents (including PDF name
- # escapes), whose source span is precisely the excluded ByteRange interval.
- matches=[]
- region=data[offset+header.end():offset+tail.start()]
- for item in re.finditer(rb"/([A-Za-z0-9#]+)[ \t\n\f\r]*(<([0-9A-Fa-f \t\n\f\r]+)>)",region):
-  if contents_name(item.group(1)):
-   matches.append((offset+header.end()+item.start(2),
-                   offset+header.end()+item.end(2),item.group(3)))
- if len(matches)!=1 or matches[0][:2]!=(b,c):
-  return False
- hex_bytes=re.sub(rb"[ \t\n\f\r]",b"",matches[0][2])
- return bool(hex_bytes) and len(hex_bytes)%2==0 and bytes.fromhex(hex_bytes.decode("ascii"))==decoded
+ source=signature_contents_span(data,offset,end,obj,gen)
+ if source is None: return False
+ span,encoded=source
+ if span!=(b,c): return False
+ hex_bytes=re.sub(rb"[ \t\n\f\r\x00]",b"",encoded[1:-1])
+ return bool(hex_bytes) and len(hex_bytes)%2==0 and bool(re.fullmatch(rb"[0-9a-fA-F]+",hex_bytes)) and bytes.fromhex(hex_bytes.decode("ascii"))==decoded
 
 try:
  raw=pdfium.raw
