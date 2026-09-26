@@ -35,7 +35,9 @@ try:
    doc.close(); result("unavailable",f"unexpected PDFium ByteRange API length={n}",77)
   a,b,c,d=vals
   end=c+d
-  well_formed=(a==0 and b>=0 and c>=b and d>=0 and end<=len(data)
+  # Both signed spans must contain bytes. A matching ByteRange in the
+  # parsed revision does not itself prove that the revision was signed.
+  well_formed=(a==0 and b>0 and c>b and d>0 and end<=len(data)
                and data[:end].rstrip(b"\0\t\n\f\r ").endswith(b"%%EOF"))
   if not well_formed:
    covers.append(False); continue

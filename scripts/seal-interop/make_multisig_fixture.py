@@ -56,3 +56,36 @@ cms[at+len(signature_value)-1] ^= 1
 corrupt = second[:b+1] + bytes(cms).hex().encode('ascii') + second[c-1:]
 assert len(corrupt) == len(second) and corrupt[:len(first)] == first
 (out.parent / 'second-signature-corrupt.pdf').write_bytes(corrupt)
+
+# A structural PDFium counterexample: both signed spans are empty, while
+# the original revision EOF and form dictionaries remain parseable.
+import re
+
+def with_empty_signed_ranges(pdf, earlier_only=False):
+    data = bytearray(pdf)
+    matches = list(re.finditer(rb"/ByteRange\s*\[([^\]]+)\]", pdf))
+    assert len(matches) == 2
+    for match in matches[:1] if earlier_only else matches:
+        a, b, c, d = map(int, match.group(1).split())
+        replacement = f"0 0 {c+d} 0".encode().ljust(len(match.group(1)), b" ")
+        assert len(replacement) == len(match.group(1))
+        data[match.start(1):match.end(1)] = replacement
+    assert len(data) == len(pdf)
+    return bytes(data)
+
+(out.parent / 'empty-ranges.pdf').write_bytes(with_empty_signed_ranges(second))
+(out.parent / 'empty-earlier-range.pdf').write_bytes(
+    with_empty_signed_ranges(second, earlier_only=True)
+)
+
+# Form field order differs from signing chronology: the last enumerated
+# field holds the earlier revision; the first enumerated field signs last.
+from pyhanko.sign.fields import append_signature_field, SigFieldSpec
+writer = IncrementalPdfFileWriter(BytesIO(source), strict=True)
+append_signature_field(writer, SigFieldSpec(sig_field_name='ProbeSignature2'))
+append_signature_field(writer, SigFieldSpec(sig_field_name='ProbeSignature1'))
+unsigned = BytesIO()
+writer.write(unsigned)
+reverse_first = sign(unsigned.getvalue(), 'ProbeSignature1')
+reverse_last = sign(reverse_first, 'ProbeSignature2')
+(out.parent / 'reverse-fields.pdf').write_bytes(reverse_last)

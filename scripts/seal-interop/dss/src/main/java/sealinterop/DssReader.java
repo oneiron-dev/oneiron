@@ -35,6 +35,7 @@ public final class DssReader {
     CommonTrustedCertificateSource trusted = new CommonTrustedCertificateSource();
     boolean cryptographicPass=true;
     int verifiedSigners=0;
+    long latestSignedEnd=0;
     try (PDDocument doc=Loader.loadPDF(pdf)) {
       var sigs=doc.getSignatureDictionaries();
       if(sigs.isEmpty()){out(version,"fail","no embedded signature","no_signature","no_signature");System.exit(1);}
@@ -43,6 +44,7 @@ public final class DssReader {
         if(range==null || range.length!=4 || range[0]!=0 || range[1]<0 || range[2]<range[1] || range[3]<0 || (long)range[2] + range[3] > pdf.length)
           throw new IllegalStateException("signature ByteRange does not cover the complete PDF revision");
         checkSignedRevision(pdf, range);
+        latestSignedEnd=Math.max(latestSignedEnd, (long)range[2] + range[3]);
         byte[] paddedContents=sig.getContents(pdf);
         byte[] cmsBytes;
         try(ASN1InputStream asn1=new ASN1InputStream(paddedContents)){
@@ -65,12 +67,7 @@ public final class DssReader {
         }
       }
     }
-    int[] latestRange;
-    try (PDDocument doc=Loader.loadPDF(pdf)) {
-      var signatures=doc.getSignatureDictionaries();
-      latestRange=signatures.get(signatures.size()-1).getByteRange();
-    }
-    boolean finalCoverage=(long)latestRange[2]+latestRange[3]==pdf.length;
+    boolean finalCoverage=latestSignedEnd==pdf.length;
     CommonCertificateVerifier verifier=new CommonCertificateVerifier();
     // This local oracle trusts certificates carried in the PDF to make the DSS result
     // reproducible without external trust stores. Output states this trust override.

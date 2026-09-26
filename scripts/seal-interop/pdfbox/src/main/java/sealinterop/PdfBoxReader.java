@@ -24,11 +24,13 @@ public final class PdfBoxReader {
       var sigs = doc.getSignatureDictionaries();
       if (sigs.isEmpty()) { out(version, "fail", "no embedded signature"); System.exit(1); }
       int checked=0;
+      long latestSignedEnd=0;
       for (PDSignature sig : sigs) {
         int[] range = sig.getByteRange();
         if (range == null || range.length != 4 || range[0] != 0 || range[1] < 0 || range[2] < range[1] || range[3] < 0 || (long)range[2] + range[3] > pdf.length)
           throw new IllegalStateException("signature ByteRange does not cover the complete PDF revision");
         checkSignedRevision(pdf, range);
+        latestSignedEnd=Math.max(latestSignedEnd, (long)range[2] + range[3]);
         byte[] cms = sig.getContents(pdf);
         byte[] signed = sig.getSignedContent(pdf);
         CMSSignedData data = new CMSSignedData(new org.bouncycastle.cms.CMSProcessableByteArray(signed), cms);
@@ -43,8 +45,7 @@ public final class PdfBoxReader {
           checked++;
         }
       }
-      int[] latestRange = sigs.get(sigs.size()-1).getByteRange();
-      boolean finalCoverage = (long)latestRange[2] + latestRange[3] == pdf.length;
+      boolean finalCoverage = latestSignedEnd == pdf.length;
       out(version, "pass", "pages="+doc.getNumberOfPages()+"; signatures="+sigs.size()+"; CMS signers verified="+checked+"; each ByteRange covers its signed revision; final_document_coverage="+finalCoverage+"; later revisions are not a permitted-change assessment; certificate trust not evaluated");
     } catch (Exception e) { out(version, "fail", e.getClass().getSimpleName()+": "+e.getMessage()); System.exit(1); }
     } catch(Throwable e) { out(version,"fail",e.getClass().getSimpleName()+": "+e.getMessage()); System.exit(1); }

@@ -20,7 +20,7 @@ The retained two-revision fixtures exercise the wrappers against a valid earlier
 signature and a corrupt later signature. After installation, run
 `SEAL_INTEROP_INTEGRATION=1 python3 -m unittest discover -s scripts/seal-interop -p test_readers.py -v`.
 To regenerate these fixtures with the pinned pyHanko environment, run
-`/mnt/wd16/w8-build/seal-interop/venv/bin/python scripts/seal-interop/make_multisig_fixture.py`.
+`ROOT="${SEAL_INTEROP_HOME:-/mnt/wd16/w8-build/seal-interop}"; "$ROOT/venv/bin/python" scripts/seal-interop/make_multisig_fixture.py`.
 
 The full runner prints TSV with `reader`, `version`, `os_proxy`, `mode`, `status`, and `detail`.
 Each per-reader wrapper prints one JSON object with `reader`, `version`, `mode`, and `status`;
