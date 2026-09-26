@@ -1,6 +1,7 @@
 //! Round-trip pipeline entry.
 
 use super::address::validate_ops;
+use super::formula::serialize_plan;
 use super::inspect::{inspect, mutation_mode_for};
 use super::opc;
 use super::session_validate::{diff_parts, validate};
@@ -8,7 +9,7 @@ use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
     OfficeDoc, OfficeFormat, StructureSummary, ValidationReport,
 };
-use crate::blob_artifact::BlobVersionProvenance;
+use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,9 @@ pub struct EditProposal {
     pub inspection: StructureSummary,
     pub validation: ValidationReport,
     pub recalc: RecalcStatus,
+    /// Calculator for the cached values, if known. When no recalc ran, this
+    /// inherits the artifact head's stamp (or remains unknown for raw input).
+    pub calc_engine: Option<Box<CalcEngineStamp>>,
     /// The artifact version these bytes were produced FROM, when the proposal
     /// was run against a blob artifact ([`crate::Vault::propose_blob_artifact_edit`]).
     /// `None` for a raw [`run_edit_roundtrip`] with no artifact binding. ARTL-4
@@ -120,8 +124,10 @@ pub fn run_edit_roundtrip<S: EditSession>(
         )));
     }
 
-    // Stage 2: targeted edit through the seam.
-    let applied = session.apply_edits(&doc_before, plan)?;
+    // Stage 2: serialize modern formulas before the openpyxl session writes
+    // them; the applied ops and manifest record the actual prefixed formulas.
+    let serialized_plan = serialize_plan(plan);
+    let applied = session.apply_edits(&doc_before, &serialized_plan)?;
     let mut current = applied.bytes;
     warnings.extend(applied.warnings);
 
@@ -129,7 +135,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // formula values but this session image cannot recalc: retaining stale
     // cached formula values in the output is silent data corruption, so refuse
     // and let the caller route to a recalc-capable session rather than propose.
-    let recalc = if plan.needs_recalc(&applied.applied_ops) {
+    let recalc = if serialized_plan.needs_recalc(&applied.applied_ops) {
         if !session.supports_recalc() {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
@@ -173,7 +179,18 @@ pub fn run_edit_roundtrip<S: EditSession>(
         return Ok(EditOutcome::Rejected { inspection, report });
     }
 
+    let calc_engine = if recalc == RecalcStatus::Performed {
+        Some(Box::new(session.recalc_engine().ok_or(Error::Artifact(
+            ArtifactError::EditRoundtripFailed(
+                "recalc session did not report its engine and version",
+            ),
+        ))?))
+    } else {
+        None
+    };
+
     Ok(EditOutcome::Proposed(EditProposal {
+        calc_engine,
         run_ref: run_ref.to_owned(),
         format,
         new_bytes: current,
@@ -217,6 +234,9 @@ impl crate::Vault {
         // can refuse it if an intervening edit has moved the head since.
         if let EditOutcome::Proposed(proposal) = &mut outcome {
             proposal.base_version = Some(head.version);
+            if proposal.calc_engine.is_none() {
+                proposal.calc_engine = head.calc_engine.map(Box::new);
+            }
         }
         Ok(outcome)
     }
