@@ -1,89 +1,113 @@
-//! ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline.
-//!
-//! An agent implementing a commented change on a foreign office file (xlsx
-//! first) runs in a code-session (doc 11: own=Wasmtime, foreign=microVM)
-//! against a **copy** of the artifact's current bytes. The output is a
-//! *retained output* — `(new blob bytes + [`EditManifest`])` — that touches
-//! nothing until settled. This module owns the host-side orchestration and the
-//! canonical [`EditManifest`]; settlement (append the version, mint the
-//! receipt) is ARTL-4 and out of scope here.
-//!
-//! # Fidelity law (Grok DR 2026-07-07)
-//!
-//! Nothing round-trips 100%. The pipeline is **minimal-mutation + passthrough**:
-//! it touches only supported elements and preserves unknown XML parts
-//! byte-for-byte. The passthrough and corruption gates run in the engine (the
-//! `opc` submodule) against the bytes the session produced, so the gate never
-//! trusts the tool that wrote them.
-//!
-//! # Four mandatory stages
-//!
-//! 1. **Inspect-first** — the `inspect` stage summarizes structure (sheets, defined
-//!    names, pivots/charts/macros presence, cross-sheet dependency map) before
-//!    any edit. SpreadsheetBench evidence: skipping this is the dominant agent
-//!    failure mode, so it always runs.
-//! 2. **Targeted edit** — the agent's [`EditPlan`] is applied through the
-//!    [`EditSession`] seam via narrow verbs ([`EditOp`]). In production the
-//!    session library is Python openpyxl (`keep_vba=True, data_only=False`);
-//!    umya-spreadsheet (Rust) and protobi/exceljs (JS) are recorded alternates.
-//! 3. **Recalc** — when inputs/formulas changed, [`EditSession::recalc`]
-//!    refreshes cached formula values. In production this is LibreOffice
-//!    headless (a session-image dependency); HyperFormula/`formulas` is the
-//!    recorded in-process fallback.
-//! 4. **Corruption-check validation** — the `validate` stage runs an automated
-//!    open/verify plus a passthrough diff. A failed check yields
-//!    [`EditOutcome::Rejected`] and never reaches the proposal stage.
-//!
-//! # External-binary seam
-//!
-//! openpyxl and LibreOffice are NOT available in CI and are NOT repo
-//! dependencies (D10 licensing wall: repo code is Apache/MIT only; openpyxl
-//! lives in session images). They sit behind the [`EditSession`] trait so the
-//! architecture is present but the whole gate passes with a mock. The pipeline
-//! logic, manifest, inspection, and validation are pure Rust and fully tested
-//! in CI against a fixture session.
-//!
-//! # Reconciliation seams
-//!
-//! * **ARTL-2 (anchored comments, ONE-1552)** consumes [`EditManifest::anchor_effects`]
-//!   to replay row/column shifts, range moves, and sheet renames against its
-//!   `(sheet, A1-range)` anchors. This module keeps its manifest self-contained
-//!   and does not import ARTL-2 types; whichever PR merges second reconciles.
-//! * **ARTL-4 (settle/receipts)** consumes an [`EditProposal`]:
-//!   [`EditProposal::agent_run_provenance`] yields the
-//!   [`BlobVersionProvenance::AgentRun`](crate::blob_artifact::BlobVersionProvenance::AgentRun) to append, and [`EditManifest::to_msgpack`]
-//!   the manifest bytes to receipt.
+//! Engine adapter for the independent document editor.
 
-mod address;
-mod inspect;
-mod manifest;
-mod opc;
-mod ops;
-mod pipeline;
-mod session_validate;
+pub use oneiron_docedit::edit_roundtrip::*;
 
-pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
-pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
-pub use self::manifest::{
-    EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
-};
-pub use self::ops::{AnchorEffect, CellValue, CellWrite, EditOp, StructuralShift};
-pub use self::pipeline::{EditOutcome, EditProposal, RecalcStatus, run_edit_roundtrip};
-pub use self::session_validate::{
-    AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
-};
-
-#[cfg(test)]
-mod tests;
-
-// The flat edit_roundtrip.rs module used to provide these names to the sibling
-// test module through `use super::*`: its own private crate/std import header,
-// every edit-roundtrip-internal item the tests name bare, and the crate imports
-// the tests rely on. After the directory split the seam re-imports them so
-// `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::{inspect::*, session_validate::*};
-#[cfg(test)]
-use crate::blob_artifact::BlobVersionProvenance;
-#[cfg(test)]
+use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use oneiron_docedit::{ArtifactSnapshot, ArtifactStorage};
+
+impl ArtifactStorage for Vault {
+    type Id = EntityId;
+    type Error = Error;
+
+    fn snapshot(&self, artifact_id: &EntityId) -> Result<Option<ArtifactSnapshot>> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(head) =
+            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)?
+        else {
+            return Ok(None);
+        };
+        let bytes = self
+            .read_blob_artifact_version_in_txn(&rtxn, artifact_id, head.version)?
+            .ok_or(Error::EntityNotFound)?;
+        let body = self
+            .get_blob_artifact_in_txn(&rtxn, artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(Some(ArtifactSnapshot {
+            version: head.version,
+            media_type: body.media_type,
+            bytes,
+        }))
+    }
+
+    fn missing_artifact(&self) -> Error {
+        Error::EntityNotFound
+    }
+}
+
+impl Vault {
+    /// Produce a validated retained output from the current artifact head.
+    pub fn propose_blob_artifact_edit<S: EditSession>(
+        &self,
+        artifact_id: &EntityId,
+        session: &S,
+        plan: &EditPlan,
+        run_ref: &str,
+    ) -> Result<EditOutcome> {
+        oneiron_docedit::propose_artifact_edit(self, artifact_id, session, plan, run_ref)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use crate::edge::EdgeActorClass;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+
+    #[test]
+    fn document_errors_keep_engine_error_kinds() {
+        use oneiron_docedit::error::Error as DoceditError;
+        assert_eq!(
+            Error::from(DoceditError::InvalidAnchor("bad")).kind(),
+            crate::error::ErrorKind::InvalidAnchor
+        );
+        assert_eq!(
+            Error::from(DoceditError::InvalidEditManifest("bad")).kind(),
+            crate::error::ErrorKind::InvalidEditManifest
+        );
+        assert_eq!(
+            Error::from(DoceditError::EditRoundtripFailed("bad")).kind(),
+            crate::error::ErrorKind::EditRoundtripFailed
+        );
+    }
+
+    #[test]
+    fn vault_adapter_returns_the_bound_head_snapshot() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let id = EntityId::now();
+        assert!(ArtifactStorage::snapshot(&vault, &id)?.is_none());
+        let time = TimeRange { start: 11, end: 11 };
+        let actor_id = EntityId::now();
+        vault.put_entity(&actor_id, ENTITY_TYPE_PERSON, time, 11, b"author")?;
+        vault.put_blob_artifact(
+            &id,
+            &BlobArtifactBody::new(
+                "workbook.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            time,
+            11,
+        )?;
+        let first = vault.append_blob_artifact_version(
+            &id,
+            b"first",
+            &BlobVersionProvenance::UserUpload,
+            WriteActor::new(actor_id, EdgeActorClass::Human),
+            time,
+            11,
+        )?;
+        let snapshot = ArtifactStorage::snapshot(&vault, &id)?.ok_or(Error::EntityNotFound)?;
+        assert_eq!(snapshot.version, first.version);
+        assert_eq!(snapshot.bytes, b"first");
+        assert_eq!(
+            snapshot.media_type,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        Ok(())
+    }
+}

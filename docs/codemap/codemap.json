@@ -1072,7 +1072,7 @@
      "path": "src/anchored_annotation/codec.rs",
      "purpose": "MessagePack claim codecs, map accessors, envelope builders, and malformed-claim quarantine",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
@@ -1102,40 +1102,37 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
-      "A1Range",
       "Anchor",
       "AnnotationComment",
       "AnnotationThread",
       "DriftMarker",
-      "Locator",
-      "ReanchorOp",
-      "ReanchorOutcome",
       "ReanchorSummary",
       "TaskBrief",
       "ThreadState"
      ],
      "path": "src/anchored_annotation/model.rs",
-     "purpose": "Domain types: A1 ranges, format-typed locators, anchors, thread/comment/brief structs, and the re-anchor op…",
+     "purpose": "Engine-owned annotation claims, thread/comment/brief records and sweep results",
      "surface": {
-      "const": 6,
-      "crate-vis": 8,
-      "enum": 4,
-      "fn": 9,
-      "struct": 7
+      "const": 4,
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 6
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/reanchor.rs",
-     "purpose": "Edit-manifest lowering, locator replay math, and the re-anchor sweep (own-txn plus caller-txn)",
+     "purpose": "Vault re-anchor sweep: the organ replays locators; the vault writes claims",
      "surface": {
-      "crate-vis": 3,
-      "fn": 2
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -14717,143 +14714,13 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [
-      "Axis",
-      "CellRef",
-      "OfficeFormat",
-      "RangeRef"
-     ],
-     "path": "src/edit_roundtrip/address.rs",
-     "purpose": "Cell addressing, ranges and op validation",
-     "surface": {
-      "crate-vis": 2,
-      "enum": 2,
-      "fn": 8,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CrossSheetDep",
-      "SheetSummary",
-      "StructureSummary"
-     ],
-     "path": "src/edit_roundtrip/inspect.rs",
-     "purpose": "Workbook inspect scanners",
-     "surface": {
-      "crate-vis": 4,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "EditManifest",
-      "EditWarning",
-      "MutationMode",
-      "WarningCode"
-     ],
-     "path": "src/edit_roundtrip/manifest.rs",
-     "purpose": "Edit manifest and warnings",
-     "surface": {
-      "const": 1,
-      "enum": 2,
-      "fn": 5,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/mod.rs",
-     "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
+     "purpose": "Engine adapter for the independent document editor",
      "surface": {
-      "re-export": 6
+      "fn": 1,
+      "re-export": 1
      }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc.rs",
-     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
-     "surface": {
-      "crate-vis": 13
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_roundtrip/opc/tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "AnchorEffect",
-      "CellValue",
-      "CellWrite",
-      "EditOp",
-      "StructuralShift"
-     ],
-     "path": "src/edit_roundtrip/ops.rs",
-     "purpose": "Edit operation vocabulary and anchor effects",
-     "surface": {
-      "enum": 3,
-      "fn": 5,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "EditOutcome",
-      "EditProposal",
-      "RecalcStatus"
-     ],
-     "path": "src/edit_roundtrip/pipeline.rs",
-     "purpose": "Round-trip pipeline entry",
-     "surface": {
-      "enum": 2,
-      "fn": 3,
-      "struct": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "AppliedEdit",
-      "EditPlan",
-      "EditSession",
-      "OfficeDoc",
-      "ValidationCheck",
-      "ValidationReport"
-     ],
-     "path": "src/edit_roundtrip/session_validate.rs",
-     "purpose": "Edit session seam and validation",
-     "surface": {
-      "crate-vis": 6,
-      "fn": 2,
-      "struct": 5,
-      "trait": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/edit_roundtrip/tests.rs",
-     "purpose": "ARTL-3 pipeline tests",
-     "surface": {}
     },
     {
      "bucket": "s",
@@ -34148,11 +34015,11 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 10,
-     "impl_vault": false,
-     "largest_src_bucket": "m",
+     "files": 1,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
      "layout": "dir",
-     "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
+     "purpose": "Engine adapter for the independent document editor"
     },
     "edit_settle": {
      "files": 8,
@@ -34920,8 +34787,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
-   "test_files": 706
+   "source_files": 2056,
+   "test_files": 704
   },
   "oneiron-android": {
    "files": [
@@ -36134,6 +36001,266 @@
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 97,
    "test_files": 18
+  },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "A1Range",
+      "Locator",
+      "ReanchorOp",
+      "ReanchorOutcome"
+     ],
+     "path": "src/anchored_annotation.rs",
+     "purpose": "Format-typed office anchors and deterministic locator replay",
+     "surface": {
+      "const": 5,
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VersionDecision",
+      "VersionError",
+      "VersionHead"
+     ],
+     "path": "src/blob_artifact.rs",
+     "purpose": "Storage-free version-chain decisions for a content-addressed artifact",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Axis",
+      "CellRef",
+      "OfficeFormat",
+      "RangeRef"
+     ],
+     "path": "src/edit_roundtrip/address.rs",
+     "purpose": "Cell addressing, ranges and op validation",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CrossSheetDep",
+      "SheetSummary",
+      "StructureSummary"
+     ],
+     "path": "src/edit_roundtrip/inspect.rs",
+     "purpose": "Workbook inspect scanners",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EditManifest",
+      "EditWarning",
+      "MutationMode",
+      "WarningCode"
+     ],
+     "path": "src/edit_roundtrip/manifest.rs",
+     "purpose": "Edit manifest and warnings",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/mod.rs",
+     "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
+     "surface": {
+      "re-export": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/opc.rs",
+     "purpose": "Minimal Open Packaging Conventions (OPC) reader/writer for the ARTL-3 edit round-trip pipeline",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/opc/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnchorEffect",
+      "CellValue",
+      "CellWrite",
+      "EditOp",
+      "StructuralShift"
+     ],
+     "path": "src/edit_roundtrip/ops.rs",
+     "purpose": "Edit operation vocabulary and anchor effects",
+     "surface": {
+      "enum": 3,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EditOutcome",
+      "EditProposal",
+      "RecalcStatus"
+     ],
+     "path": "src/edit_roundtrip/pipeline.rs",
+     "purpose": "Round-trip pipeline entry",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AppliedEdit",
+      "EditPlan",
+      "EditSession",
+      "OfficeDoc",
+      "ValidationCheck",
+      "ValidationReport"
+     ],
+     "path": "src/edit_roundtrip/session_validate.rs",
+     "purpose": "Edit session seam and validation",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 5,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/tests.rs",
+     "purpose": "ARTL-3 pipeline tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_settle.rs",
+     "purpose": "Pure settle decisions; the host owns the one-transaction consume-once write",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/error.rs",
+     "purpose": "Errors from the storage-independent document editor",
+     "surface": {
+      "enum": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactSnapshot",
+      "ArtifactStorage"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Storage-independent document editing, integrity checks and retained proposals",
+     "surface": {
+      "fn": 1,
+      "mod": 5,
+      "struct": 1,
+      "trait": 1
+     }
+    }
+   ],
+   "modules": {
+    "anchored_annotation": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Format-typed office anchors and deterministic locator replay"
+    },
+    "blob_artifact": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Storage-free version-chain decisions for a content-addressed artifact"
+    },
+    "edit_roundtrip": {
+     "files": 10,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline"
+    },
+    "edit_settle": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pure settle decisions; the host owns the one-transaction consume-once write"
+    },
+    "error": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Errors from the storage-independent document editor"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Storage-independent document editing, integrity checks and retained proposals",
+   "source_files": 13,
+   "test_files": 2
   },
   "oneiron-driver": {
    "files": [

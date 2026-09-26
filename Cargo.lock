@@ -7194,6 +7194,7 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-docedit",
  "oneiron-seal",
  "oneiron-vault-contract",
  "p256",
@@ -7273,6 +7274,17 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "oneiron-docedit"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "flate2",
+ "rmp-serde",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

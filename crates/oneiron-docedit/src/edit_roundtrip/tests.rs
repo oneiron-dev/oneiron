@@ -3,7 +3,7 @@
 
 use super::opc::{self, OpcPackage, OpcPart};
 use super::*;
-use crate::error::ArtifactError;
+use crate::error::Error;
 
 const SHEET_PART: &str = "xl/worksheets/sheet1.xml";
 const UNKNOWN_PART: &str = "customXml/item1.xml";
@@ -299,10 +299,7 @@ fn recalc_stage_updates_cached_values_via_seam() {
         "run:no-recalc",
     )
     .expect_err("recalc-incapable session must refuse a value-affecting edit");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 
     // But when nothing needs recalc, the same session proposes normally.
     let add_sheet = EditPlan::new(vec![EditOp::AddSheet {
@@ -476,23 +473,15 @@ fn empty_run_ref_is_rejected() {
         "   ",
     )
     .expect_err("blank run_ref must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
-fn agent_run_provenance_carries_run_ref() {
+fn proposal_carries_agent_run_ref() {
     let input = xlsx_bytes(&base_parts());
     let plan = EditPlan::new(vec![set_a1(10.0)]);
     let proposal = propose(&FixtureSession::faithful(), &input, &plan, "run:prov#7");
-    assert_eq!(
-        proposal.agent_run_provenance(),
-        BlobVersionProvenance::AgentRun {
-            run_ref: "run:prov#7".to_owned(),
-        }
-    );
+    assert_eq!(proposal.run_ref, "run:prov#7");
 }
 
 // -- Format gating (docx/pptx) ----------------------------------------------
@@ -511,7 +500,7 @@ fn docx_and_pptx_are_refused_at_the_pipeline() {
         )
         .expect_err("non-spreadsheet formats are unsupported");
         assert!(
-            matches!(err, Error::Artifact(ArtifactError::InvalidEditManifest(_))),
+            matches!(err, Error::InvalidEditManifest(_)),
             "expected InvalidEditManifest, got {err:?}"
         );
     }
@@ -536,10 +525,7 @@ fn zero_index_cell_is_rejected() {
         "run:badcell",
     )
     .expect_err("a 0 column must be rejected");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
 }
 
 #[test]
@@ -558,10 +544,7 @@ fn inverted_range_is_rejected() {
         "run:inverted",
     )
     .expect_err("an inverted range must be rejected");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
 }
 
 // -- Cross-sheet scan: rels-resolved names + shared formulas ----------------
@@ -712,13 +695,47 @@ fn minimal_mutation_mode_refuses_structural_ops() {
         "run:struct",
     )
     .expect_err("structural op in minimal mode must be refused");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::InvalidEditManifest(_))
-    ));
+    assert!(matches!(err, Error::InvalidEditManifest(_)));
 
     // A cell-level op on the same pivot workbook is still allowed.
     let cell = EditPlan::new(vec![set_a1(10.0)]);
     let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
+}
+
+#[test]
+fn stored_proposal_binds_the_version_read_by_storage() {
+    use crate::{ArtifactSnapshot, ArtifactStorage, propose_artifact_edit};
+
+    struct Stored(Vec<u8>);
+    impl ArtifactStorage for Stored {
+        type Id = u64;
+        type Error = Error;
+        fn snapshot(&self, _: &u64) -> Result<Option<ArtifactSnapshot>> {
+            Ok(Some(ArtifactSnapshot {
+                version: 7,
+                media_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    .into(),
+                bytes: self.0.clone(),
+            }))
+        }
+        fn missing_artifact(&self) -> Error {
+            Error::EditRoundtripFailed("missing")
+        }
+    }
+
+    let bytes = xlsx_bytes(&base_parts());
+    let outcome = propose_artifact_edit(
+        &Stored(bytes.clone()),
+        &1,
+        &FixtureSession::faithful(),
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:stored",
+    )
+    .expect("proposal");
+    let EditOutcome::Proposed(proposal) = outcome else {
+        panic!("valid edit must propose")
+    };
+    assert_eq!(proposal.base_version, Some(7));
+    assert_eq!(proposal.base_content_hash, *blake3::hash(&bytes).as_bytes());
 }

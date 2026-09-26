@@ -60,7 +60,7 @@ pub use self::model::{
     AnnotationThread, DriftMarker, Locator, ReanchorOp, ReanchorOutcome, ReanchorSummary,
     TaskBrief, ThreadState,
 };
-pub use self::reanchor::replay_locator;
+pub use oneiron_docedit::anchored_annotation::replay_locator;
 
 #[cfg(test)]
 mod tests;

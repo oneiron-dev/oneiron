@@ -2,9 +2,9 @@
 //! quarantine.
 
 use super::model::{
-    ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
-    ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, DriftMarker, FORMAT_DOCX, FORMAT_PPTX,
-    FORMAT_XLSX, Locator, TaskBrief, ThreadState,
+    ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Anchor,
+    AnnotationComment, DriftMarker, FORMAT_DOCX, FORMAT_PPTX, FORMAT_XLSX, Locator, TaskBrief,
+    ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -76,23 +76,6 @@ pub(super) struct ThreadHead {
     pub(super) drift: Option<DriftMarker>,
 }
 
-pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
-    if text.is_empty() || text.len() > ANNOTATION_LOCATOR_TEXT_MAX_BYTES {
-        return Err(match context {
-            "xlsx locator sheet" => Error::Artifact(ArtifactError::InvalidAnchor(
-                "xlsx locator sheet is empty or too long",
-            )),
-            "docx locator para_path" => Error::Artifact(ArtifactError::InvalidAnchor(
-                "docx locator para_path is empty or too long",
-            )),
-            _ => Error::Artifact(ArtifactError::InvalidAnchor(
-                "pptx locator shape_id is empty or too long",
-            )),
-        });
-    }
-    Ok(())
-}
-
 pub(crate) fn encode_locator(locator: &Locator) -> Value {
     match locator {
         Locator::Xlsx { sheet, range } => Value::Map(vec![
@@ -124,18 +107,18 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
         FORMAT_XLSX => {
             let sheet = map_str(value, KEY_SHEET)?.to_owned();
             let range = map_str(value, KEY_RANGE)?;
-            Locator::xlsx(sheet, range)
+            Locator::xlsx(sheet, range).map_err(Error::from)
         }
         FORMAT_DOCX => {
             let para_path = map_str(value, KEY_PARA_PATH)?.to_owned();
             let char_start = map_u64(value, KEY_CHAR_START)?;
             let char_end = map_u64(value, KEY_CHAR_END)?;
-            Locator::docx(para_path, char_start, char_end)
+            Locator::docx(para_path, char_start, char_end).map_err(Error::from)
         }
         FORMAT_PPTX => {
             let slide = map_u64(value, KEY_SLIDE)?;
             let shape_id = map_str(value, KEY_SHAPE_ID)?.to_owned();
-            Locator::pptx(slide, shape_id)
+            Locator::pptx(slide, shape_id).map_err(Error::from)
         }
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",

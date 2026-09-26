@@ -78,9 +78,12 @@ impl Vault {
             // Retain stale output against this exact head. Consume the old ref
             // so a retry can never accidentally apply it after another head
             // change. Reconciliation is a new, explicitly reviewed proposal.
-            if base.content_hash != proposal.base_content_hash
-                || proposal.base_version.is_some_and(|v| v != base.version)
-            {
+            if oneiron_docedit::edit_settle::proposal_is_stale(
+                base.version,
+                &base.content_hash,
+                proposal.base_version,
+                &proposal.base_content_hash,
+            ) {
                 let stranded = self.retain_stale_edit_in_txn(
                     wtxn,
                     artifact_id,
@@ -112,7 +115,9 @@ impl Vault {
                 wtxn,
                 artifact_id,
                 &proposal.new_bytes,
-                &proposal.agent_run_provenance(),
+                &crate::blob_artifact::BlobVersionProvenance::AgentRun {
+                    run_ref: proposal.run_ref.clone(),
+                },
                 actor,
                 occurred,
                 learned_at,

@@ -1,0 +1,25 @@
+[package]
+name = "oneiron-docedit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Office document edit and validation engine"
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+keywords.workspace = true
+categories.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+serde = { workspace = true }
+rmp-serde = { workspace = true }
+blake3 = { workspace = true }
+flate2 = "1"
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -27,7 +27,7 @@ pub struct StrandedEditProposal {
 
 impl StrandedEditProposal {
     pub fn manifest(&self) -> Result<EditManifest> {
-        EditManifest::from_msgpack(&self.manifest_bytes)
+        EditManifest::from_msgpack(&self.manifest_bytes).map_err(Error::from)
     }
 }
 
@@ -77,7 +77,7 @@ impl Vault {
             head_version: head.version,
             head_content_hash: head.content_hash,
             new_bytes: proposal.new_bytes.clone(),
-            manifest_bytes: proposal.manifest.to_msgpack()?,
+            manifest_bytes: proposal.manifest.to_msgpack().map_err(Error::from)?,
             actor_ref: actor.entity_ref().to_hex(),
             actor_class: actor.actor_class() as u8,
             retained_at: at,

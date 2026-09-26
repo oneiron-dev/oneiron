@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::ArtifactError;
+use crate::error::Error;
 
 fn package(parts: &[(&str, &[u8])]) -> OpcPackage {
     OpcPackage::from_parts(
@@ -48,20 +48,14 @@ fn write_read_round_trips_stored_entries() {
 fn read_rejects_non_zip_bytes() {
     let err = read(b"this is definitely not a zip archive at all")
         .expect_err("garbage bytes must not parse as OPC");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
 fn read_rejects_truncated_buffer() {
     let bytes = write(&package(&[("a.xml", b"hello")]));
     let err = read(&bytes[..bytes.len() - 4]).expect_err("truncated EOCD must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -230,10 +224,7 @@ fn read_rejects_crc_mismatch() {
     let mut entry = RawEntry::stored("a.xml", b"hello");
     entry.crc ^= 0xFFFF_FFFF;
     let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("bad crc must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -242,10 +233,7 @@ fn read_rejects_declared_size_mismatch() {
     let mut entry = RawEntry::stored("a.xml", b"hello");
     entry.uncomp_size = 4;
     let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("declared-size mismatch must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -256,10 +244,7 @@ fn read_rejects_zip_bomb_declared_size() {
     entry.uncomp_size = u32::MAX - 1;
     let err = read(&build_zip(&[entry], 0, 0, None))
         .expect_err("declared size over the per-entry cap must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -270,10 +255,7 @@ fn read_rejects_inflation_past_declaration() {
     entry.uncomp_size = 4;
     let err = read(&build_zip(&[entry], 0, 0, None))
         .expect_err("inflation past the declaration must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -281,10 +263,7 @@ fn read_rejects_zip64_uncompressed_sentinel() {
     let mut entry = RawEntry::stored("a.xml", b"hi");
     entry.uncomp_size = u32::MAX;
     let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("zip64 size sentinel must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -299,10 +278,7 @@ fn read_rejects_duplicate_part_names() {
         None,
     );
     let err = read(&zip).expect_err("duplicate part names must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -310,20 +286,14 @@ fn read_rejects_encrypted_entry() {
     let mut entry = RawEntry::stored("a.xml", b"secret");
     entry.flags |= 0x0001; // encryption bit
     let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("encrypted entry must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
 fn read_rejects_multi_disk_archive() {
     let err = read(&build_zip(&[RawEntry::stored("a.xml", b"x")], 1, 0, None))
         .expect_err("multi-disk archive must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -335,10 +305,7 @@ fn read_rejects_zip64_entry_count_sentinel() {
         Some(u16::MAX),
     ))
     .expect_err("zip64 entry-count sentinel must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -346,10 +313,7 @@ fn read_rejects_entry_on_another_disk() {
     let mut entry = RawEntry::stored("a.xml", b"x");
     entry.disk_start = 3;
     let err = read(&build_zip(&[entry], 0, 0, None)).expect_err("entry on another disk must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }
 
 #[test]
@@ -358,8 +322,5 @@ fn read_rejects_unsupported_compression_method() {
     entry.method = 12; // bzip2 — unsupported
     let err = read(&build_zip(&[entry], 0, 0, None))
         .expect_err("unsupported compression method must fail");
-    assert!(matches!(
-        err,
-        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
-    ));
+    assert!(matches!(err, Error::EditRoundtripFailed(_)));
 }

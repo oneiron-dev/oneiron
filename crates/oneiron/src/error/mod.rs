@@ -589,3 +589,20 @@ const _: fn() = || {
     fn assert_send_sync_static<T: Send + Sync + 'static>() {}
     assert_send_sync_static::<Error>();
 };
+
+impl From<oneiron_docedit::error::Error> for Error {
+    fn from(error: oneiron_docedit::error::Error) -> Self {
+        use oneiron_docedit::error::Error as DoceditError;
+        match error {
+            DoceditError::InvalidAnchor(reason) => {
+                Self::Artifact(ArtifactError::InvalidAnchor(reason))
+            }
+            DoceditError::EditRoundtripFailed(reason) => {
+                Self::Artifact(ArtifactError::EditRoundtripFailed(reason))
+            }
+            DoceditError::InvalidEditManifest(reason) => {
+                Self::Artifact(ArtifactError::InvalidEditManifest(reason))
+            }
+        }
+    }
+}

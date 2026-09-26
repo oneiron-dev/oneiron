@@ -227,38 +227,53 @@ impl Vault {
         let fingerprint =
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
-        let parent_version = match (fork_parent, &head) {
-            (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
-                let key = blob_artifact_version_key(artifact_id, parent);
-                let raw = self
-                    .store
-                    .vault_meta
-                    .get(wtxn, &key)?
-                    .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                        "fork parent version does not exist",
-                    )))?;
-                if decode_blob_artifact_version_record(&raw)?.version != parent {
-                    return Err(Error::CorruptedIndex("blob artifact fork parent"));
-                }
-                Some(parent)
-            }
-            (Some(_), _) => {
+        // The organ decides version arithmetic and ordinary dedupe; the vault
+        // validates a fork's referenced stored record inside this transaction.
+        if let Some(parent) = fork_parent {
+            if parent == 0 || head.as_ref().is_none_or(|head| parent > head.version) {
                 return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                     "fork parent version does not exist",
                 )));
             }
-            (None, Some(head)) if head.content_hash == content_hash => {
-                fingerprint.persist(&self.store, wtxn, artifact_id)?;
-                return Ok(head.clone());
+            let key = blob_artifact_version_key(artifact_id, parent);
+            let raw = self
+                .store
+                .vault_meta
+                .get(wtxn, &key)?
+                .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                    "fork parent version does not exist",
+                )))?;
+            if decode_blob_artifact_version_record(&raw)?.version != parent {
+                return Err(Error::CorruptedIndex("blob artifact fork parent"));
             }
-            (None, Some(head)) => Some(head.version),
-            (None, None) => None,
-        };
-        let next_version = head.map_or(Ok(1), |head| {
-            head.version
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
+        }
+        let decision = oneiron_docedit::blob_artifact::decide_version(
+            head.as_ref()
+                .map(|head| oneiron_docedit::blob_artifact::VersionHead {
+                    version: head.version,
+                    content_hash: head.content_hash,
+                }),
+            fork_parent,
+            content_hash,
+        )
+        .map_err(|error| match error {
+            oneiron_docedit::blob_artifact::VersionError::MissingParent => Error::Artifact(
+                ArtifactError::InvalidBlobArtifactBody("fork parent version does not exist"),
+            ),
+            oneiron_docedit::blob_artifact::VersionError::Overflow => {
+                Error::ArithmeticOverflow("blob artifact version overflow")
+            }
         })?;
+        let (next_version, parent_version) = match decision {
+            oneiron_docedit::blob_artifact::VersionDecision::Dedupe => {
+                fingerprint.persist(&self.store, wtxn, artifact_id)?;
+                return head.ok_or(Error::InvariantViolation("blob dedupe requires a head"));
+            }
+            oneiron_docedit::blob_artifact::VersionDecision::Append {
+                next_version,
+                parent_version,
+            } => (next_version, parent_version),
+        };
         let version_key = blob_artifact_version_key(artifact_id, next_version);
         if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(

@@ -144,7 +144,7 @@ pub(super) fn settled_anchors_from_summary(summary: &ReanchorSummary) -> Vec<Set
 }
 
 pub(super) fn manifest_ref(manifest: &EditManifest) -> Result<[u8; 32]> {
-    Ok(*blake3::hash(&manifest.to_msgpack()?).as_bytes())
+    Ok(*blake3::hash(&manifest.to_msgpack().map_err(Error::from)?).as_bytes())
 }
 
 pub(super) fn already_settled(existing: &SettlementRecord) -> Error {

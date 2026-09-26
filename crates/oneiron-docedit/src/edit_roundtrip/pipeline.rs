@@ -8,9 +8,7 @@ use super::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditOp, EditPlan, EditSession, MutationMode,
     OfficeDoc, OfficeFormat, StructureSummary, ValidationReport,
 };
-use crate::blob_artifact::BlobVersionProvenance;
-use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
 /// Whether a recalc stage ran, and why not when it did not.
@@ -35,7 +33,7 @@ pub struct EditProposal {
     pub validation: ValidationReport,
     pub recalc: RecalcStatus,
     /// The artifact version these bytes were produced FROM, when the proposal
-    /// was run against a blob artifact ([`crate::Vault::propose_blob_artifact_edit`]).
+    /// was run against a blob artifact ([`crate::propose_artifact_edit`]).
     /// `None` for a raw [`run_edit_roundtrip`] with no artifact binding. ARTL-4
     /// settle records it as the receipt's before-version ref.
     pub base_version: Option<u64>,
@@ -44,17 +42,6 @@ pub struct EditProposal {
     /// artifact head's content hash — an intervening edit changes the head hash,
     /// so committing these bytes would clobber it and replay a stale manifest.
     pub base_content_hash: [u8; 32],
-}
-
-impl EditProposal {
-    /// The provenance ARTL-4 appends when it settles this proposal into a new
-    /// blob version.
-    #[must_use]
-    pub fn agent_run_provenance(&self) -> BlobVersionProvenance {
-        BlobVersionProvenance::AgentRun {
-            run_ref: self.run_ref.clone(),
-        }
-    }
 }
 
 /// The pipeline result: a settle-ready proposal, or a rejection whose report
@@ -81,9 +68,7 @@ pub fn run_edit_roundtrip<S: EditSession>(
     run_ref: &str,
 ) -> Result<EditOutcome> {
     if run_ref.trim().is_empty() {
-        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
-            "run_ref must be non-empty",
-        )));
+        return Err(Error::EditRoundtripFailed("run_ref must be non-empty"));
     }
 
     // The op vocabulary and inspection are spreadsheet-specific, and `classify`
@@ -92,9 +77,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // would be vacuous. Until format-appropriate pipelines exist, accept only
     // xlsx/xlsm; a docx/pptx artifact is an unsupported-media-type refusal.
     if !matches!(format, OfficeFormat::Xlsx) {
-        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+        return Err(Error::InvalidEditManifest(
             "edit round-trip supports only xlsx/xlsm; docx and pptx are not yet supported",
-        )));
+        ));
     }
 
     // Reject a malformed plan before it can reach a session: cells, ranges, and
@@ -115,9 +100,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // would shift that grid and leave the preserved parts stale, so refuse it
     // here rather than emit a silently-wrong file; cell-level ops stay allowed.
     if mutation_mode == MutationMode::Minimal && plan.ops.iter().any(EditOp::is_structural) {
-        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+        return Err(Error::InvalidEditManifest(
             "minimal-mutation mode refuses structural ops: preserved pivot/chart/macro parts would go stale against the shifted grid",
-        )));
+        ));
     }
 
     // Stage 2: targeted edit through the seam.
@@ -131,9 +116,9 @@ pub fn run_edit_roundtrip<S: EditSession>(
     // and let the caller route to a recalc-capable session rather than propose.
     let recalc = if plan.needs_recalc(&applied.applied_ops) {
         if !session.supports_recalc() {
-            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            return Err(Error::EditRoundtripFailed(
                 "edit may change formula values but the session cannot recalc; route to a recalc-capable session",
-            )));
+            ));
         }
         match opc::read(&current) {
             Ok(package) => {
@@ -186,38 +171,4 @@ pub fn run_edit_roundtrip<S: EditSession>(
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
     }))
-}
-
-impl crate::Vault {
-    /// Runs the ARTL-3 edit round-trip against the current head bytes of a
-    /// blob artifact, returning a retained-output proposal.
-    ///
-    /// This commits nothing: the version append (with
-    /// [`BlobVersionProvenance::AgentRun`]) and the receipt are ARTL-4's
-    /// settlement, driven from the returned [`EditProposal`].
-    pub fn propose_blob_artifact_edit<S: EditSession>(
-        &self,
-        artifact_id: &EntityId,
-        session: &S,
-        plan: &EditPlan,
-        run_ref: &str,
-    ) -> Result<EditOutcome> {
-        let head = self
-            .blob_artifact_head(artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
-        let bytes = self
-            .read_blob_artifact_version(artifact_id, head.version)?
-            .ok_or(Error::EntityNotFound)?;
-        let body = self
-            .get_blob_artifact(artifact_id)?
-            .ok_or(Error::EntityNotFound)?;
-        let format = OfficeFormat::from_media_type(&body.media_type)?;
-        let mut outcome = run_edit_roundtrip(session, &bytes, format, plan, run_ref)?;
-        // Bind the proposal to the head it was produced from, so ARTL-4 settle
-        // can refuse it if an intervening edit has moved the head since.
-        if let EditOutcome::Proposed(proposal) = &mut outcome {
-            proposal.base_version = Some(head.version);
-        }
-        Ok(outcome)
-    }
 }
