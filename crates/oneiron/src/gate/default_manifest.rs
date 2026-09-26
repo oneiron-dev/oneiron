@@ -98,6 +98,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         ]),
                     ),
                 ]),
+                // A goal-intake candidate still needs a human-authenticated
+                // write door; the ordinary claim gate must not strand that
+                // confirmed interview at the unrelated critical-consent floor.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from("project.goal_intake"),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("calendar.")),
                     (

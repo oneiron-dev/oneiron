@@ -1,23 +1,52 @@
 ---
 name: goal-intake
-description: Turn an owner request into a testable goal and bounded task brief.
+description: Interview a human for a typed project goal record and commit it via authenticated intake.
 ---
 
 # Goal intake
 
-## Input
-Start from the request and context the caller is allowed to read.
+Use this skill when a person starts a project goal or accepts a proposed change to one.
+A project card is the first interview turn, not authorization to silently fill gaps.
+Only a human answers the goal interview. The loop may suggest a revision but must
+never apply one; return its proposal to the responsible human for a new interview.
 
 ## Interview
-1. State the desired observable outcome in the caller's terms.
-2. Reuse known facts. Ask only questions whose answers change the work.
-3. Confirm constraints, deadline, budget, responsible person, and authority.
-4. Separate the goal from a suggested implementation. Note assumptions.
-5. Write acceptance that another participant can check from outputs or receipts.
-6. Identify dependencies and the smallest useful first task.
+1. Identify the project and responsible human. Reuse known facts; ask only for
+   missing answers that change admission. Confirm the goal in their words and
+   **why** it matters. Keep implementation ideas separate from the outcome.
+2. Ask for **primary axes**: what should improve, how each is measured online,
+   and the success bound. Name evidence or receipts a different person can check.
+3. Ask for **floor axes**: what must not regress, how to judge it (including a
+   held-out test when relevant), and the minimum bound. A floor is not a target
+   that the loop can trade away.
+4. Ask for **cost axes**: what is spent, how it is measured, and its ceiling.
+   Always include `human_minutes` (time answering asks, reviewing and correcting).
+5. Record **preferences** only for tradeoffs the human actually chose: prefer X
+   over Y and their reason. Empty is valid before the first human pick. Never
+   infer a preference from a model score or a proposal.
+6. Ask for the **exploration budget**: maximum spend, exploration slice within
+   it, and allowed human minutes. This is a soft share, not a budget lease or
+   permission to widen a Grant. Confirm responsibility, constraints and open
+   questions before committing.
 
-## Output
-Write a goal record and task brief with outcome, acceptance, constraints,
-responsibility, evidence references, and open questions. Keep goal data in the
-project's record; do not replace the leader's instructions with the goal text.
-Return the record references and the next action. Do not claim ungranted scope.
+## Commit
+Build a `GoalRecord` with `goal`, `why`, `primary_axes`, `floor_axes`,
+`cost_axes`, `preferences`, and `exploration_budget`. Each `GoalAxis` has
+`name`, `measure`, `bound`. Each `GoalPreference` has `prefer`, `over`, `reason`.
+`GoalExplorationBudget` has `max_spend`, `exploration_slice`, `human_minutes`
+(nonnegative integers in the host's budget unit; the slice cannot exceed the
+maximum). Include a `human_minutes` cost axis. Do not invent bounds or convert
+an unanswered question into a blank field; pause to ask. Show the draft to the
+human and accept their explicit confirmation.
+
+The host authenticates that human and calls
+`Vault::write_project_goal_from_intake(&AuthenticatedOwner, project_id, &record, now)`.
+Do not use `put_project`, a raw claim or a generic batch to write the goal.
+On success, read `Vault::project_goal_record(project_id)` and return the goal
+claim ID, project ID, confirmed fields and next useful task. Make a separate
+bounded task brief with acceptance, constraints, responsible person, evidence
+references, dependencies and open questions through the normal task door.
+On rejection, report the missing or invalid field and ask again; do not claim a
+record was saved. Goal data stays in the project record, never in the leader's prompt.
+Later changes arrive as loop proposals, not edits; repeat this interview with
+an authenticated human for any accepted change.
