@@ -35,12 +35,13 @@
 //! to step into.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, EMAIL_CHANNEL, EmailProviderInbound,
-    MAX_EMAIL_PAYLOAD_REF_BYTES, MAX_EMAIL_PROVIDER_EVENT_ID_BYTES, split_email_address,
-    validate_email_inbound_metadata, validate_max_bytes, validate_non_blank,
+    ChannelIdentityProviderProvision, EMAIL_CHANNEL, MAX_EMAIL_PAYLOAD_REF_BYTES,
+    MAX_EMAIL_PROVIDER_EVENT_ID_BYTES, split_email_address, validate_email_inbound_metadata,
+    validate_max_bytes, validate_non_blank,
 };
 use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
@@ -70,8 +71,8 @@ pub const GMAIL_READONLY_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gm
 pub const GMAIL_METADATA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gmail.metadata";
 
 const GMAIL_INBOX_POLL_DEDUPE_PREFIX: &str = "gmail:inbox_poll:v1:";
-const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
-const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
+pub(super) const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
+pub(super) const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
 const MAX_GMAIL_CURSOR_BYTES: usize = 256;
 const MAX_GMAIL_MESSAGES_PER_PAGE: usize = 500;
 
@@ -84,14 +85,14 @@ const MAX_GMAIL_ID_BYTES: usize = 128;
 /// whichever is tighter. A Gmail id is namespaced with
 /// [`GMAIL_EVENT_ID_PREFIX`] before it becomes the shared `provider_event_id`,
 /// so checking the raw id against a flat cap would validate the wrong string.
-const MAX_GMAIL_MESSAGE_ID_BYTES: usize = min_bytes(
+pub(super) const MAX_GMAIL_MESSAGE_ID_BYTES: usize = min_bytes(
     MAX_GMAIL_ID_BYTES,
     MAX_EMAIL_PROVIDER_EVENT_ID_BYTES - GMAIL_EVENT_ID_PREFIX.len(),
 );
 
 /// Ceiling on a raw Gmail thread id, derived the same way against the
 /// payload-ref field its prefixed form lands in.
-const MAX_GMAIL_THREAD_ID_BYTES: usize = min_bytes(
+pub(super) const MAX_GMAIL_THREAD_ID_BYTES: usize = min_bytes(
     MAX_GMAIL_ID_BYTES,
     MAX_EMAIL_PAYLOAD_REF_BYTES - GMAIL_THREAD_PAYLOAD_PREFIX.len(),
 );
@@ -115,73 +116,7 @@ pub fn delegated_scope_for_google_oauth_scope(scope_url: &str) -> Option<Delegat
     }
 }
 
-/// One Gmail message projected down to what routing needs.
-///
-/// Deliberately header-shaped: the adapter never carries body text into the
-/// engine, only the identifiers and envelope needed to route and to point back
-/// at the provider-held message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GmailMessageMetadata {
-    pub message_id: String,
-    pub thread_id: String,
-    pub to: String,
-    pub from: String,
-    pub internal_date_secs: u64,
-}
-
-impl GmailMessageMetadata {
-    /// Builds a Gmail message projection.
-    #[must_use]
-    pub fn new(
-        message_id: impl Into<String>,
-        thread_id: impl Into<String>,
-        to: impl Into<String>,
-        from: impl Into<String>,
-        internal_date_secs: u64,
-    ) -> Self {
-        Self {
-            message_id: message_id.into(),
-            thread_id: thread_id.into(),
-            to: to.into(),
-            from: from.into(),
-            internal_date_secs,
-        }
-    }
-
-    /// Normalizes Gmail-native fields into the shared email inbound payload.
-    ///
-    /// Gmail's message id becomes the provider event id and its thread id the
-    /// payload ref, so the delegated path reaches routing in exactly the same
-    /// envelope a dedicated ESP webhook does.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::InvalidConfig`] when either id is blank, over the ceiling its
-    /// namespaced form leaves, or itself namespaced.
-    pub fn into_provider_inbound(self) -> Result<EmailProviderInbound> {
-        validate_gmail_id(
-            &self.message_id,
-            MAX_GMAIL_MESSAGE_ID_BYTES,
-            "gmail message id",
-        )?;
-        validate_gmail_id(
-            &self.thread_id,
-            MAX_GMAIL_THREAD_ID_BYTES,
-            "gmail thread id",
-        )?;
-        let message_id = self.message_id;
-        let thread_id = self.thread_id;
-        let inbound = EmailProviderInbound::new(
-            format!("{GMAIL_EVENT_ID_PREFIX}{message_id}"),
-            self.to,
-            self.from,
-            self.internal_date_secs,
-        )
-        .with_payload_ref(format!("{GMAIL_THREAD_PAYLOAD_PREFIX}{thread_id}"));
-        validate_email_inbound_metadata(&inbound)?;
-        Ok(inbound)
-    }
-}
+pub use super::gmail_header::{GmailMessageMetadata, HeaderMailbox};
 
 /// One page of read-side Gmail results.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -758,14 +693,21 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
             ));
         };
         validate_email_inbound_metadata(&email)?;
-        let (_, sender_domain) = split_email_address(&email.envelope_from)?;
-        let normalized_from = super::normalize_email_address(&email.envelope_from, &sender_domain)?;
+        let counterparty = match email.header_mailbox {
+            Some(HeaderMailbox::Parsed(mailbox)) => {
+                SurfaceCounterpartyStamp::unknown(format!("email:{mailbox}"))
+            }
+            Some(HeaderMailbox::Unparsed { raw_hash }) => {
+                SurfaceCounterpartyStamp::unparsed(EMAIL_CHANNEL, raw_hash)
+            }
+            None => counterparty_from_raw_sender(&email.envelope_from),
+        };
 
         let mut input = InboundSurfaceEventInput::new(
             email.provider_event_id,
             EMAIL_CHANNEL,
             self.config.mailbox_address.clone(),
-            SurfaceCounterpartyStamp::unknown(format!("email:{normalized_from}")),
+            counterparty,
             email.received_at,
             true,
         );
@@ -774,7 +716,22 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
     }
 }
 
-fn validate_gmail_id(value: &str, max: usize, label: &'static str) -> Result<()> {
+/// Converts a raw sender field into routing identity without making parsing a
+/// delivery gate. Invalid or unsupported From syntax degrades to a digest-only
+/// counterparty stamp; the receiving mailbox remains the configured identity.
+fn counterparty_from_raw_sender(raw_sender: &str) -> SurfaceCounterpartyStamp {
+    let parsed = split_email_address(raw_sender)
+        .and_then(|(_, domain)| super::normalize_email_address(raw_sender, &domain));
+    match parsed {
+        Ok(address) => SurfaceCounterpartyStamp::unknown(format!("email:{address}")),
+        Err(_) => SurfaceCounterpartyStamp::unparsed(
+            EMAIL_CHANNEL,
+            Sha256::digest(raw_sender.as_bytes()).into(),
+        ),
+    }
+}
+
+pub(super) fn validate_gmail_id(value: &str, max: usize, label: &'static str) -> Result<()> {
     validate_non_blank(value, label)?;
     validate_max_bytes(value, max, label)?;
     if value.contains(':') {

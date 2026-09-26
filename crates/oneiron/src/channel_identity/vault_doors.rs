@@ -247,47 +247,23 @@ impl Vault {
         decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
     }
 
-    /// Reads the ChannelIdentity holding a `(channel, address)` key.
-    ///
-    /// The lookup canonicalizes BOTH sides through [`AssignmentKey`], so a
-    /// caller spelling the mailbox the way its provider did finds the row a
-    /// normalizing writer stored, and a row decoded verbatim off disk is found
-    /// under the key it means rather than the bytes it holds.
-    ///
-    /// A row that no longer OCCUPIES its key is skipped: a released or
-    /// tombstoned delegated row has withdrawn its claim on a mailbox the
-    /// product never owned, so it must not shadow the row a lawful re-consent
-    /// stands up. Self-held rows occupy forever and are still found here in
-    /// every state, which is what keeps a tombstoned address routing to its own
-    /// rejection instead of looking unknown.
+    /// Reads the explicit two-slot assignment projection, not a scored scan.
     pub fn channel_identity_by_assignment(
         &self,
         channel: &str,
         address_or_handle: &str,
     ) -> Result<Option<(EntityId, ChannelIdentity)>> {
-        let wanted = AssignmentKey::of(channel, address_or_handle);
+        let key = AssignmentKey::of(channel, address_or_handle);
         let rtxn = self.store.env.read_txn()?;
-        for entry in
-            self.store
-                .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_CHANNEL_IDENTITY, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(&rtxn, &id)?
-                .map(|row| row.encode())
-                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-                return Err(Error::CorruptedIndex("type index row kind mismatch"));
-            }
-            let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if identity.occupies_assignment_key() && identity.assignment_key() == wanted {
-                return Ok(Some((id, identity)));
-            }
-        }
-        Ok(None)
+        super::assignment::by_assignment(&self.store, &rtxn, &key)
+    }
+
+    /// Rebuilds the assignment projection explicitly after index loss.
+    pub fn rebuild_channel_identity_assignment_index(&self) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        super::assignment::rebuild(&self.store, &mut txn)?;
+        txn.commit()?;
+        Ok(())
     }
 
     pub(crate) fn apply_channel_identity_body(

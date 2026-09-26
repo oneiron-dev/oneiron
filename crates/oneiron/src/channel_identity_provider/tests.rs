@@ -1,13 +1,13 @@
 use super::gmail::{
     GMAIL_CONNECTOR_EFFECTOR, GMAIL_INBOX_POLL_ATTEMPT_KIND, GMAIL_METADATA_OAUTH_SCOPE,
-    GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPollConfig,
-    delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
+    GmailDelegatedAdapter, GmailDelegatedAdapterConfig, GmailInboxPollConfig, GmailMessageMetadata,
+    HeaderMailbox, delegated_scope_for_google_oauth_scope, gmail_inbox_poll_dedupe_key,
 };
 use super::*;
 use crate::attempt_queue::{AttemptQueue, EnqueueOutcome};
 use crate::channel_identity::{
     ChannelIdentityState, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
-    delegated_custody_scopes,
+    MailboxAddr, delegated_custody_scopes,
 };
 use crate::secret_custody::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
@@ -820,6 +820,104 @@ fn gmail_adapter() -> Result<GmailDelegatedAdapter> {
     Ok(GmailDelegatedAdapter::new(
         GmailDelegatedAdapterConfig::new(GMAIL_MAILBOX, GMAIL_CUSTODY_REF)?,
     ))
+}
+
+#[test]
+fn gmail_parsed_from_uses_normalized_mailbox_counterparty_key() -> Result<()> {
+    let adapter = gmail_adapter()?;
+    let parsed_from = MailboxAddr::parse_addr_spec("Sender@Example.Test")?;
+    let inbound = GmailMessageMetadata::new(
+        "msg-parsed-from",
+        "thread-parsed-from",
+        "member@alias.example",
+        HeaderMailbox::Parsed(parsed_from),
+        1_800_000_009,
+    )
+    .into_provider_inbound()?;
+    let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
+    assert_eq!(
+        parsed.counterparty,
+        SurfaceCounterpartyStamp::unknown("email:sender@example.test")
+    );
+    Ok(())
+}
+
+#[test]
+fn gmail_unparseable_from_is_digest_stamped_and_still_routes() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let adapter = gmail_adapter()?;
+    let raw_from = "Doe, Jane <sender without an addr-spec>";
+    let metadata = GmailMessageMetadata::new(
+        "msg-unparseable-from",
+        "thread-unparseable-from",
+        "member@alias.example",
+        raw_from,
+        1_800_000_010,
+    );
+    let expected_header = HeaderMailbox::unparsed(raw_from);
+    let inbound = metadata.into_provider_inbound()?;
+    assert_eq!(inbound.header_mailbox.as_ref(), Some(&expected_header));
+    assert!(inbound.envelope_from.is_empty());
+    let serialized = serde_json::to_string(&inbound).expect("typed inbound serializes");
+    assert!(
+        !serialized.contains(raw_from),
+        "raw sender header is not retained"
+    );
+    let decoded: EmailProviderInbound =
+        serde_json::from_str(&serialized).expect("typed inbound deserializes");
+    assert_eq!(decoded, inbound);
+
+    let mut receiving = ChannelIdentity::requested(
+        EMAIL_CHANNEL,
+        GMAIL_MAILBOX,
+        SelfHeldShape::DedicatedAddress,
+        ChannelIdentityBinding::agent(entity(0xC9)),
+        1_800_000_000,
+    );
+    receiving.state = ChannelIdentityState::Active;
+    receiving.pending_fulfillment = None;
+    let receiving_ref = entity(0xC8);
+    vault.create_channel_identity(&receiving_ref, &receiving)?;
+
+    let parsed = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
+    let expected_stamp = match expected_header {
+        HeaderMailbox::Unparsed { raw_hash } => {
+            SurfaceCounterpartyStamp::unparsed(EMAIL_CHANNEL, raw_hash)
+        }
+        HeaderMailbox::Parsed(_) => unreachable!("display-name header is not an addr-spec"),
+    };
+    assert_eq!(
+        parsed.receiving_address_or_handle,
+        "member@member-owned.example"
+    );
+    assert_eq!(parsed.counterparty, expected_stamp);
+
+    let receipt = vault.route_inbound_surface_event(parsed)?;
+    assert_eq!(receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    assert_eq!(receipt.receiving_identity_ref, Some(receiving_ref.to_hex()));
+    let event = receipt
+        .surface_event
+        .expect("unparseable sender still routes");
+    assert_eq!(event.counterparty, expected_stamp);
+    assert!(event.source.user_ref.starts_with("unparsed:email:"));
+
+    // The trait's legacy raw-email path is total too. A caller that has not
+    // supplied a host projection still gets the same digest-only fallback.
+    let raw_input = adapter.parse_inbound(ChannelIdentityProviderInbound::Email(
+        EmailProviderInbound::new(
+            "gmail:msg-raw-unparseable-from",
+            GMAIL_MAILBOX,
+            raw_from,
+            1_800_000_011,
+        ),
+    ))?;
+    assert!(matches!(
+        raw_input.counterparty,
+        SurfaceCounterpartyStamp::Unparsed { .. }
+    ));
+    let raw_receipt = vault.route_inbound_surface_event(raw_input)?;
+    assert_eq!(raw_receipt.outcome, InboundSurfaceRouteOutcome::Routed);
+    Ok(())
 }
 
 /// Registers the member's OAuth grant: live, `connector:gmail` read-bound, and

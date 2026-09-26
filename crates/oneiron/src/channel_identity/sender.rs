@@ -1,9 +1,9 @@
+use super::decode_channel_identity_body;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::channel_identity::decode_channel_identity_body;
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::outbound::capability::normalize_key;
+
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::store::Store;
@@ -17,13 +17,13 @@ use crate::store::Store;
 /// identity that will carry the send. Missing, unregistered, or inactive
 /// identities resolve to `None`. Multiple eligible identities instead return
 /// [`Error::InvalidConfig`]: automatic selection must not send without a unique sender.
-pub(in crate::outbound) fn resolve_channel_identity_ref_for_connector(
+pub(crate) fn resolve_channel_identity_ref_for_connector(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     connector_key: &str,
     actor_entity_ref: Option<&EntityId>,
 ) -> crate::Result<Option<EntityId>> {
-    let connector = normalize_key(connector_key);
+    let connector = connector_key.trim().to_ascii_lowercase().replace('-', "_");
     let Some((_, key_record)) =
         crate::connector_key::governing_connector_key(store, txn, &connector, actor_entity_ref)?
     else {
@@ -73,7 +73,7 @@ pub(in crate::outbound) fn resolve_channel_identity_ref_for_connector(
 }
 
 /// An explicit channel identity always wins; otherwise resolve it cheaply.
-pub(in crate::outbound) fn enrich_dispatch_channel_identity(
+pub(crate) fn enrich_dispatch_channel_identity(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     connector_key: &str,
@@ -81,7 +81,24 @@ pub(in crate::outbound) fn enrich_dispatch_channel_identity(
     explicit: Option<EntityId>,
 ) -> crate::Result<Option<EntityId>> {
     match explicit {
-        some @ Some(_) => Ok(some),
+        Some(id) => {
+            let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {
+                return Ok(Some(id));
+            };
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("channel identity sender header"))?;
+            if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
+                let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                if !identity.may_send() {
+                    return Err(Error::Record(
+                        crate::error::RecordError::InvalidChannelIdentityBody(
+                            "inactive or delegated channel identity cannot send",
+                        ),
+                    ));
+                }
+            }
+            Ok(Some(id))
+        }
         None => {
             resolve_channel_identity_ref_for_connector(store, txn, connector_key, actor_entity_ref)
         }

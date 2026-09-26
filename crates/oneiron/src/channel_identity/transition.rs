@@ -1,20 +1,15 @@
 //! ChannelIdentity transition admission, custody re-proof, and uniqueness scan.
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::ports::EntityStoreRead;
 
 use crate::entity_id::EntityId;
 
 use crate::error::{Error, Result};
 
-use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
-
 use crate::store::Store;
 
 use super::binding::ChannelIdentityBinding;
-
-use super::codec::decode_channel_identity_body;
-
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
 use super::lifecycle::ChannelIdentityState;
@@ -147,7 +142,7 @@ pub(crate) fn admit_channel_identity_transition_in_txn(
             }
         }
     }
-    if channel_identity_assignment_conflict_in_txn(store, txn, id, next)? {
+    if super::assignment::conflicts(store, txn, id, next)? {
         return Err(Error::Record(RecordError::ChannelIdentityAlreadyExists));
     }
     reprove_delegated_custody_in_txn(store, txn, next)
@@ -172,37 +167,4 @@ fn reprove_delegated_custody_in_txn(
         )?;
     }
     Ok(())
-}
-
-/// Whether another row already OCCUPIES this row's assignment key.
-fn channel_identity_assignment_conflict_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    identity: &ChannelIdentity,
-) -> Result<bool> {
-    if !identity.occupies_assignment_key() {
-        return Ok(false);
-    }
-    let key = identity.assignment_key();
-    for entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_CHANNEL_IDENTITY, None)? {
-        let existing_id = entry?;
-        if existing_id == *id {
-            continue;
-        }
-        let raw = store
-            .port_entity_record(txn, &existing_id)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
-            return Err(Error::CorruptedIndex("type index row kind mismatch"));
-        }
-        let stored = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        if stored.occupies_assignment_key() && stored.assignment_key() == key {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

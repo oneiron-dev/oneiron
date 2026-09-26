@@ -19,6 +19,92 @@ fn test_vault() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
+fn delegated_identity_fixture(
+    vault: &Vault,
+    name: &str,
+    address: &str,
+    learned_at: u64,
+) -> Result<(
+    crate::channel_identity::DelegatedGrant,
+    crate::channel_identity::ChannelIdentityBinding,
+)> {
+    use crate::channel_identity::{DelegatedGrant, DelegatedGrantScope, delegated_custody_scopes};
+    use crate::secret_custody::{
+        CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding,
+        SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
+    };
+
+    let record = SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: name.to_owned(),
+        class: CustodyClass::CustodyDeviceBound,
+        device_only: true,
+        value_bytes: b"locally-held-oauth-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: learned_at,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:gmail".to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes("email", address),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    };
+    vault.register_secret(record)?;
+    let grant = DelegatedGrant::new(name, vec![DelegatedGrantScope::MailRead]);
+    vault.verify_delegated_custody("email", address, &grant)?;
+    Ok((
+        grant,
+        crate::channel_identity::ChannelIdentityBinding::agent(EntityId::from_bytes([0xA1; 16])?),
+    ))
+}
+
+fn release_local_delegated_identity(
+    vault: &Vault,
+    id: EntityId,
+    learned_at: u64,
+    address: &str,
+    grant: crate::channel_identity::DelegatedGrant,
+    binding: crate::channel_identity::ChannelIdentityBinding,
+) -> Result<crate::channel_identity::ChannelIdentity> {
+    use crate::channel_identity::{ChannelIdentityState, DelegatedProvisionRequest};
+
+    vault.provision_delegated_identity(
+        &id,
+        DelegatedProvisionRequest {
+            channel: "email".to_owned(),
+            address_or_handle: address.to_owned(),
+            binding,
+            grant,
+        },
+        learned_at,
+    )?;
+    vault.transition_channel_identity(
+        &id,
+        ChannelIdentityState::PendingFulfillment,
+        Some(crate::channel_identity::ChannelIdentityFulfillment::Manual),
+        learned_at + 1,
+        None,
+    )?;
+    vault.transition_channel_identity(
+        &id,
+        ChannelIdentityState::Active,
+        None,
+        learned_at + 2,
+        None,
+    )?;
+    vault.transition_channel_identity(
+        &id,
+        ChannelIdentityState::Released,
+        None,
+        learned_at + 3,
+        None,
+    )
+}
+
 /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
 /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
 /// byte-equality is exact).
@@ -1539,6 +1625,87 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
         record.payload_hash,
         crate::sync::quarantine::payload_hash(&forged_value)
     );
+    Ok(())
+}
+
+#[test]
+fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityShape, ChannelIdentityState, encode_channel_identity_body,
+    };
+
+    let (_dir, vault) = test_vault();
+    let window_key = WindowKey::new("2026-03");
+    let learned_at = window_key.start_timestamp().unwrap() + 60;
+    let address = "member@example.test";
+    let (grant, binding) =
+        delegated_identity_fixture(&vault, "member-custody", address, learned_at)?;
+    let retired_id = EntityId::from_bytes([0xB1; 16])?;
+    let retired = release_local_delegated_identity(
+        &vault,
+        retired_id,
+        learned_at,
+        address,
+        grant.clone(),
+        binding,
+    )?;
+    assert_eq!(retired.state, ChannelIdentityState::Released);
+    // The local custody record remains active and really covers this mailbox;
+    // it is not missing custody that makes the peer's row invalid.
+    vault.verify_delegated_custody("email", address, &grant)?;
+
+    // A peer can encode a structurally valid ACTIVE row by hand. It names the
+    // just-freed key and the receiver's locally valid custody record, but it
+    // has no local provision/bind/fulfillment history.
+    let mut peer_identity = retired;
+    peer_identity.state = ChannelIdentityState::Active;
+    peer_identity.state_changed_at = learned_at + 4;
+    peer_identity.shape = ChannelIdentityShape::DelegatedGrant;
+    let peer_body = encode_channel_identity_body(&peer_identity)?;
+    let peer_id = EntityId::from_bytes([0xB2; 16])?;
+
+    // Self-held identities remain ordinary replicated rows.
+    let self_held_id = EntityId::from_bytes([0xB3; 16])?;
+    let self_held = ChannelIdentity::own_app_home(EntityId::from_bytes([0xB4; 16])?, learned_at);
+    let self_held_body = encode_channel_identity_body(&self_held)?;
+    let doc = create_window_doc("peer-authored", &window_key);
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &peer_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at + 4,
+            &peer_body,
+        ),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &self_held_id.to_hex(),
+        &make_entity_blob(
+            crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY,
+            learned_at,
+            &self_held_body,
+        ),
+    )?;
+    doc.commit();
+
+    let count = forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    assert_eq!(count, 1, "the self-held control row still replays");
+    assert!(
+        vault.get_raw_unsealed(&peer_id)?.is_none(),
+        "a peer-authored delegated row must not occupy the freed assignment key"
+    );
+    assert_eq!(
+        vault
+            .get_channel_identity(&self_held_id)?
+            .map(|row| row.state),
+        Some(ChannelIdentityState::Active),
+        "self-held active identity replication stays supported"
+    );
+    let rejected = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].1.reason_code, "InvalidChannelIdentityBody");
     Ok(())
 }
 

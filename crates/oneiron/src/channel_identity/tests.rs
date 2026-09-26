@@ -462,8 +462,10 @@ fn delegated_rows_are_read_only_and_free_their_key_when_retired() -> Result<()> 
     )?;
     assert!(!released.occupies_assignment_key());
     assert_eq!(
-        vault.channel_identity_by_assignment(EMAIL_CHANNEL, "member@member-owned.example")?,
-        None,
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, "member@member-owned.example")?
+            .map(|(found, _)| found),
+        Some(id), // the retiring predecessor still receives in-flight mail
     );
     let reconsented = vault.provision_delegated_identity(
         &entity(0x71),
@@ -642,3 +644,102 @@ fn channel_auth_modes_register_without_credential_material() -> Result<()> {
 }
 
 mod actors;
+
+#[test]
+fn assignment_two_slots_route_retiring_predecessor_until_reconsent_is_active() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let mailbox = "member@member-owned.example";
+    let grant = DelegatedGrant::new("oauth/gmail/member", vec![DelegatedGrantScope::MailRead]);
+    register_delegated_custody(&vault, &grant, mailbox)?;
+    let first = entity(0xA8);
+    let second = entity(0xA9);
+    let request = |actor| DelegatedProvisionRequest {
+        channel: EMAIL_CHANNEL.to_owned(),
+        address_or_handle: mailbox.to_owned(),
+        binding: ChannelIdentityBinding::agent(actor),
+        grant: grant.clone(),
+    };
+    vault.provision_delegated_identity(&first, request(entity(0x51)), 100)?;
+    vault.transition_channel_identity(
+        &first,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        101,
+        None,
+    )?;
+    vault.transition_channel_identity(&first, ChannelIdentityState::Active, None, 102, None)?;
+    vault.transition_channel_identity(&first, ChannelIdentityState::Released, None, 103, None)?;
+    vault.provision_delegated_identity(&second, request(entity(0x52)), u64::MAX - 1)?;
+    // Deliberately skewed timestamps do not decide precedence. Requested and
+    // pending re-consent cannot shadow a released row's in-flight mail.
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, mailbox)?
+            .map(|(id, _)| id),
+        Some(first)
+    );
+    vault.transition_channel_identity(
+        &second,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        u64::MAX - 1,
+        None,
+    )?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, mailbox)?
+            .map(|(id, _)| id),
+        Some(first)
+    );
+    vault.transition_channel_identity(
+        &second,
+        ChannelIdentityState::Active,
+        None,
+        u64::MAX,
+        None,
+    )?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, mailbox)?
+            .map(|(id, _)| id),
+        Some(second)
+    );
+    vault.rebuild_channel_identity_assignment_index()?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, mailbox)?
+            .map(|(id, _)| id),
+        Some(second)
+    );
+    Ok(())
+}
+
+#[test]
+fn delegated_custody_must_name_the_exact_mailbox_at_engine_door() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let grant = DelegatedGrant::new("oauth/gmail/alice", vec![DelegatedGrantScope::MailRead]);
+    register_delegated_custody(&vault, &grant, "alice@example.test")?;
+    let request = DelegatedProvisionRequest {
+        channel: EMAIL_CHANNEL.to_owned(),
+        address_or_handle: "bob@example.test".to_owned(),
+        binding: ChannelIdentityBinding::agent(entity(0x51)),
+        grant: grant.clone(),
+    };
+    assert_eq!(
+        vault
+            .provision_delegated_identity(&entity(0xB1), request, 1_800_000_000)
+            .expect_err("custody of alice never authorizes bob's mailbox")
+            .kind(),
+        ErrorKind::SecretBindingDenied,
+    );
+    assert!(vault.get_channel_identity(&entity(0xB1))?.is_none());
+    // Verification is itself engine-side; the adapter cannot vouch for Bob.
+    assert_eq!(
+        vault
+            .verify_delegated_custody(EMAIL_CHANNEL, "bob@example.test", &grant)
+            .expect_err("proof cannot be minted for a different subject")
+            .kind(),
+        ErrorKind::SecretBindingDenied,
+    );
+    Ok(())
+}

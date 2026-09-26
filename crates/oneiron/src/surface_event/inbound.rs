@@ -157,6 +157,9 @@ pub enum SurfaceCounterpartyStamp {
     Known { counterparty_ref: String },
     /// A provider-native sender key not yet attached to a contact record.
     Unknown { counterparty_key: String },
+    /// Sender parsing did not project an address. The raw sender bytes are not
+    /// retained; the channel and digest form an opaque, stable counterparty key.
+    Unparsed { channel: String, raw_hash: [u8; 32] },
 }
 
 impl SurfaceCounterpartyStamp {
@@ -176,12 +179,24 @@ impl SurfaceCounterpartyStamp {
         }
     }
 
+    /// Builds a digest-only stamp when sender parsing cannot project an address.
+    #[must_use]
+    pub fn unparsed(channel: impl Into<String>, raw_hash: [u8; 32]) -> Self {
+        Self::Unparsed {
+            channel: channel.into(),
+            raw_hash,
+        }
+    }
+
     /// Provider-native user ref this stamp contributes when an adapter does
     /// not supply a richer one.
     fn default_user_ref(&self) -> String {
         match self {
             Self::Known { counterparty_ref } => counterparty_ref.clone(),
             Self::Unknown { counterparty_key } => counterparty_key.clone(),
+            Self::Unparsed { channel, raw_hash } => {
+                format!("unparsed:{channel}:{}", hash_hex(raw_hash))
+            }
         }
     }
 
@@ -195,8 +210,22 @@ impl SurfaceCounterpartyStamp {
                 counterparty_key,
                 "surface counterparty key must be non-empty",
             ),
+            Self::Unparsed { channel, .. } => validate_non_blank(
+                channel,
+                "surface unparsed counterparty channel must be non-empty",
+            ),
         }
     }
+}
+
+fn hash_hex(raw_hash: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in raw_hash {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 /// Adapter-normalized inbound payload before identity routing.

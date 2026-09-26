@@ -26,6 +26,7 @@
 
 mod actors;
 mod address;
+mod assignment;
 mod auth_mode;
 mod binding;
 mod codec;
@@ -33,6 +34,7 @@ mod custody;
 mod keys;
 mod lifecycle;
 mod record;
+mod sender;
 mod shape;
 mod transition;
 mod vault_doors;
@@ -66,9 +68,13 @@ pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
 
-pub(crate) use self::codec::{
-    validate_channel_identity_body_bytes, validate_channel_identity_claim_structure,
-};
+pub(crate) use self::assignment::maintain_assignment_put;
+#[cfg(test)]
+use self::codec::validate_channel_identity_body_bytes;
+pub(crate) use self::codec::validate_channel_identity_claim_structure;
+pub(crate) use self::sender::enrich_dispatch_channel_identity;
+#[cfg(test)]
+pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{IdentityTransition, admit_channel_identity_transition_in_txn};
 
 #[cfg(test)]

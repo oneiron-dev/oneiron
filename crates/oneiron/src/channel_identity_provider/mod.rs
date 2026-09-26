@@ -6,6 +6,7 @@
 
 mod email_adapter;
 pub mod gmail;
+mod gmail_header;
 mod inbound_types;
 mod line_adapter;
 mod shared_validate;

@@ -1,6 +1,7 @@
 //! Reverse rematerialization plus skip/policy predicates and carrier removal.
 
 use std::collections::HashSet;
+use std::io::Cursor;
 
 use super::bridge::{self, BRIDGE_ORIGIN, encode_edge_value_for_crdt, format_edge_key};
 use super::loro_support::{
@@ -21,6 +22,7 @@ use crate::error::{Error, RegistryError, Result};
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::sync::local_claims::{claim_sync_allowed, local_claim_sync_allowed};
 use loro::{CommitOptions, LoroDoc, LoroMap};
+use rmpv::Value;
 
 /// Reverse re-materialization: LMDB→CRDT (insert-missing only).
 ///
@@ -30,6 +32,39 @@ use loro::{CommitOptions, LoroDoc, LoroMap};
 /// are left alone: this pass inserts missing records only.
 ///
 /// Returns the number of entities newly mirrored into the CRDT.
+pub(in crate::sync) fn is_delegated_channel_identity_carrier(raw: &[u8]) -> bool {
+    let Some(header) = EntityMetadataHeader::parse(raw) else {
+        return false;
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY {
+        return false;
+    }
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    if crate::channel_identity::decode_channel_identity_body(body)
+        .is_ok_and(|identity| identity.is_delegated())
+    {
+        return true;
+    }
+
+    // The body is the authority for this seal, not its attacker-chosen CRDT
+    // key. Keep the seal fail-closed across a damaged delegated encoding too:
+    // schema 6, the delegated shape tag, and either custody extension field
+    // are all enough evidence to withhold this local-custody carrier.
+    let mut cursor = Cursor::new(body);
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
+        return false;
+    };
+    entries.iter().any(|(key, value)| match key.as_str() {
+        Some("schema_version") => {
+            value.as_u64()
+                == Some(crate::channel_identity::CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION)
+        }
+        Some("shape") => value.as_str() == Some("delegated_grant"),
+        Some("delegated_grant_ref" | "grant_scopes") => true,
+        _ => false,
+    })
+}
+
 pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKey) -> Result<u32> {
     let start_ts = window_key
         .start_timestamp()
@@ -39,6 +74,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
+    super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
@@ -134,6 +170,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // a local dial narrows an existing portable credential.
         if !claim_sync_allowed(&raw)
             || is_unsyncable_secret_custody(&raw)
+            || is_delegated_channel_identity_carrier(&raw)
             || *id == crate::gate::default_policy_manifest_id()?
         {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;

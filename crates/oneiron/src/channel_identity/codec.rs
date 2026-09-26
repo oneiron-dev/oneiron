@@ -143,7 +143,7 @@ pub fn decode_channel_identity_body(bytes: &[u8]) -> Result<ChannelIdentity> {
     decode_channel_identity_value(&value)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn validate_channel_identity_body_bytes(bytes: &[u8]) -> Result<()> {
     decode_channel_identity_body(bytes).map(|_| ())
 }

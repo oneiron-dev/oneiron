@@ -235,7 +235,12 @@ pub(in crate::batch) fn apply_put(
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-        crate::channel_identity::validate_channel_identity_body_bytes(data)?;
+        let identity = crate::channel_identity::decode_channel_identity_body(data)?;
+        if replicated && identity.is_delegated() {
+            return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "delegated ChannelIdentity rows are local custody facts and cannot be replicated",
+            )));
+        }
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {
@@ -615,6 +620,9 @@ pub(in crate::batch) fn apply_put(
         previous_skill_record.as_ref(),
         new_skill_record.as_ref(),
     )?;
+    if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
+        crate::channel_identity::maintain_assignment_put(store, wtxn, &id, data)?;
+    }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
     // Count authenticated local Proposed submissions, including changed bodies
     // under an actor-owned claim ID. An exact same-body retry is not new.
