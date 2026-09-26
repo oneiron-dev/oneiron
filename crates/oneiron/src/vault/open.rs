@@ -605,6 +605,7 @@ impl Vault {
                 Ok(())
             })?;
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
+            crate::skill_hub::seed_default_skill_hub(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;
