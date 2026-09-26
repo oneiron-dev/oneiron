@@ -1,5 +1,6 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
+use super::dedupe;
 use super::replay::{gate_rejection, replay_record, send_pending};
 #[cfg(test)]
 use super::types::BEFORE_NEW_ADMISSION;
@@ -131,6 +132,21 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
 
+    let dedupe_key = dedupe::dedupe_key(&prepared)?;
+    // `now_ms` is supplied by the dispatch caller; semantic suppression must
+    // use the vault's own clock, not a caller-selected future timestamp.
+    let dedupe_now = vault.store.clock.now_recorded_at();
+    if let Some(key) = dedupe_key.as_deref()
+        && dedupe::blocked(vault, &wtxn, key, dedupe_now)?
+    {
+        let (decision_id, decision) =
+            gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+        wtxn.commit().map_err(Error::from)?;
+        let mut result = gate_rejection(intent_id, decision_id, decision);
+        result.dedupe_suppressed = true;
+        return Ok(result);
+    }
+
     let (budget_accounting, budget_charge, exhausted) = charge_once(
         vault,
         &mut wtxn,
@@ -230,6 +246,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
+    if let Some(key) = dedupe_key.as_deref() {
+        dedupe::reserve(vault, &mut wtxn, key, &pending.id, dedupe_now)?;
+    }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
 

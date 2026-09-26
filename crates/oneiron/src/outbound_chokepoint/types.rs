@@ -28,6 +28,8 @@ pub(crate) struct OutboundEffectResult {
     pub(crate) gate_reason_codes: Vec<String>,
     pub(crate) gate_receipt_reasons: Vec<String>,
     pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+    /// OF-327 suppression is not a Gate denial or a Gate reason code.
+    pub(crate) dedupe_suppressed: bool,
 }
 
 /// The only two commands accepted by the effectful entry.
@@ -60,6 +62,8 @@ pub(crate) struct PreparedEffect {
     pub(crate) budget_class: BudgetClass,
     pub(crate) authorization: PreparedAuthorization,
     pub(crate) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    /// OF-327 semantic identity; absent for non-dispatch effects.
+    pub(crate) dedupe_key: Option<String>,
 }
 
 impl PreparedEffect {

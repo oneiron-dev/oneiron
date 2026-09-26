@@ -19,6 +19,22 @@ pub(super) fn append_optional_receipt_field(
     }
 }
 
+/// The semantic floor is separate from the Gate decision: a Gate allow can
+/// still collapse an already-delivered intent without fabricating a deny code.
+pub(super) fn append_dedupe_suppression_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    dedupe_suppressed: bool,
+) {
+    if dedupe_suppressed {
+        receipt
+            .fields
+            .insert("suppression".to_owned(), "dedupe".to_owned());
+        receipt
+            .policy_trace
+            .push("outbound.dedupe.cooldown".to_owned());
+    }
+}
+
 pub(super) fn append_execution_receipt_fields(
     receipt: &mut ReceiptRecord,
     fields: &BTreeMap<String, String>,

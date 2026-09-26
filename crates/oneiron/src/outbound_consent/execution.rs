@@ -111,6 +111,7 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
             prepared: Box::new(prepared_call.clone()),
         },
         verified_actor: None,
+        dedupe_key: None,
     };
     let mut transport = ScopedResultTransport::new(sender);
     let effect = crate::outbound_chokepoint::execute_outbound_effect(

@@ -344,6 +344,7 @@ fn effect_result(
         gate_reason_codes: Vec::new(),
         gate_receipt_reasons: Vec::new(),
         budget_charge: None,
+        dedupe_suppressed: false,
     }
 }
 
@@ -374,5 +375,6 @@ pub(super) fn gate_rejection(
             .map(|reason| (*reason).to_owned())
             .collect(),
         budget_charge: None,
+        dedupe_suppressed: false,
     }
 }

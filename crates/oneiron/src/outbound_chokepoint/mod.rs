@@ -4,6 +4,7 @@
 //! budget accounting, durable intent state, and transport.
 
 mod admission;
+mod dedupe;
 mod replay;
 mod types;
 

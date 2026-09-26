@@ -20,6 +20,8 @@ pub struct OutboundIntent {
     pub content_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
+    /// Vault-wide semantic identity. Producers include recipient/principal scope
+    /// in this key when the same topic may be delivered to different people.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedupe_key: Option<String>,
     pub intent_source: String,
@@ -99,6 +101,8 @@ impl OutboundIntentDraft {
         self
     }
 
+    /// Use the same key for repeat attempts at one semantic action, across
+    /// channels; include any recipient scope needed to distinguish actions.
     #[must_use]
     pub fn dedupe_key(mut self, dedupe_key: impl Into<String>) -> Self {
         self.dedupe_key = Some(dedupe_key.into());

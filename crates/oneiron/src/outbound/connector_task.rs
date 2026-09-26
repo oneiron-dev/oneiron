@@ -60,6 +60,9 @@ pub(super) struct ConnectorSendTaskBody {
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<ConnectorSendTaskOutcome>,
+    /// Synced terminal reason for a mechanically collapsed send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) suppression: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) utc_offset_minutes: Option<i16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,6 +123,8 @@ pub struct ConnectorSendTask {
     pub originating_session_ref: Option<String>,
     pub attempt_started_node_id: Option<u64>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
+    /// Synced terminal suppression reason, when the engine collapsed a send.
+    pub suppression: Option<String>,
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
     /// executor cannot derive a local minute and fails closed.
     pub utc_offset_minutes: Option<i16>,
@@ -196,6 +201,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         originating_session_ref: originating_session_ref.map(str::to_owned),
         attempt_started_node_id: None,
         outcome: None,
+        suppression: None,
         utc_offset_minutes: schedule_context.utc_offset_minutes,
         iana_timezone: schedule_context.iana_timezone.clone(),
         human_explicit_instant: schedule_context.human_explicit_instant,
@@ -339,6 +345,7 @@ impl Vault {
             originating_session_ref: body.originating_session_ref,
             attempt_started_node_id: body.attempt_started_node_id,
             outcome: body.outcome,
+            suppression: body.suppression,
             utc_offset_minutes: body.utc_offset_minutes,
             iana_timezone: body.iana_timezone,
             human_explicit_instant: body.human_explicit_instant,
@@ -439,6 +446,7 @@ pub(super) fn mark_connector_send_task_attempt_started(
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.attempt_started_node_id = Some(node_id);
         body.outcome = None;
+        body.suppression = None;
         Ok(())
     })
 }
@@ -461,6 +469,19 @@ pub(super) fn project_connector_send_task_outcome(
     }
     update_connector_send_task_body(vault, task_ref, now, |body| {
         body.outcome = Some(outcome);
+        body.suppression = None;
+        Ok(())
+    })
+}
+
+pub(super) fn project_connector_send_task_suppression(
+    vault: &Vault,
+    task_ref: EntityId,
+    now: u64,
+) -> Result<(), Error> {
+    update_connector_send_task_body(vault, task_ref, now, |body| {
+        body.outcome = Some(ConnectorSendTaskOutcome::Failed);
+        body.suppression = Some("dedupe".to_owned());
         Ok(())
     })
 }
