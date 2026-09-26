@@ -2,7 +2,7 @@
 
 use std::path::Path;
 #[cfg(unix)]
-use std::{fs, io::Write};
+use std::{fs, io::Write, os::unix::fs::OpenOptionsExt};
 
 use loro::LoroDoc;
 
@@ -50,7 +50,6 @@ fn publish(snapshot: &CanonicalSnapshot, path: &Path) -> Result<[u8; 32]> {
     options.write(true).create_new(true);
     // A snapshot contains private entity bytes; never expose them via a
     // world-readable temporary file, even briefly before publication.
-    use std::os::unix::fs::OpenOptionsExt;
     options.mode(0o600);
     let mut file = options.open(&temporary)?;
     let outcome = (|| {
