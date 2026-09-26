@@ -151,6 +151,9 @@ export type RetrievalMeta = {
   deepPending?: boolean
 }
 
+/** A full-vault render in one of the five pack serialization formats. */
+export type MemoryExport = { format: string; rendered: string }
+
 /** The engine `MemoryPack`, unchanged apart from field spelling. */
 export type MemoryPack = {
   items: MemoryItem[]

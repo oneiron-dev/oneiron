@@ -50,6 +50,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "export",
+                crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
+            ),
+            (
                 "receipts",
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
             ),
@@ -289,6 +293,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_query(&input.query)?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(10))?;
         }
+        "export" => {
+            let _input: crate::memory::ExportOptions = decode(value.clone())?;
+        }
         "receipts" => {
             let input: ReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit(input.limit.unwrap_or(100))?;
@@ -349,6 +356,7 @@ pub fn invoke(
         "witness" => encode(witness(memory, decode(value)?)?),
         "claim_upsert" => encode(claim_upsert(memory, decode(value)?)?),
         "recall" => encode(recall(memory, decode(value)?)?),
+        "export" => encode(export(memory, decode(value)?)?),
         "receipts" => encode(receipts(memory, decode(value)?)?),
         "key_value_get" => encode(key_value_get(memory, decode(value)?)?),
         "key_value_put" => encode(key_value_put(memory, decode(value)?)?),
@@ -476,6 +484,12 @@ pub fn recall(
         input.format.as_deref(),
         None,
     )
+}
+pub fn export(
+    memory: &Memory<'_>,
+    input: crate::memory::ExportOptions,
+) -> MemoryResult<crate::memory::MemoryExport> {
+    memory.export(&input)
 }
 pub fn receipts(
     memory: &Memory<'_>,

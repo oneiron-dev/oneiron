@@ -20531,6 +20531,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ExportOptions",
+      "MemoryExport"
+     ],
+     "path": "src/memory/export.rs",
+     "purpose": "Full-vault memory export through the existing five-format pack writers",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExpressionPreferenceInput",
       "ExpressionPreferenceReceipt",
       "ExpressionPreferenceView"
@@ -20662,7 +20676,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -20935,6 +20949,14 @@
      "notable": [],
      "path": "src/memory/tests/delete_tombstone.rs",
      "purpose": "Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/export.rs",
+     "purpose": "The public export verb renders the full vault and hydratable short refs",
      "surface": {}
     },
     {
@@ -31139,7 +31161,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 30
+      "fn": 31
      }
     },
     {
@@ -34371,7 +34393,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34898,8 +34920,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
@@ -37340,7 +37362,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -37624,7 +37646,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 23
      }
     },
     {
@@ -38961,7 +38983,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/facade/tests.rs",

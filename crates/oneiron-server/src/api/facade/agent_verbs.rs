@@ -9,6 +9,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/witness", post(witness))
         .route("/claim_upsert", post(claim_upsert))
         .route("/recall", post(recall))
+        .route("/export", post(export))
         .route("/receipts", post(receipts))
         .route("/key_value_get", post(key_value_get))
         .route("/key_value_put", post(key_value_put))
@@ -139,6 +140,21 @@ async fn recall(
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
         "recall",
+        value,
+    )?))
+}
+async fn export(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "export",
         value,
     )?))
 }

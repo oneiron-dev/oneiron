@@ -770,3 +770,88 @@ async fn http_tasks_update_writes_nothing_on_a_task_outside_the_callers_read_flo
     };
     assert!(section.rows.iter().any(|row| row.id == task.to_hex()));
 }
+
+#[tokio::test]
+async fn export_projects_five_formats_and_refuses_scoped_slips() {
+    use oneiron::authority::SlipCaveat;
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let dir = tempfile::tempdir().unwrap();
+    let vault =
+        Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            crate::config::SyncServerConfig {
+                auth_secret: Some("facade-export".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let recipe = format!(
+        "scope=core:read;principal_ref={};actor_class=human",
+        actor.to_hex()
+    );
+    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
+    let mut narrow = slip.clone();
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
+    narrow
+        .attenuate(SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        })
+        .unwrap();
+    let app = crate::build_app(Arc::clone(&server));
+    for format in ["toon", "md", "json", "yaml", "txt"] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/facade/export")
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"format":format}).to_string()))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server, &slip, &holder, request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{format}");
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["format"], format);
+        let rendered = body["rendered"].as_str().unwrap();
+        assert!(rendered.contains("evidence_ledger"));
+        if format == "json" {
+            let document: Value = serde_json::from_str(rendered).unwrap();
+            assert!(
+                document["evidence_ledger"]["entities"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["id"] == actor.to_hex() && row["short_ref"].as_str().is_some())
+            );
+        }
+    }
+    for (credential, format, status) in [
+        (&narrow, "json", StatusCode::FORBIDDEN),
+        (&slip, "gemini", StatusCode::BAD_REQUEST),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/core/facade/export")
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"format":format}).to_string()))
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server, credential, &holder, request,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{format}");
+    }
+}

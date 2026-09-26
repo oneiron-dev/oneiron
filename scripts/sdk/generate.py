@@ -64,7 +64,7 @@ def boundary_type(value, language, wire=False):
         return f'list[{item}]' if language.startswith('py') else f'({item})[]' if ' | ' in item else item + '[]'
     if language == 'napi': return RESULTS[inner][0]
     if language == 'py': return {'String': 'str', 'bool': 'bool'}.get(inner, 'dict[str, Any]')
-    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt'}.get(inner, inner)
+    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt', 'MemoryExport': 'dict[str, Any]'}.get(inner, inner)
     return {'String': 'string', 'bool': 'boolean', 'MemoryReceipt': 'FacadeReceipt', **({'KeyValueItem': 'WireItem'} if wire else {})}.get(inner, inner)
 
 def remote_boundary(row):

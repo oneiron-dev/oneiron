@@ -507,6 +507,7 @@ fn cyclic_archive_input_references_retire_payloads_without_recursing_through_age
             ClaimLifecycleStatus::Active,
         );
         let knowledge = ExportEntity {
+            short_ref: None,
             id: assets[1 - index].to_hex(),
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred_start: 10,
