@@ -155,7 +155,7 @@ fn state_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<WakeState> {
         .get(txn, STATE_KEY)?
         .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
         .transpose()
-        .map(|state| state.unwrap_or_default())
+        .map(Option::unwrap_or_default)
 }
 
 /// Read one snapshot of live rows. Full role/source validation happens before

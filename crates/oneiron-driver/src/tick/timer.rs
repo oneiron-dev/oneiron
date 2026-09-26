@@ -137,10 +137,11 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         // An unreadable home designation refuses Macro, but an independent
         // queued Micro/Meso/maintenance or commitment still makes progress.
         // With no other work, propagate the error rather than call it quiet.
-        if next.is_none() && commitment.is_none() {
-            if let Some(error) = macro_error {
-                return Err(error);
-            }
+        if next.is_none()
+            && commitment.is_none()
+            && let Some(error) = macro_error
+        {
+            return Err(error);
         }
         // The two lanes are independent durable sources; the earlier one arms
         // the timer. A TIE keeps the attempt deadline, so wiring the commitment
