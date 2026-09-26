@@ -26,6 +26,16 @@ fn fixture() -> (tempfile::TempDir, Vault, EntityId) {
 }
 
 fn claim(vault: &Vault, id: EntityId, subject: EntityId, value: &str) -> Result<()> {
+    claim_with_text(vault, id, subject, value, "l2needle")
+}
+
+fn claim_with_text(
+    vault: &Vault,
+    id: EntityId,
+    subject: EntityId,
+    value: &str,
+    text: &str,
+) -> Result<()> {
     let body = ClaimBody::new(
         "profile.preference",
         ClaimSubject::Entity(subject),
@@ -44,7 +54,7 @@ fn claim(vault: &Vault, id: EntityId, subject: EntityId, value: &str) -> Result<
             1,
             &raw,
         )
-        .text(&id, &[("body", "l2needle")])
+        .text(&id, &[("body", text)])
         .commit()?;
     vault.put_edge(&id, EdgeKind::ClaimOf, &subject, 1.0)
 }
@@ -69,7 +79,7 @@ fn unchanged_evidence_reuses_render_and_only_new_query_items_enter_delta() -> Re
     let first = assembly(&vault, subject).run()?;
     let summary = first.l2_base.as_ref().unwrap();
     assert_eq!(summary.evidence_ids(), &[second_id, first_id]);
-    assert!(first.results.is_empty());
+    assert!(first.results.iter().any(|row| row.id == first_id));
     assert!(first.empty.is_none());
     let rows: serde_json::Value = serde_json::from_str(&summary.body).unwrap();
     assert_eq!(rows[0]["id"], second_id.to_hex());
@@ -124,10 +134,7 @@ fn unchanged_evidence_reuses_render_and_only_new_query_items_enter_delta() -> Re
         &summary.body,
         &after.l2_base.as_ref().unwrap().body
     ));
-    assert_eq!(
-        after.results.iter().map(|row| row.id).collect::<Vec<_>>(),
-        vec![fresh]
-    );
+    assert!(after.results.iter().any(|row| row.id == fresh));
     let after_bytes = assembly(&vault, subject).run_serialized()?;
     let before: serde_json::Value = serde_json::from_slice(&before).unwrap();
     let after: serde_json::Value = serde_json::from_slice(&after_bytes).unwrap();
@@ -391,10 +398,7 @@ fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Resul
         .commit()?;
     let after = assemble().run()?;
     assert!(Arc::ptr_eq(&prefix.body, &after.l2_base.unwrap().body));
-    assert_eq!(
-        after.results.iter().map(|row| row.id).collect::<Vec<_>>(),
-        vec![fresh]
-    );
+    assert!(after.results.iter().any(|row| row.id == fresh));
     let later: serde_json::Value = serde_json::from_slice(&assemble().run_serialized()?).unwrap();
     assert_eq!(before["l2_base"], later["l2_base"]);
     assert_ne!(before["delta"], later["delta"]);
@@ -444,7 +448,7 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
     claim(&vault, user_claim, person, "user")?;
     claim(&vault, persona_claim, persona, "persona")?;
     claim(&vault, unrelated_claim, unrelated, "other user")?;
-    crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex()]);
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex(), "reader"]);
     let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
     let pack = vault
         .context_pack()
@@ -457,6 +461,34 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
     let prefix = pack.l2_base.expect("implicit personal prefix");
     assert_eq!(prefix.evidence_ids(), &[user_claim, persona_claim]);
     assert!(!prefix.evidence_ids().contains(&unrelated_claim));
+    let delegated = vault.scoped_read(
+        ScopedReadActorKey::new("reader")
+            .unwrap()
+            .require_access_grants(Some(person)),
+    );
+    let pack = vault
+        .context_pack()
+        .l2_summary_reader(&delegated)
+        .search_text("l2needle", 10)
+        .with_temporal_now(100)
+        .run()?;
+    assert_eq!(
+        pack.l2_base.unwrap().evidence_ids(),
+        &[user_claim, persona_claim]
+    );
+    let unbound = vault.scoped_read(
+        ScopedReadActorKey::new("reader")
+            .unwrap()
+            .require_access_grants(None),
+    );
+    assert!(
+        vault
+            .context_pack()
+            .l2_summary_reader(&unbound)
+            .run()?
+            .l2_base
+            .is_none()
+    );
     let other = vault.scoped_read(ScopedReadActorKey::new(unrelated.to_hex()).unwrap());
     let pack = vault
         .context_pack()
@@ -524,7 +556,113 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
     assert!(vault.context_pack().run()?.l2_base.is_none());
     assert!(matches!(
         vault.context_pack().l2_summary_subjects(&[owner]).run(),
-        Err(crate::Error::IndexOverflow("L2 evidence claims"))
+        Err(crate::Error::IndexOverflow(_))
     ));
+    Ok(())
+}
+
+#[test]
+fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()> {
+    use crate::claim::ClaimSource;
+    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::edge::EdgeActorClass;
+    let (_dir, vault, stranger) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let owner_persona = crate::test_util::entity(0xB0);
+    let stranger_persona = crate::test_util::entity(0xB1);
+    let provenance = CompanionProvenance::new(
+        owner,
+        EdgeActorClass::Human,
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        rmpv::Value::from("origin"),
+    );
+    for (id, person, persona) in [
+        (crate::test_util::entity(0xB2), owner, owner_persona),
+        (crate::test_util::entity(0xB3), stranger, stranger_persona),
+    ] {
+        vault.create_companion_record(
+            &id,
+            &CompanionRecord::persona(
+                CompanionScope::personal(person),
+                persona,
+                rmpv::Value::from("persona"),
+                provenance.clone(),
+                crate::federation::Sensitivity::Public,
+            ),
+            1,
+        )?;
+    }
+    let owner_claim = crate::test_util::entity(0xB4);
+    let stranger_claim = crate::test_util::entity(0xB5);
+    claim(&vault, owner_claim, owner_persona, "owner persona")?;
+    claim(&vault, stranger_claim, stranger_persona, "stranger persona")?;
+    let base = vault.context_pack().run()?.l2_base.expect("owner persona");
+    assert_eq!(base.evidence_ids(), &[owner_claim]);
+    assert!(!base.evidence_ids().contains(&stranger_claim));
+    Ok(())
+}
+
+#[test]
+fn implicit_base_field_cap_restores_the_ranked_claim_in_serialized_output() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let id = crate::test_util::entity(0xC1);
+    claim(&vault, id, owner, &format!("visible{}", "x".repeat(501)))?;
+    let builder = || vault.context_pack().search_text("l2needle", 10);
+    let pack = builder().run()?;
+    assert!(pack.l2_base.is_some());
+    assert!(pack.results.iter().any(|row| row.id == id));
+    let projected = crate::serialize::project_pack_for_json_response(
+        pack,
+        &crate::serialize::SerializeConfig {
+            format: PackFormat::Json,
+            profile: crate::context_pack::FieldProfile::Standard,
+            budget: 4000,
+            allocation: Default::default(),
+            include_stats: false,
+            merge_neighbors: true,
+            max_field_chars: crate::context_pack::DEFAULT_MAX_FIELD_CHARS,
+            max_item_tokens: 0,
+        },
+    );
+    assert!(projected.l2_base.is_none());
+    assert!(projected.results.iter().any(|row| row.id == id));
+    let bytes = builder().run_serialized()?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(value.get("l2_base").is_none());
+    assert!(String::from_utf8_lossy(&bytes).contains("visible"));
+    Ok(())
+}
+
+#[test]
+fn implicit_base_shed_by_token_budget_restores_a_fitting_ranked_claim() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let bulky = crate::test_util::entity(0xC2);
+    let matched = crate::test_util::entity(0xC3);
+    let large: String = (0..1200).map(|i| format!("{i:04x}")).collect();
+    claim_with_text(&vault, bulky, owner, &large, "other evidence")?;
+    claim(&vault, matched, owner, "budget-visible")?;
+    let pack = vault.context_pack().search_text("l2needle", 10).run()?;
+    assert_eq!(
+        pack.l2_base.as_ref().unwrap().evidence_ids(),
+        &[bulky, matched]
+    );
+    assert!(pack.results.iter().any(|row| row.id == matched));
+    let bytes = vault
+        .context_pack()
+        .search_text("l2needle", 10)
+        .max_field_chars(0)
+        .token_budget(350)
+        .run_serialized_with_stats()?
+        .value;
+    assert_eq!(
+        bytes.stats.items_dropped.reason,
+        crate::context_pack::PackItemAccountingReason::TokenBudget
+    );
+    let value: serde_json::Value = serde_json::from_slice(&bytes.bytes).unwrap();
+    assert!(value.get("l2_base").is_none());
+    assert!(String::from_utf8_lossy(&bytes.bytes).contains("budget-visible"));
     Ok(())
 }

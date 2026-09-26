@@ -562,3 +562,49 @@ fn finish_post_filter_propagates_finalize_failure_and_discards_trace() {
             .is_none()
     );
 }
+
+#[test]
+fn in_process_context_pack_keeps_ranked_owner_claim_when_l2_is_implicit() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let owner = vault.ensure_embedded_owner_actor().expect("owner person");
+    let id = entity(0xC2);
+    let body = ClaimBody::new(
+        "profile.preference",
+        ClaimSubject::Entity(owner),
+        MsgpackValue::from("owner adapter visible"),
+        0.9,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    );
+    let now = crate::unix_seconds_now();
+    vault
+        .put_claim(
+            &id,
+            &body,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .expect("owner claim");
+    vault
+        .batch()
+        .text(&id, &[("body", "owner-adapter-needle")])
+        .commit()
+        .expect("text index");
+    crate::test_util::authorize_readers(&vault, &["reader"]);
+    let adapter = InProcessVaultReadAdapter::new(
+        &vault,
+        ScopedReadActorKey::new("reader").expect("actor key"),
+    );
+    let response = adapter
+        .context_pack(CoreContextPackRequest {
+            query: Some("owner-adapter-needle".to_owned()),
+            limit: 10,
+            ..context_pack_request()
+        })
+        .expect("context pack");
+    assert!(response.0.results.iter().any(|row| row.id == id.to_hex()));
+    assert!(response.0.access.granted_data.contains(&id.to_hex()));
+}

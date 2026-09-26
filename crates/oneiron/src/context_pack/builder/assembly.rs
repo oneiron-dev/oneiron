@@ -457,11 +457,6 @@ impl<'a> ContextPackBuilder<'a> {
             )?;
             resolve_edge_short_ids(&mut results, &mut neighbors);
 
-            if let Some(summary) = &l2_base {
-                let ids = summary.evidence_ids();
-                results.retain(|entity| ids.binary_search(&entity.id).is_err());
-                neighbors.retain(|entity| ids.binary_search(&entity.id).is_err());
-            }
             let memory_is_empty = results.is_empty() && neighbors.is_empty() && l2_base.is_none();
             let pack_is_empty = memory_is_empty && capabilities.is_empty();
             // Discoveries keep the whole pack nonempty, but never decide the

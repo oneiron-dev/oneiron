@@ -7481,7 +7481,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 1
      }
@@ -21042,6 +21042,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/tests_regressions/recall_l2.rs",
+     "purpose": "Typed recall retains a ranked owner claim even when L2 also caches it",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
      "surface": {}
@@ -34372,7 +34380,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34899,7 +34907,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

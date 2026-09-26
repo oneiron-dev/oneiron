@@ -103,9 +103,11 @@ pub(super) fn default_l2_subjects(
 ) -> Result<Vec<EntityId>> {
     let txn = vault.store.env.read_txn()?;
     let owner = crate::vault::embedded_owner_actor_id()?;
-    let principal = if let Some(id) =
-        reader.and_then(|read| EntityId::from_hex(read.actor_key().actor_ref()).ok())
-    {
+    let person_id = match reader {
+        Some(read) => read.actor_key().authenticated_person(),
+        None => Some(owner),
+    };
+    let principal = if let Some(id) = person_id {
         vault
             .store
             .entities
