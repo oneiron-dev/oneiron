@@ -94,7 +94,7 @@ Linux is the reference host. On macOS:
   Linux Rust tests enable napi-rs `dyn-symbols` through a Linux-only dev-dependency;
   normal production builds still resolve Node-API symbols from the importing Node host.
   Hostless Rust tests cover conversion/engine logic, not the JS ABI. Real Node-host tests
-  remain necessary. `scripts/verify.sh` retains its existing `--exclude oneiron-napi`.
+  remain necessary. `scripts/verify.sh` includes the crate's hostless Rust tests.
 - 7 `oneiron-bench` `eval::tests::*` cases fail on macOS with `VaultRootPreflight …
   UnsupportedPlatform` and pass on Linux. Known; ticket pending.
 - Full suite on an M4 Max (16 cores): ~8 min wall warm, ~9.5k tests across 41 binaries.
@@ -148,9 +148,8 @@ build to work around an occupied target directory.
 
 - `oneiron-napi` hostless Rust tests are not JS ABI tests: Linux test builds use napi-rs
   dynamic symbols, and macOS uses `-undefined dynamic_lookup`. Production addons still need
-  a real Node host. `scripts/verify.sh` retains its exclusion on all hosts; distributed nextest
-  legs retain their Linux exclusion. Neither exclusion is changed by the test-link repair.
-  macOS CI includes the crate too.
+  a real Node host. Workspace nextest includes the crate on Linux and macOS;
+  the Rust tests do not replace real Node-host JS ABI tests.
 - Never run `scripts/review-pr.sh` — it doesn't exist. Deleted as dead/banned/zero-referenced;
   if you find a reference to it, that reference is stale.
 - Pre-GA, no deployed vaults: don't request migrations or legacy decoders for storage-ABI
