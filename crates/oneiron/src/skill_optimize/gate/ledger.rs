@@ -19,7 +19,7 @@ pub(super) fn record_verdict_in_txn(
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
     if let Some(measurements) = &verdict.measurements {
-        validate_measurements(measurements)?;
+        validate_measurements(measurements, verdict.held_out_count)?;
     } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
         || verdict.accepted_verdict.is_some()
     {
@@ -176,6 +176,9 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
             .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
             .map(str::to_owned)
     };
+    let held_out_count = field(KEY_HELD_OUT_COUNT)
+        .and_then(Value::as_u64)
+        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
     let measurements = match field(KEY_MEASUREMENTS) {
         Some(Value::Nil) => None,
         Some(value) => {
@@ -185,7 +188,7 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
                     .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
             )
             .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
-            validate_measurements(&decoded)
+            validate_measurements(&decoded, held_out_count)
                 .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
             Some(decoded)
         }
@@ -208,9 +211,7 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
         disposition,
         cycle: text(KEY_CYCLE)?,
         held_out_receipts: strings(KEY_HELD_OUT)?,
-        held_out_count: field(KEY_HELD_OUT_COUNT)
-            .and_then(Value::as_u64)
-            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        held_out_count,
         held_out_digest: text(KEY_HELD_OUT_DIGEST)?,
         held_out_truncated: field(KEY_HELD_OUT_TRUNCATED)
             .and_then(Value::as_bool)

@@ -177,8 +177,8 @@ use admission::{
     bounded_receipts, provenance_str, require_open_optimizer_proposal, target_is_current, target_of,
 };
 use basis::{
-    ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_receipts_in_txn, host_replay_scorer,
-    validate_score,
+    ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
+    held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
 use decision::{close_answered_proposal_in_txn, readable_target, standing_verdict_in_txn};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};

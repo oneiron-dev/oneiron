@@ -28520,7 +28520,7 @@
      "path": "src/skill_optimize/gate/basis.rs",
      "purpose": "What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 11,
       "static": 1,
       "struct": 2,

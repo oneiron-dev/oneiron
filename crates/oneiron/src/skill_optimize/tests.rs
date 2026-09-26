@@ -4275,3 +4275,128 @@ fn a_contrastive_audit_without_frozen_preference_cannot_write_a_verdict() -> Res
     assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
     Ok(())
 }
+
+#[test]
+fn judged_verdict_rejects_unsupported_world_axes_and_unbound_counts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.corrupt_axes");
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "axes", 10),
+        900,
+    )?;
+    let original = serde_json::to_value(verdict.measurements.expect("judged row"))
+        .expect("serialize measurements");
+    // Every case leaves the body and evidence digests intact. Decoding must
+    // still reject a receipt that names an unsupported axis or invents labels.
+    for alteration in 0..3 {
+        let mut changed = original.clone();
+        let axes = changed["world_axes"].as_object_mut().expect("axis map");
+        match alteration {
+            0 => {
+                let score = axes.remove("task_success").expect("supported axis");
+                axes.insert(String::new(), score);
+            }
+            1 => {
+                axes.insert("not_a_world_axis".to_owned(),
+                    serde_json::json!({"before": 0.5, "after": 0.5, "labelled_receipts": verdict.held_out_count}));
+            }
+            _ => {
+                axes.get_mut("task_success").expect("supported axis")["labelled_receipts"] =
+                    serde_json::json!(verdict.held_out_count + 1);
+            }
+        }
+        let json = serde_json::to_string(&changed).expect("measurement JSON");
+        rewrite_verdict_row(&vault, |entries| {
+            set_row_field(entries, "measurements", &Value::from(json.as_str()));
+        });
+        assert_eq!(
+            skill_edit_verdicts(&vault)
+                .expect_err("invalid world axis is corrupt")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+        assert_eq!(
+            vault
+                .receipts(crate::receipt::ReceiptQuery::default())
+                .expect_err("receipt projection must not repeat the false measurement")
+                .kind(),
+            ErrorKind::CorruptedIndex,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.long_history");
+    // Seed a large, valid local outcome ledger in one transaction; making
+    // thousands of attempt/receipt queue entries would measure that unrelated
+    // fixture machinery instead of the gate's outcome join. The real gate and
+    // admission doors must still read these rows through the production codec.
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(
+        &mut encoded,
+        &Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1u64)),
+            (Value::from("win"), Value::Boolean(true)),
+            (Value::from("at"), Value::from(500u64)),
+        ]),
+    )
+    .expect("encode outcome row");
+    vault.with_write_txn(|wtxn| {
+        for index in 0..8_000u32 {
+            // Select a distinct id in the requested partition instead of
+            // hoping 1,600 random draws reserve enough evidence. The count is
+            // fixed for every skill id and on every test host.
+            let want_reserved = index % 5 == 0;
+            let receipt = (0..=u64::MAX)
+                .map(|nonce| format!("load:{index:05}:{nonce}"))
+                .find(|id| receipt_is_held_out(&skill, id) == want_reserved)
+                .expect("each partition has a fixture id");
+            let mut key = b"skill_reliability:outcome:v1:".to_vec();
+            key.extend_from_slice(skill.as_bytes());
+            key.extend_from_slice(receipt.as_bytes());
+            vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        }
+        Ok(())
+    })?;
+    let reserved = held_out_receipts(&vault, &skill)?;
+    assert!(reserved.len() >= 1_600);
+    assert!(reserved.iter().all(|id| receipt_is_held_out(&skill, id)));
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::improving(),
+        wake(&vault, "long-history", 10),
+        900,
+    )?;
+    assert_eq!(verdict.held_out_count, reserved.len() as u64);
+    let measured = verdict.measurements.as_ref().expect("judged measurements");
+    assert_eq!(
+        measured.world_axes["task_success"].labelled_receipts,
+        verdict.held_out_count
+    );
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    // The standing verdict and the admission door each recompute the same
+    // complete labelled basis in ledger order, with no new ruling on replay.
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &UnreachableScorer,
+            wake(&vault, "long-history-retry", 20),
+            901
+        )?,
+        verdict,
+    );
+    admit_optimized_skill_revision(&vault, &proposal, t(400), 401)?;
+    assert_eq!(
+        stored(&vault, &proposal).lifecycle_status,
+        SkillLifecycle::Active
+    );
+    Ok(())
+}

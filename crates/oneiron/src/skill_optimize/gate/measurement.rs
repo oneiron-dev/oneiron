@@ -165,7 +165,10 @@ pub(super) fn world_labels_digest(outcomes: &[(String, bool)]) -> String {
     bytes_to_hex_lower(&hash.finalize())
 }
 
-pub(super) fn validate_measurements(measurements: &JudgeMeasurements) -> Result<()> {
+pub(super) fn validate_measurements(
+    measurements: &JudgeMeasurements,
+    held_out_count: u64,
+) -> Result<()> {
     if measurements.world_labels_digest.len() != 64
         || !measurements
             .world_labels_digest
@@ -179,15 +182,20 @@ pub(super) fn validate_measurements(measurements: &JudgeMeasurements) -> Result<
         checked(pair.before)?;
         checked(pair.after)?;
     }
-    if measurements.world_axes.is_empty() {
-        return Err(invalid("judge measurement has no world axes"));
+    // This schema has exactly one world-labelled axis. A row must not claim
+    // an arbitrary axis or an invented number of labels beside a valid basis.
+    let Some(axis) = measurements.world_axes.get("task_success") else {
+        return Err(invalid("judge measurement is missing task_success"));
+    };
+    if measurements.world_axes.len() != 1
+        || held_out_count == 0
+        || axis.labelled_receipts != held_out_count
+    {
+        return Err(invalid(
+            "judge world axis does not match the held-out basis",
+        ));
     }
-    for axis in measurements.world_axes.values() {
-        checked(axis.before)?;
-        checked(axis.after)?;
-        if axis.labelled_receipts == 0 {
-            return Err(invalid("judge world axis has no labels"));
-        }
-    }
+    checked(axis.before)?;
+    checked(axis.after)?;
     Ok(())
 }

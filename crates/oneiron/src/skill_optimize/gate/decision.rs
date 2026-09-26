@@ -181,10 +181,7 @@ fn rule_on_proposal(
                         "no evidence is reserved for this skill, so there is nothing to score",
                     ));
                 }
-                let outcomes = crate::skill_reliability::attributed_outcome_results(vault, &*wtxn, &target)?
-                    .into_iter()
-                    .filter(|(receipt, _)| held_out.contains(receipt))
-                    .collect::<Vec<_>>();
+                let outcomes = held_out_outcome_results_in_txn(vault, &*wtxn, &target)?;
                 let basis = ScoredBasis::of(
                     &staged,
                     &current,
@@ -495,11 +492,7 @@ fn decide_in_txn(
             "the reserved evidence moved while the scorer was thinking",
         ));
     }
-    let world_now =
-        crate::skill_reliability::attributed_outcome_results(vault, wtxn, &target_of(staged)?)?
-            .into_iter()
-            .filter(|(receipt, _)| committed.contains(receipt))
-            .collect::<Vec<_>>();
+    let world_now = held_out_outcome_results_in_txn(vault, wtxn, &target_of(staged)?)?;
     if world_labels_digest(&world_now) != basis.world_digest {
         return Err(retry(
             "world outcome labels moved while the judge was measuring",

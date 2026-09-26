@@ -56,6 +56,23 @@ pub(super) fn held_out_receipts_in_txn(
     )
 }
 
+/// Held-out outcomes WITH their world labels, in the same ledger order as
+/// [`held_out_receipts_in_txn`]. This does one linear pass over the outcome
+/// ledger; it does not search the growing held-out list for every row while
+/// the vault writer is held by preparation, commit, or admission.
+pub(super) fn held_out_outcome_results_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<(String, bool)>> {
+    Ok(
+        crate::skill_reliability::attributed_outcome_results(vault, rtxn, skill)?
+            .into_iter()
+            .filter(|(receipt, _)| receipt_is_held_out(skill, receipt))
+            .collect(),
+    )
+}
+
 /// The optimize job's view: everything the gate did NOT reserve.
 ///
 /// The exact complement of [`held_out_receipts`] over the same ledger, so the
