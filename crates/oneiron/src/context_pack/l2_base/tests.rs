@@ -353,3 +353,178 @@ fn unchanged_evidence_expires_at_the_hydration_time() -> Result<()> {
     )?);
     Ok(())
 }
+
+#[test]
+fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Result<()> {
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let id = crate::test_util::entity(0x51);
+    claim(&vault, id, owner, "owner preference")?;
+    let assemble = || {
+        vault
+            .context_pack()
+            .search_text("l2needle", 10)
+            .with_temporal_now(100)
+            .token_budget(0)
+            .max_field_chars(0)
+    };
+    let first = assemble().run()?;
+    let prefix = first.l2_base.as_ref().expect("implicit owner prefix");
+    assert_eq!(prefix.evidence_ids(), &[id]);
+    let again = assemble().run()?;
+    assert!(Arc::ptr_eq(&prefix.body, &again.l2_base.unwrap().body));
+    let before_bytes = assemble().run_serialized()?;
+    assert_eq!(before_bytes, assemble().run_serialized()?);
+    let before: serde_json::Value = serde_json::from_slice(&before_bytes).unwrap();
+    let fresh = crate::test_util::entity(0x52);
+    let fresh_body = rmp_serde::to_vec_named(&serde_json::json!({"txt": "new item"})).unwrap();
+    vault
+        .batch()
+        .put(
+            &fresh,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &fresh_body,
+        )
+        .text(&fresh, &[("body", "l2needle")])
+        .commit()?;
+    let after = assemble().run()?;
+    assert!(Arc::ptr_eq(&prefix.body, &after.l2_base.unwrap().body));
+    assert_eq!(
+        after.results.iter().map(|row| row.id).collect::<Vec<_>>(),
+        vec![fresh]
+    );
+    let later: serde_json::Value = serde_json::from_slice(&assemble().run_serialized()?).unwrap();
+    assert_eq!(before["l2_base"], later["l2_base"]);
+    assert_ne!(before["delta"], later["delta"]);
+    claim(&vault, id, owner, "changed preference")?;
+    let changed = assemble().run()?.l2_base.unwrap();
+    assert_ne!(prefix.content_hash, changed.content_hash);
+    assert!(!Arc::ptr_eq(&prefix.body, &changed.body));
+    Ok(())
+}
+
+#[test]
+fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Result<()> {
+    use crate::claim::{ClaimSource, ScopedReadActorKey};
+    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::edge::EdgeActorClass;
+    let (_dir, vault, unrelated) = fixture();
+    let person = crate::test_util::entity(0x64);
+    let persona = crate::test_util::entity(0x65);
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let provenance = CompanionProvenance::new(
+        person,
+        EdgeActorClass::Human,
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        rmpv::Value::from("origin"),
+    );
+    vault.create_companion_record(
+        &crate::test_util::entity(0x66),
+        &CompanionRecord::persona(
+            CompanionScope::personal(person),
+            persona,
+            rmpv::Value::from("persona"),
+            provenance,
+            crate::federation::Sensitivity::Private,
+        ),
+        1,
+    )?;
+    let user_claim = crate::test_util::entity(0x67);
+    let persona_claim = crate::test_util::entity(0x68);
+    let unrelated_claim = crate::test_util::entity(0x69);
+    claim(&vault, user_claim, person, "user")?;
+    claim(&vault, persona_claim, persona, "persona")?;
+    claim(&vault, unrelated_claim, unrelated, "other user")?;
+    crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex()]);
+    let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+    let pack = vault
+        .context_pack()
+        .l2_summary_reader(&reader)
+        .search_text("l2needle", 10)
+        .with_temporal_now(100)
+        .token_budget(0)
+        .max_field_chars(0)
+        .run()?;
+    let prefix = pack.l2_base.expect("implicit personal prefix");
+    assert_eq!(prefix.evidence_ids(), &[user_claim, persona_claim]);
+    assert!(!prefix.evidence_ids().contains(&unrelated_claim));
+    let other = vault.scoped_read(ScopedReadActorKey::new(unrelated.to_hex()).unwrap());
+    let pack = vault
+        .context_pack()
+        .l2_summary_reader(&other)
+        .search_text("l2needle", 10)
+        .with_temporal_now(100)
+        .token_budget(0)
+        .max_field_chars(0)
+        .run()?;
+    assert_eq!(pack.l2_base.unwrap().evidence_ids(), &[unrelated_claim]);
+    Ok(())
+}
+
+#[test]
+fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
+    use crate::claim::ClaimSource;
+    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+    use crate::edge::EdgeActorClass;
+    let (_dir, vault, _) = fixture();
+    let provenance = CompanionProvenance::new(
+        crate::test_util::entity(0x77),
+        EdgeActorClass::Human,
+        ClaimSource::UserStated,
+        ClaimApprovalStatus::Approved,
+        rmpv::Value::from("origin"),
+    );
+    let first_persona = crate::test_util::entity(0x80);
+    for n in 0..9_u8 {
+        vault.create_companion_record(
+            &crate::test_util::entity(0x90 + n),
+            &CompanionRecord::persona(
+                CompanionScope::neutral(),
+                crate::test_util::entity(0x80 + n),
+                rmpv::Value::from("persona"),
+                provenance.clone(),
+                crate::federation::Sensitivity::Public,
+            ),
+            1,
+        )?;
+    }
+    claim(&vault, crate::test_util::entity(0xA0), first_persona, "one")?;
+    assert!(vault.context_pack().run()?.l2_base.is_none());
+    assert!(
+        vault
+            .context_pack()
+            .l2_summary_subjects(&[first_persona])
+            .run()?
+            .l2_base
+            .is_some()
+    );
+
+    let (_dir, vault, _) = fixture();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    for n in 0..257_u16 {
+        let mut bytes = [0x70; 16];
+        bytes[14] = (n >> 8) as u8;
+        bytes[15] = n as u8;
+        claim(
+            &vault,
+            EntityId::from_bytes(bytes)?,
+            owner,
+            "bounded evidence",
+        )?;
+    }
+    assert!(vault.context_pack().run()?.l2_base.is_none());
+    assert!(matches!(
+        vault.context_pack().l2_summary_subjects(&[owner]).run(),
+        Err(crate::Error::IndexOverflow("L2 evidence claims"))
+    ));
+    Ok(())
+}
