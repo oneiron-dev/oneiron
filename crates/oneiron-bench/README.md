@@ -1,3 +1,41 @@
+# Extraction teacher checkpoint gate (ONE-2312)
+
+`oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest
+CANDIDATE.json --out APPROVED.json` gates a candidate `extraction_teacher`
+manifest file. Only publish/commit `APPROVED.json`, never the candidate input. The
+output is created **only** after a successful runner invocation, matching the
+manifest model ID and passing the fixed probe. Failure exits nonzero without creating an approved file. An existing output
+is never overwritten. This is a
+**checkpoint publication** door, not a new gate on `Vault::set_model_manifest`:
+hosts can still write model manifests directly, and must use this publication
+workflow when selecting a teacher.
+
+The bench pins `fixtures/teacher_probe/conll_bio.v1.json` (10 English CoNLL
+BIO-format sentences, PER/ORG/LOC/MISC, 24 gold spans). These are a deliberately
+small **protocol/quality probe**, not the official CoNLL-2003 test set or a
+claim of leaderboard quality. Its data are versioned here, not supplied at
+runtime. The bar is exact typed entity-span micro-F1 >= 0.800000: span start,
+end and type must all agree; `2*TP/(predicted+gold)` across the whole probe.
+Malformed BIO, missing or extra sentences/tokens, runner failure, wrong model
+identity and below-bar results fail closed. No tuning flags exist.
+
+The model repository owns the real `EXECUTABLE` and checkpoint.
+`DIR/model_id` must contain the exact candidate manifest model ID
+(`provider/name@immutable-revision`). The executable must accept `--checkpoint DIR --probe PATH`, run inference against the provided
+pinned sentences, and print one JSON object to stdout:
+`{"model_id":"provider/name@immutable-revision","predictions":[["B-ORG","O",...],...]}`.
+Rows and tags must align with the probe; the model ID must equal the
+candidate manifest's `extraction_teacher` binding. Use an immutable checkpoint
+revision and run the published gate before committing that binding. The engine
+has no checkpoint weights or inference runtime. The included
+`fixture_runner.py` and `checkpoint/output.json` are **canned CI protocol
+fixtures**, not inference or proof of the actual LLM2Vec weights. CI exercises
+the bench command with the passing fixture and a deliberately below-bar fixture.
+The actual McGill-NLP/LLM2Vec-Qwen3-8B-mntp pin remains a model-repo/operator
+choice after a real runner and immutable revision have passed. The served
+extraction encoder remains a separate manifest role; this gate does not change
+its mGTE-306M base or route the teacher to turns.
+
 # Single-vault swarm baseline (2026-09-26)
 
 **Busy-host observation, not a capacity claim. A quiet-machine rerun is required**

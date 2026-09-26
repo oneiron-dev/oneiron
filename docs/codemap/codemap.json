@@ -36272,6 +36272,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/teacher_probe.rs",
+     "purpose": "Offline extraction-teacher admission over the fixed CoNLL BIO probe",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/teacher_probe_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vector/mod.rs",
      "purpose": "`vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120)",
      "surface": {
@@ -36314,6 +36332,14 @@
      "notable": [],
      "path": "src/vector/vector_tests.rs",
      "purpose": "Vector bench contract and end-to-end tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/teacher_probe_cli.rs",
+     "purpose": "Run the shipped binary, not only its Rust scoring function, against CI fixtures",
      "surface": {}
     }
    ],
@@ -36374,6 +36400,20 @@
      "layout": "file",
      "purpose": "Seeded single-vault, in-process agent-swarm baseline"
     },
+    "teacher_probe": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Offline extraction-teacher admission over the fixed CoNLL BIO probe"
+    },
+    "teacher_probe_tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    },
     "vector": {
      "files": 5,
      "impl_vault": false,
@@ -36384,8 +36424,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 97,
-   "test_files": 18
+   "source_files": 98,
+   "test_files": 20
   },
   "oneiron-driver": {
    "files": [
