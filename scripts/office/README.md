@@ -66,6 +66,21 @@ change the expectation. `test_deck_oracle.py` pins timeout handling without
 requiring a flaky real hang. The local clean source was generated with
 `python-pptx` from one textbox; no external document content is shipped.
 
+## Environment approval and receipt gates
+
+`environment.json` is the versioned approved Mac/renderer pin. It fixes the
+PowerPoint and macOS builds, PDFKit version, font-inventory SHA-256, observer,
+locale, raster scale and harness version. The oracle records the observed pin
+but refuses to open a candidate when any approved field differs. Update the
+configuration explicitly after checking a deliberate Mac or Office upgrade;
+never change it just to turn an unsupported result green. The committed Mac
+mini receipts show the reference values.
+
+`classify` requires each receipt's input SHA-256 to match the fixture hash or
+one of that PPTArena case's pinned original/ground-truth hashes. Missing or
+wrong-case evidence fails. Missing cases and unexpected timeouts stay
+inconclusive, and both fail the CLI exit status.
+
 ## Recorded Mac mini result
 
 The passing live fixture run and hashed outputs are committed under

@@ -75,6 +75,25 @@ def env_pin(observer: str) -> dict:
             'observer': observer, 'locale': os.environ.get('LANG', '')}
 
 
+ENV_FIELDS = frozenset({'harness', 'powerpoint', 'macos', 'macos_build', 'pdfkit',
+                        'raster_scale', 'font_inventory_sha256', 'observer', 'locale'})
+
+
+def environment_mismatch(observed: dict) -> str | None:
+    """Only the explicitly approved Mac/renderer combination may produce a clean receipt."""
+    try:
+        config = json.loads((ROOT / 'environment.json').read_text())
+        expected = config['environment']
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return f'approved environment unavailable: {exc}'
+    if config.get('version') != 1 or not isinstance(expected, dict) or set(expected) != ENV_FIELDS:
+        return 'approved environment configuration is incomplete or unsupported'
+    for field in sorted(ENV_FIELDS):
+        if not isinstance(observed, dict) or observed.get(field) != expected[field]:
+            return f'unapproved environment {field}: expected {expected[field]!r}, observed {observed.get(field) if isinstance(observed, dict) else None!r}'
+    return None
+
+
 def observer_status(observer: str) -> str | None:
     if observer == 'cua':
         if not shutil.which('cua-driver'):
@@ -101,69 +120,113 @@ def app_pid() -> int | None:
     return int(r.stdout.splitlines()[0]) if r.returncode == 0 and r.stdout.strip() else None
 
 
-def windows(observer: str, pid: int) -> list[str]:
+def windows(observer: str, pid: int, timeout: float | None = None) -> list[str]:
     if observer == 'cua':
-        data = json.loads(command(['cua-driver', 'call', 'list_windows', json.dumps({'pid': pid})], 6))
-        return [w['title'] for w in data['windows'] if w.get('title')]
-    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowTitle as text\n            if subrole of w is "AXDialog" then\n                set textValues to get value of every static text of w\n                repeat with textEntry in textValues\n                    set actualText to contents of textEntry\n                    if actualText is not missing value then set end of labels to actualText as text\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 10)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
-    return [x.strip() for x in command(['osascript', '-e', script], 5).splitlines() if x.strip()]
+        data = json.loads(command(['cua-driver', 'call', 'list_windows', json.dumps({'pid': pid})],
+                                  min(6, timeout) if timeout is not None else 6))
+        return ['WINDOW:' + w['title'] for w in data['windows'] if w.get('title')]
+    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowKind to "WINDOW:"\n            if subrole of w is "AXDialog" then set windowKind to "DIALOG:"\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowKind & (windowTitle as text)\n            if windowKind is "DIALOG:" then\n                set textValues to get value of every static text of w\n                repeat with textEntry in textValues\n                    set actualText to contents of textEntry\n                    if actualText is not missing value then set end of labels to "DIALOG:" & (actualText as text)\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 30)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
+    text = command(['osascript', '-e', script], min(5, timeout) if timeout is not None else 5)
+    return [entry.strip() for entry in text.split('\x1e') if entry.strip()]
 
 
 def dialog_class(titles: list[str], expected_stem: str) -> str | None:
+    allowed = {expected_stem.lower(), expected_stem.lower() + '.pptx',
+               'reference', 'reference.pptx', '', 'presentation1'}
     unrelated = []
     for title in titles:
-        low = title.lower()
-        if any(word in low for word in REPAIR_WORDS):
-            return 'repaired'
-        if any(word in low for word in UNSUPPORTED_WORDS):
-            return 'unsupported'
-        if low not in (expected_stem.lower(), expected_stem.lower() + '.pptx',
-                       'reference', 'reference.pptx', '', 'presentation1'):
-            unrelated.append(title)
+        kind, separator, text = title.partition(':')
+        if not separator or kind not in ('WINDOW', 'DIALOG'):
+            kind, text = 'LEGACY', title
+        low = text.lower()
+        # An exact document title is not a repair prompt, even if its name
+        # contains "recovery", "repair", or "permission".
+        if kind != 'DIALOG' and low in allowed:
+            continue
+        if kind != 'WINDOW':
+            if any(word in low for word in REPAIR_WORDS):
+                return 'repaired'
+            if any(word in low for word in UNSUPPORTED_WORDS):
+                return 'unsupported'
+        unrelated.append(title)
     return 'unsupported' if unrelated else None
+
+
+def stop_script(proc: subprocess.Popen) -> None:
+    """Reap the scripting child even if the oracle budget is already exhausted."""
+    if proc.poll() is None:
+        proc.terminate()
+    try:
+        proc.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
 
 
 def run_script(source: Path, action: str, target: Path | None, observer: str,
                deadline: float) -> tuple[str | None, str]:
+    if time.monotonic() >= deadline:
+        return 'timed_out', f'{action} exceeded deadline before launch'
     args = ['osascript', str(ROOT / 'powerpoint.applescript'), action, str(source)]
     if target:
         args.append(str(target))
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     classification = None
-    while proc.poll() is None:
-        pid = app_pid()
-        if pid:
-            try:
-                classification = dialog_class(windows(observer, pid), source.stem)
-            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-                classification = 'unsupported'
-                detail = f'observer failed: {exc}'
-                break
-            if classification:
-                detail = f'PowerPoint window: {windows(observer, pid)}'
-                break
-        if time.monotonic() >= deadline:
+    detail = ''
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             classification, detail = 'timed_out', f'{action} exceeded deadline'
             break
-        time.sleep(0.25)
+        if proc.poll() is not None:
+            break
+        pid = app_pid()
+        if pid:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                classification, detail = 'timed_out', f'{action} exceeded deadline'
+                break
+            try:
+                observed = windows(observer, pid, remaining)
+                classification = dialog_class(observed, source.stem)
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+                classification, detail = 'unsupported', f'observer failed: {exc}'
+                break
+            if time.monotonic() >= deadline:
+                classification, detail = 'timed_out', f'{action} exceeded deadline'
+                break
+            if classification:
+                detail = f'PowerPoint window: {observed}'
+                break
+        time.sleep(min(0.25, max(0, deadline - time.monotonic())))
     if classification:
-        proc.terminate()
-        try:
-            proc.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
+        stop_script(proc)
         return classification, detail
-    out, err = proc.communicate()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        stop_script(proc)
+        return 'timed_out', f'{action} exceeded deadline after process exit'
+    try:
+        out, err = proc.communicate(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        stop_script(proc)
+        return 'timed_out', f'{action} exceeded deadline while collecting output'
+    if time.monotonic() >= deadline:
+        return 'timed_out', f'{action} exceeded deadline after process exit'
     if proc.returncode:
         return 'failed', (err or out).strip()[-500:]
-    # One final observation catches asynchronous dialogs after AppleScript returns.
     pid = app_pid()
     if pid:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 'timed_out', f'{action} exceeded deadline before final observation'
         try:
-            classification = dialog_class(windows(observer, pid), source.stem)
+            observed = windows(observer, pid, remaining)
+            classification = dialog_class(observed, source.stem)
         except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
             return 'unsupported', f'observer failed: {exc}'
+    if time.monotonic() >= deadline:
+        return 'timed_out', f'{action} exceeded deadline after observation'
     return classification, out.strip()
 
 
@@ -203,8 +266,9 @@ def cancel_owned_repair(staged: Path) -> None:
 
 
 def close_owned(allowed: set[str]) -> str | None:
-    """Never close a presentation unless custody still identifies only ours."""
-    if not app_pid():
+    """Never close a foreign presentation, or overlook a modal after closing ours."""
+    pid = app_pid()
+    if not pid:
         return None
     try:
         names = presentations()
@@ -215,9 +279,15 @@ def close_owned(allowed: set[str]) -> str | None:
             command(['osascript', str(ROOT / 'powerpoint.applescript'), 'close', names[0]], 10)
         hide_powerpoint()
         remaining = presentations()
-        return f'presentation(s) remain open: {remaining}' if remaining else None
-    except (RuntimeError, subprocess.TimeoutExpired) as exc:
-        return f'could not confirm presentation closure: {exc}'
+        if remaining:
+            return f'presentation(s) remain open: {remaining}'
+        observed = windows('system-events', pid)
+        if any(entry.startswith('DIALOG:') for entry in observed) or any(
+                dialog_class([entry], '') for entry in observed if not entry.startswith('WINDOW:')):
+            return f'PowerPoint dialog remains after cleanup: {observed}'
+        return None
+    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        return f'could not confirm presentation/dialog closure: {exc}'
 
 
 def quit_if_empty() -> None:
@@ -261,6 +331,10 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 receipt['detail'] = f'PowerPoint has open presentation(s): {names}'
                 return record()
         receipt['environment'] = env_pin(observer)
+        mismatch = environment_mismatch(receipt['environment'])
+        if mismatch:
+            receipt['detail'] = mismatch
+            return receipt
         stage = STAGING / f'{candidate.stem}-{os.getpid()}-{uuid.uuid4().hex[:8]}'
         stage.mkdir(parents=True, exist_ok=False)
         staged = stage / f'{candidate.stem}-{os.getpid()}-{uuid.uuid4().hex[:8]}.pptx'
@@ -272,11 +346,22 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
             receipt['detail'] = f'PowerPoint has open presentation(s): {names}'
             return record()
         deadline = time.monotonic() + timeout
+
+        def expired(stage_name: str) -> bool:
+            if time.monotonic() < deadline:
+                return False
+            receipt.update(status='timed_out', detail=f'{stage_name} exceeded deadline')
+            return True
+
         for action in ('open', 'pdf', 'raster', 'saveback'):
+            if expired(action):
+                break
             if action == 'raster':
                 try:
                     swift = command(['swift', str(ROOT / 'raster.swift'), str(stage / 'render.pdf'),
-                                     str(stage)], max(1, int(deadline - time.monotonic())))
+                                     str(stage)], deadline - time.monotonic())
+                    if expired('raster'):
+                        break
                     pngs = sorted(stage.glob('page-*.png'))
                     if not pngs:
                         raise ValueError('PDFKit returned no PNG pages')
@@ -285,9 +370,13 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                     receipt['pages'] = len(pngs)
                     receipt['raster_detail'] = swift
                     for png in pngs:
+                        if expired('raster output'):
+                            break
                         shutil.move(str(png), output / png.name)
                         receipt['outputs'][png.name] = {'sha256': digest(output / png.name),
                                                         'bytes': (output / png.name).stat().st_size}
+                    if expired('raster output'):
+                        break
                 except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
                     receipt.update(status='timed_out' if isinstance(exc, subprocess.TimeoutExpired) else 'failed',
                                    detail=f'raster: {exc}')
@@ -300,6 +389,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 status, detail = run_script(staged, action, target, observer, deadline)
             finally:
                 hide_powerpoint()
+            if expired(action):
+                # A repair alert must still be cancelled during cleanup even if
+                # the observer returned it at the boundary of the deadline.
+                repair_alert_seen = status == 'repaired'
+                break
             if status:
                 repair_alert_seen = status == 'repaired'
                 if repair_alert_seen and invalid_presentation_package(candidate):
@@ -314,9 +408,13 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 receipt.update(status='unsupported', detail=f'{action}: {detail}')
                 break
             if target:
+                if expired(action + ' validation'):
+                    break
                 end_wait = min(deadline, time.monotonic() + 5)
                 while (not target.is_file() or target.stat().st_size == 0) and time.monotonic() < end_wait:
                     time.sleep(0.25)
+                if expired(action + ' output wait'):
+                    break
                 if not target.is_file() or target.stat().st_size == 0:
                     receipt.update(status='failed', detail=f'{action}: missing or empty output after save')
                     break
@@ -338,8 +436,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                     shutil.move(str(target), output / target.name)
                 receipt['outputs'][target.name] = {'sha256': digest(output / target.name),
                                                    'bytes': (output / target.name).stat().st_size}
+                if expired(action + ' postprocessing'):
+                    break
         else:
-            receipt.update(status='clean', detail=f"PDFKit rasterized {receipt['pages']} page(s)")
+            if not expired('final validation'):
+                receipt.update(status='clean', detail=f"PDFKit rasterized {receipt['pages']} page(s)")
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
         receipt.update(status='timed_out' if isinstance(exc, subprocess.TimeoutExpired) else 'unsupported',
                        detail=f'oracle control failure: {exc}')
@@ -369,13 +470,32 @@ def classify_manifest(manifest: Path, results: Path) -> dict:
     cases = json.loads(manifest.read_text())['cases']
     report = {'cases': [], 'counts': {}}
     for case in cases:
+        pinned = ({case['sha256']} if 'sha256' in case else
+                  {case[role]['sha256'] for role in ('original', 'ground_truth')})
         path = results / case['id'] / 'receipt.json'
         receipt = json.loads(path.read_text()) if path.exists() else None
-        actual = receipt['status'] if receipt else 'not_run'
+        actual = receipt.get('status', 'unsupported') if isinstance(receipt, dict) else 'not_run'
         expected = case['expected_oracle']
-        verdict = 'pass' if actual == expected else 'inconclusive' if actual in ('unsupported', 'timed_out', 'not_run') else 'fail'
+        inputs = receipt.get('input') if isinstance(receipt, dict) else None
+        binding = inputs.get('sha256') if isinstance(inputs, dict) else None
+        environment_error = (environment_mismatch(receipt.get('environment'))
+                             if isinstance(receipt, dict) else None)
+        if receipt is not None and binding not in pinned:
+            verdict = 'fail'
+        elif environment_error:
+            verdict = 'inconclusive' if actual in ('unsupported', 'timed_out') else 'fail'
+        elif actual == expected:
+            verdict = 'pass'
+        elif actual in ('unsupported', 'timed_out', 'not_run'):
+            verdict = 'inconclusive'
+        else:
+            verdict = 'fail'
         row = {'id': case['id'], 'expected': expected, 'actual': actual, 'verdict': verdict,
                'preservation': case['preservation']}
+        if receipt is not None and binding not in pinned:
+            row['binding_error'] = 'receipt input SHA-256 missing or not pinned to this case'
+        if environment_error:
+            row['environment_error'] = environment_error
         report['cases'].append(row)
         report['counts'][verdict] = report['counts'].get(verdict, 0) + 1
     return report
@@ -433,7 +553,7 @@ def main() -> int:
     if args.command == 'classify':
         report = classify_manifest(args.manifest, args.results)
         print(json.dumps(report, indent=2))
-        return 1 if report['counts'].get('fail') else 0
+        return 1 if report['counts'].get('fail') or report['counts'].get('inconclusive') else 0
     if args.timeout < 1 or not args.candidate.is_file() or args.output.exists():
         p.error('candidate must exist, timeout positive, and output directory must be new')
     receipt = oracle(args.candidate, args.output, args.observer, args.timeout)

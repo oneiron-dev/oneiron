@@ -4,31 +4,36 @@
       "id": "clean",
       "file": "clean.pptx",
       "expected_oracle": "clean",
-      "preservation": "no-op all OPC entries"
+      "preservation": "no-op all OPC entries",
+      "sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480"
     },
     {
       "id": "failed-open",
       "file": "failed.pptx",
       "expected_oracle": "failed",
-      "preservation": "not a ZIP"
+      "preservation": "not a ZIP",
+      "sha256": "3af34e811bc1d5750beffde41dfb1fe5340750bbe88282f3cd3f10855d23efa2"
     },
     {
       "id": "damaged-candidate",
       "file": "damaged.pptx",
       "expected_oracle": "failed",
-      "preservation": "broken required presentation XML must not settle"
+      "preservation": "broken required presentation XML must not settle",
+      "sha256": "f015d5161ac235dd6cea0901d2311154ddb0cdc7ff0ff43662af38ca501bb003"
     },
     {
       "id": "timeout",
       "file": "clean.pptx",
       "expected_oracle": "timed_out",
-      "preservation": "injected stalled scripting process"
+      "preservation": "injected stalled scripting process",
+      "sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480"
     },
     {
       "id": "repair-prompt",
       "file": "repair.pptx",
       "expected_oracle": "repaired",
-      "preservation": "missing referenced slide part; repair must not pass"
+      "preservation": "missing referenced slide part; repair must not pass",
+      "sha256": "d6ee2daa8847430ec9f13ffabefec1e934d4a167d255afd751b700dee6e196d8"
     }
   ]
 }

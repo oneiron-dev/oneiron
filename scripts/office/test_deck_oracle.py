@@ -10,6 +10,7 @@ from unittest import mock
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
+APPROVED_ENV = json.loads((ROOT / 'environment.json').read_text())['environment']
 spec = importlib.util.spec_from_file_location('deck_oracle', ROOT / 'deck_oracle.py')
 oracle = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(oracle)
@@ -44,13 +45,203 @@ class OfflineContracts(unittest.TestCase):
                             for k in ('original', 'ground_truth')))
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / 'clean').mkdir()
-            (Path(tmp) / 'clean/receipt.json').write_text('{"status":"clean"}')
+            (Path(tmp) / 'clean/receipt.json').write_text(json.dumps({'status': 'clean',
+                'input': {'sha256': oracle.digest(ROOT / 'fixtures/clean.pptx')},
+                'environment': APPROVED_ENV}))
             (Path(tmp) / 'damaged-candidate').mkdir()
-            (Path(tmp) / 'damaged-candidate/receipt.json').write_text('{"status":"clean"}')
+            (Path(tmp) / 'damaged-candidate/receipt.json').write_text(json.dumps({'status': 'clean',
+                'input': {'sha256': oracle.digest(ROOT / 'fixtures/damaged.pptx')},
+                'environment': APPROVED_ENV}))
             report = oracle.classify_manifest(ROOT / 'fixtures.json', Path(tmp))
             self.assertEqual(report['counts']['fail'], 1)
             self.assertEqual(report['counts']['pass'], 1)
             self.assertEqual(report['counts']['inconclusive'], 3)
+
+    def test_pinned_case_requires_input_hash_binding(self):
+        corpus = json.loads((ROOT / 'pptarena.json').read_text())['cases'][:2]
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp)
+            for case in corpus:
+                folder = results / case['id']
+                folder.mkdir()
+                (folder / 'receipt.json').write_text(json.dumps({
+                    'status': 'clean', 'input': {'sha256': oracle.digest(ROOT / 'fixtures/clean.pptx')},
+                    'environment': APPROVED_ENV}))
+            manifest = results / 'manifest.json'
+            manifest.write_text(json.dumps({'cases': corpus}))
+            report = oracle.classify_manifest(manifest, results)
+            self.assertEqual(report['counts'].get('pass', 0), 0)
+            first = corpus[0]
+            (results / first['id'] / 'receipt.json').write_text(json.dumps({
+                'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'environment': APPROVED_ENV}))
+            self.assertEqual(oracle.classify_manifest(manifest, results)['counts']['pass'], 1)
+            (results / first['id'] / 'receipt.json').write_text(json.dumps({
+                'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'environment': {**APPROVED_ENV, 'pdfkit': 'unapproved'}}))
+            self.assertEqual(oracle.classify_manifest(manifest, results)['counts'].get('pass', 0), 0)
+            (results / first['id'] / 'receipt.json').write_text(json.dumps({
+                'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'environment': APPROVED_ENV}))
+            second = corpus[1]
+            (results / second['id'] / 'receipt.json').write_text(json.dumps({
+                'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'environment': APPROVED_ENV}))
+            self.assertEqual(oracle.classify_manifest(manifest, results)['counts'],
+                             {'pass': 1, 'fail': 1})
+            (results / first['id'] / 'receipt.json').write_text(json.dumps({
+                'status': 'clean', 'input': {'sha256': first['ground_truth']['sha256']},
+                'environment': APPROVED_ENV}))
+            self.assertEqual(oracle.classify_manifest(manifest, results)['counts']['pass'], 1)
+            (results / first['id'] / 'receipt.json').write_text(json.dumps({'status': 'clean'}))
+            self.assertEqual(oracle.classify_manifest(manifest, results)['counts'].get('pass', 0), 0)
+
+    def test_incomplete_classification_cli_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = oracle.subprocess.run([sys.executable, str(ROOT / 'deck_oracle.py'), 'classify',
+                                          str(ROOT / 'fixtures.json'), tmp],
+                                         capture_output=True, text=True, check=False)
+        self.assertEqual(json.loads(proc.stdout)['counts'], {'inconclusive': 5})
+        self.assertNotEqual(proc.returncode, 0)
+
+    def test_completed_script_past_deadline_is_timed_out(self):
+        proc = mock.Mock()
+        proc.poll.return_value = 0
+        proc.returncode = 0
+        proc.communicate.return_value = ('ok', '')
+        with mock.patch.object(oracle.subprocess, 'Popen', return_value=proc), \
+             mock.patch.object(oracle, 'app_pid', return_value=None), \
+             mock.patch.object(oracle.time, 'monotonic', return_value=10):
+            status, _ = oracle.run_script(ROOT / 'fixtures/clean.pptx', 'saveback',
+                                          Path('/unused/reference.pptx'), 'system-events', 9)
+        self.assertEqual(status, 'timed_out')
+
+    def test_postprocessing_overrun_is_timed_out(self):
+        clock = [10]
+        original_digest = oracle.digest
+        def costly_digest(path):
+            value = original_digest(path)
+            if path.name == 'reference.pptx':
+                clock[0] += 100
+            return value
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = {'name': None}
+            def inventory():
+                return [state['name']] if state['name'] else []
+            def scripted(source, action, target, observer, deadline):
+                state['name'] = source.name
+                if target:
+                    target.write_bytes(b'%PDF-1.4 fixture' if action == 'pdf'
+                                       else (ROOT / 'fixtures/clean.pptx').read_bytes())
+                return None, 'ok'
+            def raster(args, timeout=8):
+                Path(args[3], 'page-0001.png').write_bytes(b'\x89PNG\r\n\x1a\nfixture')
+                return 'pages=1'
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
+                 mock.patch.object(oracle, 'app_pid', return_value=123), \
+                 mock.patch.object(oracle, 'presentations', side_effect=inventory), \
+                 mock.patch.object(oracle, 'launch_hidden'), \
+                 mock.patch.object(oracle, 'hide_powerpoint'), \
+                 mock.patch.object(oracle, 'run_script', side_effect=scripted), \
+                 mock.patch.object(oracle, 'command', side_effect=raster), \
+                 mock.patch.object(oracle, 'close_owned', return_value=None), \
+                 mock.patch.object(oracle.time, 'monotonic', side_effect=lambda: clock[0]), \
+                 mock.patch.object(oracle, 'digest', side_effect=costly_digest):
+                result = oracle.oracle(ROOT / 'fixtures/clean.pptx', root / 'result', timeout=1)
+        self.assertEqual(result['status'], 'timed_out', result)
+
+    def test_expired_budget_does_not_start_raster(self):
+        clock = [10]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = {'name': None}
+            def inventory():
+                return [state['name']] if state['name'] else []
+            def scripted(source, action, target, observer, deadline):
+                state['name'] = source.name
+                if target:
+                    target.write_bytes(b'%PDF-1.4 fixture')
+                    clock[0] += 100
+                return None, 'ok'
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
+                 mock.patch.object(oracle, 'app_pid', return_value=123), \
+                 mock.patch.object(oracle, 'presentations', side_effect=inventory), \
+                 mock.patch.object(oracle, 'launch_hidden'), \
+                 mock.patch.object(oracle, 'hide_powerpoint'), \
+                 mock.patch.object(oracle, 'run_script', side_effect=scripted), \
+                 mock.patch.object(oracle, 'command') as swift, \
+                 mock.patch.object(oracle, 'close_owned', return_value=None), \
+                 mock.patch.object(oracle.time, 'monotonic', side_effect=lambda: clock[0]):
+                result = oracle.oracle(ROOT / 'fixtures/clean.pptx', root / 'result', timeout=1)
+        self.assertEqual(result['status'], 'timed_out')
+        swift.assert_not_called()
+
+    def test_unapproved_environment_blocks_open(self):
+        unapproved = {**APPROVED_ENV, 'powerpoint': '99.0-unapproved'}
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+             mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+             mock.patch.object(oracle, 'observer_status', return_value=None), \
+             mock.patch.object(oracle, 'app_pid', return_value=None), \
+             mock.patch.object(oracle, 'env_pin', return_value=unapproved), \
+             mock.patch.object(oracle, 'launch_hidden') as launch:
+            result = oracle.oracle(ROOT / 'fixtures/clean.pptx', Path(tmp) / 'result')
+        self.assertEqual(result['status'], 'unsupported', result)
+        self.assertIn('powerpoint', result['detail'])
+        launch.assert_not_called()
+        self.assertIn('font_inventory_sha256', oracle.environment_mismatch(
+            {key: value for key, value in APPROVED_ENV.items() if key != 'font_inventory_sha256'}))
+
+    def test_ordinary_deck_titles_are_not_dialogs(self):
+        for stem in ('Disaster Recovery-123-abcd', 'Repair Plan', 'Permission Review'):
+            with self.subTest(stem=stem):
+                self.assertIsNone(oracle.dialog_class([stem + '.pptx'], stem))
+                self.assertIsNone(oracle.dialog_class(['WINDOW:' + stem + '.pptx'], stem))
+        self.assertEqual(oracle.dialog_class(['DIALOG:PowerPoint found a problem with content'],
+                                             'Disaster Recovery'), 'repaired')
+        with mock.patch.object(oracle, 'command', return_value=(
+                'WINDOW:Repair Plan.pptx\x1eDIALOG:PowerPoint found a problem with content')):
+            observed = oracle.windows('system-events', 123)
+        self.assertEqual(observed, ['WINDOW:Repair Plan.pptx',
+                                    'DIALOG:PowerPoint found a problem with content'])
+
+    def test_unsupported_modal_warns_after_closing_documents(self):
+        with mock.patch.object(oracle, 'app_pid', return_value=123), \
+             mock.patch.object(oracle, 'presentations', return_value=[]), \
+             mock.patch.object(oracle, 'hide_powerpoint'), \
+             mock.patch.object(oracle, 'windows', return_value=['DIALOG:Grant File Access']):
+            warning = oracle.close_owned({'candidate.pptx'})
+        self.assertIsNotNone(warning)
+        self.assertIn('dialog', warning.lower())
+        with mock.patch.object(oracle, 'app_pid', return_value=123), \
+             mock.patch.object(oracle, 'presentations', return_value=[]), \
+             mock.patch.object(oracle, 'hide_powerpoint'), \
+             mock.patch.object(oracle, 'windows', return_value=['Grant File Access']):
+            self.assertIn('dialog', oracle.close_owned({'candidate.pptx'}).lower())
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+             mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+             mock.patch.object(oracle, 'STAGING', Path(tmp) / 'sandbox'), \
+             mock.patch.object(oracle, 'observer_status', return_value=None), \
+             mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
+             mock.patch.object(oracle, 'app_pid', return_value=123), \
+             mock.patch.object(oracle, 'presentations', return_value=[]), \
+             mock.patch.object(oracle, 'launch_hidden'), \
+             mock.patch.object(oracle, 'hide_powerpoint'), \
+             mock.patch.object(oracle, 'run_script', return_value=('unsupported', 'Grant File Access')), \
+             mock.patch.object(oracle, 'windows', return_value=['DIALOG:Grant File Access']):
+            result = oracle.oracle(ROOT / 'fixtures/clean.pptx', Path(tmp) / 'result')
+        self.assertEqual(result['status'], 'unsupported')
+        self.assertIn('dialog', result['cleanup_warning'].lower())
 
     def test_linux_skips_with_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(oracle.sys, 'platform', 'linux'):
@@ -77,7 +268,7 @@ class OfflineContracts(unittest.TestCase):
         proc.communicate.return_value = ('', '')
         with mock.patch.object(oracle.subprocess, 'Popen', return_value=proc), \
              mock.patch.object(oracle, 'app_pid', return_value=None), \
-             mock.patch.object(oracle.time, 'monotonic', return_value=10):
+             mock.patch.object(oracle.time, 'monotonic', side_effect=[8, 10]):
             status, _ = oracle.run_script(ROOT / 'fixtures/clean.pptx', 'open', None, 'cua', 9)
         self.assertEqual(status, 'timed_out')
         proc.terminate.assert_called_once()
@@ -99,7 +290,7 @@ class OfflineContracts(unittest.TestCase):
                  mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
                  mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
                  mock.patch.object(oracle, 'observer_status', return_value=None), \
-                 mock.patch.object(oracle, 'env_pin', return_value={'test': True}), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
                  mock.patch.object(oracle, 'app_pid', return_value=123), \
                  mock.patch.object(oracle, 'presentations', return_value=[]), \
                  mock.patch.object(oracle, 'launch_hidden'), \
@@ -124,7 +315,7 @@ class OfflineContracts(unittest.TestCase):
                  mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
                  mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
                  mock.patch.object(oracle, 'observer_status', return_value=None), \
-                 mock.patch.object(oracle, 'env_pin', return_value={'test': True}), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
                  mock.patch.object(oracle, 'app_pid', return_value=123), \
                  mock.patch.object(oracle, 'presentations', return_value=[]), \
                  mock.patch.object(oracle, 'launch_hidden'), \
@@ -185,7 +376,7 @@ class OfflineContracts(unittest.TestCase):
                  mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
                  mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
                  mock.patch.object(oracle, 'observer_status', return_value=None), \
-                 mock.patch.object(oracle, 'env_pin', return_value={'test': True}), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
                  mock.patch.object(oracle, 'app_pid', return_value=123), \
                  mock.patch.object(oracle, 'presentations', side_effect=inventory), \
                  mock.patch.object(oracle, 'launch_hidden'), \
