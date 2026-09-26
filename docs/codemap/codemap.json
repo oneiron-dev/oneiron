@@ -12239,7 +12239,7 @@
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -12269,19 +12269,34 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeleteEntityOptions",
       "DeleteEntityOutcome"
      ],
      "path": "src/deletion/delete/outcome.rs",
      "purpose": "Reason-aware delete result type and its missing() constructor",
      "surface": {
       "crate-vis": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeleteEntityPreview"
+     ],
+     "path": "src/deletion/delete/preview.rs",
+     "purpose": "Snapshot-bound impact preview for the one-action, confirmed delete door",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -15918,7 +15933,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -20509,6 +20524,16 @@
      "surface": {
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/entity_delete.rs",
+     "purpose": "Owner-bound preview and one-call unshare-before-delete confirmation",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -27400,13 +27425,13 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 5,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/share/tests.rs",
@@ -34029,7 +34054,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34372,7 +34397,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34899,7 +34924,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2064,
    "test_files": 705
   },
   "oneiron-android": {

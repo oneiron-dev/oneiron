@@ -152,7 +152,12 @@ fn evidence_change_rerenders_and_erasure_releases_the_cached_body() -> Result<()
     drop(first);
     drop(second);
     assert!(current_render.upgrade().is_some());
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(old_render.upgrade().is_none());
     assert!(current_render.upgrade().is_none());
     assert!(assembly(&vault, subject).run()?.l2_base.is_none());
@@ -280,7 +285,7 @@ fn changed_or_erased_evidence_refuses_an_earlier_prefix() -> Result<()> {
     )?);
     drop(txn);
     let current = assembly(&vault, subject).run()?.l2_base.unwrap();
-    vault.delete_entity(&id)?;
+    vault.delete_entity_with_options(&id, crate::deletion::DeleteEntityOptions { purge: true })?;
     let txn = vault.store.env.read_txn()?;
     assert!(!super::revalidate_l2_base(
         &vault,

@@ -840,7 +840,14 @@ fn put_companion_record_creates_and_optionally_retires() {
     // transaction as companion creation, rather than trusting a stale
     // preflight probe for caller-supplied ids.
     let tombstoned_id = put_person(&vault, 0xE5);
-    assert!(vault.delete_entity(&tombstoned_id).expect("hard delete"));
+    assert!(
+        vault
+            .delete_entity_with_options(
+                &tombstoned_id,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
+            .expect("hard delete")
+    );
     let err = facade
         .put_companion_record(&CompanionRecordInput {
             id: Some(tombstoned_id.to_hex()),

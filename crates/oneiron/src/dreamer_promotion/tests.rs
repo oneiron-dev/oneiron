@@ -638,7 +638,10 @@ fn landed_verification_blocks_ack() -> Result<()> {
     promote_consolidated_claims(&vault, &fixture.run, vec![promoted])?;
     assert!(vault.get_claim(&claim_id)?.is_some());
 
-    vault.delete_entity(&claim_id)?;
+    vault.delete_entity_with_options(
+        &claim_id,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?;
     let verdict = verify_landed(&vault, &claim_id, "profile.name", ClaimSource::Generated);
     assert!(
         verdict.is_err(),

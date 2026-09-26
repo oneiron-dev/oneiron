@@ -830,3 +830,51 @@ fn raced_gdpr_delete_against_batch_delete_still_converges() -> Result<()> {
     assert_eq!(hard_erase_sweep_rows(&peer)?.len(), 1);
     Ok(())
 }
+
+#[test]
+fn plain_delete_is_tombstone_tier_and_explicit_purge_is_irreversible() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let soft = EntityId::now();
+    let hard = EntityId::now();
+    for id in [soft, hard] {
+        vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"body")?;
+    }
+    assert!(vault.delete_entity(&soft)?);
+    assert_eq!(vault.get(&soft)?.as_deref(), Some([].as_slice()));
+    assert!(
+        vault.delete_entity_with_options(
+            &hard,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
+    assert_eq!(vault.get(&hard)?, None);
+    let txn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .sync_state
+            .get(&txn, &crate::deletion::local_hard_delete_key(&hard))?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let raw = b"stable bytes";
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, raw)?;
+    assert!(vault.record_scope(&id)?.is_some());
+    // Generic deindex is intentionally used here: unlike hard delete it has no
+    // permanent dt: marker, and a same-id same-body put can reveal a stale stamp.
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity(&vault.store, txn, &id)?;
+        Ok(())
+    })?;
+    let txn = vault.store.env.read_txn()?;
+    let mut stamp_key = b"scope:record:v1:".to_vec();
+    stamp_key.extend_from_slice(id.as_bytes());
+    assert!(vault.store.vault_meta.get(&txn, &stamp_key)?.is_none());
+    Ok(())
+}

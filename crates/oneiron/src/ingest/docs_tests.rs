@@ -268,7 +268,8 @@ fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Resul
     assert!(vault.blob_fingerprint(&asset)?.is_none());
     ingest(&doc)?;
     assert!(vault.blob_fingerprint(&asset)?.is_some());
-    vault.delete_entity(&asset)?;
+    vault
+        .delete_entity_with_options(&asset, crate::deletion::DeleteEntityOptions { purge: true })?;
     assert!(vault.blob_fingerprint(&asset)?.is_none());
     Ok(())
 }

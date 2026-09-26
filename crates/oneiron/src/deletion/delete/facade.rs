@@ -19,16 +19,30 @@ use super::super::rendezvous::{
 use super::super::tombstone::{
     DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
 };
-use super::DeleteEntityOutcome;
+use super::{DeleteEntityOptions, DeleteEntityOutcome};
 use crate::error::RegistryError;
 
 impl Vault {
-    /// Deletes an entity blob by ID using the destructive user-hard-delete
-    /// contract.
+    /// Plain deletion retains a tombstone shell. Use `delete_entity_with_options`
+    /// to request irreversible active-store purge explicitly.
     pub fn delete_entity(&self, id: &EntityId) -> Result<bool> {
-        Ok(self
-            .delete_entity_with_reason(id, DeleteReason::UserHardDelete)?
-            .existed)
+        self.delete_entity_with_options(id, DeleteEntityOptions::default())
+    }
+
+    /// `purge` selects the ARCH-0038 hard tier; false is a shell-keeping
+    /// user-delete. Hosts must display an impact preview before a confirmed
+    /// purge of shared content.
+    pub fn delete_entity_with_options(
+        &self,
+        id: &EntityId,
+        options: DeleteEntityOptions,
+    ) -> Result<bool> {
+        let reason = if options.purge {
+            DeleteReason::UserHardDelete
+        } else {
+            DeleteReason::UserDelete
+        };
+        Ok(self.delete_entity_with_reason(id, reason)?.existed)
     }
 
     /// Deletes an entity according to the pinned ARCH-0038 reason behavior.
@@ -100,6 +114,33 @@ impl Vault {
         // header read, forcing the headerful leg every run. No-op in
         // production.
         signal_after_delete_probe(self);
+        // Reserve this identity before publication. Grant creation checks this
+        // durable fence under the same LMDB writer; a grant cannot slip
+        // between the final live-grant check and the CRDT retraction. A crash
+        // leaves a fail-closed fence, and a fresh preview can retry deletion.
+        if matches!(
+            reason,
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+        ) {
+            let mut txn = self.store.env.write_txn()?;
+            // The fence is a durable effect. A gated owner must still hold
+            // authority in this writer's view before it can be committed.
+            reverify_deletion_authority_before_publication(gate.as_ref(), &txn)?;
+            if !crate::share::active_brief_shares_for(
+                &self.store,
+                &txn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?
+            .is_empty()
+            {
+                return Err(Error::InvariantViolation(
+                    "active brief share requires confirmed delete",
+                ));
+            }
+            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
+            txn.commit()?;
+        }
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
