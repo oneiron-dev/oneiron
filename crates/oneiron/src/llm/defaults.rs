@@ -56,7 +56,7 @@ impl CallEnvelope {
 impl TierPrecedence {
     pub fn for_purpose(purpose: &CallPurpose, global_default: ModelTierRef) -> Self {
         Self {
-            per_call: None,
+            per_seat: None,
             vault_policy: None,
             purpose_default: purpose
                 .default_policy()
