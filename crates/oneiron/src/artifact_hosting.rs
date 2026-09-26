@@ -14,6 +14,7 @@ use crate::codebase::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result, SecretError};
+use crate::registry::{ArtifactFamilyKindId, artifact_family_kind_of};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
@@ -283,6 +284,16 @@ impl Vault {
                 continue;
             };
             if snapshot.project_id != artifact {
+                continue;
+            }
+            // This serving adapter mounts code trees only. The semantic family
+            // match keeps other registered kinds out without treating their
+            // different export bodies as code snapshots.
+            if self
+                .get_entity_type(&code_artifact_id)?
+                .and_then(artifact_family_kind_of)
+                != Some(ArtifactFamilyKindId::Code)
+            {
                 continue;
             }
             let Some(body) = self.get_code_artifact(&code_artifact_id)? else {
