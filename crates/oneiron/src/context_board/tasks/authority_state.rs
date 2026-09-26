@@ -90,9 +90,9 @@ fn put_task_state_fact_in_txn(
 /// scan reaches the same read through [`TaskIntentPresence::render_state_in`].
 ///
 /// Strictness travels with the fold: the `Err` a poisoned companion set
-/// produces reaches [`task_is_cancelled`] / [`task_is_acked`] unchanged. Board
-/// call sites degrade it per row (skip in the page scan, `Ok(None)` by id);
-/// authority call sites keep failing closed on it.
+/// produces reaches [`task_is_cancelled`] / [`task_is_acked`] unchanged. The
+/// board scan warns and skips that row; direct-by-id reads return the error,
+/// and authority call sites keep failing closed on it.
 pub(super) fn task_render_state(vault: &Vault, task_ref: EntityId) -> Result<TaskRenderState> {
     let rtxn = vault.store.env.read_txn()?;
     TaskIntentPresence::render_state_in(vault, &rtxn, task_ref)
