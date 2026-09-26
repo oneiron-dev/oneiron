@@ -4,6 +4,7 @@ mod atom_fuzz;
 mod genui_render;
 mod genui_validation;
 mod instrument;
+mod intent;
 mod mediation;
 mod result_set;
 mod selection_handles;
