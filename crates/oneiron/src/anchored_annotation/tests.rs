@@ -582,6 +582,38 @@ fn open_thread_rejects_bad_anchor_version() {
     assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
 }
 
+#[test]
+fn anchor_refuses_non_artifact_and_unadapted_code_kind() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let person_id = actor.entity_ref();
+    let code_id = EntityId::now();
+    vault.put_code_artifact(
+        &code_id,
+        &crate::code_artifact::CodeArtifactBody::new(
+            "summary",
+            [1; 32],
+            "github:oneiron-dev/oneiron#9d561405a81ffbf29d1369cd848e0ef9fca4f277",
+        )
+        .with_class(crate::code_artifact::CodeArtifactClass::Artifact),
+        test_time(10),
+        10,
+    )?;
+    for id in [person_id, code_id] {
+        let err = vault
+            .open_annotation_thread(
+                &xlsx_anchor(id, 1, "Sheet1", "A1"),
+                actor,
+                "not a blob version",
+                test_time(11),
+                11,
+            )
+            .expect_err("only an adapted version chain can be anchored");
+        assert_eq!(err.kind(), crate::error::ErrorKind::InvalidAnchor);
+    }
+    Ok(())
+}
+
 // PR #397 fix 1: the live-read gate ([`claim_surfaceable`]) hides an
 // agent-authored (Proposed) head, so it can never override an admitted
 // human head via newest-UUID-wins selection.
