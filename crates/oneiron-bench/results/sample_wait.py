@@ -1,4 +1,8 @@
-"""Sample task wait channels only during a synchronized cohort; separate diagnostic."""
+"""Sample ALL tasks during full-thread prefix only; includes leader, excludes drain tail.
+
+This is a point-in-time wait-channel profile, not a complete trial-time breakdown.
+The count guard intentionally omits warmup and the tail after the first worker exits.
+"""
 import collections, json, pathlib, re, sys, time
 pid=int(sys.argv[1]); log=pathlib.Path(sys.argv[2]); out=pathlib.Path(sys.argv[3]); task=pathlib.Path(f"/proc/{pid}/task")
 counts=collections.defaultdict(collections.Counter)
@@ -22,4 +26,4 @@ while task.exists():
         if "EXIT=" in text:break
     except (OSError,ValueError):pass
     time.sleep(0.05)
-out.write_text(json.dumps({"samples":samples,"wait_channels":counts},indent=2,sort_keys=True))
+out.write_text(json.dumps({"scope":"all tasks including leader, full-thread prefix only; no draining tail", "interval_ms":50, "samples":samples,"wait_channels":counts},indent=2,sort_keys=True))

@@ -1,8 +1,9 @@
 //! Seeded single-vault, in-process agent-swarm baseline. No engine internals.
 use std::io::Write;
 use std::process::ExitCode;
-use std::sync::Barrier;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+use crate::perf::sessions::ReleaseGate;
 
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
@@ -128,23 +129,64 @@ fn parse(args: &[String]) -> Result<(Mode, usize, usize, u64), String> {
     Ok((mode.ok_or("missing --mode")?, agents, ops, seed))
 }
 
+#[derive(Clone, Serialize)]
+struct Storage {
+    temp_root: String,
+    device: String,
+    rotational: bool,
+    filesystem: String,
+}
+
+/// Caller-supplied device identity, checked against findmnt/lsblk before a run.
+/// Requiring it avoids silently publishing tmpfs runs as disk baselines.
+fn storage() -> Result<Storage, String> {
+    let temp_root = std::env::var("TMPDIR").map_err(|_| "set TMPDIR to a disk-backed root")?;
+    let temp_root = std::fs::canonicalize(temp_root)
+        .map_err(|e| format!("TMPDIR does not resolve: {e}"))?
+        .display()
+        .to_string();
+    let device = std::env::var("SWARM_DISK_DEVICE").map_err(|_| "set SWARM_DISK_DEVICE")?;
+    let rotational = match std::env::var("SWARM_DISK_ROTATIONAL").as_deref() {
+        Ok("0") => false,
+        Ok("1") => true,
+        _ => return Err("set SWARM_DISK_ROTATIONAL=0|1".into()),
+    };
+    let filesystem =
+        std::env::var("SWARM_DISK_FILESYSTEM").map_err(|_| "set SWARM_DISK_FILESYSTEM")?;
+    if device.is_empty() || filesystem.is_empty() || filesystem == "tmpfs" {
+        return Err("disk device and non-tmpfs filesystem must be specified".into());
+    }
+    Ok(Storage {
+        temp_root,
+        device,
+        rotational,
+        filesystem,
+    })
+}
+
 pub(crate) fn run(args: &[String]) -> ExitCode {
     if args == ["--matrix"] {
         return run_matrix();
     }
-    match parse(args).and_then(|(mode, agents, ops, seed)| measure(mode, agents, ops, seed)) {
-        Ok(report) => {
-            println!(
+    match parse(args).and_then(|(mode, agents, ops, seed)| {
+        let storage = storage()?;
+        measure(mode, agents, ops, seed).map(|report| (report, storage))
+    }) {
+        Ok((report, storage)) => {
+            writeln!(
+                std::io::stdout(),
                 "{}",
-                serde_json::to_string(&report).expect("report serializes")
-            );
+                serde_json::json!({
+                    "report": report, "storage": storage
+                })
+            )
+            .expect("write single-run JSON");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("swarm: {error}");
-            eprintln!(
-                "usage: oneiron-bench swarm --mode write|recall|mixed --agents 1|10|100|300 [--ops 1200] [--seed 42]"
-            );
+            writeln!(std::io::stderr(), "swarm: {error}").expect("write error");
+            writeln!(std::io::stderr(), "usage: oneiron-bench swarm --mode write|recall|mixed --agents 1|10|100|300 [--ops 1200] [--seed 42] | --matrix; set TMPDIR and SWARM_DISK_DEVICE, SWARM_DISK_ROTATIONAL, SWARM_DISK_FILESYSTEM")
+                .expect("write usage");
             ExitCode::FAILURE
         }
     }
@@ -153,29 +195,44 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
 /// Each JSONL row is an independent fresh-vault trial. Host load is sampled
 /// directly beside the run, not once for the whole matrix.
 fn run_matrix() -> ExitCode {
+    let storage = match storage() {
+        Ok(storage) => storage,
+        Err(error) => {
+            writeln!(std::io::stderr(), "swarm: {error}").expect("write error");
+            return ExitCode::FAILURE;
+        }
+    };
     for mode in [Mode::Write, Mode::Recall, Mode::Mixed] {
         for agents in [1, 10, 100, 300] {
             for trial in 1..=3 {
                 let load_start = std::fs::read_to_string("/proc/loadavg")
                     .unwrap_or_else(|_| "unavailable".to_owned());
-                eprintln!("START {mode:?} {agents} trial={trial}");
+                writeln!(std::io::stderr(), "START {mode:?} {agents} trial={trial}")
+                    .expect("write progress");
                 match measure(mode, agents, OPS, SEED) {
                     Ok(report) => {
                         let load_end = std::fs::read_to_string("/proc/loadavg")
                             .unwrap_or_else(|_| "unavailable".to_owned());
-                        println!(
+                        writeln!(
+                            std::io::stdout(),
                             "{}",
                             serde_json::json!({
                                 "trial": trial,
                                 "loadavg_start": load_start.trim(),
                                 "loadavg_end": load_end.trim(),
+                                "storage": &storage,
                                 "report": report,
                             })
-                        );
+                        )
+                        .expect("write JSONL row");
                         std::io::stdout().flush().expect("flush JSONL row");
                     }
                     Err(error) => {
-                        eprintln!("FAIL {mode:?} {agents} trial={trial}: {error}");
+                        writeln!(
+                            std::io::stderr(),
+                            "FAIL {mode:?} {agents} trial={trial}: {error}"
+                        )
+                        .expect("write error");
                         return ExitCode::FAILURE;
                     }
                 }
@@ -183,6 +240,64 @@ fn run_matrix() -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// Start is captured inside the release gate after every worker is ready.
+/// End is the latest worker timestamp, before joining and merging samples.
+struct Cohort<T> {
+    results: Vec<T>,
+    started_at: Instant,
+    finished_at: Instant,
+    #[cfg(test)]
+    collected_at: Instant,
+}
+
+fn run_cohort<T, F>(agents: usize, work: F) -> Result<Cohort<T>, String>
+where
+    T: Send,
+    F: Fn(usize, &ReleaseGate) -> Result<(T, Instant), String> + Sync,
+{
+    let gate = ReleaseGate::new();
+    std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(agents);
+        let mut error = None;
+        for agent in 0..agents {
+            let gate = &gate;
+            let work = &work;
+            match std::thread::Builder::new().spawn_scoped(scope, move || work(agent, gate)) {
+                Ok(handle) => handles.push(handle),
+                Err(cause) => error = Some(format!("worker {agent} spawn: {cause}")),
+            }
+        }
+        let release = gate.release_all(handles.len(), Duration::from_secs(120));
+        let mut finished_at = release.window_started;
+        let mut results = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok((result, instant))) => {
+                    finished_at = finished_at.max(instant);
+                    results.push(result);
+                }
+                Ok(Err(cause)) => error = Some(cause),
+                Err(_) => error = Some("worker panicked".into()),
+            }
+        }
+        if release.arrived != agents || error.is_some() {
+            return Err(error.unwrap_or_else(|| {
+                format!(
+                    "only {} of {agents} workers reached the release gate",
+                    release.arrived
+                )
+            }));
+        }
+        Ok(Cohort {
+            results,
+            started_at: release.window_started,
+            finished_at,
+            #[cfg(test)]
+            collected_at: Instant::now(),
+        })
+    })
 }
 
 fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, String> {
@@ -220,78 +335,58 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
             return Err(format!("warmup lost planted document {token}"));
         }
     }
-    let barrier = Barrier::new(agents + 1);
+    let cohort = run_cohort(agents, |agent, gate| {
+        let mut writes = Vec::new();
+        let mut reads = Vec::new();
+        let mut telemetry_rows = 0;
+        gate.arrive_and_wait();
+        // Fixed disjoint action slots, with per-agent deterministic query rotation.
+        for index in (agent * ops / agents)..((agent + 1) * ops / agents) {
+            let started = Instant::now();
+            if mode.writes(index) {
+                let entity = &write_ids[index];
+                let token = marker(CORPUS + index);
+                vault
+                    .batch()
+                    .put(
+                        entity,
+                        1,
+                        TimeRange {
+                            start: index as u64 + 2,
+                            end: index as u64 + 2,
+                        },
+                        index as u64 + 2,
+                        b"swarm-action",
+                    )
+                    .text(entity, &[("body", token.as_str())])
+                    .commit()
+                    .map_err(|e| format!("write {index}: {e}"))?;
+                writes.push(started.elapsed().as_secs_f64() * 1000.0);
+            } else {
+                let (expected, query) = &corpus[(index + agent) % corpus.len()];
+                let result = vault
+                    .search_text_with_telemetry(query, 5)
+                    .map_err(|e| format!("recall {index}: {e}"))?;
+                if !result.value.iter().any(|hit| hit.id == *expected) {
+                    return Err(format!("recall {index}: planted document missing"));
+                }
+                telemetry_rows += usize::from(result.run_id.is_some());
+                reads.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        Ok(((writes, reads, telemetry_rows), Instant::now()))
+    })?;
+    let window_seconds = cohort
+        .finished_at
+        .duration_since(cohort.started_at)
+        .as_secs_f64();
     let mut writes = Vec::new();
     let mut reads = Vec::new();
     let mut telemetry_rows = 0;
-    let mut failure = None;
-    let mut window_seconds = 0.0;
-    std::thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(agents);
-        for agent in 0..agents {
-            let barrier = &barrier;
-            let vault = &vault;
-            let corpus = &corpus;
-            let write_ids = &write_ids;
-            handles.push(scope.spawn(move || {
-                let mut writes = Vec::new();
-                let mut reads = Vec::new();
-                let mut telemetry_rows = 0;
-                barrier.wait();
-                // Fixed disjoint action slots, with per-agent deterministic query rotation.
-                for index in (agent * ops / agents)..((agent + 1) * ops / agents) {
-                    let started = Instant::now();
-                    if mode.writes(index) {
-                        let entity = &write_ids[index];
-                        let token = marker(CORPUS + index);
-                        vault
-                            .batch()
-                            .put(
-                                entity,
-                                1,
-                                TimeRange {
-                                    start: index as u64 + 2,
-                                    end: index as u64 + 2,
-                                },
-                                index as u64 + 2,
-                                b"swarm-action",
-                            )
-                            .text(entity, &[("body", token.as_str())])
-                            .commit()
-                            .map_err(|e| format!("write {index}: {e}"))?;
-                        writes.push(started.elapsed().as_secs_f64() * 1000.0);
-                    } else {
-                        let (expected, query) = &corpus[(index + agent) % corpus.len()];
-                        let result = vault
-                            .search_text_with_telemetry(query, 5)
-                            .map_err(|e| format!("recall {index}: {e}"))?;
-                        if !result.value.iter().any(|hit| hit.id == *expected) {
-                            return Err(format!("recall {index}: planted document missing"));
-                        }
-                        telemetry_rows += usize::from(result.run_id.is_some());
-                        reads.push(started.elapsed().as_secs_f64() * 1000.0);
-                    }
-                }
-                Ok::<_, String>((writes, reads, telemetry_rows))
-            }));
-        }
-        let start = Instant::now();
-        barrier.wait();
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok((w, r, t))) => {
-                    writes.extend(w);
-                    reads.extend(r);
-                    telemetry_rows += t;
-                }
-                Ok(Err(e)) => failure = Some(e),
-                Err(_) => failure = Some("worker panicked".to_owned()),
-            }
-        }
-        window_seconds = start.elapsed().as_secs_f64();
-    });
-    if let Some(error) = failure {
-        return Err(error);
+    for (w, r, t) in cohort.results {
+        writes.extend(w);
+        reads.extend(r);
+        telemetry_rows += t;
     }
     if writes.len() + reads.len() != ops {
         return Err("incomplete operations".into());
@@ -348,6 +443,44 @@ mod tests {
         let writes = (0..1200).filter(|i| Mode::Mixed.writes(*i)).count();
         assert_eq!(writes, 240);
     }
+    /// A late arrival and slow result collection must not enter the operation
+    /// window; its end is the last completed action, not the last join.
+    #[test]
+    fn cohort_window_excludes_readiness_and_collection() {
+        let ready = std::sync::Mutex::new(Vec::new());
+        let cohort = run_cohort(2, |agent, gate| {
+            if agent == 1 {
+                std::thread::sleep(Duration::from_millis(90));
+            }
+            ready.lock().expect("ready lock").push(Instant::now());
+            gate.arrive_and_wait();
+            std::thread::sleep(Duration::from_millis(5));
+            let completed = Instant::now();
+            std::thread::sleep(Duration::from_millis(90));
+            Ok(((agent, completed), completed))
+        })
+        .expect("cohort completes");
+        let last_ready = ready
+            .lock()
+            .expect("ready lock")
+            .iter()
+            .copied()
+            .max()
+            .expect("ready");
+        assert!(cohort.started_at >= last_ready);
+        let last_action = cohort
+            .results
+            .iter()
+            .map(|(_, at)| *at)
+            .max()
+            .expect("action");
+        assert_eq!(cohort.finished_at, last_action);
+        assert!(
+            cohort.collected_at.duration_since(cohort.finished_at) >= Duration::from_millis(80)
+        );
+        assert_eq!(cohort.results.len(), 2);
+    }
+
     #[test]
     fn public_doors_return_all_operations() {
         let result = measure(Mode::Mixed, 1, 10, SEED).expect("seeded smoke");
