@@ -234,9 +234,7 @@ pub(super) fn validate(
 fn external_link_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<String> {
     const LINK_CONTENT_TYPE: &str =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
-    fn graph(
-        pkg: &OpcPackage,
-    ) -> std::result::Result<Vec<super::xml::ExternalRelationship>, &'static str> {
+    fn graph(pkg: &OpcPackage) -> std::result::Result<Vec<(String, String)>, &'static str> {
         let refs = pkg
             .part("xl/workbook.xml")
             .map_or(Ok(Vec::new()), super::xml::external_refs)?;
@@ -259,7 +257,12 @@ fn external_link_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<Stri
             let rel = by_id
                 .remove(&id)
                 .ok_or("external reference has no link relationship")?;
-            if rel.mode.is_some() || !pkg.contains(&rel.target) {
+            // TargetMode defaults to Internal in OPC. An explicit Internal is
+            // the same join; External (or an unknown mode) cannot target a
+            // package part and must fail closed.
+            if rel.mode.as_deref().is_some_and(|mode| mode != "Internal")
+                || !pkg.contains(&rel.target)
+            {
                 return Err("external link must point to an internal package part");
             }
             let types = pkg
@@ -268,7 +271,9 @@ fn external_link_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<Stri
             if super::xml::content_type(types, &rel.target)?.as_deref() != Some(LINK_CONTENT_TYPE) {
                 return Err("external link has no correct content type");
             }
-            joined.push(rel);
+            // The r:id is only a key within this workbook. openpyxl may
+            // renumber it along with its reference on a valid AddSheet save.
+            joined.push((rel.target, rel.kind));
         }
         Ok(joined)
     }

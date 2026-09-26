@@ -1155,3 +1155,87 @@ fn public_vault_and_raw_proposal_paths_preserve_calculator_at_settle() -> Result
     );
     Ok(())
 }
+
+// openpyxl 3.1.5 load_workbook(keep_links=True, data_only=False),
+// create_sheet("Extra"), save: workbook r:id and matching relationship Id
+// both change rId2 -> rId3 while the external link still resolves unchanged.
+#[test]
+fn real_openpyxl_add_sheet_keeps_the_ordered_link_join() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let after = opc::read(include_bytes!("fixtures/linked-add-sheet.xlsx")).unwrap();
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report.ok,
+        "valid AddSheet save must retain its external link: {report:?}"
+    );
+    for part in [
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+    ] {
+        assert_eq!(before.part(part), after.part(part));
+    }
+}
+
+#[test]
+fn renumbered_link_ids_are_equivalent_only_when_both_sides_join() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let mut after = before.clone();
+    let wb = String::from_utf8(before.part("xl/workbook.xml").unwrap().to_vec()).unwrap();
+    let rels =
+        String::from_utf8(before.part("xl/_rels/workbook.xml.rels").unwrap().to_vec()).unwrap();
+    after.upsert("xl/workbook.xml", wb.replace("rId2", "rId3").into_bytes());
+    after.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace("rId2", "rId3").into_bytes(),
+    );
+    assert!(validate(&before, &after, OfficeFormat::Xlsx).ok);
+    after.upsert("xl/_rels/workbook.xml.rels", rels.into_bytes());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "broken join must still fail: {report:?}"
+    );
+}
+
+#[test]
+fn omitted_and_explicit_internal_modes_are_equivalent_but_external_refuses() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let rels =
+        String::from_utf8(before.part("xl/_rels/workbook.xml.rels").unwrap().to_vec()).unwrap();
+    let mut explicit = before.clone();
+    explicit.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace(
+            "Target=\"externalLinks/externalLink1.xml\"",
+            "TargetMode=\"Internal\" Target=\"externalLinks/externalLink1.xml\"",
+        )
+        .into_bytes(),
+    );
+    assert_ne!(
+        explicit.part("xl/_rels/workbook.xml.rels"),
+        before.part("xl/_rels/workbook.xml.rels")
+    );
+    assert!(validate(&explicit, &explicit, OfficeFormat::Xlsx).ok);
+    assert!(validate(&before, &explicit, OfficeFormat::Xlsx).ok);
+    assert!(validate(&explicit, &before, OfficeFormat::Xlsx).ok);
+    let mut invalid = before.clone();
+    invalid.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace(
+            "Target=\"externalLinks/externalLink1.xml\"",
+            "TargetMode=\"External\" Target=\"externalLinks/externalLink1.xml\"",
+        )
+        .into_bytes(),
+    );
+    let report = validate(&before, &invalid, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "external mode must still fail: {report:?}"
+    );
+}
