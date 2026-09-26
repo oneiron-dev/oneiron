@@ -1,4 +1,5 @@
-//! Public session-less signing lens. The capability is in POST, never the URL.
+//! Session-less signing ceremony. The public link carries the capability in its
+//! path; after loading, the client scrubs it and sends it only in POST bodies.
 use crate::server::SyncServer;
 mod editor_budget;
 mod presentation;
@@ -16,8 +17,8 @@ struct SigningRequest {
     token: String,
     action: SigningAction,
 }
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    let editor = Router::new()
+pub(super) fn editor_routes() -> Router<Arc<SyncServer>> {
+    Router::new()
         .route("/sign/layout", post(presentation::layout))
         .route(
             "/sign/geometry",
@@ -26,18 +27,25 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route_layer(axum::middleware::from_fn_with_state(
             editor_budget::EditorBudget::new(),
             editor_budget::admit,
-        ));
+        ))
+        .route("/sign/editor", get(presentation::editor))
+        .route("/sign/field-renderer.js", get(presentation::field_script))
+        .route("/sign/editor.js", get(presentation::editor_script))
+        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
+        .layer(axum::middleware::from_fn(private_response))
+}
+
+/// Only the signing ceremony bypasses the hosted device-lease gate. Every
+/// action and document read still checks the bearer capability in the vault.
+pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
     Router::new()
-        .merge(editor)
         .route("/sign", get(page))
+        .route("/sign/{token}", get(page_for_token))
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
         .route("/sign/image", post(image))
         .route("/sign/preview", post(presentation::preview))
         .route("/sign/signature", post(presentation::signature))
-        .route("/sign/editor", get(presentation::editor))
-        .route("/sign/field-renderer.js", get(presentation::field_script))
-        .route("/sign/editor.js", get(presentation::editor_script))
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(axum::middleware::from_fn(private_response))
 }
@@ -190,6 +198,13 @@ async fn image(
         Err(_) => refused(),
     }
 }
+async fn page_for_token(axum::extract::Path(token): axum::extract::Path<String>) -> Response {
+    if EsignCapability::parse(&token).is_err() {
+        return (StatusCode::NOT_FOUND, "").into_response();
+    }
+    page().await
+}
+
 async fn page() -> Response {
     use base64::Engine;
     use sha2::{Digest, Sha256};
@@ -258,7 +273,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = public_routes().with_state(server);
         let page = app
             .clone()
             .oneshot(Request::builder().uri("/sign").body(Body::empty()).unwrap())
@@ -317,7 +332,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = public_routes().with_state(server);
         for path in ["/sign/action", "/sign/pdf", "/sign/preview"] {
             let body = if path == "/sign/action" {
                 serde_json::json!({"token":"11".repeat(32), "action":{"action":"load"}})
@@ -358,7 +373,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = routes().with_state(server);
+        let app = public_routes().with_state(server);
         let mut pdf = b"%PDF-1.7\n".to_vec();
         let mut offsets = Vec::new();
         for (index, body) in [

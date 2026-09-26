@@ -1,6 +1,9 @@
 "use strict";
-const token = location.hash.slice(1);
-history.replaceState(null, "", location.pathname);
+const pathToken = location.pathname.match(/^\/sign\/([0-9a-f]{64})$/);
+const token = pathToken ? pathToken[1] : location.pathname === "/sign" ? location.hash.slice(1) : "";
+// A capability in the public link must not remain in browser history or in
+// referrers after the first document load. Subsequent calls use POST bodies.
+history.replaceState(null, "", "/sign");
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
 async function post(path, value) {
@@ -37,6 +40,7 @@ async function refreshPreview() {
   EsignFieldRenderer.preview(document.getElementById("preview"), model, ref => imageURLs.get(ref));
 }
 async function start() {
+  if (!/^[0-9a-f]{64}$/.test(token)) throw new Error("The signing request is unavailable. Reopen the invitation or contact its sender.");
   const result = await action({action:"load"});
   if (result.outcome !== "page") return;
   for (const presentation of result.data.presentations) {
