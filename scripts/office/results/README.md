@@ -2,18 +2,22 @@
 
 ## Current passing run (post-review)
 
-- Source commit: `7084af94` (approved environment, hash-bound cases, deadline
-  checks, exact deck-title exemption and modal cleanup).
+- Source commit: `08111200` (private staged-snapshot identity checked before
+  opening, package checks bound to that snapshot, and tagged dialog inputs).
 - Command: `python3 scripts/office/run_fixture_matrix.py
-  scripts/office/fixtures/.runs/mac-mini-008` from the Mac mini clone.
+  scripts/office/fixtures/.runs/mac-mini-009` from the Mac mini clone.
 - Result: **5/5 passed** — clean, failed-open, damaged-candidate, timeout and
-  repair-prompt. See [matrix.json](mac-mini-008/matrix.json), the per-case
+  repair-prompt. See [matrix.json](mac-mini-009/matrix.json), the per-case
   receipts and the clean PDF/PNG/save-back. The copied files match all receipt
   SHA-256 values and byte counts. No cleanup warnings, open presentations,
   PowerPoint process or staging directories remained.
 - The observed Mac/renderer pin matches [`environment.json`](../environment.json)
   exactly. The 100 PPTArena cases remain an offline manifest/classifier scope;
   their binaries were not opened.
+
+The earlier [mac-mini-008](mac-mini-008/matrix.json) post-review run also passed
+5/5 at oracle commit `7084af94`. The current run rechecks the source snapshot
+and observer-format changes on the actual Mac.
 
 ## Earlier passing baseline
 
