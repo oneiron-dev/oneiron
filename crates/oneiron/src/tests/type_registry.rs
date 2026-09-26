@@ -1296,7 +1296,7 @@ fn family_allocator_persists_identity_through_overflow_and_reopen() -> Result<()
     let dir = tempfile::tempdir()?;
     {
         let vault = Vault::open(dir.path(), test_config())?;
-        for (prefix, expected) in [("qa", 112), ("qb", 113), ("qc", 114), ("qd", 120)] {
+        for (prefix, expected) in [("qa", 112), ("qb", 113), ("qc", 114), ("qd", 121)] {
             let row = vault.allocate_structural_kind(
                 TypeByteFamily::Documents,
                 prefix,
@@ -1308,7 +1308,7 @@ fn family_allocator_persists_identity_through_overflow_and_reopen() -> Result<()
     }
     let vault = Vault::open(dir.path(), test_config())?;
     let row = vault
-        .structural_kind_registration(120)
+        .structural_kind_registration(121)
         .expect("spilled registration survives reopen");
     assert_eq!(row.family, Some(TypeByteFamily::Documents));
     assert_eq!(row.short_id_prefix, "qd");
@@ -1316,7 +1316,7 @@ fn family_allocator_persists_identity_through_overflow_and_reopen() -> Result<()
         vault
             .allocate_structural_kind(TypeByteFamily::Documents, "qe", "document-fixture")?
             .type_byte,
-        121
+        122
     );
     Ok(())
 }

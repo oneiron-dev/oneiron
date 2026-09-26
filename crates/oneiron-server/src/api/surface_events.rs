@@ -111,6 +111,13 @@ pub(crate) enum SurfaceEventActionPayload {
         #[serde(default)]
         #[schema(example = "slack:1735689600.000100")]
         target_ref: Option<String>,
+        /// Unicode glyph when interaction is a reaction.
+        #[serde(default)]
+        glyph: Option<String>,
+        #[serde(default)]
+        external_reaction_id: Option<String>,
+        #[serde(default)]
+        revoked: bool,
     },
 }
 
@@ -121,9 +128,15 @@ impl SurfaceEventActionPayload {
             Self::Interaction {
                 interaction,
                 target_ref,
+                glyph,
+                external_reaction_id,
+                revoked,
             } => oneiron::SurfaceEventAction::Interaction {
                 interaction: interaction.to_engine(),
                 target_ref,
+                glyph,
+                external_reaction_id,
+                revoked,
             },
         }
     }

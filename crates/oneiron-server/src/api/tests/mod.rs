@@ -25,6 +25,7 @@ mod context_pack_disclosure;
 mod context_pack_v4;
 mod contract_snapshots;
 mod conversation_dag;
+mod conversation_reactions;
 mod conversation_rooms;
 mod core_memory_conversations;
 mod mcp_memory;
@@ -220,7 +221,11 @@ pub(super) fn test_server_with_config(
     config: SyncServerConfig,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    // API contract fixtures assert retrieval evidence and cursor run IDs.
+    // Device defaults now leave capture off; opt these test servers in.
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)

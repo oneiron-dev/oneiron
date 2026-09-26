@@ -176,6 +176,26 @@ pub(super) fn windows_rows(
     }
     Ok(windows)
 }
+pub(crate) fn member_at_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+    at: u64,
+) -> Result<bool> {
+    Ok(members_at_rows(&rows_in(&vault.store, txn, room)?, at).contains(&person))
+}
+pub(crate) fn visible_at_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+    at: u64,
+) -> Result<bool> {
+    Ok(windows_rows(&rows_in(&vault.store, txn, room)?, person)?
+        .iter()
+        .any(|window| window.contains(at)))
+}
 impl Vault {
     pub fn membership_ledger(&self, conversation: EntityId) -> Result<Vec<MembershipRow>> {
         let txn = self.store.env.read_txn()?;

@@ -124,6 +124,13 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
         Some("CompanionRecordAlreadyExists")
     );
     assert_eq!(
+        remote_rejection_reason(&Error::Record(RecordError::InvalidReactionBody(
+            "bad glyph"
+        )))
+        .as_deref(),
+        Some("InvalidReactionBody")
+    );
+    assert_eq!(
         remote_rejection_reason(&Error::Record(RecordError::InvalidPsychProfileBody(
             "bad profile"
         )))

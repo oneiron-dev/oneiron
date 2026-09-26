@@ -72,6 +72,7 @@ pub(in crate::batch) fn apply_put(
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
+    crate::reaction::guard_recorded_at(store, wtxn, &id, entity_type, learned_at)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
@@ -616,6 +617,9 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == crate::registry::ENTITY_TYPE_REACTION {
+        crate::reaction::record_put_in_store(store, wtxn, id, data, learned_at)?;
+    }
     // Count authenticated local Proposed submissions, including changed bodies
     // under an actor-owned claim ID. An exact same-body retry is not new.
     // Replays and envelope-less system puts cannot be assigned to an actor.

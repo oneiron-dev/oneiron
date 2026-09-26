@@ -193,6 +193,9 @@ pub(crate) struct CoreContextPackEvidence {
 /// Context-pack response envelope.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreContextPackResponse {
+    /// Witness signals since the caller's last turn, separate from retrieval.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) signals: Vec<CoreReactionSignal>,
     /// Separately budgeted turn-local capability discoveries.
     #[schema(value_type = Vec<Object>)]
     pub(crate) capabilities: Vec<oneiron::context_board::CapabilityHit>,
@@ -418,6 +421,7 @@ pub(crate) fn core_context_pack_response(
 ) -> CoreContextPackResponse {
     let state = core_context_pack_state(pack.empty.as_ref());
     CoreContextPackResponse {
+        signals: Vec::new(),
         capabilities: pack.capabilities,
         l2_base: pack.l2_base,
         pin_narrowing: Vec::new(),
@@ -654,4 +658,16 @@ impl CoreContextPackResponse {
         }
         session.observe_rows(read, &ids)
     }
+}
+
+/// A reaction record or soft-delete tombstone witnessed by a message author.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreReactionSignal {
+    pub event: &'static str,
+    pub reaction: String,
+    pub message: String,
+    pub by: String,
+    pub glyph: String,
+    pub occurred_at: u64,
+    pub recorded_at: u64,
 }

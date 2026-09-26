@@ -505,6 +505,13 @@ fn all_entity_type_prefixes() {
             EntityClassification::Pack,
             TypeByteZone::CompiledProduct,
         ),
+        (
+            "REACTION",
+            crate::registry::ENTITY_TYPE_REACTION,
+            Some("rx"),
+            EntityClassification::Pack,
+            TypeByteZone::CompiledProduct,
+        ),
         // ONE-1377 landed NOTE at 86; byte-space v3 canon assigns 106 and
         // ONE-1754 executed the persisted re-key. This table spells the NEW
         // byte because the re-key is done.

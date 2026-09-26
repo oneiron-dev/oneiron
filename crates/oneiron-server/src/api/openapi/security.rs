@@ -86,6 +86,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             "get",
         ),
         ("/v1/core/conversations/{conversation_id}/records", "post"),
+        ("/v1/core/messages/{message}/reactions", "post"),
         ("/v1/core/conversations/{conversation_id}/records", "get"),
         ("/v1/core/conversations/{conversation_id}/canonical", "get"),
         (

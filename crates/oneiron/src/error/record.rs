@@ -30,6 +30,8 @@ pub enum RecordError {
     ProjectDependencyPending,
     #[error("message stream recovery refused: {0}")]
     MessageStreamRecoveryFailed(String),
+    #[error("invalid reaction body: {0}")]
+    InvalidReactionBody(&'static str),
     #[error("invalid conversation body: {0}")]
     InvalidConversationBody(&'static str),
     #[error("invalid conversation operation: {0}")]
@@ -216,6 +218,7 @@ impl RecordError {
             Self::InvalidProjectRoomBody(_) => ErrorKind::InvalidProjectRoomBody,
             Self::ProjectDependencyPending => ErrorKind::ProjectDependencyPending,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
+            Self::InvalidReactionBody(_) => ErrorKind::InvalidReactionBody,
             Self::ConversationState(_) => ErrorKind::ConversationState,
             Self::ConversationDenied => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,

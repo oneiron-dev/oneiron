@@ -11758,7 +11758,7 @@
      "path": "src/conversation/membership.rs",
      "purpose": "Append-only membership ledger",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -11771,7 +11771,7 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 3
      }
     },
@@ -12336,6 +12336,7 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "re-export": 1
      }
     },
@@ -12350,6 +12351,16 @@
      "surface": {
       "crate-vis": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/reaction.rs",
+     "purpose": "One-transaction reaction toggle revocation, then the usual sync publication",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -12379,7 +12390,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 5
      }
     },
@@ -19353,7 +19364,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 168,
+      "mod": 169,
       "re-export": 72
      }
     },
@@ -25516,6 +25527,116 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/reaction/admission.rs",
+     "purpose": "Guard every raw and replicated REACTION put at the generic batch door",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionBody",
+      "ReactionExternalId"
+     ],
+     "path": "src/reaction/body.rs",
+     "purpose": "Pinned `REACTION` MessagePack body, including mirrored provenance",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reaction/mod.rs",
+     "purpose": "Immutable message reactions and their live, audience-bound projections",
+     "surface": {
+      "crate-vis": 2,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionOutboundAttempt"
+     ],
+     "path": "src/reaction/outbound.rs",
+     "purpose": "Connector-neutral reaction attempts; connector workers own provider sends",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionPill",
+      "ReactionSignal"
+     ],
+     "path": "src/reaction/read.rs",
+     "purpose": "One-snapshot, batched reaction pills and agent-facing reaction signal rows",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reaction/signal.rs",
+     "purpose": "Derived per-author event index",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/reaction/surface.rs",
+     "purpose": "Mirrored reaction ingress through the normalized SurfaceEvent contract",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/reaction/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReactionChange",
+      "ReactionInput",
+      "ReactionState"
+     ],
+     "path": "src/reaction/write.rs",
+     "purpose": "One live reaction per (message, person, glyph), with a soft-delete toggle",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
      "surface": {
@@ -26105,7 +26226,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 46
+      "const": 47
      }
     },
     {
@@ -34582,7 +34703,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35085,6 +35206,13 @@
      "layout": "file+dir",
      "purpose": "Host-injected HyDE query-expansion seam"
     },
+    "reaction": {
+     "files": 9,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "Immutable message reactions and their live, audience-bound projections"
+    },
     "receipt": {
      "files": 17,
      "impl_vault": true,
@@ -35459,8 +35587,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2093,
-   "test_files": 718
+   "source_files": 2102,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [
@@ -39432,7 +39560,7 @@
      "path": "src/api/context_pack/response.rs",
      "purpose": "Response DTOs and engine-to-wire mapping functions for context-pack assembly",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -39442,7 +39570,7 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -39452,7 +39580,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 29
      }
     },
     {
@@ -40217,6 +40345,14 @@
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
      "purpose": "Wire-level DAG, summary and reply-strip acceptance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/conversation_reactions.rs",
+     "purpose": "HTTP reaction toggle and grouped pills on the MESSAGE children of listed TURNs",
      "surface": {}
     },
     {
@@ -42395,7 +42531,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 156,
+     "files": 157,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42573,7 +42709,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 230,
-   "test_files": 96
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [

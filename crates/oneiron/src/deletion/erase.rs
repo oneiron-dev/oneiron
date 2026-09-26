@@ -609,6 +609,7 @@ impl Vault {
                 .entities
                 .get(&*wtxn, id.as_bytes())?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
+            crate::reaction::record_replayed_revoke(self, wtxn, *id, decoded.deleted_at)?;
             let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;

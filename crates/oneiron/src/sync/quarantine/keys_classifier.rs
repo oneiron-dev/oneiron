@@ -145,6 +145,9 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
         // Replicated rooms carry only body metadata, not the local ledger.
         // Invalid incoming codecs are remote rejections, not window failures.
         | ErrorKind::InvalidConversationBody
+        // A malformed or conflicting remote REACTION is the remote op's
+        // refusal; stored reaction corruption uses CorruptedIndex instead.
+        | ErrorKind::InvalidReactionBody
         | ErrorKind::InvalidConversationDag
         | ErrorKind::InvalidPsychProfileBody
         | ErrorKind::InvalidSkillBody

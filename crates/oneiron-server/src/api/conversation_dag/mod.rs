@@ -13,9 +13,11 @@ use crate::server::SyncServer;
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
-use oneiron::EntityId;
 use oneiron::conversation_dag::{AppendRecord, DagPageRequest};
+use oneiron::reaction::{ReactionExternalId, ReactionInput, ReactionState};
+use oneiron::registry::ENTITY_TYPE_MESSAGE;
 use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::{EdgeKind, EntityId};
 use std::sync::Arc;
 use types::parse_optional;
 pub(crate) use types::*;
@@ -103,6 +105,80 @@ pub(crate) async fn get_core_dag(
             },
         )
         .map_err(|e| core_engine_error("DAG read failed", e))?;
+    let (records, reactions_outbound) = match req.with.as_deref() {
+        None => (None, None),
+        Some("reactions") => {
+            auth.require_unrestricted_record_scope()?;
+            let viewer = req.viewer.as_deref().ok_or_else(|| {
+                ApiError::bad_request("viewer is required with reactions", Some("viewer"))
+            })?;
+            let viewer = parse_entity_id_param(viewer, "viewer")?;
+            if !auth.is_owner_grade() && auth.principal_ref() != Some(viewer.to_hex().as_str()) {
+                return Err(ApiError::forbidden_scope("viewer").into());
+            }
+            let mut pairs = Vec::new();
+            let mut targets = Vec::new();
+            for turn in &page.main_line {
+                let children = server
+                    .vault
+                    .sources(turn, EdgeKind::PartOf, Some(ENTITY_TYPE_MESSAGE))
+                    .map_err(|e| core_engine_error("message listing failed", e))?;
+                if auth
+                    .can_read_entity(&server.vault, turn)
+                    .map_err(|e| core_engine_error("record access failed", e))?
+                {
+                    pairs.push((*turn, *turn, !children.is_empty()));
+                    targets.push(*turn);
+                }
+                for message in children {
+                    if auth
+                        .can_read_entity(&server.vault, &message)
+                        .map_err(|e| core_engine_error("message access failed", e))?
+                    {
+                        pairs.push((*turn, message, false));
+                        targets.push(message);
+                    }
+                }
+            }
+            let pills = server
+                .vault
+                .reaction_pills(&targets, viewer)
+                .map_err(|e| core_engine_error("reaction listing failed", e))?;
+            let records = pairs
+                .into_iter()
+                .filter_map(|(turn, target, has_children)| {
+                    let groups = pills.get(&target)?;
+                    // A witnessed TURN groups MESSAGE children; when it has no
+                    // direct reaction, render only those children. A first-party
+                    // append has no child, so its TURN is the record itself.
+                    if has_children && target == turn && groups.is_empty() {
+                        return None;
+                    }
+                    Some(DagReactionRecord {
+                        turn: turn.to_hex(),
+                        id: target.to_hex(),
+                        reactions: groups
+                            .iter()
+                            .map(|pill| DagReactionPill {
+                                glyph: pill.glyph.clone(),
+                                count: pill.count,
+                                by: pill.by.iter().map(EntityId::to_hex).collect(),
+                                mine: pill.mine,
+                            })
+                            .collect(),
+                    })
+                })
+                .collect();
+            let outbound = server
+                .vault
+                .reactions_outbound(conversation)
+                .map_err(|e| core_engine_error("room capability read failed", e))?;
+            (Some(records), Some(outbound))
+        }
+        Some(_) => {
+            return Err(ApiError::bad_request("unsupported with projection", Some("with")).into());
+        }
+    };
     Ok(Json(DagPageResponse {
         head: page.head.map(|id| id.to_hex()),
         root: page.root.map(|id| id.to_hex()),
@@ -110,6 +186,8 @@ pub(crate) async fn get_core_dag(
         page: DagPageCursor {
             next: page.next.map(|id| id.to_hex()),
         },
+        records,
+        reactions_outbound,
     }))
 }
 
@@ -353,5 +431,52 @@ pub(crate) async fn get_canonical(
         .map_err(|e| core_engine_error("canonical read failed", e))?;
     Ok(Json(DagRecordsResponse {
         records: ids(resolved.records),
+    }))
+}
+
+/// Toggle one MESSAGE reaction; actor binding is verified by the credential
+/// and the vault revalidates PERSON and room membership in its write txn.
+#[utoipa::path(post, path = "/v1/core/messages/{message}/reactions",
+    params(("message" = String, Path)), request_body = ReactionToggleRequest,
+    responses((status = 200, body = ReactionToggleResponse), (status = 400, body = ApiErrorEnvelope), (status = 403, body = ApiErrorEnvelope)))]
+pub(crate) async fn toggle_core_reaction(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(message): Path<String>,
+    payload: Result<Json<ReactionToggleRequest>, JsonRejection>,
+) -> Result<Json<ReactionToggleResponse>, EnvelopedApiError> {
+    auth.require(CoreScope::Write)?;
+    let message = parse_entity_id_param(&message, "message")?;
+    let req = json_payload(payload)?;
+    let by = parse_entity_id_param(&req.by, "by")?;
+    let actor = req.actor.parse(&auth)?;
+    if actor.entity_ref() != by {
+        return Err(ApiError::forbidden_scope("reaction_actor").into());
+    }
+    if req.external_id.is_some() && !auth.is_owner_grade() {
+        return Err(ApiError::forbidden_scope("reaction_external_id").into());
+    }
+    let external_id = req.external_id.map(|ext| ReactionExternalId {
+        connector: ext.connector,
+        id: ext.id,
+    });
+    let change = server
+        .vault
+        .react(ReactionInput {
+            message,
+            by,
+            glyph: req.glyph,
+            occurred_at: req.occurred_at,
+            external_id,
+            actor,
+        })
+        .map_err(|e| core_engine_error("reaction toggle failed", e))?;
+    Ok(Json(ReactionToggleResponse {
+        id: change.id.to_hex(),
+        event: match change.state {
+            ReactionState::Put => "reaction.put",
+            ReactionState::Revoked => "reaction.revoked",
+            ReactionState::Replayed => "reaction.replayed",
+        },
     }))
 }

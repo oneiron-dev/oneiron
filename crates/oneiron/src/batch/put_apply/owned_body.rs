@@ -14,6 +14,7 @@ pub(super) fn guard_storage_owned_body(
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    crate::reaction::guard_put(store, wtxn, id, entity_type, occurred, data, replicated)?;
     crate::conversation_dag::guard_record_put(
         store,
         wtxn,

@@ -239,6 +239,13 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional actor-bound read-session id; omission uses the active session.
     #[serde(default)]
     pub(super) session_id: Option<String>,
+    /// Separate, bounded agent signal cursor; not a retrieval-time filter.
+    #[serde(default)]
+    pub(super) signals_since: Option<u64>,
+    /// Required for owner credentials without a bound person. Delegated
+    /// credentials may only name their own bound PERSON.
+    #[serde(default)]
+    pub(super) signals_person: Option<String>,
     /// Optional BM25 text query.
     #[serde(default)]
     #[schema(example = "blue hallway")]

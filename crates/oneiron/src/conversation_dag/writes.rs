@@ -217,6 +217,16 @@ pub(crate) fn append_in_txn(
     if !fields.is_empty() {
         batch = batch.text(&id, &fields);
     }
+    // The append door already stamped this actor into the TURN body. Link a
+    // PERSON author for reaction witness signals, just as witnessed MESSAGEs
+    // carry AuthoredBy. Agent actors represented as PERSONs use the same edge.
+    if let crate::vault::LiveEntityRow::Live {
+        entity_type: crate::registry::ENTITY_TYPE_PERSON,
+        ..
+    } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &input.actor.entity_ref())?
+    {
+        batch = batch.edge(&id, EdgeKind::AuthoredBy, &input.actor.entity_ref(), 1.0);
+    }
     if let Some(parent) = input.parent {
         batch =
             batch.edge_with_value_fields(&id, EdgeKind::Parent, &parent, value(input.learned_at));

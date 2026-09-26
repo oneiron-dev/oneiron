@@ -133,6 +133,9 @@ pub(crate) struct DagSummaryRequest {
 pub(crate) struct DagPageQuery {
     pub after: Option<String>,
     pub limit: Option<usize>,
+    /// `reactions` adds grouped MESSAGE pills without per-record HTTP calls.
+    pub with: Option<String>,
+    pub viewer: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
@@ -157,6 +160,10 @@ pub(crate) struct DagPageResponse {
     pub root: Option<String>,
     pub main_line: Vec<String>,
     pub page: DagPageCursor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub records: Option<Vec<DagReactionRecord>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reactions_outbound: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -207,4 +214,39 @@ pub(crate) struct DagThreadResponse {
     pub replies: Vec<String>,
     pub count: u64,
     pub last_at: Option<u64>,
+}
+
+/// One MESSAGE beneath a listed TURN, with its reaction pills.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagReactionRecord {
+    pub turn: String,
+    pub id: String,
+    pub reactions: Vec<DagReactionPill>,
+}
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagReactionPill {
+    pub glyph: String,
+    pub count: usize,
+    pub by: Vec<String>,
+    pub mine: bool,
+}
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionToggleRequest {
+    pub by: String,
+    pub glyph: String,
+    pub occurred_at: u64,
+    pub external_id: Option<ReactionExternalPayload>,
+    pub actor: DagActor,
+}
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReactionExternalPayload {
+    pub connector: String,
+    pub id: String,
+}
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ReactionToggleResponse {
+    pub id: String,
+    pub event: &'static str,
 }

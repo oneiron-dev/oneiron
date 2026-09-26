@@ -281,6 +281,20 @@ fn byte_space_v3_matches_vendored_canon() {
     assert_eq!(workflow.classification, EntityClassification::Core);
     assert_eq!(workflow.zone, TypeByteZone::Core);
 
+    // ONE-1991 adds REACTION as a cross-product pack kind. The 2026-09-08
+    // ticket's proposed 107 predates ARCH-0058 v3.1's code-family 105–109;
+    // pack overflow 120 is the first free cross-product slot. Pin this one
+    // addition against the read-only docs snapshot until canon ratifies it.
+    assert!(
+        canon_bytes.insert(120, "REACTION").is_none(),
+        "canon now owns REACTION; remove the ticket overlay"
+    );
+    let reaction = entity_type_registry_entry(120).expect("REACTION registration");
+    assert_eq!(reaction.kind, "REACTION");
+    assert_eq!(reaction.short_id_prefix, Some("rx"));
+    assert_eq!(reaction.classification, EntityClassification::Pack);
+    assert_eq!(reaction.zone, TypeByteZone::CompiledProduct);
+
     // Every reserve named above must actually appear in canon — a reserve that
     // canon dropped would otherwise sit here forever unnoticed.
     for (byte, name) in CANON_RESERVED_UNREGISTERED {

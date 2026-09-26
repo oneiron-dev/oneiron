@@ -54,6 +54,9 @@ pub const ENTITY_TYPE_CODE_ARTIFACT: u8 = 105;
 
 pub const ENTITY_TYPE_CODE_SYMBOL: u8 = 106;
 
+/// Cross-product message reaction; pack-overflow family allocation (ARCH-0058).
+pub const ENTITY_TYPE_REACTION: u8 = 120;
+
 /// OF-368 D1 (ARTL-1) versioned blob artifact for foreign binary (office)
 /// files. Rides the OF-320 artifact model: append-only version chain in
 /// `vault_meta`, content-addressed ASSET bytes, `blob.version` LEDGER claim

@@ -215,6 +215,68 @@ pub(crate) async fn run_context_pack(
             *observed = staged;
         }
     }
+    if let Some(since) = req.signals_since {
+        let person = req
+            .signals_person
+            .as_deref()
+            .or_else(|| auth.principal_ref())
+            .ok_or_else(|| {
+                ApiError::bad_request("signals_person is required", Some("signals_person"))
+            })?;
+        if !auth.is_owner_grade() && auth.principal_ref() != Some(person) {
+            return Err(ApiError::forbidden_scope("signals_person"));
+        }
+        let person = super::super::parse_entity_id_param(person, "signals_person")?;
+        let signal_room = req
+            .conversation_id
+            .as_deref()
+            .map(|id| super::super::parse_entity_id_param(id, "conversation_id"))
+            .transpose()?;
+        for row in server
+            .vault
+            .reactions_since(person, since)
+            .map_err(|e| core_engine_error("reaction signal read failed", e))?
+        {
+            // An owner-only request has no actor-scoped retrieval floor; its
+            // author-window predicate is the audience door. Delegated and
+            // multi-party packs still pass their scoped retrieval policy.
+            if (!auth.is_owner_grade()
+                || req.interlocutors.is_some()
+                || req.conversation_id.is_some())
+                && !scoped_read
+                    .is_entity_readable(&row.message)
+                    .map_err(|e| core_engine_error("reaction signal scope failed", e))?
+            {
+                continue;
+            }
+            if let Some(room) = signal_room {
+                let belongs = server
+                    .vault
+                    .targets(&row.message, oneiron::EdgeKind::BelongsTo, None)
+                    .map_err(|e| core_engine_error("reaction signal room failed", e))?;
+                let child_of = server
+                    .vault
+                    .targets(&row.message, oneiron::EdgeKind::ChildOf, None)
+                    .map_err(|e| core_engine_error("reaction signal room failed", e))?;
+                if !belongs.contains(&room) && !child_of.contains(&room) {
+                    continue;
+                }
+            }
+            response.signals.push(super::response::CoreReactionSignal {
+                event: if row.revoked {
+                    "reaction.revoked"
+                } else {
+                    "reaction.put"
+                },
+                reaction: row.reaction.to_hex(),
+                message: row.message.to_hex(),
+                by: row.by.to_hex(),
+                glyph: row.glyph,
+                occurred_at: row.occurred_at,
+                recorded_at: row.recorded_at,
+            });
+        }
+    }
     response.interlocutors = interlocutors.as_ref().map(oneiron::InterlocutorSet::stamps);
     Ok((response, memories, cursor))
 }

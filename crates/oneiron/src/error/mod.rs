@@ -277,6 +277,7 @@ pub enum ErrorKind {
     InvalidProjectRoomBody,
     ProjectDependencyPending,
     InvalidConversationBody,
+    InvalidReactionBody,
     ConversationState,
     ConversationDenied,
     MessageStreamRecoveryFailed,

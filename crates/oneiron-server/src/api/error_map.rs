@@ -11,6 +11,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         ErrorKind::ConversationDenied => ApiError::forbidden_scope("conversation_actor"),
         ErrorKind::ConversationState => ApiError::invalid_state(Some("conversation_state")),
         ErrorKind::InvalidConversationBody
+        | ErrorKind::InvalidReactionBody
         | ErrorKind::DimensionMismatch
         | ErrorKind::InvalidVector
         | ErrorKind::InvalidKey

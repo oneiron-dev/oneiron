@@ -21,6 +21,7 @@ pub use coop_request::{
     encode_cooperative_deletion_request_body, encode_signed_cooperative_deletion_request,
 };
 pub use delete::DeleteEntityOutcome;
+pub(crate) use delete::ReactionRevocation;
 pub use sweep_queue::arch0038_carrier_classes;
 pub use timeline::{
     HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,

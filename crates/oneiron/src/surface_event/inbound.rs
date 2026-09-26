@@ -102,6 +102,10 @@ pub enum SurfaceInteractionKind {
     Tap,
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// What the counterparty did on the surface.
 ///
 /// A message dispatches toward the addressed actor's `self.*` flow; every
@@ -115,6 +119,15 @@ pub enum SurfaceEventAction {
         interaction: SurfaceInteractionKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target_ref: Option<String>,
+        /// Provider-normalized Unicode glyph for reactions.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        glyph: Option<String>,
+        /// Stable provider reaction identity, distinct from the delivery event id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        external_reaction_id: Option<String>,
+        /// A removed reaction carries the same stable external reaction id.
+        #[serde(default, skip_serializing_if = "is_false")]
+        revoked: bool,
     },
 }
 

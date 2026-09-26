@@ -239,7 +239,7 @@ impl Vault {
         }
     }
 }
-pub(super) fn body_in(
+pub(crate) fn body_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

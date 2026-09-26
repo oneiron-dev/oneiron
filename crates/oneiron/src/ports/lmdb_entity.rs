@@ -250,6 +250,7 @@ impl EdgeStore for Vault {
         dst: &EntityId,
     ) -> Result<bool> {
         crate::edge::validate_public_edge_kind(kind)?;
+        crate::reaction::guard_edge_delete(&self.store, txn, *src, kind, *dst)?;
         let out = Store::encode_edge_key(src, kind, dst);
         let incoming = Store::encode_edge_key(dst, kind, src);
         let existed = self.store.edges_out.delete(txn, &out)?;
