@@ -36345,6 +36345,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "examples/emit_revision.rs",
+     "purpose": "Produce one deterministic tracked-change sample for the external Word oracle",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "DoceditError"
      ],
@@ -36376,7 +36384,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
-   "source_files": 1,
+   "source_files": 2,
    "test_files": 1
   },
   "oneiron-driver": {
