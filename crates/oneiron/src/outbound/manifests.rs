@@ -323,29 +323,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 "APNs can interrupt users and depends on app entitlement, token validity, and user notification permission.",
             )],
         ),
-        // In-app reactions target an existing message visible to the actor's
-        // audience; the app adapter enforces that scope at the write door.
-        manifest(
-            "in_app",
-            "first_party_chat",
-            "First-party conversation messages; reaction targets retain their message audience.",
-            vec![verb(
-                "react",
-                "reaction.put",
-                json!({
-                    "message_id": "visible message ref",
-                    "glyph": "Unicode emoji",
-                    "emoji_vocabulary": "unicode_emoji"
-                }),
-                OutboundInterruptionClass::Ambient,
-                OutboundDeliverySemanticsKind::ReactionTarget,
-                None,
-                OutboundRetryClass::IdempotentNative,
-                OutboundPermissionState::Conditional,
-                false,
-                "The first-party adapter checks message visibility and audience before writing a reaction.",
-            )],
-        ),
+        in_app_reaction_manifest(),
         manifest(
             "imessage_mfb",
             "apple_messages_for_business",
@@ -596,6 +574,32 @@ fn verb(
             note,
         },
     }
+}
+
+// In-app reactions target an existing message visible to the actor's
+// audience; the app adapter enforces that scope at the write door.
+fn in_app_reaction_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "in_app",
+        "first_party_chat",
+        "First-party conversation messages; reaction targets retain their message audience.",
+        vec![verb(
+            "react",
+            "reaction.put",
+            json!({
+                "message_id": "visible message ref",
+                "glyph": "Unicode emoji",
+                "emoji_vocabulary": "unicode_emoji"
+            }),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::ReactionTarget,
+            None,
+            OutboundRetryClass::IdempotentNative,
+            OutboundPermissionState::Conditional,
+            false,
+            "The first-party adapter checks message visibility and audience before writing a reaction.",
+        )],
+    )
 }
 
 fn feedback_manifest(channel: &'static str) -> OutboundCapabilityManifest {
