@@ -2,6 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::sync::bridge::Materializer;
 use core::assert_matches;
+use std::time::Duration;
 
 fn test_manager() -> Arc<WindowManager> {
     let config = VaultConfig::device();
@@ -255,6 +256,79 @@ async fn spawn_fake_sync_server(
         }
     });
     (format!("ws://{addr}"), handle)
+}
+
+#[tokio::test]
+async fn sync_socket_attach_and_shutdown_reelects_macro_home_node() {
+    use crate::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
+
+    let manager = test_manager();
+    let runner = DreamerRunnerStore::new(manager.vault());
+    let local = runner.local_home_node_candidate(true, true, false).unwrap();
+    let cloud = DreamerHomeNodeCandidate::cloud(
+        if local.node_id == u64::MAX {
+            1
+        } else {
+            local.node_id + 1
+        },
+        false,
+    );
+    let (server_url, server_task) =
+        spawn_fake_sync_server(FakeServer::new(), None, Arc::new(AtomicUsize::new(0))).await;
+    let conn = SyncConnection::new(
+        Arc::clone(&manager),
+        ConnectionConfig {
+            client_config: SyncClientConfig {
+                server_url,
+                home_node_candidates: Some(vec![local, cloud]),
+                ..Default::default()
+            },
+            auto_reconnect: false,
+        },
+    )
+    .unwrap();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+    let running = tokio::spawn(async move { conn.run(shutdown_rx).await.unwrap() });
+
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            if runner
+                .home_node_designation()
+                .unwrap()
+                .is_some_and(|home| home.node_id == cloud.node_id)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("synced socket must elect cloud");
+    shutdown_tx.send(()).unwrap();
+    let mut events = tokio::time::timeout(Duration::from_secs(15), running)
+        .await
+        .expect("sync connection must shut down")
+        .unwrap();
+    server_task.abort();
+    assert_eq!(
+        runner.home_node_designation().unwrap().unwrap().node_id,
+        local.node_id
+    );
+    let mut saw_synced = false;
+    let mut saw_disconnected = false;
+    while let Ok(event) = events.try_recv() {
+        match event {
+            SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Synced) => saw_synced = true,
+            SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Disconnected) => {
+                saw_disconnected = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        saw_synced && saw_disconnected,
+        "election brackets the real sync lifecycle"
+    );
 }
 
 /// Drives client→server frames and all transitive replies to quiescence

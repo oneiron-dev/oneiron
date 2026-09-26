@@ -1075,7 +1075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion.rs` | src | m | 3 struct · 4 fn · 1 const · 2 re-export | DreamerRunContext, PromotionOutcome, PromotionWriterSink | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
 | `src/dreamer_promotion/scoped.rs` | src | s | 1 fn | — | Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors |
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
-| `src/dreamer_runner/admission.rs` | src | m | 13 fn · 2 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
+| `src/dreamer_runner/admission.rs` | src | m | 14 fn · 2 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
 | `src/dreamer_runner/admission/settlement.rs` | src | s | 4 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
 | `src/dreamer_runner/authority.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | DreamerAuthorityStamp | One vault-owned Dreamer principal; job kinds are facets, not new authorities |
 | `src/dreamer_runner/authority/tests.rs` | test | s | — | — | — |

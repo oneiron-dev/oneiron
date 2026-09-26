@@ -1524,6 +1524,65 @@ fn dreamer_home_node_election_order_persists_and_reelects() -> Result<()> {
 }
 
 #[test]
+fn dreamer_sync_topology_change_reelects_and_gates_macro() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let local = runner.local_home_node_candidate(true, true, false)?;
+    let cloud = DreamerHomeNodeCandidate::cloud(different_node_id(local.node_id), false);
+    let candidates = [local, cloud];
+    let queued = enqueue_consolidation_attempt(
+        &runner,
+        DreamerConsolidationScope::Macro,
+        Some("topology-change"),
+        1,
+    )?;
+
+    let home = runner
+        .sync_topology_changed(&candidates, false, 10)?
+        .unwrap();
+    assert_eq!(home.node_id, local.node_id);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+
+    let home = runner
+        .sync_topology_changed(&candidates, true, 11)?
+        .unwrap();
+    assert_eq!(home.node_id, cloud.node_id);
+    assert_eq!(home.class, DreamerHomeNodeClass::CloudAttached);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert_eq!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            12
+        )?,
+        DreamerConsolidationAdmissionOutcome::NotHomeNode(home)
+    );
+    assert_eq!(
+        runner.status(queued.attempt.id)?.unwrap().attempt.state,
+        AttemptState::Queued
+    );
+
+    let home = runner
+        .sync_topology_changed(&candidates, false, 13)?
+        .unwrap();
+    assert_eq!(home.node_id, local.node_id);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert!(matches!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            14
+        )?,
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(_))
+    ));
+    Ok(())
+}
+
+#[test]
 fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);

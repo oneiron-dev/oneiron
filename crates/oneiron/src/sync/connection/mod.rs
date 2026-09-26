@@ -82,6 +82,28 @@ impl SyncConnection {
         })
     }
 
+    /// Applies the current connection state to the host-supplied Dreamer
+    /// candidates and persists the new MACRO designation before status is
+    /// reported to the host. No configured topology leaves manual election
+    /// untouched.
+    fn update_home_node_for_sync_status(
+        &self,
+        cloud_attached: bool,
+        now: u64,
+    ) -> crate::error::Result<()> {
+        if let Some(candidates) = &self.config.client_config.home_node_candidates {
+            crate::dreamer_runner::DreamerRunnerStore::new(self.manager.vault())
+                .sync_topology_changed(candidates, cloud_attached, now)?;
+        }
+        Ok(())
+    }
+
+    fn topology_now() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs())
+    }
+
     /// Returns a reference to the offline queue for external inspection.
     pub fn queue(&self) -> &SyncQueue {
         &self.queue
