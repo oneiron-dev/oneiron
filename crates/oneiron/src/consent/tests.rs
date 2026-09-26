@@ -976,7 +976,7 @@ fn consent_fail_safe_hides_disclosure_and_asks_writes() {
     // too: it yields no bound at all rather than a permissive one.
     let revoked = DisclosureScope {
         status: DisclosureScopeStatus::Revoked,
-        ..DisclosureScope::task_scoped("purpose", vec![entity(0x71)], 5).expect("scope")
+        ..DisclosureScope::new(crate::federation::Scope::top(), "purpose", 5).expect("scope")
     };
     assert_eq!(
         disclosure_grant_from_disclosure_scope(&revoked, "contact:doctor", "health")
@@ -1257,11 +1257,31 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     );
 
     // DisclosureScope → DisclosureGrant.
-    let scope = DisclosureScope::task_scoped("q3 planning", vec![entity(0x71)], 5).expect("scope");
+    let scope =
+        DisclosureScope::new(crate::federation::Scope::top(), "q3 planning", 5).expect("scope");
     let before = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
     let projected = disclosure_grant_from_disclosure_scope(&scope, "contact:doctor", "health")
         .expect("project");
     assert_eq!(projected.bound().domain(), ConsentDomain::Disclosure);
+    let BoundEnvelope::Disclosure(envelope) = projected.bound().envelope() else {
+        panic!("disclosure envelope");
+    };
+    assert_eq!(envelope.selectors().len(), 1);
+    assert_eq!(envelope.selectors(), &["scope:clearance"]);
+    assert_eq!(envelope.scope(), Some(&crate::federation::Scope::top()));
+    let mut repurposed = scope.clone();
+    repurposed.purpose = "same clearance, new purpose".into();
+    assert_eq!(
+        disclosure_grant_from_disclosure_scope(&repurposed, "contact:doctor", "health")
+            .expect("same Scope")
+            .bound(),
+        projected.bound(),
+    );
+    repurposed.scope = crate::federation::Scope::default();
+    assert!(
+        disclosure_grant_from_disclosure_scope(&repurposed, "contact:doctor", "health").is_err(),
+        "lattice bottom never projects a grant",
+    );
     let after = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
     assert_eq!(
         before, after,
@@ -1271,6 +1291,171 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
         crate::disclosure::decode_disclosure_scope_body(&after).expect("decode"),
         scope
     );
+}
+
+#[test]
+fn projected_contact_scope_preserves_lattice_containment_and_silent_reuse() {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    use std::collections::BTreeSet;
+
+    let wide = DisclosureScope::new(Scope::top(), "health", 1).expect("wide clearance");
+    let mut narrow_scope = Scope::top();
+    narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    narrow_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x31))]));
+    narrow_scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
+    let narrow = DisclosureScope::new(narrow_scope.clone(), "health", 1).expect("narrow");
+    let project = |clearance: &DisclosureScope| {
+        disclosure_grant_from_disclosure_scope(clearance, "contact:doctor", "health")
+            .expect("projection")
+    };
+    let wide_grant = project(&wide);
+    let narrow_grant = project(&narrow);
+    assert!(wide_grant.bound().contains(narrow_grant.bound()));
+    assert!(!narrow_grant.bound().contains(wide_grant.bound()));
+
+    // Facets are masks, not authority; changing only this axis cannot ask again.
+    narrow_scope.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x32))]));
+    let other_facet =
+        project(&DisclosureScope::new(narrow_scope, "health", 1).expect("facet-only change"));
+    assert!(narrow_grant.bound().contains(other_facet.bound()));
+    assert!(other_facet.bound().contains(narrow_grant.bound()));
+    assert_eq!(other_facet.bound().digest(), narrow_grant.bound().digest());
+    assert_ne!(wide_grant.bound().digest(), narrow_grant.bound().digest());
+
+    // Standing-grant persistence must retain the typed Scope and its digest.
+    let row = ConsentGrantRow {
+        grant: StandingConsentGrant::Disclosure(wide_grant.clone()),
+        status: ConsentGrantStatus::Active,
+        owner_stamp: ConsentOwnerStamp {
+            actor: entity(0x51),
+            principal_ref: "principal:owner".to_owned(),
+            decision_id: GateDecisionId::now(),
+        },
+        created_at: 1,
+    };
+    let stored =
+        decode_consent_grant_row(&encode_consent_grant_row(&row).expect("encode")).expect("decode");
+    assert_eq!(stored, row);
+    assert_eq!(stored.grant.bound().digest(), wide_grant.bound().digest());
+    assert!(stored.grant.bound().contains(narrow_grant.bound()));
+
+    let grants = [stored.grant];
+    let required = ComposedEffect::new(
+        EffectFacts::new("disclosure.share")
+            .expect("facts")
+            .with_external_observers(true),
+    )
+    .with_disclosure_requirement(narrow_grant.bound().clone())
+    .expect("requirement");
+    assert_eq!(
+        evaluate_consent(&required, None, &grants),
+        ConsentDecision::Auto
+    );
+    let wider = ComposedEffect::new(
+        EffectFacts::new("disclosure.share")
+            .expect("facts")
+            .with_external_observers(true),
+    )
+    .with_disclosure_requirement(project(&wide).bound().clone())
+    .expect("requirement");
+    let narrow_grants = [StandingConsentGrant::Disclosure(narrow_grant)];
+    assert_eq!(
+        evaluate_consent(&wider, None, &narrow_grants),
+        ConsentDecision::Hide
+    );
+}
+
+#[test]
+fn registry_shows_distinct_contact_clearances_and_revokes_only_the_selected_bound() {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner) = owner_vault();
+    let wide_scope = Scope::top();
+    let mut narrow_scope = Scope::top();
+    narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    narrow_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x31))]));
+    narrow_scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
+
+    let project = |scope: Scope| {
+        disclosure_grant_from_disclosure_scope(
+            &DisclosureScope::new(scope, "health", 1).expect("clearance"),
+            "contact:doctor",
+            "health",
+        )
+        .expect("projection")
+        .bound()
+        .clone()
+    };
+    let wide = project(wide_scope.clone());
+    let narrow = project(narrow_scope.clone());
+    let wide_ref = wide.digest().to_hex();
+    let narrow_ref = narrow.digest().to_hex();
+    assert_ne!(wide_ref, narrow_ref);
+    vault
+        .create_standing_grant(&owner, wide)
+        .expect("mint wide");
+    vault
+        .create_standing_grant(&owner, narrow)
+        .expect("mint narrow");
+
+    let query = ConsentRegistryQuery::new(16, false);
+    let registry = vault.consent_registry(query).expect("registry");
+    assert_eq!(
+        registry,
+        vault.consent_registry_lens(query).expect("receipt lens")
+    );
+    assert_eq!(registry.rows.len(), 2);
+    let wide_row = registry
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == wide_ref)
+        .expect("wide row");
+    let narrow_row = registry
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == narrow_ref)
+        .expect("narrow row");
+    assert_eq!(wide_row.subject, narrow_row.subject);
+    assert_eq!(wide_row.class, narrow_row.class);
+    assert_ne!(
+        wide_row.selectors, narrow_row.selectors,
+        "review must distinguish the world, project and sensitivity limits"
+    );
+    assert_eq!(wide_row.scope.as_ref(), Some(&wide_scope));
+    assert_eq!(narrow_row.scope.as_ref(), Some(&narrow_scope));
+    assert!(narrow_row.selectors.contains(&format!(
+        "worlds:{}",
+        crate::claim::base_world_id().to_hex()
+    )));
+    assert!(
+        narrow_row
+            .selectors
+            .contains(&format!("projects:{}", entity(0x31).to_hex()))
+    );
+    assert!(
+        narrow_row
+            .selectors
+            .contains(&"sensitivity:private".to_owned())
+    );
+
+    vault
+        .revoke_consent_grant(&owner, &narrow_row.revoke_action.grant_ref)
+        .expect("one-tap narrow revoke");
+    let active = vault.consent_registry(query).expect("active registry");
+    assert_eq!(active.rows.len(), 1);
+    assert_eq!(active.rows[0].grant_ref, wide_ref);
+    let audit = vault
+        .consent_registry(ConsentRegistryQuery::new(16, true))
+        .expect("audit");
+    assert_eq!(audit.rows.len(), 2);
+    let revoked = audit
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == narrow_ref)
+        .expect("revoked row");
+    assert_eq!(revoked.status, ConsentGrantStatus::Revoked);
+    assert_eq!(revoked.scope.as_ref(), Some(&narrow_scope));
 }
 
 /// The consent contract allocates NO entity type and NO type byte: its rows
@@ -1368,6 +1553,7 @@ fn consent_grant_row_round_trips_and_rejects_malformed_bodies() {
                 (Value::from(ENVELOPE_KEYS[1]), Value::Nil),
                 (Value::from(ENVELOPE_KEYS[2]), Value::Nil),
                 (Value::from(ENVELOPE_KEYS[3]), Value::from(false)),
+                (Value::from(ENVELOPE_KEYS[4]), Value::Nil),
             ]),
         ),
         (Value::from(KEY_STATUS), Value::from("active")),

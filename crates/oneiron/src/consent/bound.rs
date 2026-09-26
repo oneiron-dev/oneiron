@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 use super::effect::{ComposedEffect, ConsentDecision, EffectDigest};
 use super::grant::StandingConsentGrant;
@@ -238,30 +239,62 @@ impl BoundClass {
     }
 }
 
-/// The data envelope of a disclosure bound: WHICH entities/topics/purposes.
+/// The data envelope of a disclosure bound: legacy selectors or a typed
+/// contact Scope. The two forms never authorize each other by string matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DisclosureEnvelope {
     pub(super) selectors: Vec<String>,
+    pub(super) scope: Option<Box<Scope>>,
 }
 
 impl DisclosureEnvelope {
-    /// Builds a data envelope from its selectors.
+    /// Builds a selector-based data envelope.
     pub fn new(selectors: impl IntoIterator<Item = String>) -> Result<Self> {
         let selectors = normalized_selectors(selectors)?;
-        Ok(Self { selectors })
+        Ok(Self {
+            selectors,
+            scope: None,
+        })
     }
 
-    /// The sorted, deduped selectors.
+    /// Builds a Scope-valued contact clearance envelope. Facets are masks,
+    /// not authorization axes; they are normalized out of consent authority.
+    pub(super) fn from_scope(mut scope: Scope) -> Result<Self> {
+        scope.facets = ScopeAxis::All;
+        if !scope.admits("read", &scope, &Scope::top()) {
+            return Err(invalid_bound("contact Scope grants no readable records"));
+        }
+        Ok(Self {
+            selectors: vec!["scope:clearance".to_owned()],
+            scope: Some(Box::new(scope)),
+        })
+    }
+
+    /// The sorted, deduped selectors. A typed envelope uses one fixed marker;
+    /// its Scope, not that marker, determines containment.
     #[must_use]
     pub fn selectors(&self) -> &[String] {
         &self.selectors
     }
 
-    /// Envelope containment: every candidate selector must be inside the
-    /// bound's selector set.
+    /// The typed Scope when this envelope represents contact clearance.
+    #[must_use]
+    pub(super) fn scope(&self) -> Option<&Scope> {
+        self.scope.as_deref()
+    }
+
+    /// Typed clearances use Scope admission; selector-only envelopes keep
+    /// their existing exact selector containment. Mixed forms never cover.
     #[must_use]
     fn contains(&self, candidate: &Self) -> bool {
-        selectors_contain(&self.selectors, &candidate.selectors)
+        match (self.scope.as_deref(), candidate.scope.as_deref()) {
+            (Some(bound), Some(request)) => {
+                selectors_contain(&self.selectors, &candidate.selectors)
+                    && bound.admits("read", request, &Scope::top())
+            }
+            (None, None) => selectors_contain(&self.selectors, &candidate.selectors),
+            _ => false,
+        }
     }
 }
 
@@ -434,6 +467,47 @@ pub struct GrantBound {
     envelope: BoundEnvelope,
 }
 
+// Hash each normalized authorization axis without a fallible serializer.
+// Scope is persisted in standing-grant rows; this digest must be stable after
+// decode and must distinguish two scopes with the same selector marker.
+fn hash_scope_axis<T: Ord>(
+    hasher: &mut blake3::Hasher,
+    axis: &ScopeAxis<T>,
+    bytes: impl Fn(&T) -> Vec<u8>,
+) {
+    match axis {
+        ScopeAxis::Bottom => {
+            hasher.update(&[0]);
+        }
+        ScopeAxis::All => {
+            hasher.update(&[1]);
+        }
+        ScopeAxis::Some(values) => {
+            hasher.update(&[2]);
+            hasher.update(&(values.len() as u64).to_be_bytes());
+            for value in values {
+                hash_field(hasher, &bytes(value));
+            }
+        }
+    }
+}
+
+fn hash_scope(hasher: &mut blake3::Hasher, scope: &Scope) {
+    hash_field(hasher, b"contact-scope-v1");
+    hash_scope_axis(hasher, &scope.worlds, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(hasher, &scope.bands, |band| vec![*band]);
+    hash_scope_axis(hasher, &scope.audience, |id| id.0.as_bytes().to_vec());
+    hash_scope_axis(hasher, &scope.verbs, |verb| verb.as_bytes().to_vec());
+    let sensitivity = match scope.sensitivity {
+        SensitivityCeiling::Bottom => 0,
+        SensitivityCeiling::AtMost(Sensitivity::Public) => 1,
+        SensitivityCeiling::AtMost(Sensitivity::Private) => 2,
+        SensitivityCeiling::AtMost(Sensitivity::Sensitive) => 3,
+        SensitivityCeiling::AtMost(Sensitivity::Restricted) => 4,
+    };
+    hasher.update(&[sensitivity]);
+}
+
 impl GrantBound {
     /// Builds a bound from matching domain triples.
     ///
@@ -545,6 +619,9 @@ impl GrantBound {
             BoundEnvelope::Disclosure(envelope) => {
                 for selector in &envelope.selectors {
                     hash_field(&mut hasher, selector.as_bytes());
+                }
+                if let Some(scope) = &envelope.scope {
+                    hash_scope(&mut hasher, scope);
                 }
             }
             BoundEnvelope::Action(envelope) => {

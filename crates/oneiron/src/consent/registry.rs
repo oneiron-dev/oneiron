@@ -1,5 +1,6 @@
 use super::bound::{BoundEnvelope, BoundSubject, ConsentDomain};
 use super::grant::{ConsentGrantRow, ConsentGrantStatus};
+use crate::federation::{Scope, ScopeAxis, Sensitivity, SensitivityCeiling};
 
 // ---------------------------------------------------------------------------
 // The registry surface (invariant 9 surface (b))
@@ -36,8 +37,11 @@ pub struct ConsentRegistryRow {
     pub subject: String,
     /// The class, rendered for display.
     pub class: String,
-    /// The envelope selectors, rendered for display.
+    /// The envelope's authorization axes, rendered for display.
     pub selectors: Vec<String>,
+    /// Typed contact clearance, when present. Hosts can inspect the complete
+    /// Scope before choosing which standing grant to revoke; facet is a mask.
+    pub scope: Option<Scope>,
     /// Lifecycle state.
     pub status: ConsentGrantStatus,
     /// Creation time in Unix seconds.
@@ -74,6 +78,10 @@ impl ConsentRegistryRow {
             subject: render_subject(bound.subject()),
             class: bound.class().as_str().to_owned(),
             selectors: render_selectors(bound.envelope()),
+            scope: match bound.envelope() {
+                BoundEnvelope::Disclosure(envelope) => envelope.scope().cloned(),
+                BoundEnvelope::Action(_) => None,
+            },
             status: row.status,
             created_at: row.created_at,
             revoke_action: ConsentRevokeAction {
@@ -97,7 +105,10 @@ fn render_subject(subject: &BoundSubject) -> String {
 
 fn render_selectors(envelope: &BoundEnvelope) -> Vec<String> {
     match envelope {
-        BoundEnvelope::Disclosure(envelope) => envelope.selectors().to_vec(),
+        BoundEnvelope::Disclosure(envelope) => match envelope.scope() {
+            Some(scope) => render_scope(scope),
+            None => envelope.selectors().to_vec(),
+        },
         BoundEnvelope::Action(envelope) => {
             let mut selectors = envelope.selectors().to_vec();
             if let Some(target) = envelope.target() {
@@ -108,5 +119,38 @@ fn render_selectors(envelope: &BoundEnvelope) -> Vec<String> {
             }
             selectors
         }
+    }
+}
+
+// Display only: the typed Scope above remains the authority and is available
+// to hosts as structured data. Facets are deliberately omitted because they
+// do not grant or deny disclosure.
+fn render_scope(scope: &Scope) -> Vec<String> {
+    vec![
+        format!("worlds:{}", render_axis(&scope.worlds, |id| id.0.to_hex())),
+        format!(
+            "projects:{}",
+            render_axis(&scope.audience, |id| id.0.to_hex())
+        ),
+        format!("bands:{}", render_axis(&scope.bands, ToString::to_string)),
+        format!("verbs:{}", render_axis(&scope.verbs, Clone::clone)),
+        format!(
+            "sensitivity:{}",
+            match scope.sensitivity {
+                SensitivityCeiling::Bottom => "bottom",
+                SensitivityCeiling::AtMost(Sensitivity::Public) => "public",
+                SensitivityCeiling::AtMost(Sensitivity::Private) => "private",
+                SensitivityCeiling::AtMost(Sensitivity::Sensitive) => "sensitive",
+                SensitivityCeiling::AtMost(Sensitivity::Restricted) => "restricted",
+            }
+        ),
+    ]
+}
+
+fn render_axis<T: Ord>(axis: &ScopeAxis<T>, display: impl Fn(&T) -> String) -> String {
+    match axis {
+        ScopeAxis::Bottom => "bottom".to_owned(),
+        ScopeAxis::All => "*".to_owned(),
+        ScopeAxis::Some(values) => values.iter().map(display).collect::<Vec<_>>().join(","),
     }
 }
