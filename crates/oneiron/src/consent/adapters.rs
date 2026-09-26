@@ -265,35 +265,23 @@ fn policy_value_selectors(label: &str, value: Option<&Value>) -> Vec<String> {
     selectors
 }
 
-/// Projects a [`DisclosureScope`] into a [`DisclosureGrant`] for one resolved
-/// interlocutor.
-///
-/// The resolved interlocutor/contact is the audience; entity/topic/purpose
-/// selectors are the envelope. A missing or malformed scope remains HIDE:
-/// callers with no scope must not call this at all, and a scope that fails
-/// validation returns an error rather than an empty-but-permissive bound.
+/// Projects an active contact clearance into a typed Scope-valued bound.
+/// An empty or revoked Scope cannot project a reusable disclosure grant.
 pub fn disclosure_grant_from_disclosure_scope(
-    scope: &DisclosureScope,
+    clearance: &DisclosureScope,
     interlocutor_ref: &str,
     class: &str,
 ) -> Result<DisclosureGrant> {
-    scope.validate()?;
-    if scope.status != DisclosureScopeStatus::Active {
+    clearance.validate()?;
+    if clearance.status != DisclosureScopeStatus::Active {
         return Err(invalid_bound(
-            "revoked disclosure scope projects to no bound; the fail-safe is hide",
+            "revoked contact clearance projects to no bound",
         ));
     }
     let audience = AudienceBound::singleton(interlocutor_ref)?;
-    let mut selectors: Vec<String> = scope
-        .entities
-        .iter()
-        .map(|entity| format!("entity:{}", entity.to_hex()))
-        .collect();
-    selectors.extend(scope.topics.iter().map(|topic| format!("topic:{topic}")));
-    selectors.push(format!("purpose:{}", scope.purpose));
     DisclosureGrant::new(GrantBound::disclosure(
         audience,
         DisclosureClass::new(class)?,
-        DisclosureEnvelope::new(selectors)?,
+        DisclosureEnvelope::from_scope(clearance.scope.clone())?,
     )?)
 }

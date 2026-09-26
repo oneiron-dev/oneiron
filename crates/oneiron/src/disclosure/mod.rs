@@ -8,7 +8,7 @@
 //! set on every assembly.
 //!
 //! Enforcement lives in `context_pack.rs` (the enforcement point IS context
-//! assembly); this module owns mode/tier/scope classification, storage, and
+//! assembly); this module owns mode/tier/Scope classification, storage, and
 //! the agent-visible assembly block.
 
 mod scope_codec;
@@ -17,8 +17,7 @@ mod vault_context;
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
-    DisclosureScopeStatus, MAX_DISCLOSURE_SCOPE_ENTITIES, MAX_DISCLOSURE_SCOPE_TOPICS,
-    decode_disclosure_scope_body, encode_disclosure_scope_body,
+    DisclosureScopeStatus, decode_disclosure_scope_body, encode_disclosure_scope_body,
 };
 pub use self::tier_classification::{
     DISCLOSURE_CLAIM_PREDICATES, DISCLOSURE_TIER_A_ENTITY_TYPES,
