@@ -1566,3 +1566,141 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
     );
     assert_eq!(in_the_written_tick, one_tick_later);
 }
+
+#[test]
+fn scoped_recall_hides_world_ids_without_claim_read_authority() {
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture(false);
+    let hidden = EntityId::from_bytes([0x7a; 16]).unwrap();
+    let requested = EntityId::from_bytes([0x7b; 16]).unwrap();
+    let mut input = claim_input(
+        "profile.city",
+        &owner,
+        "user_stated",
+        serde_json::json!("hidden world record"),
+    );
+    input.world_ref = Some(hidden.to_hex());
+    facade_for(&vault, owner)
+        .claim_upsert(&input)
+        .expect("owner claim");
+    let scope = RecallScope {
+        world_ref: Some(requested.to_hex()),
+        facet: None,
+    };
+    let owner_pack = facade_for(&vault, owner)
+        .recall("hidden world record", Effort::Light, &scope, 10, None, None)
+        .expect("owner recall");
+    assert_eq!(
+        owner_pack.scope_honesty.out_of_scope_worlds,
+        vec![hidden.to_hex()]
+    );
+    let denied = facade_for(&vault, scoped)
+        .recall("hidden world record", Effort::Light, &scope, 10, None, None)
+        .expect("scoped recall");
+    assert!(denied.items.is_empty());
+    assert!(denied.scope_honesty.out_of_scope_worlds.is_empty());
+
+    vault
+        .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
+        .expect("scoped claim read permit");
+    let admitted = facade_for(&vault, scoped)
+        .recall("hidden world record", Effort::Light, &scope, 10, None, None)
+        .expect("permitted recall");
+    assert_eq!(
+        admitted.scope_honesty.out_of_scope_worlds,
+        vec![hidden.to_hex()]
+    );
+}
+
+#[test]
+fn scoped_recall_provenance_does_not_name_a_denied_supersedes_target() {
+    let (_dir, vault, owner, scoped) = recall_after_control_writes_fixture(true);
+    let mut allowed = witness_message(0, WitnessAuthor::User, "scoped provenance anchor");
+    allowed.metadata = Some(serde_json::json!({
+        "rel": EntityId::from_bytes([0x68; 16]).unwrap().to_hex()
+    }));
+    let anchor = facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x7e; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![allowed],
+            occurred_at: crate::unix_seconds_now(),
+        })
+        .expect("allowed witness");
+    let anchor_id = EntityId::from_hex(
+        &facade_for(&vault, owner)
+            .get_entity(&anchor.message_short_ids[0])
+            .unwrap()
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    let hidden_space = EntityId::from_bytes([0x7c; 16]).unwrap();
+    let mut message = witness_message(0, WitnessAuthor::User, "denied provenance body");
+    message.metadata = Some(serde_json::json!({"rel": hidden_space.to_hex()}));
+    let receipt = facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0x7d; 16]).unwrap().to_hex(),
+            turn_ref: None,
+            messages: vec![message],
+            occurred_at: crate::unix_seconds_now(),
+        })
+        .expect("hidden witness");
+    let target = EntityId::from_hex(
+        &facade_for(&vault, owner)
+            .get_entity(&receipt.message_short_ids[0])
+            .unwrap()
+            .unwrap()
+            .id_hex,
+    )
+    .unwrap();
+    vault
+        .batch()
+        .edge(&anchor_id, crate::EdgeKind::Supersedes, &target, 1.0)
+        .commit()
+        .expect("provenance edge");
+    let facet = EntityId::from_bytes([0x7f; 16]).unwrap();
+    vault
+        .put_entity(
+            &facet,
+            crate::registry::ENTITY_TYPE_FACET,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&serde_json::json!({"name": "facet"})).unwrap(),
+        )
+        .unwrap();
+    for scope in [
+        RecallScope::default(),
+        RecallScope {
+            facet: Some(facet.to_hex()),
+            ..Default::default()
+        },
+    ] {
+        let pack = facade_for(&vault, scoped)
+            .recall(
+                "scoped provenance anchor",
+                Effort::Light,
+                &scope,
+                10,
+                None,
+                None,
+            )
+            .expect("scoped recall");
+        let item = pack
+            .items
+            .iter()
+            .find(|item| item.value_text.contains("scoped provenance anchor"))
+            .unwrap_or_else(|| panic!("readable anchor in {scope:?}: {:?}", pack.items));
+        assert_eq!(
+            item.provenance.source_revision_ids,
+            vec![anchor_id.to_hex()],
+            "{scope:?}"
+        );
+        assert!(
+            !item
+                .provenance
+                .source_revision_ids
+                .contains(&target.to_hex()),
+            "{scope:?}"
+        );
+    }
+}
