@@ -245,7 +245,10 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
 }
 
 fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
-    if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND {
+    if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+    {
+        // Maintenance is vault-local and does not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)

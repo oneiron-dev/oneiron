@@ -17,6 +17,8 @@ use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
 pub const CURATOR_FACET: &str = "dreamer.curator";
 pub const HARNESS_FACET: &str = "dreamer.harness_maintenance";
+/// Executable, zero-model wake-policy receipt. Recipe jobs may be attached by the loop.
+pub const POLICY_WAKE_FACET: &str = "dreamer.policy_wake";
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer maintenance row".into())
 }
@@ -43,6 +45,27 @@ impl DreamerRunnerStore<'_> {
             )
         })
     }
+    /// Transactional policy wake receipt. It is a maintenance facet rather than
+    /// a fake consolidation partition: a source-only wake has no TURN slice.
+    pub(crate) fn enqueue_policy_wake_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        trigger: &crate::dreamer_wake::WakePolicyTrigger,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: POLICY_WAKE_FACET.into(),
+                input: Value::from(serde_json::to_string(trigger).map_err(|_| invalid())?),
+                parent_attempt: None,
+            },
+            None,
+            None,
+            now,
+        )
+    }
     pub fn admit_next_maintenance(
         &self,
         input: AdmitDreamerAttempt,
@@ -65,6 +88,16 @@ pub(crate) fn execute(
         representation::REPRESENTATION_FACET => {
             representation::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }
+        POLICY_WAKE_FACET => {
+            let trigger: crate::dreamer_wake::WakePolicyTrigger =
+                serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
+                    .map_err(|_| invalid())?;
+            if trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0 {
+                return Err(invalid());
+            }
+            // Completion acknowledges dispatch, not the recipe body. Its
+            // replayable input remains in the policy outbox.
+        }
         _ => return Err(invalid()),
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
@@ -83,7 +116,7 @@ fn load_row<T: serde::de::DeserializeOwned>(
 
 pub mod digest;
 
-fn validate_owner_in_txn(
+pub(crate) fn validate_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owner: &crate::consent::AuthenticatedOwner,

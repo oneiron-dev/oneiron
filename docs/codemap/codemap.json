@@ -13453,8 +13453,8 @@
      "path": "src/dreamer_runner/maintenance/mod.rs",
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
      "surface": {
-      "const": 3,
-      "crate-vis": 2,
+      "const": 4,
+      "crate-vis": 4,
       "fn": 1,
       "mod": 2,
       "re-export": 2
@@ -13803,8 +13803,35 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 5
+      "re-export": 6
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DreamerWakePolicy",
+      "WakeIdleState",
+      "WakePolicyDecision",
+      "WakePolicyOutcome",
+      "WakePolicyTrigger",
+      "WakeRecipe"
+     ],
+     "path": "src/dreamer_wake/policy.rs",
+     "purpose": "Row-backed wake admission",
+     "surface": {
+      "enum": 2,
+      "fn": 5,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/policy/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -24231,7 +24258,9 @@
      "notable": [],
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -24377,7 +24406,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 6
      }
     },
@@ -34127,8 +34156,8 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 11,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
@@ -34920,8 +34949,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
-   "test_files": 706
+   "source_files": 2064,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [
@@ -36329,7 +36358,7 @@
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4,
+      "re-export": 5,
       "type": 1
      }
     },
@@ -36352,6 +36381,20 @@
       "enum": 1,
       "struct": 4,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WakePolicyTicks"
+     ],
+     "path": "src/tick/policy.rs",
+     "purpose": "One cancellable quiet sleep per tick source, driven by the vault's row policy",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -36386,6 +36429,14 @@
      "notable": [],
      "path": "src/tick/tests/tests_commitment.rs",
      "purpose": "Tick commitment-lane tests: merge and tie, admission, and fire tests",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tick/tests/tests_policy.rs",
+     "purpose": "One-shot wake-policy timer: quiet expiry, inbound cancellation, and durable queue",
      "surface": {}
     },
     {
@@ -36429,7 +36480,7 @@
      "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
     },
     "tick": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36438,8 +36489,8 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 14,
-   "test_files": 9
+   "source_files": 15,
+   "test_files": 10
   },
   "oneiron-ffi": {
    "files": [
