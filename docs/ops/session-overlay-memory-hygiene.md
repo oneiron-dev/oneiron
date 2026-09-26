@@ -11,7 +11,11 @@ sync state or exports**. The overlay remains RAM-only and budget-fenced; there i
   their string fields at close or if abandoned. Close's live-row census counts
   through references instead of copying private row bodies into a temporary plan.
 - Each COW keyspace and each journal entry wipes **its own** buffers at its last
-  drop. Close first drains generation leases. It does not overwrite an Arc held
+  drop. Displaced values, deleted row keys, and duplicate members wipe when
+  removed, even if their parent COW keyspace stays live. The independent
+  promotion replay clone is guarded through builder preflight, unconsumed ops,
+  and consumed Put/Text/Vector arms on both success and error. Close first
+  drains generation leases. It does not overwrite an Arc held
   by another snapshot, nor clear the closed registry entry before its taint
   membership is unpublished. A caller-owned read result or promote outcome has
   its own lifetime and is not scrubbed by closing the overlay.

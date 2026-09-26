@@ -63,7 +63,7 @@ impl Drop for JournalEntry {
     }
 }
 
-pub(super) fn zeroize_batch_op_payload(op: &mut BatchOp) {
+pub(crate) fn zeroize_batch_op_payload(op: &mut BatchOp) {
     match op {
         BatchOp::Put { data, .. } => data.zeroize(),
         BatchOp::Vector {

@@ -157,28 +157,49 @@ mod hygiene_tests {
     use crate::receipt::ReceiptKind;
     use std::collections::BTreeMap;
 
-    #[test]
-    fn scrub_close_buffer_erases_emit_context_and_identifiers() {
-        let mut record = ReceiptRecord {
-            receipt_id: "private-receipt".into(),
+    use crate::session_overlay::hygiene_tests::{allocation, observe_drop};
+
+    fn emit_with_context() -> ReceiptRecord {
+        ReceiptRecord {
+            receipt_id: "receipt-private".into(),
             receipt_kind: ReceiptKind::Outbound,
             occurred_at: 1,
-            actor: Some("actor-private".into()),
-            on_behalf_of: Some("principal-private".into()),
-            outcome: "outcome-private".into(),
-            job_ref: Some("job-private".into()),
-            trigger_ref: Some("trigger-private".into()),
-            policy_trace: vec!["trace-private".into()],
+            actor: None,
+            on_behalf_of: None,
+            outcome: "done".into(),
+            job_ref: None,
+            trigger_ref: None,
+            policy_trace: Vec::new(),
             fields: BTreeMap::from([("context".into(), "private-memory".into())]),
-        };
-        zeroize_receipt(&mut record);
-        assert!(record.receipt_id.is_empty());
-        assert!(record.actor.is_none());
-        assert!(record.on_behalf_of.is_none());
-        assert!(record.outcome.is_empty());
-        assert!(record.job_ref.is_none());
-        assert!(record.trigger_ref.is_none());
-        assert!(record.policy_trace[0].is_empty());
-        assert!(record.fields.is_empty());
+        }
+    }
+
+    #[test]
+    fn close_and_abandon_scrub_off_record_receipts_but_preserve_on_record_output() {
+        let mut log = SessionLocalReceiptLog::off_record("session-private");
+        log.record(emit_with_context()).unwrap();
+        let watched = allocation(log.receipts()[0].fields["context"].as_bytes());
+        observe_drop(watched, true, || {
+            let outcome = log.close();
+            assert_eq!(outcome.deleted, 1);
+            assert!(outcome.retained.is_empty());
+        });
+
+        let mut abandoned = SessionLocalReceiptLog::off_record("session-private");
+        abandoned.record(emit_with_context()).unwrap();
+        let watched = allocation(abandoned.receipts()[0].fields["context"].as_bytes());
+        observe_drop(watched, true, || drop(abandoned));
+
+        let mut log = SessionLocalReceiptLog::on_record("session-ordinary");
+        log.record(emit_with_context()).unwrap();
+        let watched = allocation(log.receipts()[0].fields["context"].as_bytes());
+        let mut retained = None;
+        observe_drop(watched, false, || {
+            retained = Some(log.close());
+        });
+        assert_eq!(
+            retained.as_ref().unwrap().retained[0].fields["context"],
+            "private-memory"
+        );
     }
 }

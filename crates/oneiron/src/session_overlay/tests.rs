@@ -807,7 +807,10 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
 
     let id = EntityId::now();
     let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
-    let (second, second_hash) = overlay.alloc_session_short_id(&id, b"body-two")?;
+    let first_key = encode_session_short_id_forward_key(&first, first_hash);
+    let (second, second_hash) = super::hygiene_tests::observe_pattern(&first_key, || {
+        overlay.alloc_session_short_id(&id, b"body-two")
+    })?;
 
     assert_eq!(first, second, "the room alias must be stable for an entity");
     assert_ne!(
@@ -841,34 +844,21 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
         "the refreshed forward row is missing"
     );
 
-    drop(segment);
+    drop(snapshot);
+    segment.commit()?;
+    let second_key = encode_session_short_id_forward_key(&second, second_hash);
+    assert_ne!(second_hash, session_short_id_content_hash(b"body-three"));
+    // No txn segment: the stale-key delete fails before staging. Both the
+    // encoded key and the borrowed alias must scrub on this error exit.
+    let failure = super::hygiene_tests::observe_pattern(&second_key, || {
+        overlay.alloc_session_short_id(&id, b"body-three")
+    });
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
+    let failure = super::hygiene_tests::observe_pattern(second.as_bytes(), || {
+        overlay.alloc_session_short_id(&id, b"body-three")
+    });
+    assert!(matches!(failure, Err(Error::InvariantViolation(_))));
     Ok(())
-}
-
-#[test]
-fn teardown_scrubs_owned_row_and_journal_payload() {
-    let mut op = put_op(b"journal-secret".to_vec());
-    super::journal::zeroize_batch_op_payload(&mut op);
-    assert!(matches!(op, BatchOp::Put { ref data, .. } if data.is_empty()));
-
-    let mut vector = BatchOp::Vector {
-        id: EntityId::now(),
-        vector: vec![4.0, 5.0],
-        pending_embedding_token: Some(b"token".to_vec()),
-    };
-    super::journal::zeroize_batch_op_payload(&mut vector);
-    assert!(
-        matches!(vector, BatchOp::Vector { ref vector, pending_embedding_token: Some(ref token), .. } if vector.is_empty() && token.is_empty())
-    );
-
-    let mut text = BatchOp::Text {
-        id: EntityId::now(),
-        fields: vec![("name".into(), "content".into())],
-    };
-    super::journal::zeroize_batch_op_payload(&mut text);
-    assert!(
-        matches!(text, BatchOp::Text { ref fields, .. } if fields[0].0.is_empty() && fields[0].1.is_empty())
-    );
 }
 
 #[test]
@@ -907,5 +897,47 @@ fn journal_refuses_payloads_outside_its_scrubbed_vocabulary() -> Result<()> {
     assert!(matches!(result, Err(Error::InvariantViolation(_))));
     segment.commit()?;
     assert!(overlay.snapshot()?.journal_ops(scope).is_empty());
+    Ok(())
+}
+
+#[test]
+fn live_snapshot_defers_old_body_scrub_until_its_final_release() -> Result<()> {
+    use super::hygiene_tests::{allocation, observe_drop};
+    use super::keyspace::{KeyspaceState, OverlayValue};
+
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(
+        OverlayKeyspace::Entities,
+        id.as_bytes(),
+        b"snapshot-private-body",
+    )?;
+    segment.commit()?;
+    let snapshot = overlay.snapshot()?;
+    let KeyspaceState::Single { rows, .. } =
+        snapshot.state.keyspaces[OverlayKeyspace::Entities.slot()].as_ref()
+    else {
+        panic!("entities are single valued");
+    };
+    let Some(OverlayValue::Present(bytes)) = rows.get(id.as_bytes().as_slice()) else {
+        panic!("snapshot owns old body");
+    };
+    let watched = allocation(bytes);
+    let segment = overlay.install_txn_segment()?;
+    observe_drop(watched, false, || {
+        overlay
+            .put(
+                OverlayKeyspace::Entities,
+                id.as_bytes(),
+                b"replacement-body",
+            )
+            .unwrap();
+        segment.commit().unwrap();
+    });
+    assert!(
+        matches!(snapshot.lookup_single(OverlayKeyspace::Entities, id.as_bytes()), SnapshotLookup::Present(ref value) if value == b"snapshot-private-body")
+    );
+    observe_drop(watched, true, || drop(snapshot));
     Ok(())
 }
