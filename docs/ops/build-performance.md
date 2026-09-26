@@ -85,8 +85,8 @@ the same across commands when you want to reuse their artifacts.
 
 ## Cache retention
 
-The CI jobs that run cache maintenance keep their existing 20 GiB cap; the
-Linux jobs currently do not run it. `scripts/ci/cap-target-cache.sh` first asks Cargo
+The CI jobs that run cache maintenance keep their existing 20 GiB cap: `Checks`
+(on Linux) runs it; the two Linux test jobs, `Test` and `Test (featureless)`, do not. `scripts/ci/cap-target-cache.sh` first asks Cargo
 1.96 to clean workspace-owned outputs in both the dev/test and release profiles,
 including old feature variants. It retains
 third-party dependencies, including excluded vendor packages, if that is enough
