@@ -328,7 +328,7 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
-        if fold.slips.revoked.contains(&slip_id) {
+        if fold.slips.explicit_revoked.contains(&slip_id) {
             return Ok(false);
         }
         self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
