@@ -111,6 +111,10 @@ impl EditSession for FixtureSession {
         Ok(opc::write(&pkg))
     }
 
+    fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+        Some(crate::blob_artifact::CalcEngineStamp::new("fixture-calc", "1.0").unwrap())
+    }
+
     fn supports_recalc(&self) -> bool {
         self.supports_recalc
     }
@@ -238,6 +242,9 @@ fn recalc_stage_updates_cached_values_via_seam() {
             pkg.upsert(SHEET_PART, sheet.into_bytes());
             Ok(opc::write(&pkg))
         }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("formula-fixture", "1.0").unwrap())
+        }
     }
 
     let mut parts = base_parts();
@@ -353,6 +360,162 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
             .iter()
             .any(|c| c.name == "passthrough_unknown_parts" && !c.passed)
     );
+}
+
+#[test]
+fn xlookup_write_is_prefixed_before_the_session_serializes_it() {
+    struct FormulaWriteSession;
+    impl EditSession for FormulaWriteSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let EditOp::SetCell {
+                after: CellValue::Formula { expr, .. },
+                ..
+            } = &plan.ops[0]
+            else {
+                panic!("expected formula write");
+            };
+            let mut pkg = opc::read(&doc.bytes)?;
+            pkg.upsert(SHEET_PART, format!("<worksheet><sheetData><row r=\"1\"><c r=\"B1\"><f>{expr}</f><v>42</v></c></row></sheetData></worksheet>").into_bytes());
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("test-calc", "1.2").unwrap())
+        }
+    }
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::SetCell {
+        sheet: "Sheet1".into(),
+        cell: CellRef::new(2, 1),
+        before: None,
+        after: CellValue::Formula {
+            expr: "XLOOKUP(A1,A2:A3,B2:B3)+SUM(1,2)".into(),
+            cached: None,
+        },
+    }]);
+    let outcome = run_edit_roundtrip(
+        &FormulaWriteSession,
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:xlookup",
+    )
+    .unwrap();
+    let EditOutcome::Proposed(proposal) = outcome else {
+        panic!("formula should propose")
+    };
+    let after = opc::read(&proposal.new_bytes).unwrap();
+    assert!(
+        String::from_utf8_lossy(after.part(SHEET_PART).unwrap())
+            .contains("<f>_xlfn.XLOOKUP(A1,A2:A3,B2:B3)+SUM(1,2)</f>")
+    );
+    assert_eq!(proposal.calc_engine.as_ref().unwrap().engine(), "test-calc");
+    assert_eq!(proposal.calc_engine.as_ref().unwrap().version(), "1.2");
+}
+
+#[test]
+fn recalculation_without_engine_identity_cannot_be_proposed() {
+    struct UnstampedSession;
+    impl EditSession for UnstampedSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            FixtureSession::faithful().apply_edits(doc, plan)
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            FixtureSession::faithful().recalc(doc)
+        }
+    }
+    let err = run_edit_roundtrip(
+        &UnstampedSession,
+        &xlsx_bytes(&base_parts()),
+        OfficeFormat::Xlsx,
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:unstamped",
+    )
+    .expect_err("a recalc that cannot identify its engine must not propose");
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
+    ));
+}
+
+#[test]
+fn session_cannot_strip_modern_function_prefix_after_serialization() {
+    let before = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+    let mut after = before.clone();
+    after.upsert(SHEET_PART, b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><f>XLOOKUP(A1,A2:A3,B2:B3)</f><v>42</v></c></row></sheetData></worksheet>".to_vec());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "modern_functions_prefixed" && !c.passed)
+    );
+}
+
+#[test]
+fn external_workbook_link_must_survive_session_edit() {
+    let mut parts = base_parts();
+    parts.push(("xl/_rels/workbook.xml.rels", b"<Relationships><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>"));
+    parts.push(("xl/externalLinks/externalLink1.xml", b"<externalLink/>"));
+    parts.push(("xl/externalLinks/_rels/externalLink1.xml.rels", b"<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath\" Target=\"file:///source.xlsx\" TargetMode=\"External\"/></Relationships>"));
+    parts[1].1 = b"<workbook><externalReferences><externalReference r:id=\"rId2\"/></externalReferences></workbook>";
+    let input = xlsx_bytes(&parts);
+    let before = opc::read(&input).unwrap();
+    let proposal = propose(
+        &FixtureSession::faithful(),
+        &input,
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:linked",
+    );
+    let edited = opc::read(&proposal.new_bytes).unwrap();
+    for name in [
+        "xl/workbook.xml",
+        "xl/_rels/workbook.xml.rels",
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+    ] {
+        assert_eq!(
+            edited.part(name),
+            before.part(name),
+            "link part {name} changed"
+        );
+    }
+    assert!(proposal.validation.ok);
+    let mut dropped_rel = before.clone();
+    dropped_rel.upsert("xl/_rels/workbook.xml.rels", b"<Relationships/>".to_vec());
+    let report = validate(&before, &dropped_rel, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let mut dropped_ref = before.clone();
+    dropped_ref.upsert("xl/workbook.xml", b"<workbook/>".to_vec());
+    let report = validate(&before, &dropped_ref, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let mut changed_target = before.clone();
+    changed_target.upsert("xl/externalLinks/_rels/externalLink1.xml.rels", b"<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath\" Target=\"file:///wrong.xlsx\" TargetMode=\"External\"/></Relationships>".to_vec());
+    let report = validate(&before, &changed_target, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let report = validate(&before, &before, OfficeFormat::Xlsx);
+    assert!(report.ok);
 }
 
 // -- Unit tests -------------------------------------------------------------

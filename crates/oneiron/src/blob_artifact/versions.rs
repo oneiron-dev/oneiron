@@ -26,6 +26,48 @@ use super::store_keys::{
 };
 use crate::error::ArtifactError;
 
+/// The calculator that last computed an artifact version's cached values.
+/// An upload or a version that was never recalculated has no stamp; absence is
+/// explicit in both the version record and its ledger claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalcEngineStamp {
+    engine: String,
+    version: String,
+}
+
+impl CalcEngineStamp {
+    pub fn new(engine: impl Into<String>, version: impl Into<String>) -> Result<Self> {
+        let stamp = Self {
+            engine: engine.into(),
+            version: version.into(),
+        };
+        stamp.validate()?;
+        Ok(stamp)
+    }
+
+    #[must_use]
+    pub fn engine(&self) -> &str {
+        &self.engine
+    }
+
+    #[must_use]
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    fn validate(&self) -> Result<()> {
+        for text in [&self.engine, &self.version] {
+            if text.trim().is_empty() || text.len() > 128 {
+                return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                    "calc engine and version must be non-empty and at most 128 bytes",
+                )));
+            }
+            crate::batch::secret_scan::scan_metadata_field(text)?;
+        }
+        Ok(())
+    }
+}
+
 /// One record of the append-only version chain: content hash + provenance +
 /// the `blob.version` claim id (the LEDGER event for this version).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,17 +76,21 @@ pub struct BlobArtifactVersion {
     pub version: u64,
     pub content_hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     pub provenance: BlobVersionProvenance,
+    /// `None` means no known calculator computed the cached values.
+    pub calc_engine: Option<CalcEngineStamp>,
     pub claim_id: EntityId,
     pub created_at: u64,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 6] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 8] = [
     "version",
     "content_hash",
     "provenance",
     "run_ref",
     "claim_id",
     "created_at",
+    "calc_engine",
+    "calc_engine_version",
 ];
 
 pub(super) const KEY_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[0];
@@ -58,6 +104,10 @@ pub(super) const KEY_RUN_REF: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[3];
 const KEY_CLAIM_ID: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[4];
 
 const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
+
+pub(super) const KEY_CALC_ENGINE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
+
+pub(super) const KEY_CALC_ENGINE_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[7];
 
 impl Vault {
     pub fn put_blob_artifact(
@@ -145,7 +195,35 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_with_engine_in_txn(
+            wtxn,
+            artifact_id,
+            bytes,
+            provenance,
+            None,
+            actor,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Settle's append door, with the calculator that produced cached values.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn append_blob_artifact_version_with_engine_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        calc_engine: Option<&CalcEngineStamp>,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
+        if let Some(stamp) = calc_engine {
+            stamp.validate()?;
+        }
         if bytes.is_empty() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version bytes must be non-empty",
@@ -184,7 +262,7 @@ impl Vault {
         let candidate = ClaimCandidate::new(
             BLOB_VERSION_CLAIM_PREDICATE,
             ClaimSubject::Entity(*artifact_id),
-            blob_version_claim_value(next_version, &content_hash, provenance),
+            blob_version_claim_value(next_version, &content_hash, provenance, calc_engine),
             1.0,
         );
         let envelope = WriteEnvelope::new(
@@ -209,6 +287,7 @@ impl Vault {
             version: next_version,
             content_hash,
             provenance: provenance.clone(),
+            calc_engine: calc_engine.cloned(),
             claim_id,
             created_at: learned_at,
         };
@@ -306,7 +385,12 @@ impl Vault {
         if claim.predicate != BLOB_VERSION_CLAIM_PREDICATE
             || claim.subject != ClaimSubject::Entity(*artifact_id)
             || claim.value
-                != blob_version_claim_value(version, &record.content_hash, &record.provenance)
+                != blob_version_claim_value(
+                    version,
+                    &record.content_hash,
+                    &record.provenance,
+                    record.calc_engine.as_ref(),
+                )
         {
             return Err(Error::CorruptedIndex("blob artifact version claim"));
         }
@@ -368,6 +452,20 @@ fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<V
             Value::from(KEY_CREATED_AT),
             Value::Integer(record.created_at.into()),
         ),
+        (
+            Value::from(KEY_CALC_ENGINE),
+            record
+                .calc_engine
+                .as_ref()
+                .map_or(Value::Nil, |s| Value::from(s.engine())),
+        ),
+        (
+            Value::from(KEY_CALC_ENGINE_VERSION),
+            record
+                .calc_engine
+                .as_ref()
+                .map_or(Value::Nil, |s| Value::from(s.version())),
+        ),
     ]);
     encode_value(&value, "blob artifact version MessagePack encode failed")
 }
@@ -386,6 +484,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut run_ref: Option<Option<String>> = None;
     let mut claim_id = None;
     let mut created_at = None;
+    let mut calc_engine: Option<Option<String>> = None;
+    let mut calc_engine_version: Option<Option<String>> = None;
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
 
     for (key, value) in &entries {
@@ -433,6 +533,24 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             }
             KEY_CLAIM_ID => claim_id = Some(entity_value(value, "claim_id")?),
             KEY_CREATED_AT => created_at = Some(u64_value(value, "created_at")?),
+            KEY_CALC_ENGINE | KEY_CALC_ENGINE_VERSION => {
+                let text = match value {
+                    Value::Nil => None,
+                    other => Some(
+                        other
+                            .as_str()
+                            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                                "calc stamp must be a UTF-8 string or nil",
+                            )))?
+                            .to_owned(),
+                    ),
+                };
+                if key == KEY_CALC_ENGINE {
+                    calc_engine = Some(text);
+                } else {
+                    calc_engine_version = Some(text);
+                }
+            }
             _ => unreachable!("index resolved from BLOB_ARTIFACT_VERSION_RECORD_KEYS"),
         }
     }
@@ -454,6 +572,22 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         )))?,
     )?;
     validate_provenance(&provenance)?;
+    let calc_engine = match (
+        calc_engine.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "missing calc_engine",
+        )))?,
+        calc_engine_version.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "missing calc_engine_version",
+        )))?,
+    ) {
+        (Some(engine), Some(version)) => Some(CalcEngineStamp::new(engine, version)?),
+        (None, None) => None,
+        _ => {
+            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                "calc stamp must have both engine and version",
+            )));
+        }
+    };
     Ok(BlobArtifactVersion {
         version,
         content_hash: content_hash.ok_or(Error::Artifact(
@@ -462,6 +596,7 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             ),
         ))?,
         provenance,
+        calc_engine,
         claim_id: claim_id.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key claim_id",
         )))?,

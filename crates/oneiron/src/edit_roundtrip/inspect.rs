@@ -210,7 +210,7 @@ fn formula_references_sheet(formula: &str, sheet: &str) -> bool {
 /// match the tag prefix, skip to the end of the open tag, then read to `</f>`.
 /// A self-closing `<f .../>` (a shared-formula reference with no inline text)
 /// yields nothing.
-fn extract_formulas(xml: &str) -> Vec<String> {
+pub(super) fn extract_formulas(xml: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = xml;
     while let Some(idx) = rest.find("<f") {

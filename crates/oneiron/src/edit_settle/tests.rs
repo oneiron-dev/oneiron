@@ -104,6 +104,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             checks: Vec::new(),
         },
         recalc: RecalcStatus::NotNeeded,
+        calc_engine: None,
         base_version: Some(1),
         base_content_hash: *blake3::hash(WORKBOOK_V1_BYTES).as_bytes(),
     }
@@ -140,6 +141,47 @@ fn unsettled_proposal_is_invisible_until_select() -> Result<()> {
         BlobVersionProvenance::AgentRun {
             run_ref: "run:invisible".to_owned(),
         }
+    );
+    Ok(())
+}
+
+#[test]
+fn selected_version_keeps_calculator_and_version_in_metadata_and_claim() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let mut prop = proposal("run:calc-stamp", b"calculated xlsx bytes", Vec::new());
+    prop.calc_engine = Some(Box::new(crate::blob_artifact::CalcEngineStamp::new(
+        "LibreOffice",
+        "24.8",
+    )?));
+    let out =
+        vault.settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(11), 11)?;
+    assert_eq!(
+        out.version.calc_engine.as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)?
+            .unwrap()
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_version_metadata(&artifact, 2)?
+            .unwrap()
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault.blob_artifact_versions(&artifact)?[1]
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
     );
     Ok(())
 }

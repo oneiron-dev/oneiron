@@ -108,11 +108,12 @@ impl Vault {
                     .put(wtxn, &key, &encode_settlement_record(&record)?)?;
                 return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
             }
-            let version = self.append_blob_artifact_version_in_txn(
+            let version = self.append_blob_artifact_version_with_engine_in_txn(
                 wtxn,
                 artifact_id,
                 &proposal.new_bytes,
                 &proposal.agent_run_provenance(),
+                proposal.calc_engine.as_deref(),
                 actor,
                 occurred,
                 learned_at,

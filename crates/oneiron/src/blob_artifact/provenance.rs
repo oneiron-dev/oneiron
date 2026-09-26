@@ -8,7 +8,10 @@ use crate::error::{Error, Result};
 
 use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
-use super::versions::{KEY_CONTENT_HASH, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION};
+use super::versions::{
+    CalcEngineStamp, KEY_CALC_ENGINE, KEY_CALC_ENGINE_VERSION, KEY_CONTENT_HASH, KEY_PROVENANCE,
+    KEY_RUN_REF, KEY_VERSION,
+};
 use crate::error::ArtifactError;
 
 pub(super) const BLOB_VERSION_CLAIM_PREDICATE: &str = "blob.version";
@@ -99,6 +102,7 @@ pub(super) fn blob_version_claim_value(
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     provenance: &BlobVersionProvenance,
+    calc_engine: Option<&CalcEngineStamp>,
 ) -> Value {
     let mut entries = vec![
         (Value::from(KEY_VERSION), Value::Integer(version.into())),
@@ -109,6 +113,14 @@ pub(super) fn blob_version_claim_value(
         (
             Value::from(KEY_PROVENANCE),
             Value::from(provenance.as_str()),
+        ),
+        (
+            Value::from(KEY_CALC_ENGINE),
+            calc_engine.map_or(Value::Nil, |s| Value::from(s.engine())),
+        ),
+        (
+            Value::from(KEY_CALC_ENGINE_VERSION),
+            calc_engine.map_or(Value::Nil, |s| Value::from(s.version())),
         ),
     ];
     if let Some(run_ref) = provenance.run_ref() {

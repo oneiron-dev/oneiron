@@ -326,6 +326,7 @@ pub(crate) fn classify(name: &str) -> PartClass {
 /// byte-for-byte: VBA macros, pivot caches/tables, charts, and custom XML.
 fn is_unknown_forced(name: &str) -> bool {
     name == "xl/vbaProject.bin"
+        || name.starts_with("xl/externalLinks/")
         || name.starts_with("customXml/")
         || name.starts_with("xl/pivotCache/")
         || name.starts_with("xl/pivotTables/")

@@ -3,6 +3,7 @@
 use super::inspect::{attr_value, scan_tag_attr};
 use super::opc::{self, OpcPackage, PartClass};
 use super::{EditOp, EditWarning, OfficeFormat};
+use crate::blob_artifact::CalcEngineStamp;
 use crate::error::Result;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -68,7 +69,8 @@ pub struct AppliedEdit {
 }
 
 /// The seam behind which the external session binaries live. In production:
-/// openpyxl for [`EditSession::apply_edits`] and LibreOffice headless for
+/// openpyxl (`keep_links=True`, `keep_vba=True`, `data_only=False`) for
+/// [`EditSession::apply_edits`] and LibreOffice headless for
 /// [`EditSession::recalc`], both inside a foreign-tier microVM. In CI: a
 /// fixture implementation, so the full gate passes without either binary.
 pub trait EditSession {
@@ -78,6 +80,12 @@ pub trait EditSession {
     /// Stage 3: refresh cached formula values in the edited bytes. Must
     /// preserve unknown parts; the corruption gate re-checks regardless.
     fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>>;
+
+    /// Actual calculator and version for the bytes returned by `recalc`.
+    /// No default: an unknown calculator cannot be silently attributed.
+    fn recalc_engine(&self) -> Option<CalcEngineStamp> {
+        None
+    }
 
     /// Whether this session image can recalc (LibreOffice present).
     fn supports_recalc(&self) -> bool {
@@ -174,8 +182,99 @@ pub(super) fn validate(
         },
     });
 
+    let modern_formulas = after
+        .parts()
+        .iter()
+        .filter(|part| {
+            part.name.starts_with("xl/worksheets/")
+                && part.name.ends_with(".xml")
+                && before.part(&part.name) != Some(part.data.as_slice())
+        })
+        .flat_map(|part| {
+            let xml = String::from_utf8_lossy(&part.data);
+            super::inspect::extract_formulas(&xml)
+                .into_iter()
+                .filter(|formula| super::formula::prefix_functions(formula) != *formula)
+                .map(move |_| part.name.clone())
+        })
+        .collect::<Vec<_>>();
+    checks.push(ValidationCheck {
+        name: "modern_functions_prefixed",
+        passed: modern_formulas.is_empty(),
+        detail: if modern_formulas.is_empty() {
+            "edited worksheet formulas use the OOXML function prefix".to_owned()
+        } else {
+            format!("bare modern function in: {}", modern_formulas.join(", "))
+        },
+    });
+
+    let links = external_link_violations(before, after);
+    checks.push(ValidationCheck {
+        name: "external_links_preserved",
+        passed: links.is_empty(),
+        detail: if links.is_empty() {
+            "workbook references, relationships and link targets survived".to_owned()
+        } else {
+            format!("external links changed: {}", links.join(", "))
+        },
+    });
+
     let ok = checks.iter().all(|c| c.passed);
     ValidationReport { ok, checks }
+}
+
+/// The workbook relation id is part of the formula/link join. Keeping a link
+/// XML part alone is not enough if openpyxl drops its workbook reference or
+/// retargets a relationship. Unknown link parts, including their URI `.rels`,
+/// must also survive byte-for-byte via the passthrough check.
+fn external_link_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<String> {
+    let mut violations = Vec::new();
+    let workbook_refs = |pkg: &OpcPackage| -> Vec<String> {
+        pkg.part("xl/workbook.xml")
+            .map(|bytes| {
+                super::inspect::scan_tag_attr(
+                    &String::from_utf8_lossy(bytes),
+                    "<externalReference",
+                    "r:id",
+                )
+            })
+            .unwrap_or_default()
+    };
+    if workbook_refs(before) != workbook_refs(after) {
+        violations.push("workbook externalReferences".to_owned());
+    }
+    let link_rels = |pkg: &OpcPackage| -> Vec<(String, String)> {
+        let mut links = Vec::new();
+        if let Some(bytes) = pkg.part("xl/_rels/workbook.xml.rels") {
+            let xml = String::from_utf8_lossy(bytes);
+            let mut rest = xml.as_ref();
+            while let Some(idx) = rest.find("<Relationship") {
+                let tag = &rest[idx + "<Relationship".len()..];
+                let end = tag.find('>').unwrap_or(tag.len());
+                let body = &tag[..end];
+                if attr_value(body, "Type=\"").is_some_and(|t| t.ends_with("/externalLink"))
+                    && let (Some(id), Some(target)) =
+                        (attr_value(body, "Id=\""), attr_value(body, "Target=\""))
+                {
+                    links.push((id, target));
+                }
+                rest = &tag[end..];
+            }
+        }
+        links.sort();
+        links
+    };
+    if link_rels(before) != link_rels(after) {
+        violations.push("workbook externalLink relationships".to_owned());
+    }
+    for part in before.parts() {
+        if part.name.starts_with("xl/externalLinks/")
+            && after.part(&part.name) != Some(part.data.as_slice())
+        {
+            violations.push(part.name.clone());
+        }
+    }
+    violations
 }
 
 /// Names of unknown parts that were dropped, altered, or newly injected — any
