@@ -30,6 +30,7 @@ pub(crate) struct ExportSnapshot {
 
 pub(crate) struct ExportSnapshotEntity {
     pub(crate) id: EntityId,
+    pub(crate) short_ref: Option<String>,
     pub(crate) header: EntityMetadataHeader,
     pub(crate) body: Vec<u8>,
     pub(crate) tainted: bool,
@@ -125,8 +126,12 @@ impl Vault {
                 }
             }
             included.insert(id);
+            let short_ref =
+                crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &rtxn, &id)?
+                    .map(|(name, hash)| format!("{name}:{hash:02x}"));
             entities.push(ExportSnapshotEntity {
                 id,
+                short_ref,
                 header,
                 body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
                 tainted,

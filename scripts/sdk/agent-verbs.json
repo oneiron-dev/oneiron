@@ -296,6 +296,33 @@
       }
     },
     {
+      "name": "export",
+      "input": "crate::memory::ExportOptions",
+      "output": "crate::memory::MemoryExport",
+      "call": "memory.export(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp": "none",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "assemble": true,
+        "args": [
+          {
+            "name": "format",
+            "kind": "format"
+          }
+        ],
+        "docs": {
+          "remote": "    /// Exports the full vault through the shared five-format serializer.\n",
+          "ts": "/** Exports the live vault as toon (default), md, json, yaml, or txt. */",
+          "py": "Exports the live vault through the five-format serializer."
+        }
+      }
+    },
+    {
       "name": "receipts",
       "input": "ReceiptsRequest",
       "output": "Vec<crate::memory::MemoryReceipt>",

@@ -163,6 +163,22 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("recall", value)
     }
+    /// Exports the full vault through the shared five-format serializer.
+    pub fn export(
+        &self,
+        format: Option<&str>,
+    ) -> Result<oneiron::memory::MemoryExport, MemoryError> {
+        let input = oneiron::memory::ExportOptions {
+            format: format.map(str::to_owned),
+        };
+        let value = serde_json::to_value(&input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("export", value)
+    }
     /// Lists governance receipts, newest first.
     pub fn receipts(
         &self,

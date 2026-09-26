@@ -32,6 +32,7 @@ import type {
   CommitReceipt,
   FacadeReceipt,
   MemoryPack,
+  MemoryExport,
   OpenOptions,
   RecallOptions,
   WitnessReceipt,
@@ -141,6 +142,8 @@ export class Oneiron {
    * simulates a lease.
    */
   recall(query: string, opts: RecallOptions = {}): MemoryPack { return this.#call(() => this.#client.recall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format)) }
+  /** Exports the live vault as toon (default), md, json, yaml, or txt. */
+  export(format?: string): MemoryExport { return this.#call(() => this.#client.export({format: format}) as MemoryExport) }
   /** Governance receipts, newest first. */
   receipts(limit: number = 100): FacadeReceipt[] { return this.#call(() => this.#client.receipts(limit)) }
   /** Exact actor-owned worldless key lookup, never recall. */

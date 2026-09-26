@@ -241,6 +241,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn export(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "export")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     #[pyo3(signature = (limit=None))]
     fn receipts(&self, py: Python<'_>, limit: Option<usize>) -> PyResult<String> {
         let limit = limit.unwrap_or(100);

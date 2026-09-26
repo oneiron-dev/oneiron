@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `examples/provision-fixture-actor.rs` | src | s | — | — | Provisions the wire fixture's owner actor on a PRE-SERVER vault |
-| `src/agent_verbs.rs` | src | m | 22 fn | — | — |
+| `src/agent_verbs.rs` | src | m | 23 fn | — | — |
 | `src/caps.rs` | src | s | 1 re-export | — | Shared boundary caps live with the engine DTOs so HTTP ingress and SDK dispatch use the same validators |
 | `src/embedded.rs` | src | m | 1 fn · 14 crate-vis | — | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
