@@ -31887,7 +31887,7 @@
      "path": "src/vault/read_fixture.rs",
      "purpose": "Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -35491,7 +35491,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/fleet/workload.rs",
@@ -36025,7 +36025,7 @@
     "fleet": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
