@@ -1050,6 +1050,163 @@ fn the_split_is_deterministic_disjoint_and_invisible_to_the_author() -> Result<(
     Ok(())
 }
 
+/// The second author sees the failed edit and its reason, not the held-out
+/// receipts or numeric scores, and can draft a different correction.
+#[test]
+fn a_rejected_edit_informs_the_next_draft_without_repeating_it() -> Result<()> {
+    struct AvoidRejectedEdit {
+        seen: RefCell<Option<SkillOptimizeBrief>>,
+    }
+
+    impl SkillOptimizeAuthor for AvoidRejectedEdit {
+        fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
+            *self.seen.borrow_mut() = Some(brief.clone());
+            let desc = if brief
+                .rejected_edits
+                .iter()
+                .any(|edit| edit.desc == DRAFTED_DESC)
+            {
+                "Do the thing. Verify the result, then the other thing."
+            } else {
+                DRAFTED_DESC
+            };
+            Ok(SkillEditDraft::Edit {
+                desc: desc.to_owned(),
+                rationale: "use the prior rejection to avoid repeating it".to_owned(),
+            })
+        }
+    }
+
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.rejected-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.rejected-buffer");
+    let first_author = StubAuthor::editing();
+    let first = run(&vault, &first_author)?.proposal.expect("first edit");
+    assert!(first_author.brief().rejected_edits.is_empty());
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-rejected", 10),
+        900,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+
+    let second_author = AvoidRejectedEdit {
+        seen: RefCell::new(None),
+    };
+    let second = run(&vault, &second_author)?.proposal.expect("second edit");
+    let brief = second_author.seen.borrow();
+    let brief = brief.as_ref().expect("the second author saw a brief");
+    assert_eq!(brief.skill, skill);
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, first);
+    assert_eq!(brief.rejected_edits[0].desc, DRAFTED_DESC);
+    assert_eq!(
+        brief.rejected_edits[0].author_rationale,
+        "five attributed defects name the missing check"
+    );
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Regression
+    );
+    assert_ne!(stored(&vault, &second).desc, stored(&vault, &first).desc);
+    assert!(
+        brief
+            .cited_receipts
+            .iter()
+            .all(|id| !verdict.held_out_receipts.contains(id))
+    );
+    Ok(())
+}
+
+/// A tie is still feedback; verdicts for another target never appear here.
+#[test]
+fn rejected_edit_buffer_is_scoped_and_classifies_ties() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tie-buffer");
+    let (other, other_proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.other-buffer");
+    let tie = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &StubScorer::new(0.60, 0.60),
+        wake(&vault, "wake-tie", 10),
+        900,
+    )?;
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &other_proposal,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-other", 10),
+        901,
+    )?;
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("skill still eligible after rejection");
+    let brief = optimize_brief(&vault, &candidate)?;
+    assert_eq!(brief.rejected_edits.len(), 1);
+    assert_eq!(brief.rejected_edits[0].proposal, tie.proposal);
+    assert_eq!(
+        brief.rejected_edits[0].rejection_reason,
+        RejectedSkillEditReason::Tie
+    );
+    assert_ne!(brief.rejected_edits[0].proposal, other_proposal);
+    assert_ne!(brief.skill, other);
+    Ok(())
+}
+
+/// Owner-scoped rejection feedback is not a back door into another
+/// principal's preference evidence, including an unbound optimizer job.
+#[test]
+fn rejected_edit_buffer_keeps_preference_principals_separate() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, _) = put_standard_active(&vault, "oneiron.skill.private-buffer");
+    attribute_defects_across_split(&vault, &skill, "oneiron.skill.private-buffer");
+    let owner_id = EntityId::now();
+    let other_id = EntityId::now();
+    put_actor(&vault, &owner_id);
+    put_actor(&vault, &other_id);
+    let owner = crate::write_envelope::WriteActor::new(owner_id, crate::EdgeActorClass::Human);
+    let other = crate::write_envelope::WriteActor::new(other_id, crate::EdgeActorClass::Human);
+    let first = run_skill_optimize_as(
+        &vault,
+        enqueue_attempt(&vault, None, 5),
+        &StubAuthor::editing(),
+        t(300),
+        301,
+        owner,
+    )?
+    .proposal
+    .expect("owner-scoped edit");
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &StubScorer::new(0.60, 0.55),
+        wake(&vault, "wake-private", 10),
+        900,
+    )?;
+    let candidate = optimize_candidates(&vault)?
+        .into_iter()
+        .find(|candidate| candidate.skill == skill)
+        .expect("still eligible");
+    assert!(
+        optimize_brief(&vault, &candidate)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert!(
+        optimize_brief_for_principal_at(&vault, &candidate, other, 301)?
+            .rejected_edits
+            .is_empty()
+    );
+    assert_eq!(
+        optimize_brief_for_principal_at(&vault, &candidate, owner, 301)?.rejected_edits[0].proposal,
+        first
+    );
+    Ok(())
+}
+
 // ─── ONE-1449: the strict-improvement gate ──────────────────────────────
 
 #[test]
