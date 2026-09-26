@@ -12,7 +12,7 @@ FEATURELESS_FULL = (
     "run cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0",
 )
 GUARD = (
-    "      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' "
+    "      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' "
     "|| github.event.pull_request.draft == false)"
 )
 
@@ -65,6 +65,67 @@ class CiWorkflowTests(unittest.TestCase):
             gate = next(l for l in self.job_lines(job) if l.startswith("    if: "))
             self.assertIn("github.event_name == 'workflow_dispatch'", gate)
             self.assertNotIn("pull_request", gate)
+
+    def test_shared_compiler_cache_is_pinned_and_reported_in_each_compiler_job(self):
+        self.assertIn("  SCCACHE_GHA_ENABLED: 'on'", self.lines)
+        self.assertIn(
+            "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}",
+            self.text,
+        )
+        for job in ("checks", "test", "test-linux", "test-linux-featureless"):
+            lines = self.job_lines(job)
+            self.assertIn(
+                "        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9",
+                lines,
+                job,
+            )
+            self.assertIn("      - name: Shared compiler cache key", lines, job)
+            self.assertIn("        id: sccache", lines, job)
+            self.assertIn('          version: "v0.15.0"', lines, job)
+            self.assertIn("        if: always() && steps.sccache.outcome == 'success'", lines, job)
+            self.assertIn("          RUSTC_WRAPPER: sccache", lines, job)
+            self.assertIn("        run: sccache --show-stats", lines, job)
+        # Tool installers stay unwrapped. Check the owning step, not a global line count.
+        expected = {
+            "checks": {"Clippy (touched packages; the full gate nightly)"},
+            "test": {"Workspace tests (nextest, full tier, macOS recipe)",
+                     "Featureless oneiron library tests",
+                     "Featureless oneiron library tests (nextest, no retries)"},
+            "test-linux": {"Tests (touched packages and modules; everything nightly)"},
+            "test-linux-featureless": {"Featureless oneiron library tests (touched modules; both process models nightly)"},
+        }
+        for job, names in expected.items():
+            lines = self.job_lines(job)
+            steps = [i for i, line in enumerate(lines) if line.startswith("      - name: ")]
+            wrapped = {lines[i].removeprefix("      - name: ") for i, end in zip(steps, steps[1:] + [len(lines)])
+                       if "          RUSTC_WRAPPER: sccache" in lines[i:end]}
+            self.assertEqual(wrapped, names, job)
+
+    def test_full_tier_nextest_commands_are_not_replaced_by_cache_setup(self):
+        self.assertIn(
+            "run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
+            self.text,
+        )
+        self.assertIn(
+            "run cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
+            self.runner,
+        )
+
+    def test_cache_proof_dispatch_runs_two_separate_clean_artifact_jobs(self):
+        self.assertIn("      cache_proof:", self.lines)
+        self.assertIn("  group: ${{ inputs.cache_proof && format('ci-proof-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}", self.lines)
+        for job, phase in (("cache-proof-populate", "populate"), ("cache-proof-repeat", "repeat")):
+            lines = self.job_lines(job)
+            self.assertIn("    runs-on: [self-hosted, macos, arm64, mini]", lines)
+            self.assertIn("    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof", lines)
+            self.assertTrue(any("proof-${{ github.run_id }}" in line for line in lines))
+            self.assertTrue(any(f"ci_cache_proof.py {phase}" in line for line in lines))
+            self.assertIn('          version: "v0.15.0"', lines)
+            self.assertIn("        uses: actions/upload-artifact@v4", lines)
+        self.assertIn("    needs: cache-proof-populate", self.job_lines("cache-proof-repeat"))
+        self.assertIn("        uses: actions/download-artifact@v4", self.job_lines("cache-proof-repeat"))
+        for job in ("changes", "checks", "test", "test-linux", "test-linux-featureless", "mutation-audit"):
+            self.assertTrue(any("!inputs.cache_proof" in line for line in self.job_lines(job)), job)
 
     def test_workflow_guard_is_executed_by_python_check(self):
         self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", self.text)
