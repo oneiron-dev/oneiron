@@ -95,7 +95,7 @@ run_stage clippy-server       cargo clippy --locked -p oneiron-server --all-feat
 # Encoded flags take precedence even when empty. Unset them for this child only;
 # do not change other stages' environments or compiler fingerprints globally.
 run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
-run_stage test                cargo nextest run --locked --workspace --exclude oneiron-napi --all-features --profile full
+run_stage test                cargo nextest run --locked --workspace --all-features --profile full
 run_stage test-featureless    cargo test --locked -p oneiron --lib --no-default-features
 run_stage doctest             cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
 
