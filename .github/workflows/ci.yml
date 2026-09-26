@@ -27,6 +27,11 @@ name: CI
 # The toolchain is host rustup via rust-toolchain.toml. `clean: true` on every checkout because `_work` persists.
 on:
   workflow_dispatch:
+    inputs:
+      cache_proof:
+        description: Run a cold-artifact shared-cache comparison instead of the full gate
+        type: boolean
+        default: false
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
@@ -48,7 +53,7 @@ jobs:
     name: Detect changed paths
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 10
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       full: ${{ steps.scope.outputs.full }}
@@ -83,7 +88,7 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
@@ -155,7 +160,7 @@ jobs:
     name: Test (macOS)
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
-    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch'
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -204,7 +209,7 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
@@ -253,7 +258,7 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
@@ -293,6 +298,62 @@ jobs:
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
         run: sccache --show-stats
+  cache-proof-populate:
+    name: Cache proof (baseline and populate)
+    runs-on: [self-hosted, linux, x64, arch]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Host-target-only baseline, then shared-cache population (fresh artifacts)
+        run: python3 scripts/audit/ci_cache_proof.py populate --output "$RUNNER_TEMP/oneiron-cache-proof-populate.json"
+      - name: Retain baseline and population receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-populate.json
+          if-no-files-found: error
+
+  cache-proof-repeat:
+    name: Cache proof (repeat)
+    needs: cache-proof-populate
+    runs-on: [self-hosted, linux, x64, arch]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Read population receipt from prior job
+        uses: actions/download-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-input
+      - name: Repeat build from fresh artifacts using shared cache
+        run: python3 scripts/audit/ci_cache_proof.py repeat --baseline "$RUNNER_TEMP/oneiron-cache-proof-input/oneiron-cache-proof-populate.json" --output "$RUNNER_TEMP/oneiron-cache-proof-repeat.json"
+      - name: Retain repeat receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-repeat-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-repeat.json
+          if-no-files-found: error
+
   package:
     name: Package oneiron-server
     runs-on: [self-hosted, linux, x64]
@@ -328,7 +389,7 @@ jobs:
       contents: read
     runs-on: [self-hosted]
     timeout-minutes: 180
-    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch'
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
