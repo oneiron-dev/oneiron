@@ -6,7 +6,7 @@
 
 #[cfg(test)]
 use oneiron::memory::Effort;
-use oneiron::memory::{Memory, RecallScope};
+use oneiron::memory::{Memory, RecallScope, ScopedView};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -132,15 +132,6 @@ pub(crate) fn bound_rpc(
         }),
         Err(error) => rpc_error(request.request_id, error),
     }
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct ScopedView {
-    pub world_ref: Option<String>,
-    pub facet: Option<String>,
-    pub filter: Option<Value>,
-    pub query: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
