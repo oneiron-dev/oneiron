@@ -111,6 +111,10 @@ impl EditSession for FixtureSession {
         Ok(opc::write(&pkg))
     }
 
+    fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+        Some(crate::blob_artifact::CalcEngineStamp::new("fixture-calc", "1.0").unwrap())
+    }
+
     fn supports_recalc(&self) -> bool {
         self.supports_recalc
     }
@@ -238,6 +242,9 @@ fn recalc_stage_updates_cached_values_via_seam() {
             pkg.upsert(SHEET_PART, sheet.into_bytes());
             Ok(opc::write(&pkg))
         }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("formula-fixture", "1.0").unwrap())
+        }
     }
 
     let mut parts = base_parts();
@@ -353,6 +360,163 @@ fn corruption_gate_blocks_broken_output_from_proposal() {
             .iter()
             .any(|c| c.name == "passthrough_unknown_parts" && !c.passed)
     );
+}
+
+#[test]
+fn xlookup_write_is_prefixed_before_the_session_serializes_it() {
+    struct FormulaWriteSession;
+    impl EditSession for FormulaWriteSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let EditOp::SetCell {
+                after: CellValue::Formula { expr, .. },
+                ..
+            } = &plan.ops[0]
+            else {
+                panic!("expected formula write");
+            };
+            let mut pkg = opc::read(&doc.bytes)?;
+            pkg.upsert(SHEET_PART, format!("<worksheet><sheetData><row r=\"1\"><c r=\"B1\"><f>{expr}</f><v>42</v></c></row></sheetData></worksheet>").into_bytes());
+            Ok(AppliedEdit {
+                bytes: opc::write(&pkg),
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("test-calc", "1.2").unwrap())
+        }
+    }
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::SetCell {
+        sheet: "Sheet1".into(),
+        cell: CellRef::new(2, 1),
+        before: None,
+        after: CellValue::Formula {
+            expr: "XLOOKUP(A1,A2:A3,B2:B3)+SUM(1,2)".into(),
+            cached: None,
+        },
+    }]);
+    let outcome = run_edit_roundtrip(
+        &FormulaWriteSession,
+        &input,
+        OfficeFormat::Xlsx,
+        &plan,
+        "run:xlookup",
+    )
+    .unwrap();
+    let EditOutcome::Proposed(proposal) = outcome else {
+        panic!("formula should propose")
+    };
+    let after = opc::read(&proposal.new_bytes).unwrap();
+    assert!(
+        String::from_utf8_lossy(after.part(SHEET_PART).unwrap())
+            .contains("<f>_xlfn.XLOOKUP(A1,A2:A3,B2:B3)+SUM(1,2)</f>")
+    );
+    assert_eq!(proposal.calc_engine.as_ref().unwrap().engine(), "test-calc");
+    assert_eq!(proposal.calc_engine.as_ref().unwrap().version(), "1.2");
+}
+
+#[test]
+fn recalculation_without_engine_identity_cannot_be_proposed() {
+    struct UnstampedSession;
+    impl EditSession for UnstampedSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            FixtureSession::faithful().apply_edits(doc, plan)
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            FixtureSession::faithful().recalc(doc)
+        }
+    }
+    let err = run_edit_roundtrip(
+        &UnstampedSession,
+        &xlsx_bytes(&base_parts()),
+        OfficeFormat::Xlsx,
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:unstamped",
+    )
+    .expect_err("a recalc that cannot identify its engine must not propose");
+    assert!(matches!(
+        err,
+        Error::Artifact(ArtifactError::EditRoundtripFailed(_))
+    ));
+}
+
+#[test]
+fn session_cannot_strip_modern_function_prefix_after_serialization() {
+    let before = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+    let mut after = before.clone();
+    after.upsert(SHEET_PART, b"<worksheet><sheetData><row r=\"1\"><c r=\"A1\"><f>XLOOKUP(A1,A2:A3,B2:B3)</f><v>42</v></c></row></sheetData></worksheet>".to_vec());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "modern_functions_prefixed" && !c.passed)
+    );
+}
+
+#[test]
+fn external_workbook_link_must_survive_session_edit() {
+    let mut parts = base_parts();
+    parts.push(("xl/_rels/workbook.xml.rels", b"<Relationships><Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>"));
+    parts.push(("xl/externalLinks/externalLink1.xml", b"<externalLink/>"));
+    parts.push(("xl/externalLinks/_rels/externalLink1.xml.rels", b"<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath\" Target=\"file:///source.xlsx\" TargetMode=\"External\"/></Relationships>"));
+    parts[0].1 = b"<Types><Override PartName=\"/xl/externalLinks/externalLink1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml\"/></Types>";
+    parts[1].1 = b"<workbook xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><externalReferences><externalReference r:id=\"rId2\"/></externalReferences></workbook>";
+    let input = xlsx_bytes(&parts);
+    let before = opc::read(&input).unwrap();
+    let proposal = propose(
+        &FixtureSession::faithful(),
+        &input,
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:linked",
+    );
+    let edited = opc::read(&proposal.new_bytes).unwrap();
+    for name in [
+        "xl/workbook.xml",
+        "xl/_rels/workbook.xml.rels",
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+    ] {
+        assert_eq!(
+            edited.part(name),
+            before.part(name),
+            "link part {name} changed"
+        );
+    }
+    assert!(proposal.validation.ok);
+    let mut dropped_rel = before.clone();
+    dropped_rel.upsert("xl/_rels/workbook.xml.rels", b"<Relationships/>".to_vec());
+    let report = validate(&before, &dropped_rel, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let mut dropped_ref = before.clone();
+    dropped_ref.upsert("xl/workbook.xml", b"<workbook/>".to_vec());
+    let report = validate(&before, &dropped_ref, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let mut changed_target = before.clone();
+    changed_target.upsert("xl/externalLinks/_rels/externalLink1.xml.rels", b"<Relationships><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/externalLinkPath\" Target=\"file:///wrong.xlsx\" TargetMode=\"External\"/></Relationships>".to_vec());
+    let report = validate(&before, &changed_target, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed)
+    );
+    let report = validate(&before, &before, OfficeFormat::Xlsx);
+    assert!(report.ok);
 }
 
 // -- Unit tests -------------------------------------------------------------
@@ -721,4 +885,357 @@ fn minimal_mutation_mode_refuses_structural_ops() {
     let cell = EditPlan::new(vec![set_a1(10.0)]);
     let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
+}
+
+// A real openpyxl 3.1.5 load_workbook(keep_links=True, data_only=False)
+// B1 edit/save pair. The target spelling changes to /xl/..., but resolves to
+// the same link part; no external link bytes or workbook references are lost.
+#[test]
+fn real_openpyxl_link_roundtrip_accepts_equivalent_target() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let after = opc::read(include_bytes!("fixtures/linked-after.xlsx")).unwrap();
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(report.ok, "{report:?}");
+    assert_eq!(
+        before.part("xl/externalLinks/externalLink1.xml"),
+        after.part("xl/externalLinks/externalLink1.xml")
+    );
+}
+
+#[test]
+fn link_gate_rejects_removed_single_quoted_or_prefixed_reference() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let original = String::from_utf8(before.part("xl/workbook.xml").unwrap().to_vec()).unwrap();
+    let mut single = before.clone();
+    single.upsert("xl/workbook.xml", original.replace('"', "'").into_bytes());
+    let mut dropped = single.clone();
+    let workbook = String::from_utf8(single.part("xl/workbook.xml").unwrap().to_vec()).unwrap();
+    let start = workbook.find("<externalReferences>").unwrap();
+    let end = workbook.find("</externalReferences>").unwrap() + "</externalReferences>".len();
+    dropped.upsert(
+        "xl/workbook.xml",
+        format!("{}{}", &workbook[..start], &workbook[end..]).into_bytes(),
+    );
+    assert!(validate(&single, &single, OfficeFormat::Xlsx).ok);
+    let report = validate(&single, &dropped, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "{report:?}"
+    );
+
+    let mut prefixed = before;
+    prefixed.upsert("xl/workbook.xml", b"<x:workbook xmlns:x=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><x:externalReferences><x:externalReference r:id=\"rId2\"/></x:externalReferences></x:workbook>".to_vec());
+    let mut dropped = prefixed.clone();
+    dropped.upsert(
+        "xl/workbook.xml",
+        b"<x:workbook xmlns:x=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"/>"
+            .to_vec(),
+    );
+    assert!(validate(&prefixed, &prefixed, OfficeFormat::Xlsx).ok);
+    let report = validate(&prefixed, &dropped, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn link_gate_rejects_lost_or_changed_content_type() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let types = String::from_utf8(before.part(opc::CONTENT_TYPES_PART).unwrap().to_vec()).unwrap();
+    let mut after = before.clone();
+    let override_start = types
+        .find("<Override PartName=\"/xl/externalLinks/externalLink1.xml\"")
+        .or_else(|| {
+            types
+                .find("PartName=\"/xl/externalLinks/externalLink1.xml\"")
+                .and_then(|i| types[..i].rfind("<Override"))
+        })
+        .unwrap();
+    let override_end = override_start + types[override_start..].find("/>").unwrap() + 2;
+    after.upsert(
+        opc::CONTENT_TYPES_PART,
+        format!("{}{}", &types[..override_start], &types[override_end..]).into_bytes(),
+    );
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "{report:?}"
+    );
+    let mut changed = before.clone();
+    changed.upsert(
+        opc::CONTENT_TYPES_PART,
+        types
+            .replace(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml",
+                "application/xml",
+            )
+            .into_bytes(),
+    );
+    let report = validate(&before, &changed, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn formula_gate_reads_xml_decoded_literals_and_prefixed_elements() {
+    let before = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+    let mut after = before.clone();
+    after.upsert(SHEET_PART, b"<x:worksheet xmlns:x=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><x:sheetData><x:row><x:c><x:f>&quot;XLOOKUP(&quot;</x:f></x:c></x:row></x:sheetData></x:worksheet>".to_vec());
+    assert_eq!(
+        super::xml::formulas(std::str::from_utf8(after.part(SHEET_PART).unwrap()).unwrap())
+            .unwrap(),
+        vec!["\"XLOOKUP(\""]
+    );
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(report.ok, "{report:?}");
+    after.upsert(SHEET_PART, b"<x:worksheet xmlns:x=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><x:f>XLOOKUP(A1,A2:A3,B2:B3)</x:f></x:worksheet>".to_vec());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "modern_functions_prefixed" && !c.passed),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn structured_header_stays_unmodified_across_each_formula_write_verb() {
+    let expr = "SUM(Table1[XLOOKUP(foo)])";
+    let set_cell = EditOp::SetCell {
+        sheet: "Sheet1".into(),
+        cell: CellRef::new(2, 1),
+        before: None,
+        after: CellValue::Formula {
+            expr: expr.into(),
+            cached: None,
+        },
+    };
+    let set_range = EditOp::SetRange {
+        sheet: "Sheet1".into(),
+        range: RangeRef::new(CellRef::new(2, 1), CellRef::new(2, 1)),
+        writes: vec![CellWrite {
+            cell: CellRef::new(2, 1),
+            before: None,
+            after: CellValue::Formula {
+                expr: expr.into(),
+                cached: None,
+            },
+        }],
+    };
+    let column = EditOp::AddFormulaColumn {
+        sheet: "Sheet1".into(),
+        column: 3,
+        header: None,
+        formula: expr.into(),
+    };
+    let serialized = super::formula::serialize_plan(&EditPlan::new(vec![
+        set_cell.clone(),
+        set_range.clone(),
+        column.clone(),
+    ]));
+    assert_eq!(serialized.ops, vec![set_cell, set_range, column]);
+}
+
+#[test]
+fn formula_gate_rejects_partial_filter_qualifier_and_missing_randarray() {
+    let before = opc::read(&xlsx_bytes(&base_parts())).unwrap();
+    for expr in ["_xlfn.FILTER(A1:A2,A1:A2&gt;0)", "RANDARRAY(2,2)"] {
+        let mut after = before.clone();
+        after.upsert(
+            SHEET_PART,
+            format!("<worksheet><f>{expr}</f></worksheet>").into_bytes(),
+        );
+        let report = validate(&before, &after, OfficeFormat::Xlsx);
+        assert!(
+            report
+                .checks
+                .iter()
+                .any(|c| c.name == "modern_functions_prefixed" && !c.passed),
+            "{expr}: {report:?}"
+        );
+    }
+}
+
+#[test]
+fn public_vault_and_raw_proposal_paths_preserve_calculator_at_settle() -> Result<()> {
+    use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use crate::edge::EdgeActorClass;
+    use crate::edit_settle::SettleConsent;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let time = |start| TimeRange { start, end: start };
+    let actor_id = crate::entity_id::EntityId::now();
+    vault.put_entity(&actor_id, ENTITY_TYPE_PERSON, time(10), 10, b"editor")?;
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Human);
+    let artifact = crate::entity_id::EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "sheet.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+        time(10),
+        10,
+    )?;
+    vault.append_blob_artifact_version(
+        &artifact,
+        &xlsx_bytes(&base_parts()),
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        time(10),
+        10,
+    )?;
+    let consent = SettleConsent::OwnerConsent { brief_ref: None };
+    let session = FixtureSession::faithful();
+
+    // The Vault wrapper binds the head and reports the performed recalc.
+    let EditOutcome::Proposed(calculated) = vault.propose_blob_artifact_edit(
+        &artifact,
+        &session,
+        &EditPlan::new(vec![set_a1(10.0)]),
+        "run:calculated",
+    )?
+    else {
+        panic!("expected calculated proposal")
+    };
+    let computed = vault
+        .settle_select_edit_proposal(&artifact, &calculated, &consent, actor, time(11), 11)?
+        .version;
+    assert_eq!(
+        computed.calc_engine.as_ref().unwrap().engine(),
+        "fixture-calc"
+    );
+
+    // The public raw path has no artifact context. AddSheet does not recalc;
+    // settlement binds it to the head and keeps the head calculator stamp.
+    let head_bytes = vault
+        .read_blob_artifact_version(&artifact, computed.version)?
+        .unwrap();
+    let EditOutcome::Proposed(raw) = run_edit_roundtrip(
+        &session,
+        &head_bytes,
+        OfficeFormat::Xlsx,
+        &EditPlan::new(vec![EditOp::AddSheet {
+            name: "Extra".into(),
+        }]),
+        "run:raw",
+    )?
+    else {
+        panic!("expected raw proposal")
+    };
+    assert_eq!(raw.recalc, RecalcStatus::NotNeeded);
+    assert!(raw.calc_engine.is_none());
+    let settled = vault
+        .settle_select_edit_proposal(&artifact, &raw, &consent, actor, time(12), 12)?
+        .version;
+    assert_eq!(settled.calc_engine, computed.calc_engine);
+    assert_eq!(
+        vault.blob_artifact_version_metadata(&artifact, settled.version)?,
+        Some(settled)
+    );
+    Ok(())
+}
+
+// openpyxl 3.1.5 load_workbook(keep_links=True, data_only=False),
+// create_sheet("Extra"), save: workbook r:id and matching relationship Id
+// both change rId2 -> rId3 while the external link still resolves unchanged.
+#[test]
+fn real_openpyxl_add_sheet_keeps_the_ordered_link_join() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let after = opc::read(include_bytes!("fixtures/linked-add-sheet.xlsx")).unwrap();
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report.ok,
+        "valid AddSheet save must retain its external link: {report:?}"
+    );
+    for part in [
+        "xl/externalLinks/externalLink1.xml",
+        "xl/externalLinks/_rels/externalLink1.xml.rels",
+    ] {
+        assert_eq!(before.part(part), after.part(part));
+    }
+}
+
+#[test]
+fn renumbered_link_ids_are_equivalent_only_when_both_sides_join() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let mut after = before.clone();
+    let wb = String::from_utf8(before.part("xl/workbook.xml").unwrap().to_vec()).unwrap();
+    let rels =
+        String::from_utf8(before.part("xl/_rels/workbook.xml.rels").unwrap().to_vec()).unwrap();
+    after.upsert("xl/workbook.xml", wb.replace("rId2", "rId3").into_bytes());
+    after.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace("rId2", "rId3").into_bytes(),
+    );
+    assert!(validate(&before, &after, OfficeFormat::Xlsx).ok);
+    after.upsert("xl/_rels/workbook.xml.rels", rels.into_bytes());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "broken join must still fail: {report:?}"
+    );
+}
+
+#[test]
+fn omitted_and_explicit_internal_modes_are_equivalent_but_external_refuses() {
+    let before = opc::read(include_bytes!("fixtures/linked-before.xlsx")).unwrap();
+    let rels =
+        String::from_utf8(before.part("xl/_rels/workbook.xml.rels").unwrap().to_vec()).unwrap();
+    let mut explicit = before.clone();
+    explicit.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace(
+            "Target=\"externalLinks/externalLink1.xml\"",
+            "TargetMode=\"Internal\" Target=\"externalLinks/externalLink1.xml\"",
+        )
+        .into_bytes(),
+    );
+    assert_ne!(
+        explicit.part("xl/_rels/workbook.xml.rels"),
+        before.part("xl/_rels/workbook.xml.rels")
+    );
+    assert!(validate(&explicit, &explicit, OfficeFormat::Xlsx).ok);
+    assert!(validate(&before, &explicit, OfficeFormat::Xlsx).ok);
+    assert!(validate(&explicit, &before, OfficeFormat::Xlsx).ok);
+    let mut invalid = before.clone();
+    invalid.upsert(
+        "xl/_rels/workbook.xml.rels",
+        rels.replace(
+            "Target=\"externalLinks/externalLink1.xml\"",
+            "TargetMode=\"External\" Target=\"externalLinks/externalLink1.xml\"",
+        )
+        .into_bytes(),
+    );
+    let report = validate(&before, &invalid, OfficeFormat::Xlsx);
+    assert!(
+        report
+            .checks
+            .iter()
+            .any(|c| c.name == "external_links_preserved" && !c.passed),
+        "external mode must still fail: {report:?}"
+    );
 }

@@ -24,7 +24,8 @@
 //!    failure mode, so it always runs.
 //! 2. **Targeted edit** — the agent's [`EditPlan`] is applied through the
 //!    [`EditSession`] seam via narrow verbs ([`EditOp`]). In production the
-//!    session library is Python openpyxl (`keep_vba=True, data_only=False`);
+//!    session library is Python openpyxl (`keep_vba=True, keep_links=True,
+//!    data_only=False`);
 //!    umya-spreadsheet (Rust) and protobi/exceljs (JS) are recorded alternates.
 //! 3. **Recalc** — when inputs/formulas changed, [`EditSession::recalc`]
 //!    refreshes cached formula values. In production this is LibreOffice
@@ -55,12 +56,14 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+mod formula;
 mod inspect;
 mod manifest;
 mod opc;
 mod ops;
 mod pipeline;
 mod session_validate;
+mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};

@@ -56,6 +56,8 @@ arc-swap = { workspace = true }
 # independently of the session. rust_backend (miniz_oxide) keeps it pure Rust,
 # and both crates were already resolved transitively, so this adds no new deps.
 flate2 = "1"
+# OPC workbook/link and formula validation must parse XML namespaces and entities.
+quick-xml = "=0.42.0"
 gix = { version = "0.85.0", default-features = false, features = ["revision", "sha1"] }
 tiktoken-rs = "0.12.0"
 sha2 = "0.10"

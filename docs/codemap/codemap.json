@@ -3817,15 +3817,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "BlobArtifactVersion"
+      "BlobArtifactVersion",
+      "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
-      "fn": 8,
-      "struct": 1
+      "crate-vis": 15,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -14784,6 +14785,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/formula.rs",
+     "purpose": "Serialize post-2007 spreadsheet functions with Excel's OOXML prefix",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -14794,7 +14805,7 @@
      "path": "src/edit_roundtrip/inspect.rs",
      "purpose": "Workbook inspect scanners",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 3
      }
     },
@@ -14899,12 +14910,22 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
      "purpose": "ARTL-3 pipeline tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/xml.rs",
+     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "s",
@@ -14994,7 +15015,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_settle/tests.rs",
@@ -34245,7 +34266,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35045,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2070,
    "test_files": 710
   },
   "oneiron-android": {
