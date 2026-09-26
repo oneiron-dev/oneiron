@@ -1,0 +1,36 @@
+{
+  "detail": "PDFKit rasterized 1 page(s)",
+  "environment": {
+    "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "input": {
+    "bytes": 28281,
+    "sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480"
+  },
+  "outputs": {
+    "page-0001.png": {
+      "bytes": 37813,
+      "sha256": "258c82a8bb01ea2d26fdf602e449d9b590145f28dcdb760a1ca220398cb4182c"
+    },
+    "reference.pptx": {
+      "bytes": 32506,
+      "sha256": "2617a2db4f111c16e2fcaecea9700d6ac44e36b2a74cb64270643b0b68e6bd91"
+    },
+    "render.pdf": {
+      "bytes": 16417,
+      "sha256": "dc9e054a62a5451df9ec844becbe29ac4590bfd3ccdec13aeb9b22044c94a9b7"
+    }
+  },
+  "pages": 1,
+  "raster_detail": "pages=1",
+  "staged_input_sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480",
+  "status": "clean"
+}
