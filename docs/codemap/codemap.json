@@ -36254,6 +36254,79 @@
    "source_files": 97,
    "test_files": 18
   },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Native document editing organ crate and retained OPC substrate",
+     "surface": {
+      "mod": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Error"
+     ],
+     "path": "src/retained_opc/mod.rs",
+     "purpose": "Bounded, retained OPC archives",
+     "surface": {
+      "enum": 1,
+      "re-export": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Limits",
+      "Package"
+     ],
+     "path": "src/retained_opc/package.rs",
+     "purpose": "ZIP central-directory reader and copy-through writer",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/xml.rs",
+     "purpose": "Lexical XML patcher: retain all unaddressed nodes, namespace declarations, processing instructions and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/identity.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "retained_opc": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "Bounded, retained OPC archives"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Native document editing organ crate and retained OPC substrate",
+   "source_files": 4,
+   "test_files": 1
+  },
   "oneiron-driver": {
    "files": [
     {

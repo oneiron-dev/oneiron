@@ -1,0 +1,21 @@
+[package]
+name = "oneiron-docedit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Retained Open Packaging Conventions document substrate"
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+flate2 = "1"
+quick-xml = "0.42"
+crc32fast = "1"
+thiserror.workspace = true
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[lints]
+workspace = true

@@ -16,6 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2069 | 710 | 9 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 97 | 18 | 0 |
+| [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate and retained OPC substrate | 4 | 1 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
@@ -247,6 +248,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `retrieval_turn_corpus` | file | 1 | m | Offline replay of finalized, turn-indexed retrieval runs |
 | `swarm` | file | 1 | m | Seeded single-vault, in-process agent-swarm baseline |
 | `vector` | dir | 5 | m | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
+
+## oneiron-docedit
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `retained_opc` | dir | 3 | m | Bounded, retained OPC archives |
 
 ## oneiron-driver
 

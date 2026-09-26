@@ -7277,6 +7277,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-docedit"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "quick-xml",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "oneiron-driver"
 version = "0.1.0"
 dependencies = [
