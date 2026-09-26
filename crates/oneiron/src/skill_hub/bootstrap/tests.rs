@@ -1,6 +1,6 @@
 use super::*;
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::skill_hub::{LocalDirSkillHubAdapter, SkillHubAdapter};
+use crate::skill_hub::{HubIndexEntry, LocalDirSkillHubAdapter, SkillHubAdapter};
 use crate::test_util::put_policy_manifest_bytes;
 
 #[test]
@@ -251,6 +251,85 @@ fn bootstrap_duplicate_leaves_existing_hub_provenance_unchanged() -> Result<()> 
     assert_eq!(
         vault.skill_hub_provenance_count(&imported)?,
         provenance_before
+    );
+    Ok(())
+}
+
+#[test]
+fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let (name, markdown) = FILES[1];
+    let id = stable_id(name)?;
+    let package = package(name, markdown)?;
+    let hash = package.content_hash()?;
+    let mut adapter = LocalDirSkillHubAdapter::new(EntityId::now());
+    let source = HubRef::new(
+        adapter.hub_id(),
+        "external/judge",
+        HubPin::ContentHash(hash.to_hex()),
+    )?;
+    adapter.insert_package(&source.ref_string, source.pin.clone(), package.clone());
+    let entry = HubIndexEntry {
+        name: package.record.skill_id.clone(),
+        description: package.record.desc.clone(),
+        version: package.record.version,
+        content_hash: hash,
+        ref_string: source.ref_string.clone(),
+    };
+    assert_eq!(
+        vault.ingest_skill_from_adapter_checked(
+            &adapter,
+            &entry,
+            id,
+            TimeRange { start: 1, end: 1 },
+            1
+        )?,
+        id,
+    );
+    let before = vault.get_raw(&id)?;
+    let lifecycle = vault
+        .get_skill_record(&id)?
+        .expect("foreign holder")
+        .lifecycle_status;
+    assert_eq!(lifecycle, SkillLifecycle::Candidate);
+    let count = vault.skill_hub_provenance_count(&id)?;
+    let saved = vault.stored_hub_package_in_txn(&vault.store.env.read_txn()?, &id)?;
+    let receipt = vault
+        .hub_import_receipt(&id, &source)?
+        .expect("foreign receipt");
+    let bootstrap_source =
+        HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+    assert!(vault.hub_import_receipt(&id, &bootstrap_source)?.is_none());
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&id)?, before);
+    assert_eq!(
+        vault
+            .get_skill_record(&id)?
+            .expect("foreign holder")
+            .lifecycle_status,
+        lifecycle
+    );
+    assert_eq!(vault.skill_hub_provenance_count(&id)?, count);
+    assert_eq!(
+        vault.stored_hub_package_in_txn(&vault.store.env.read_txn()?, &id)?,
+        saved
+    );
+    assert_eq!(vault.hub_import_receipt(&id, &source)?, Some(receipt));
+    assert!(vault.hub_import_receipt(&id, &bootstrap_source)?.is_none());
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, SEED_KEY)?
+            .is_some()
     );
     Ok(())
 }

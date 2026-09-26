@@ -165,12 +165,13 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         let package = package(name, markdown)?;
         let seed_id = stable_id(name)?;
         let content_hash = package.content_hash()?;
-        // A foreign import already holds these exact files. Check before the
-        // import door can attach provenance, scans, receipts or capabilities
-        // to that holder (or reject its different admitted capabilities).
+        // A prior import already holds these exact files. Its entity ID is
+        // not bootstrap admission, even when it equals our deterministic ID.
+        // Check before the import door can attach provenance, scans, receipts
+        // or capabilities, and promote only a record minted by this pass.
         if vault
-            .imported_skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
-            .is_some_and(|holder| holder != seed_id)
+            .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
+            .is_some()
         {
             continue;
         }
