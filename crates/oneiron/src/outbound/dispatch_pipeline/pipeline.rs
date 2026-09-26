@@ -22,9 +22,9 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchResult, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
 use crate::outbound::receipt_fields::{
-    append_dedupe_suppression_receipt_fields, append_dispatch_outcome_receipt_fields,
+    append_budget_charge_receipt_fields, append_dispatch_outcome_receipt_fields,
     append_execution_receipt_fields, append_optional_receipt_field, append_window_receipt_fields,
-    append_window_resolution_receipt_fields,
+    append_window_resolution_receipt_fields, suppression_receipt_for_dispatch,
 };
 use crate::outbound::window_door::{
     outbound_delivery_window_decision_at_door, outbound_delivery_window_resolution_at_door,
@@ -272,8 +272,10 @@ impl OutboundDispatchPipeline {
             effect_state,
             outcome,
             execution,
-            dedupe_suppressed,
+            suppression_receipt,
         ) = if admit_for_execution {
+            let suppression_receipt =
+                suppression_receipt_for_dispatch(&request, &window_decision, &window_resolution);
             let prepared = crate::outbound_chokepoint::PreparedEffect {
                 attempt_id,
                 call_seq: 0,
@@ -289,6 +291,7 @@ impl OutboundDispatchPipeline {
                 authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
                 verified_actor,
                 dedupe_key: request.intent.dedupe_key.clone(),
+                suppression_receipt,
             };
             let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
             let mut transport =
@@ -320,24 +323,30 @@ impl OutboundDispatchPipeline {
                     )));
                 }
             };
-            let outcome = match effect_result.dispatch.state {
-                Some(crate::outbound_intent_ledger::IntentState::Done) => {
-                    OutboundDispatchOutcome::DeliveredToChannel
-                }
-                Some(crate::outbound_intent_ledger::IntentState::Pending) => {
-                    if transport.execution.as_ref().is_some_and(|execution| {
-                        execution.kind == OutboundExecutionOutcomeKind::Failed
-                    }) {
+            let outcome = if effect_result.dedupe_suppressed {
+                OutboundDispatchOutcome::Suppressed
+            } else {
+                match effect_result.dispatch.state {
+                    Some(crate::outbound_intent_ledger::IntentState::Done) => {
+                        OutboundDispatchOutcome::DeliveredToChannel
+                    }
+                    Some(crate::outbound_intent_ledger::IntentState::Pending) => {
+                        if transport.execution.as_ref().is_some_and(|execution| {
+                            execution.kind == OutboundExecutionOutcomeKind::Failed
+                        }) {
+                            OutboundDispatchOutcome::Failed
+                        } else {
+                            OutboundDispatchOutcome::Held
+                        }
+                    }
+                    Some(crate::outbound_intent_ledger::IntentState::Abandoned) => {
                         OutboundDispatchOutcome::Failed
-                    } else {
+                    }
+                    None if gate_outcome_kind == GateOutcome::Pending => {
                         OutboundDispatchOutcome::Held
                     }
+                    None => OutboundDispatchOutcome::Suppressed,
                 }
-                Some(crate::outbound_intent_ledger::IntentState::Abandoned) => {
-                    OutboundDispatchOutcome::Failed
-                }
-                None if gate_outcome_kind == GateOutcome::Pending => OutboundDispatchOutcome::Held,
-                None => OutboundDispatchOutcome::Suppressed,
             };
             (
                 // On a ledger replay the chokepoint returns no gate decision id
@@ -353,7 +362,7 @@ impl OutboundDispatchPipeline {
                 effect_result.dispatch.state,
                 outcome,
                 transport.execution,
-                effect_result.dedupe_suppressed,
+                effect_result.suppression_receipt,
             )
         } else {
             let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
@@ -430,10 +439,21 @@ impl OutboundDispatchPipeline {
                 None,
                 outcome,
                 None,
-                false,
+                None,
             )
         };
 
+        if let Some(receipt) = suppression_receipt {
+            return Ok(OutboundDispatchResult {
+                outcome,
+                gate_decision_id: gate_decision_ref,
+                gate_outcome,
+                gate_reason_codes,
+                receipt,
+                effector_budget: None,
+                budget_ladder_events: Vec::new(),
+            });
+        }
         let mut receipt = outbound_intent_receipt(
             request.receipt_id.clone(),
             request.intent_ref.clone(),
@@ -483,33 +503,7 @@ impl OutboundDispatchPipeline {
                 .fields
                 .insert("intent_state".to_owned(), effect_state.as_str().to_owned());
         }
-        // GOV-02 (ONE-1418) budget legibility: stamped only when a governing
-        // connector key's budget stage ran. `budget_debit`/`budget` are the
-        // exact fields the RS4 receipt projections already sum. A refused
-        // send stamps `budget_debit: "0"` next to the deny reason — the
-        // honest record. `budget` = min remaining over the rows MATCHED by
-        // this dispatch (the binding constraint — M4 resolution 2026-07-10).
-        if let Some(charge) = effector_charge.as_ref() {
-            receipt.fields.insert(
-                "connector_key_ref".to_owned(),
-                format!("ckey:{}", charge.key_ref.to_hex()),
-            );
-            receipt
-                .fields
-                .insert("budget_debit".to_owned(), charge.sends_debit.to_string());
-            let binding_remaining = charge
-                .read
-                .rows
-                .iter()
-                .filter(|row| charge.matched_rows.contains(&row.row_index))
-                .map(|row| row.remaining)
-                .min();
-            if let Some(binding_remaining) = binding_remaining {
-                receipt
-                    .fields
-                    .insert("budget".to_owned(), binding_remaining.to_string());
-            }
-        }
+        append_budget_charge_receipt_fields(&mut receipt, effector_charge.as_ref());
         receipt.fields.insert(
             "channel_call".to_owned(),
             verb_contract.channel_call.clone(),
@@ -584,7 +578,6 @@ impl OutboundDispatchPipeline {
             );
             append_execution_receipt_fields(&mut receipt, &execution.receipt_fields);
         }
-        append_dedupe_suppression_receipt_fields(&mut receipt, dedupe_suppressed);
         append_dispatch_outcome_receipt_fields(
             &mut receipt,
             outcome,

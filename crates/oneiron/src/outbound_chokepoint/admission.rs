@@ -1,7 +1,7 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
 use super::dedupe;
-use super::replay::{gate_rejection, replay_record, send_pending};
+use super::replay::{gate_rejection, replay_record, send_pending, suppression_result};
 #[cfg(test)]
 use super::types::BEFORE_NEW_ADMISSION;
 use super::types::{
@@ -18,8 +18,9 @@ use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
-    BudgetChargeMarker, BudgetClass, IntentLedgerError, OutboundCallRequest, force_sync,
-    insert_pending_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
+    BudgetChargeMarker, BudgetClass, IntentEscalationReason, IntentLedgerError, IntentState,
+    OutboundCallRequest, RecordedOutboundOutcome, force_sync, insert_pending_in_txn,
+    insert_suppressed_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
 };
 
 /// Executes every outbound effect in ledger-read → replay → gate → debit →
@@ -139,12 +140,51 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if let Some(key) = dedupe_key.as_deref()
         && dedupe::blocked(vault, &wtxn, key, dedupe_now)?
     {
-        let (decision_id, decision) =
-            gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+        // An Allow was evaluated, but recording it here would spend an
+        // approve-once marker without admitting a send. Instead commit the
+        // replayable terminal attempt and its synced receipt in ONE txn.
+        let mut receipt =
+            prepared
+                .suppression_receipt
+                .clone()
+                .ok_or(IntentLedgerError::InvalidInput(
+                    "dedupe dispatch lacks receipt",
+                ))?;
+        receipt.occurred_at = dedupe_now;
+        receipt.receipt_id = crate::receipt::suppression_receipt_id(&intent_id);
+        let request = OutboundCallRequest::new(
+            prepared.attempt_id,
+            prepared.call_seq,
+            prepared.server.clone(),
+            prepared.tool.clone(),
+            prepared.payload.clone(),
+            now_ms,
+        );
+        let mut suppressed = crate::outbound_intent_ledger::IntentLedgerRecord::pending(
+            request,
+            prepared.idempotency_supported,
+            BudgetChargeMarker {
+                key_ref: None,
+                budget_class: prepared.budget_class,
+                matched_rows: Vec::new(),
+                sends_debit: 0,
+                accounted_at_ms: now_ms,
+            },
+        )?;
+        if suppressed.id != intent_id {
+            return Err(IntentLedgerError::InvalidRecord(
+                "suppressed outbound identity changed",
+            ));
+        }
+        suppressed.state = IntentState::Abandoned;
+        suppressed.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+            IntentEscalationReason::DedupeSuppressed,
+        ));
+        insert_suppressed_in_txn(vault, &mut wtxn, &suppressed)?;
+        crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
-        let mut result = gate_rejection(intent_id, decision_id, decision);
-        result.dedupe_suppressed = true;
-        return Ok(result);
+        force_sync(vault)?;
+        return suppression_result(vault, &suppressed, false);
     }
 
     let (budget_accounting, budget_charge, exhausted) = charge_once(

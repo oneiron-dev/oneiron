@@ -1414,11 +1414,84 @@ fn semantic_suppression_is_visible_on_synced_task_and_receipt() -> crate::Result
     assert_eq!(task.outcome, Some(ConnectorSendTaskOutcome::Failed));
     assert_eq!(task.suppression.as_deref(), Some("dedupe"));
     let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
-    assert!(
-        receipts
-            .iter()
-            .any(|r| r.fields.get("task_ref") == Some(&second_ref.to_hex())
-                && r.fields.get("suppression").map(String::as_str) == Some("dedupe"))
+    assert!(receipts.iter().any(|r| r.fields.get("intent_ref")
+        == Some(&format!("intent:task:{}", second_ref.to_hex()))
+        && r.fields.get("suppression").map(String::as_str) == Some("dedupe")));
+    Ok(())
+}
+
+#[test]
+fn failed_scheduled_send_releases_key_after_cooldown_without_reviving_old_task() -> crate::Result<()>
+{
+    use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+    use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x83);
+    put_connector_task_actor(&vault, actor, 90)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x84),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let mut first = one_1768_draft("email", "send", "no-wire-first");
+    first.dedupe_key = Some("cooldown:no-wire".to_owned());
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&first)
+        .expect("schedule first");
+    let first_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 131)
+            .expect("fail first"),
+        0
+    );
+    assert_eq!(
+        vault
+            .connector_send_task(&first_ref)?
+            .expect("first task")
+            .outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
+    );
+    let mut second = one_1768_draft("email", "send", "no-wire-second");
+    second.dedupe_key = first.dedupe_key;
+    second.occurred_at = Some(87_400);
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&second)
+        .expect("schedule after cooldown");
+    sink.outcome = OutboundExecutionOutcome::delivered_to_channel("provider:second");
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 87_401)
+            .expect("send new task"),
+        1
+    );
+    let old = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
+        kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
+        payload: connector_send_attempt_payload(first_ref)?,
+        dedupe_key: None,
+        run_id: None,
+        now: 87_402,
+    })?;
+    assert!(matches!(old, EnqueueOutcome::Enqueued(_)));
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut sink, 87_403)
+            .expect("fence old task"),
+        0
+    );
+    assert_eq!(sink.calls.len(), 2);
+    assert_eq!(
+        vault
+            .connector_send_task(&first_ref)?
+            .expect("old task")
+            .outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
     );
     Ok(())
 }

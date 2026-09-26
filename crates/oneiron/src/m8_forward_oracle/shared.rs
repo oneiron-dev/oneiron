@@ -164,5 +164,6 @@ pub(super) fn oracle_prepared_effect(
         },
         verified_actor: None,
         dedupe_key: None,
+        suppression_receipt: None,
     }
 }

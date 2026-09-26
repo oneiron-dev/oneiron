@@ -60,3 +60,18 @@ pub(crate) fn persist_send_receipt_in_txn(
     }
     Ok(true)
 }
+
+/// A consistent delivered-winner read for an executor settlement transaction.
+pub(crate) fn delivered_send_exists_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<bool> {
+    let Some(raw) = store.get_send_receipt_by_task_in_txn(txn, &task_ref)? else {
+        return Ok(false);
+    };
+    Ok(
+        decode_durable_send_receipt(task_ref.as_bytes(), &raw)?.outcome
+            == SendReceiptOutcome::Delivered,
+    )
+}

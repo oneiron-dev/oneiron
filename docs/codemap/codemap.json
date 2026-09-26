@@ -22584,13 +22584,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -22600,7 +22600,7 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic persistence of a failed send receipt and its retry",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -22662,7 +22662,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/retry_audit.rs",
@@ -22736,7 +22736,7 @@
      "path": "src/outbound_chokepoint/dedupe.rs",
      "purpose": "OF-327 mechanical semantic cooldown under the effect admission writer lock",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -22777,7 +22777,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1
      }
     },
@@ -22788,7 +22788,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -23095,7 +23095,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -25226,7 +25226,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -25255,7 +25255,7 @@
      "path": "src/receipt/send_receipt_txn.rs",
      "purpose": "Send receipt persistence inside a caller-owned transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -25270,6 +25270,16 @@
      "surface": {
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/suppression.rs",
+     "purpose": "Replicated, immutable observation of a suppressed outbound intent",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -34525,7 +34535,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34908,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

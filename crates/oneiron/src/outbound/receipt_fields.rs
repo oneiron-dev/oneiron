@@ -2,10 +2,11 @@ use std::collections::BTreeMap;
 
 use super::OutboundDeliveryWindowDecision;
 use super::connector_task::ConnectorSendTask;
-use super::dispatch_types::OutboundDispatchOutcome;
+use super::dispatch_types::{OutboundDispatchOutcome, OutboundDispatchRequest};
+use crate::connector_key::EffectorBudgetCharge;
 use crate::delivery_window::{DeliveryWindowMatch, DeliveryWindowResolution};
 use crate::gate::GateOutcome;
-use crate::receipt::ReceiptRecord;
+use crate::receipt::{ReceiptRecord, outbound_intent_receipt};
 
 pub(super) fn append_optional_receipt_field(
     receipt: &mut ReceiptRecord,
@@ -33,6 +34,47 @@ pub(super) fn append_dedupe_suppression_receipt_fields(
             .policy_trace
             .push("outbound.dedupe.cooldown".to_owned());
     }
+}
+
+/// Receipt bytes the common writer door commits on semantic suppression.
+/// The same row is returned on first admission and on exact replay.
+pub(super) fn suppression_receipt_for_dispatch(
+    request: &OutboundDispatchRequest,
+    decision: &OutboundDeliveryWindowDecision,
+    resolution: &DeliveryWindowResolution,
+) -> Option<ReceiptRecord> {
+    request
+        .intent
+        .dedupe_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())?;
+    let mut receipt = outbound_intent_receipt(
+        request.receipt_id.clone(),
+        request.intent_ref.clone(),
+        &request.intent,
+        request.occurred_at,
+        "suppressed",
+    );
+    append_dedupe_suppression_receipt_fields(&mut receipt, true);
+    // Peers receive the observation as an ASSET, never the device-local
+    // ledger authority that decided suppression.
+    receipt.fields.insert(
+        "suppression_evidence".to_owned(),
+        "replicated_observation".to_owned(),
+    );
+    receipt.policy_trace.push(decision.policy_trace());
+    receipt
+        .fields
+        .insert("gate_outcome".to_owned(), "allow".to_owned());
+    receipt
+        .fields
+        .insert("gate_reason_codes".to_owned(), "gate.allow".to_owned());
+    append_window_receipt_fields(&mut receipt, decision);
+    append_window_resolution_receipt_fields(&mut receipt, resolution, decision);
+    if let Some(context) = request.context_receipt.as_ref() {
+        context.append_to_fields(&mut receipt.fields);
+    }
+    Some(receipt)
 }
 
 pub(super) fn append_execution_receipt_fields(
@@ -238,6 +280,35 @@ pub(super) fn append_window_receipt_fields(
             receipt
                 .fields
                 .insert("let_go_reason".to_owned(), reason.clone());
+        }
+    }
+}
+
+/// GOV-02 meter evidence is stamped only when a connector key governed the
+/// effect. The binding minimum is the one constraint the receipt can report.
+pub(super) fn append_budget_charge_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    charge: Option<&EffectorBudgetCharge>,
+) {
+    if let Some(charge) = charge {
+        receipt.fields.insert(
+            "connector_key_ref".to_owned(),
+            format!("ckey:{}", charge.key_ref.to_hex()),
+        );
+        receipt
+            .fields
+            .insert("budget_debit".to_owned(), charge.sends_debit.to_string());
+        let binding_remaining = charge
+            .read
+            .rows
+            .iter()
+            .filter(|row| charge.matched_rows.contains(&row.row_index))
+            .map(|row| row.remaining)
+            .min();
+        if let Some(binding_remaining) = binding_remaining {
+            receipt
+                .fields
+                .insert("budget".to_owned(), binding_remaining.to_string());
         }
     }
 }

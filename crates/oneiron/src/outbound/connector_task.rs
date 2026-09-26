@@ -444,6 +444,9 @@ pub(super) fn mark_connector_send_task_attempt_started(
     now: u64,
 ) -> Result<(), Error> {
     update_connector_send_task_body(vault, task_ref, now, |body| {
+        if body.outcome.is_some() {
+            return Ok(());
+        }
         body.attempt_started_node_id = Some(node_id);
         body.outcome = None;
         body.suppression = None;
@@ -474,14 +477,21 @@ pub(super) fn project_connector_send_task_outcome(
     })
 }
 
-pub(super) fn project_connector_send_task_suppression(
+pub(super) fn project_connector_send_task_suppression_in_txn(
     vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
     now: u64,
+    delivered_won: bool,
 ) -> Result<(), Error> {
-    update_connector_send_task_body(vault, task_ref, now, |body| {
-        body.outcome = Some(ConnectorSendTaskOutcome::Failed);
-        body.suppression = Some("dedupe".to_owned());
+    update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
+        if delivered_won || body.outcome == Some(ConnectorSendTaskOutcome::Delivered) {
+            body.outcome = Some(ConnectorSendTaskOutcome::Delivered);
+            body.suppression = None;
+        } else {
+            body.outcome = Some(ConnectorSendTaskOutcome::Failed);
+            body.suppression = Some("dedupe".to_owned());
+        }
         Ok(())
     })
 }
@@ -513,55 +523,64 @@ fn update_connector_send_task_body(
     update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
 ) -> Result<(), Error> {
     vault.with_write_txn(|wtxn| {
-        let raw = vault
-            .store
-            .port_entity_record(&*wtxn, &task_ref)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.entity_type != ENTITY_TYPE_TASK {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "connector send entity is not a TASK",
-            )));
-        }
-        let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body).map_err(|_| {
-            Error::Record(RecordError::InvalidTaskBody("invalid connector send body"))
-        })?;
-        if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
-            || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
-            || body.role != TaskRole::Task.role_byte()
-        {
-            return Err(Error::Record(RecordError::InvalidTaskBody(
-                "unsupported connector send body version",
-            )));
-        }
-        update(&mut body)?;
-        let encoded = rmp_serde::to_vec_named(&body)
-            .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
-        // A no-op update writes NOTHING. The executor re-marks the attempt on
-        // every claim, so a send that keeps parking (a gate hold waiting on a
-        // person, a window edge) would otherwise rewrite an identical body and
-        // bump the entity's learned time once per poll — a growing trail of
-        // writes that says the TASK changed when it did not. Comparing the
-        // encoded bytes against what is stored makes the retry loop leave the
-        // row byte-identical, while any real projection — the terminal
-        // outcome, a timezone refresh, a different node picking the attempt up
-        // — still differs in bytes and writes exactly once.
-        if raw.body == encoded[..] {
-            return Ok(());
-        }
-        vault
-            .batch_in()
-            .put(
-                &task_ref,
-                ENTITY_TYPE_TASK,
-                TimeRange {
-                    start: body.occurred_at,
-                    end: body.occurred_at,
-                },
-                now,
-                &encoded,
-            )
-            .apply(wtxn)
+        update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, update)
     })
+}
+
+fn update_connector_send_task_body_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    now: u64,
+    update: impl FnOnce(&mut ConnectorSendTaskBody) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let raw = vault
+        .store
+        .port_entity_record(&*wtxn, &task_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.entity_type != ENTITY_TYPE_TASK {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "connector send entity is not a TASK",
+        )));
+    }
+    let mut body: ConnectorSendTaskBody = rmp_serde::from_slice(&raw.body)
+        .map_err(|_| Error::Record(RecordError::InvalidTaskBody("invalid connector send body")))?;
+    if body.schema_version != CONNECTOR_SEND_TASK_SCHEMA_VERSION
+        || body.subkind != CONNECTOR_SEND_TASK_SUBKIND
+        || body.role != TaskRole::Task.role_byte()
+    {
+        return Err(Error::Record(RecordError::InvalidTaskBody(
+            "unsupported connector send body version",
+        )));
+    }
+    update(&mut body)?;
+    let encoded = rmp_serde::to_vec_named(&body)
+        .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
+    // A no-op update writes NOTHING. The executor re-marks the attempt on
+    // every claim, so a send that keeps parking (a gate hold waiting on a
+    // person, a window edge) would otherwise rewrite an identical body and
+    // bump the entity's learned time once per poll — a growing trail of
+    // writes that says the TASK changed when it did not. Comparing the
+    // encoded bytes against what is stored makes the retry loop leave the
+    // row byte-identical, while any real projection — the terminal
+    // outcome, a timezone refresh, a different node picking the attempt up
+    // — still differs in bytes and writes exactly once.
+    if raw.body == encoded[..] {
+        return Ok(());
+    }
+    vault
+        .batch_in()
+        .put(
+            &task_ref,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: body.occurred_at,
+                end: body.occurred_at,
+            },
+            now,
+            &encoded,
+        )
+        .apply(wtxn)
 }
 
 fn has_connector_send_subkind(body: &[u8]) -> Result<bool, Error> {

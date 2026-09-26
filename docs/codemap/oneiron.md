@@ -1811,8 +1811,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/intent.rs` | src | s | 3 struct · 1 enum · 12 fn · 1 const | OutboundIntent, OutboundIntentDraft, OutboundIntentSource, OutboundIntentTrigger | — |
 | `src/outbound/manifests.rs` | src | m | 1 crate-vis | — | — |
 | `src/outbound/mod.rs` | src | s | 7 re-export · 3 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
-| `src/outbound/receipt_fields.rs` | src | s | 7 crate-vis | — | — |
-| `src/outbound/retry_audit.rs` | src | s | 1 crate-vis | — | Atomic persistence of a failed send receipt and its retry |
+| `src/outbound/receipt_fields.rs` | src | m | 9 crate-vis | — | — |
+| `src/outbound/retry_audit.rs` | src | s | 2 crate-vis | — | Atomic persistence of a failed send receipt and its retry |
 | `src/outbound/tests/connector_schedule.rs` | test | L | 1 crate-vis | — | Connector send-task scheduling, executor idempotency, idempotency keys and schedule gates |
 | `src/outbound/tests/dispatch_budget.rs` | test | m | — | — | Dispatch budget debit, exhaustion/suspend/resume, ladders, wrap window and charter drift |
 | `src/outbound/tests/gate_window.rs` | test | L | — | — | Gate-pending holds, delivery-window door evaluation, pending re-arm and retry-after authority |
@@ -1820,7 +1820,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/tests/mod.rs` | test | L | — | — | — |
 | `src/outbound/tests/pipeline_contract.rs` | test | L | — | — | Intent shape, verb capability contract, manifests and pipeline execute-and-receipt core |
 | `src/outbound/tests/quiet_window.rs` | test | L | — | — | Quiet-window delivery, timezone fields, host refresh, human-explicit-instant override and APNS mapping |
-| `src/outbound/tests/retry_audit.rs` | test | m | — | — | Retry audit history and receipt/queue transaction regressions |
+| `src/outbound/tests/retry_audit.rs` | test | L | — | — | Retry audit history and receipt/queue transaction regressions |
 | `src/outbound/tests/sender_selection.rs` | test | s | — | — | — |
 | `src/outbound/tests/sender_selection/admission_integrity.rs` | test | s | — | — | — |
 | `src/outbound/tests/sender_selection/facet_selection.rs` | test | s | — | — | — |
@@ -1828,12 +1828,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/tests/space_posting.rs` | test | s | — | — | Owner presentation must ride the ordinary gate, frozen payload and recovery |
 | `src/outbound/window_door.rs` | src | s | 6 crate-vis | — | — |
 | `src/outbound_chokepoint/admission.rs` | src | m | 2 crate-vis | — | New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert |
-| `src/outbound_chokepoint/dedupe.rs` | src | s | 3 crate-vis | — | OF-327 mechanical semantic cooldown under the effect admission writer lock |
+| `src/outbound_chokepoint/dedupe.rs` | src | s | 6 crate-vis | — | OF-327 mechanical semantic cooldown under the effect admission writer lock |
 | `src/outbound_chokepoint/fanout.rs` | src | m | 1 enum · 24 crate-vis | FanoutApprovalMode | Pre-execution fan-out admission |
 | `src/outbound_chokepoint/fanout/history.rs` | src | s | 3 crate-vis | — | Admission against the live consult graph, without charging its old edges again |
 | `src/outbound_chokepoint/fanout/tests.rs` | test | L | — | — | Fan-out admission tests |
-| `src/outbound_chokepoint/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | Replay-first outbound effect execution |
-| `src/outbound_chokepoint/replay.rs` | src | m | 5 crate-vis | — | Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes |
+| `src/outbound_chokepoint/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Replay-first outbound effect execution |
+| `src/outbound_chokepoint/replay.rs` | src | m | 6 crate-vis | — | Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes |
 | `src/outbound_chokepoint/tests.rs` | test | m | — | — | Recovery-side governance tests (ONE-1885) |
 | `src/outbound_chokepoint/types.rs` | src | s | 10 crate-vis | — | Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper… |
 | `src/outbound_consent/authority.rs` | src | m | 3 struct · 1 enum · 5 fn · 8 crate-vis | FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization | Frozen payload, keyed binding authority, and grant-scope digest |
@@ -1858,7 +1858,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 28 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
 | `src/outbound_intent_ledger/dispatch.rs` | src | m | 2 fn · 5 crate-vis | — | Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay |
 | `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 5 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
-| `src/outbound_intent_ledger/store.rs` | src | m | 18 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
+| `src/outbound_intent_ledger/store.rs` | src | m | 19 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
 | `src/outbound_intent_ledger/tests.rs` | test | XL | — | — | — |
 | `src/outbound_intent_ledger/types.rs` | src | m | 13 struct · 8 enum · 20 fn · 2 type · 2 const · 14 crate-vis | BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentLedgerCorruptRow, IntentLedgerError +13 | Version consts, domain types, record impls, and listing/escalation/report types |
 | `src/overlay_db/accessors.rs` | src | m | 27 crate-vis | — | ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors |
@@ -2045,10 +2045,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/identity_kind.rs` | src | m | 2 fn · 3 crate-vis | — | — |
 | `src/receipt/kernel.rs` | src | m | 6 struct · 1 enum · 10 fn · 4 const · 89 crate-vis | ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptScanContinuation, ReceiptScanPosition, ReceiptView | — |
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 14 crate-vis | — | — |
-| `src/receipt/mod.rs` | src | s | 8 re-export · 10 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
+| `src/receipt/mod.rs` | src | s | 8 re-export · 11 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
-| `src/receipt/send_receipt_txn.rs` | src | s | 1 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
+| `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
+| `src/receipt/suppression.rs` | src | s | 4 crate-vis | — | Replicated, immutable observation of a suppressed outbound intent |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
 | `src/recovery.rs` | src | s | 2 struct · 2 enum · 7 fn · 3 const · 1 mod · 4 re-export · 3 crate-vis | QuarantinedArtifact, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `src/recovery/canonical.rs` | src | m | 6 struct · 6 fn · 2 const · 9 crate-vis | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalEntity, CanonicalSchemaManifest, CanonicalSnapshot, CanonicalTombstone | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |

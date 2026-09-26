@@ -13,6 +13,7 @@ mod ledgers;
 mod projection;
 mod send_receipt_txn;
 mod session;
+mod suppression;
 
 #[cfg(test)]
 mod tests;
@@ -66,7 +67,12 @@ pub(crate) use self::ledgers::{
     overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
-pub(crate) use self::send_receipt_txn::persist_send_receipt_in_txn;
+pub(crate) use self::send_receipt_txn::{
+    delivered_send_exists_in_txn, persist_send_receipt_in_txn,
+};
+pub(crate) use self::suppression::{
+    put_suppression_in_txn, suppression_for_intent, suppression_receipt_id,
+};
 
 // The flat receipt.rs module used to provide these names to the test module
 // through `use super::*`; after the directory split the seam re-imports them so

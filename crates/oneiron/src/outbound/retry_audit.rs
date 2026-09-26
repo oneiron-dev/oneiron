@@ -59,3 +59,44 @@ pub(super) fn persist_failed_send_receipt_and_retry(
         Ok(true)
     })
 }
+
+/// Terminal mechanical suppression, or a concurrent delivered winner. Queue
+/// settlement and the synced TASK projection share one writer transaction.
+pub(super) fn settle_suppressed_send(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    now: u64,
+) -> Result<(), Error> {
+    use crate::attempt_queue::{CompleteAttempt, FailAttempt};
+    let queue = AttemptQueue::new(vault);
+    vault.with_write_txn(|wtxn| {
+        let delivered = crate::receipt::delivered_send_exists_in_txn(&vault.store, wtxn, task_ref)?;
+        if delivered {
+            queue.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: attempt.id,
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    attempt_count: attempt.attempt_count,
+                    now,
+                },
+            )?;
+        } else {
+            queue.fail_in_txn(
+                wtxn,
+                FailAttempt {
+                    id: attempt.id,
+                    lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                    attempt_count: attempt.attempt_count,
+                    reason: "dedupe_suppressed".to_owned(),
+                    now,
+                },
+            )?;
+        }
+        super::connector_task::project_connector_send_task_suppression_in_txn(
+            vault, wtxn, task_ref, now, delivered,
+        )?;
+        Ok(())
+    })
+}
