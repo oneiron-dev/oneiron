@@ -315,10 +315,25 @@ impl Vault {
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
+        self.revoke_capability_slip_once(issuer, slip_id).map(drop)
+    }
+    /// Appends a signed revocation once per slip id. `true` means this call
+    /// appended the first explicit revoke; expiry, ancestor revocation, or an
+    /// absent mint does not prevent a first tombstone for a late mint.
+    pub fn revoke_capability_slip_once(
+        &self,
+        issuer: &HostSlipIssuer,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        if fold.slips.revoked.contains(&slip_id) {
+            return Ok(false);
+        }
         self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
         txn.commit()?;
-        Ok(())
+        Ok(true)
     }
     /// Verifies the binding and burns single-use authority before returning it.
     /// Request nonce consumption is transactionally shared with SlipConsume.
