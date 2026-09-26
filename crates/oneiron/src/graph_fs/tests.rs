@@ -743,3 +743,29 @@ fn readdir_listing_carries_the_read_receipt() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn fixed_and_unmatched_files_do_not_claim_a_scoped_read() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    let fs = resolver(&read, 16 * 1024);
+    let fixed = fs.read_file("/worlds/base/scope")?;
+    assert_eq!(fixed.value.unwrap().bytes(), b"base\n");
+    assert!(fixed.receipt.is_none());
+    let missing = fs.read_file("/unmatched/path")?;
+    assert!(missing.value.is_none());
+    assert!(missing.receipt.is_none());
+    for output in [
+        fs.cat("/worlds/base/scope", None)?,
+        fs.head("/worlds/base/scope", 1)?,
+        fs.wc("/worlds/base/scope")?,
+        fs.grep("base", "/worlds/base/scope", false, None)?,
+        fs.cat("/unmatched/path", None)?,
+        fs.head("/unmatched/path", 1)?,
+        fs.wc("/unmatched/path")?,
+        fs.grep("base", "/unmatched/path", false, None)?,
+    ] {
+        assert!(output.read_receipt().is_none());
+    }
+    Ok(())
+}

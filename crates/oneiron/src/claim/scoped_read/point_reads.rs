@@ -100,7 +100,19 @@ impl ScopedRead<'_> {
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<ReadRow>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        self.read_projected(reads, requested, |_, rows| Ok::<_, Error>(rows))
+    }
+
+    /// Keeps the scoped rows, their receipt and a dependent projection in the
+    /// same read transaction. A projection must not open a newer snapshot for
+    /// metadata that labels these rows.
+    pub(crate) fn read_projected<T, E: From<Error>>(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(&heed::RoTxn<'_>, Vec<Option<ReadRow>>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
@@ -133,9 +145,10 @@ impl ScopedRead<'_> {
             };
             value.push(row);
         }
+        let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult {
-            value,
-            receipt: self.receipt_for(requested, &policy, &filter, suppressed),
+            value: project(&txn, value)?,
+            receipt,
         })
     }
 

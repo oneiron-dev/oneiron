@@ -7573,6 +7573,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -17435,7 +17436,7 @@
      "path": "src/graph_fs/mod.rs",
      "purpose": "Graph-FS read projection over the vault graph",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -17476,12 +17477,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "GraphFsFileRead"
+     ],
      "path": "src/graph_fs/readdir.rs",
      "purpose": "Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir…",
      "surface": {
       "crate-vis": 7,
-      "fn": 6
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -20844,7 +20848,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {

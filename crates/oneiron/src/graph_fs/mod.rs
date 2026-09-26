@@ -11,6 +11,8 @@ mod model;
 mod paging;
 mod readdir;
 
+pub use self::readdir::GraphFsFileRead;
+
 pub use self::model::{
     GRAPH_FS_COREUTILS_DEFAULT_RESULT_CAP, GRAPH_FS_COREUTILS_MAX_RESULT_CAP,
     GRAPH_FS_DEFAULT_MAX_ENTRIES, GRAPH_FS_DEFAULT_PAGE_BYTE_CAP, GRAPH_FS_HOST_IMPORTS,

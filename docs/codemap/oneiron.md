@@ -628,7 +628,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/lifecycle.rs` | src | s | 1 crate-vis | — | Status-only history reads for already-served session rows, without weakening body reads |
 | `src/claim/scoped_read/note_visibility.rs` | src | s | 1 crate-vis | — | Actor and class checks for private NOTE bodies in scoped reads |
 | `src/claim/scoped_read/pinned_reads.rs` | src | s | 1 fn | — | Manifest-derived safety pins bypass query relevance, never actor authority |
-| `src/claim/scoped_read/point_reads.rs` | src | s | 2 struct · 1 enum · 4 fn | PointRead, ReadRow, ReadTarget | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
+| `src/claim/scoped_read/point_reads.rs` | src | s | 2 struct · 1 enum · 4 fn · 1 crate-vis | PointRead, ReadRow, ReadTarget | The one receipted point-read entry: ids and short references, each at its own read frontier, answered from… |
 | `src/claim/scoped_read/receipt.rs` | src | m | 3 struct · 6 fn · 2 crate-vis | ReadScope, ScopedReadReceipt, ScopedReadResult | Mandatory read receipts |
 | `src/claim/scoped_read/retrieval_visibility.rs` | src | s | 3 crate-vis | — | The retrieval authority floor for graph channels on a scoped read |
 | `src/claim/scoped_read/slip_tests.rs` | test | s | — | — | Root provisioning and fail-closed read admission land together |
@@ -1406,10 +1406,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/git_wire/wire_worktree.rs` | src | s | 5 fn · 2 crate-vis | — | Journaled worktree effects: list, prune, add, remove, and crash-journal settlement |
 | `src/graph_fs/claim_grep.rs` | src | s | 2 crate-vis | — | Indexed claim grep with search and final-hydration narrowing receipts |
 | `src/graph_fs/coreutils.rs` | src | m | 6 fn · 6 crate-vis | — | grep, ls, find, cat, head and wc verbs with pushdown, walk, visibility and telemetry helpers, and the… |
-| `src/graph_fs/mod.rs` | src | s | 1 re-export | — | Graph-FS read projection over the vault graph |
+| `src/graph_fs/mod.rs` | src | s | 2 re-export | — | Graph-FS read projection over the vault graph |
 | `src/graph_fs/model.rs` | src | m | 6 struct · 4 enum · 34 fn · 10 const · 6 crate-vis | GraphFsCommandOutput, GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntry, GraphFsEntryKind, GraphFsFile, GraphFsMount, GraphFsOptions +2 | Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils… |
 | `src/graph_fs/paging.rs` | src | s | 25 crate-vis | — | Cursor codecs, page and output builders with byte-cap logic, and day-shard civil-date math |
-| `src/graph_fs/readdir.rs` | src | m | 6 fn · 7 crate-vis | — | Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir… |
+| `src/graph_fs/readdir.rs` | src | m | 1 struct · 6 fn · 7 crate-vis | GraphFsFileRead | Path-routing readdir, readdir_bytes, read_file and read_link, fixed pages, world, entity and claim listdir… |
 | `src/graph_fs/tests.rs` | test | m | — | — | — |
 | `src/habit.rs` | src | m | 1 enum · 3 fn · 1 const · 13 crate-vis | TaskRole | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
 | `src/hnsw/archive_tests.rs` | test | s | — | — | Archive visibility must not turn the bounded beam into a full graph walk |
@@ -1666,7 +1666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/outbound/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | Outbound schedule/dispatch and the calendar read/search/freebusy/invite surface |
 | `src/memory/outbound/schedule.rs` | src | m | 2 fn · 1 const · 1 crate-vis | — | Schedule-only dispatch of connector sends through the OF-327 chokepoint |
 | `src/memory/outbound/types.rs` | src | s | 3 struct · 1 crate-vis | OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext | Outbound schedule DTOs: context, draft input, and intent receipt |
-| `src/memory/read_lane.rs` | src | s | 8 crate-vis | — | The bound actor's one read lane |
+| `src/memory/read_lane.rs` | src | s | 9 crate-vis | — | The bound actor's one read lane |
 | `src/memory/reads.rs` | src | m | 5 struct · 10 fn · 2 crate-vis | ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts | Entity/claim read surface plus BM25 and neighbor queries |
 | `src/memory/recall.rs` | src | m | 6 struct · 1 enum · 10 fn · 1 const · 3 crate-vis | Effort, MemoryItem, MemoryPack, MemoryProvenance, RecallScope, RetrievalMeta, ScopeHonesty | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
 | `src/memory/recall/items.rs` | src | s | 1 crate-vis | — | Builds typed recall items from actor-admitted rows at the selected revision |

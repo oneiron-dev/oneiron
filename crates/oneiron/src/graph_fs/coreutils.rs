@@ -196,7 +196,7 @@ impl GraphFsResolver<'_, '_> {
             next_cursor,
             Vec::new(),
             0,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -225,7 +225,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             total,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -251,7 +251,7 @@ impl GraphFsResolver<'_, '_> {
             None,
             Vec::new(),
             0,
-            Some(read.receipt),
+            read.receipt,
         )
     }
 
@@ -270,13 +270,15 @@ impl GraphFsResolver<'_, '_> {
             if let Some(file) = &read.value {
                 append_grep_file_matches(path, file.bytes(), pattern, &mut out, &mut total);
             }
-            return Ok(WalkOutput::new(out, None, total, Some(read.receipt)));
+            return Ok(WalkOutput::new(out, None, total, read.receipt));
         }
 
         let (paths, mut receipt) = self.walk_paths(path, cursor)?;
         for path in paths {
             let read = self.read_file(&path)?;
-            fold_receipt(&mut receipt, read.receipt);
+            if let Some(read_receipt) = read.receipt {
+                fold_receipt(&mut receipt, read_receipt);
+            }
             let Some(file) = read.value else {
                 continue;
             };

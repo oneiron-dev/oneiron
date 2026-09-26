@@ -125,41 +125,52 @@ impl Memory<'_> {
         lane: &ScopedRead<'_>,
         targets: &[ReadTargetSlot],
     ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
+        self.read_views_after(lane, targets, || {})
+    }
+
+    /// The callback is a test seam for a write between row admission and
+    /// projection; production callers pass an empty callback.
+    pub(super) fn read_views_after(
+        &self,
+        lane: &ScopedRead<'_>,
+        targets: &[ReadTargetSlot],
+        after_read: impl FnOnce(),
+    ) -> MemoryResult<ScopedReadResult<Vec<Option<EntityView>>>> {
         let reads: Vec<_> = targets
             .iter()
             .flatten()
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
-        let ScopedReadResult { value, receipt } = lane.read(&reads, None)?;
-        let mut rows = value.into_iter();
-        let mut views = Vec::with_capacity(targets.len());
-        for target in targets {
-            let view = match target {
-                Some((_, mode)) => match rows.next().flatten() {
-                    Some(row) => self.entity_view_of(row, *mode)?,
+        lane.read_projected(&reads, None, |txn, value| {
+            after_read();
+            let mut rows = value.into_iter();
+            let mut views = Vec::with_capacity(targets.len());
+            for target in targets {
+                let view = match target {
+                    Some((_, mode)) => match rows.next().flatten() {
+                        Some(row) => self.entity_view_of_in_txn(txn, row, *mode)?,
+                        None => None,
+                    },
                     None => None,
-                },
-                None => None,
-            };
-            views.push(view);
-        }
-        Ok(ScopedReadResult {
-            value: views,
-            receipt,
+                };
+                views.push(view);
+            }
+            Ok::<_, MemoryError>(views)
         })
     }
 
     /// Projects one admitted row to the typed entity view. A deleted shell
     /// has no body and projects to nothing.
-    pub(super) fn entity_view_of(
+    pub(super) fn entity_view_of_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         row: ReadRow,
         mode: ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
         let Some(body) = row.body else {
             return Ok(None);
         };
-        let short_ref = self.short_ref_of(&row.id)?.map(|reference| {
+        let short_ref = self.short_ref_of_in_txn(txn, &row.id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             match mode {
                 ReadMode::Pinned(revision) => {
