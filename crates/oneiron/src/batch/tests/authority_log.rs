@@ -1087,6 +1087,7 @@ fn authority_fold_backfills_legacy_missing_first_seen_sidecars_once() -> Result<
             .store
             .sync_state
             .delete(wtxn, enroll_sidecar.as_str())?;
+        crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
         Ok(())
     })?;
     let missing_after_marker = vault.authority_fold()?;

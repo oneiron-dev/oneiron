@@ -724,6 +724,7 @@ fn readonly_fold_rejects_sidecar_lost_after_backfill() {
                 } else {
                     assert!(vault.store.sync_state.delete(wtxn, sidecar.as_str())?);
                 }
+                advance_authority_cache_generation(&vault.store, wtxn)?;
                 Ok(())
             })
             .unwrap();
@@ -738,4 +739,129 @@ fn readonly_fold_rejects_sidecar_lost_after_backfill() {
             "corrupt_in_place={corrupt_in_place}: {err}"
         );
     }
+}
+
+#[test]
+fn authority_cache_is_bound_to_snapshot_and_abort_does_not_publish_a_mint() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let owner = ed_key(243);
+    let owner_key = authority_key_from_ed(&owner);
+    let genesis = genesis_entry(243, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    vault
+        .put_authority_log_entry(&genesis, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    let actor = scope_entity(0x83);
+    let mint = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    let revoke = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            2,
+            vec![authority_entry_hash(&mint).unwrap()],
+            AuthorityOp::RevokeActor {
+                authority_key: owner_key,
+                epoch: 1,
+            },
+            authority_key_from_ed(&owner),
+            3,
+        ),
+        &owner,
+    );
+    let row = |entry: AuthorityLogEntry| (entry, TimeRange { start: 1, end: 1 }, 1);
+
+    // LMDB's default reader slot is thread-local: distinct simultaneous
+    // snapshots must be held on distinct threads, not opened twice here.
+    let before_generation = std::thread::scope(|scope| {
+        let vault = &vault;
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let (check, checked) = std::sync::mpsc::sync_channel(0);
+        let old = scope.spawn(move || {
+            let before = vault.store.env.read_txn().unwrap();
+            let before_view = vault.authority_view_readonly_in_txn(&before).unwrap();
+            assert!(!actor_binding_is_active(&before_view, &actor, "human"));
+            ready.send(before_view.generation()).unwrap();
+            checked.recv().unwrap();
+            assert!(!actor_binding_is_active(
+                &vault.authority_view_readonly_in_txn(&before).unwrap(),
+                &actor,
+                "human"
+            ));
+        });
+        let before_generation = started.recv().unwrap();
+        let mut aborted = vault.store.env.write_txn().unwrap();
+        vault
+            .put_authority_log_entries_in_txn(&mut aborted, &[row(mint.clone())])
+            .unwrap();
+        let writer_view = vault.authority_view_readonly_in_txn(&aborted).unwrap();
+        assert!(writer_view.generation() > before_generation);
+        assert!(actor_binding_is_active(&writer_view, &actor, "human"));
+        check.send(()).unwrap();
+        old.join().unwrap();
+        aborted.abort();
+        before_generation
+    });
+    let after_abort = vault.store.env.read_txn().unwrap();
+    let after_abort_view = vault.authority_view_readonly_in_txn(&after_abort).unwrap();
+    assert_eq!(after_abort_view.generation(), before_generation);
+    assert!(!actor_binding_is_active(&after_abort_view, &actor, "human"));
+    drop(after_abort);
+
+    vault
+        .put_authority_log_entry(&mint, TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    std::thread::scope(|scope| {
+        let vault = &vault;
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let (check, checked) = std::sync::mpsc::sync_channel(0);
+        let old = scope.spawn(move || {
+            let before = vault.store.env.read_txn().unwrap();
+            let before_view = vault.authority_view_readonly_in_txn(&before).unwrap();
+            assert!(actor_binding_is_active(&before_view, &actor, "human"));
+            ready.send(before_view.generation()).unwrap();
+            checked.recv().unwrap();
+            assert!(actor_binding_is_active(
+                &vault.authority_view_readonly_in_txn(&before).unwrap(),
+                &actor,
+                "human"
+            ));
+        });
+        let before_generation = started.recv().unwrap();
+        vault
+            .put_authority_log_entry(&revoke, TimeRange { start: 1, end: 1 }, 1)
+            .unwrap();
+        let after = vault.store.env.read_txn().unwrap();
+        assert!(
+            vault
+                .authority_view_readonly_in_txn(&after)
+                .unwrap()
+                .generation()
+                > before_generation
+        );
+        for _ in 0..2 {
+            assert!(!actor_binding_is_active(
+                &vault.authority_view_readonly_in_txn(&after).unwrap(),
+                &actor,
+                "human"
+            ));
+        }
+        check.send(()).unwrap();
+        old.join().unwrap();
+        drop(after);
+    });
+    assert!(!actor_binding_is_active(
+        &vault.authority_fold().unwrap(),
+        &actor,
+        "human"
+    ));
 }

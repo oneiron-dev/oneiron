@@ -21,7 +21,7 @@ impl Vault {
             return Ok(None);
         }
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(Some(if claim_causal_admitted(&fold, &body) {
             CausalWriteDisposition::Admitted
         } else {
@@ -97,7 +97,7 @@ pub(crate) fn check_materialized_claim_causality(
     if claims.is_empty() {
         return Ok(());
     }
-    let fold = authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
+    let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
     if claims
         .iter()
         .any(|body| !claim_causal_admitted(&fold, body))
@@ -118,8 +118,6 @@ pub(crate) fn row_causal_admitted(
         return Ok(true);
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    Ok(claim_causal_admitted(
-        &vault.authority_fold_readonly_in_txn(txn)?,
-        &body,
-    ))
+    let view = vault.authority_view_readonly_in_txn(txn)?;
+    Ok(claim_causal_admitted(&view, &body))
 }

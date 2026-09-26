@@ -232,6 +232,7 @@ impl Vault {
             self.store
                 .sync_state
                 .put(wtxn, authority_first_seen_backfill_sync_key(), &[1])?;
+            advance_authority_cache_generation(&self.store, wtxn)?;
             Ok(())
         })
     }
@@ -247,6 +248,38 @@ impl Vault {
     /// consent roots enter as gesture evidence only: they never join the local
     /// roster, hold local quorum, or change this vault's id.
     pub fn authority_fold(&self) -> Result<AuthorityFold> {
+        self.backfill_authority_first_seen_sidecars()?;
+        // Keep the original write-side monotonic observation. The read view is
+        // opened only after that transaction commits, so its clock and rows
+        // belong to the same snapshot (including a concurrent authority put).
+        self.with_write_txn(|wtxn| {
+            let key = authority_first_seen_clock_sync_key();
+            let floor = self
+                .store
+                .sync_state
+                .get(wtxn, key)?
+                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+                .unwrap_or(0);
+            let now =
+                authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
+            if now != floor {
+                self.store
+                    .sync_state
+                    .put(wtxn, key, &encode_authority_first_seen_secs(now))?;
+            }
+            Ok(())
+        })?;
+        let rtxn = self.store.env.read_txn()?;
+        match self.authority_view_readonly_in_txn(&rtxn) {
+            Err(error) if is_corrupt_first_seen_sidecar(&error) => {
+                drop(rtxn);
+                self.authority_fold_full_fallback()
+            }
+            result => result.map(|view| (*view).clone()),
+        }
+    }
+
+    fn authority_fold_full_fallback(&self) -> Result<AuthorityFold> {
         self.backfill_authority_first_seen_sidecars()?;
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
@@ -323,5 +356,12 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<AuthorityFold> {
         authority_fold_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
+    }
+
+    pub(crate) fn authority_view_readonly_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<AuthorityView> {
+        authority_view_readonly_for_store_in_txn(&self.store, self.privacy_posture(), txn)
     }
 }
