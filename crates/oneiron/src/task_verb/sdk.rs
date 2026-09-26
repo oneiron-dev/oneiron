@@ -72,7 +72,7 @@ pub struct BoardSubscriptionRequest {
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
     serde_path_to_error::deserialize(value)
-        .map_err(|error| MemoryError::bad_request(format!("invalid keyed request: {error}")))
+        .map_err(|error| MemoryError::bad_request(format!("invalid SDK request: {error}")))
 }
 fn encode<T: Serialize>(value: T) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
@@ -171,4 +171,16 @@ fn retired_task_verb_names_are_unknown() {
     for name in ["describe", "tasks.update", "cancel"] {
         assert!(AgentVerb::from_name(name).is_some(), "{name}");
     }
+}
+
+#[cfg(test)]
+#[test]
+fn non_keyed_sdk_request_does_not_claim_a_keyed_decoder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let error = invoke(&memory, "recall", serde_json::json!({})).expect_err("missing query");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(!error.message.contains("keyed"), "{error:?}");
 }

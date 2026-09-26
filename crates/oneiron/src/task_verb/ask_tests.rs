@@ -815,6 +815,40 @@ fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_writ
 }
 
 #[test]
+fn uncounted_source_less_reply_cannot_restore_an_impossible_threshold() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.spec();
+    let mut class = fixture.policy(false);
+    class.required_sources = [fixture.question].into();
+    spec.class = Some(class);
+    spec.need = TaskAskNeed {
+        count: 3,
+        of: TaskAskElectorate::Any,
+    };
+    spec.decide = Some(TaskAskDecide::AtLeast {
+        count: 2,
+        of: TaskAskElectorate::Any,
+        answer: TaskAskOptionId::new("yes")?,
+    });
+    let handle = fixture.ask(&spec)?;
+    fixture.word_with_sources(handle, 0, "no", [fixture.question].into())?;
+    fixture.word(handle, 1, "yes")?;
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(result.decision, TaskAskDecision::No);
+    assert_eq!(result.coverage.unknown, [fixture.people[2]].into());
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|entry| entry.reason == TaskAskEvidenceReason::MissingSource)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn ask_word_missing_a_required_source_does_not_veto_the_counted_words() -> Result<()> {
     let fixture = RuledAskFixture::new(3)?;
     let result = fixture.ask_with_uncounted_word(false)?;
