@@ -12,6 +12,7 @@ use super::record::{
     SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES, SKILL_VERSION_MAX_BYTES,
     SkillDependency, SkillRecord,
 };
+use super::role::SkillRole;
 use crate::error::ArtifactError;
 
 pub(super) fn validate_skill_record(record: &SkillRecord) -> Result<()> {
@@ -57,6 +58,20 @@ pub(super) fn validate_skill_record(record: &SkillRecord) -> Result<()> {
         return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
             "quarantined is a human-ratified state: approval must be approved",
         )));
+    }
+    match (&record.role, &record.call) {
+        (SkillRole::Callable, Some(call)) => call.validate()?,
+        (SkillRole::Callable, None) => {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "callable role requires call contract",
+            )));
+        }
+        (_, Some(_)) => {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "only a callable role may declare call",
+            )));
+        }
+        (_, None) => {}
     }
     validate_provenance(&record.provenance)?;
     validate_dependencies(&record.skill_id, &record.dependencies)?;

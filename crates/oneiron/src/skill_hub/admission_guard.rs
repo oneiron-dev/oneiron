@@ -105,6 +105,15 @@ pub(crate) fn check_hub_skill_put(
             .transpose()?
             == Some(crate::skill_optimize::skill_body_binding_digest(record)?);
     if record.lifecycle_status == SkillLifecycle::Active && !unchanged_active {
+        // Code-bearing hub source stays Candidate until a foreign microVM can
+        // execute and return its typed result. The in-process JS runtime
+        // deliberately refuses Foreign; a held-out text score is not that
+        // sandbox qualification. Imported ancestry keeps this guard on forks.
+        if record.role == crate::skill::SkillRole::Callable {
+            return Err(invalid(
+                "imported callable activation requires foreign sandbox qualification",
+            ));
+        }
         let proof = proof.ok_or_else(|| {
             invalid("hub or fork activation requires local consent and held-out replay")
         })?;

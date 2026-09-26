@@ -1812,3 +1812,87 @@ fn seeded_work_agents_inherit_dreaming() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn authored_definitions_land_at_author_ceiling_or_remain_non_dispatchable_proposals() -> Result<()>
+{
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let author_id = crate::test_util::entity(0x81);
+    let mut author = minimal_agent("1");
+    author.scope = AgentScope::World(world_id());
+    author.ceiling = AgentCeiling::Proposed;
+    author.skills = vec![SkillDependency::new("known-skill")];
+    vault.put_agent_definition(&author_id, &author, TimeRange { start: 1, end: 1 }, 1)?;
+
+    let child_id = crate::test_util::entity(0x82);
+    let mut child = minimal_agent("1");
+    child.agent_id = "child".into();
+    child.scope = AgentScope::Base;
+    child.skills = author.skills.clone();
+    child.ceiling = AgentCeiling::Auto;
+    // A wider requested ceiling, even with narrower scope, cannot be active.
+    assert_eq!(
+        vault.put_agent_definition_for_author(
+            &author_id,
+            &child_id,
+            &child,
+            TimeRange { start: 2, end: 2 },
+            2
+        )?,
+        AgentDefinitionPutDisposition::Proposed
+    );
+    let pending = vault
+        .get_agent_definition(&child_id)?
+        .expect("saved proposal");
+    assert_eq!(pending.ceiling, AgentCeiling::Auto);
+    assert_eq!(pending.approval_status, ClaimApprovalStatus::Proposed);
+    assert_eq!(pending.lifecycle_status, ClaimLifecycleStatus::Active);
+    assert_eq!(pending.source, ClaimSource::Generated);
+    assert!(pending.generated && !pending.human_authored);
+    let author_hex = author_id.to_hex();
+    assert!(
+        matches!(&pending.provenance, Value::Map(entries) if entries.iter().any(|(key, value)|
+        key.as_str() == Some("author") && value.as_str() == Some(author_hex.as_str())))
+    );
+    assert_eq!(
+        crate::agent_dispatch::AgentDispatcher::new(&vault)
+            .dispatch(crate::agent_dispatch::DispatchAgent {
+                target: crate::agent_dispatch::AgentDispatchTarget::Custom(child_id),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: 2,
+            })
+            .expect_err("a proposal must not dispatch")
+            .kind(),
+        ErrorKind::AgentNotDispatchable
+    );
+
+    let active_id = crate::test_util::entity(0x83);
+    child.ceiling = AgentCeiling::Proposed;
+    child.skills.clear();
+    assert_eq!(
+        vault.put_agent_definition_for_author(
+            &author_id,
+            &active_id,
+            &child,
+            TimeRange { start: 3, end: 3 },
+            3
+        )?,
+        AgentDefinitionPutDisposition::Active
+    );
+    let stored = vault
+        .get_agent_definition(&active_id)?
+        .expect("saved definition");
+    assert_eq!(stored.ceiling, author.ceiling);
+    assert_eq!(stored.approval_status, author.approval_status);
+    assert_eq!(stored.lifecycle_status, ClaimLifecycleStatus::Active);
+    assert!(vault.get_agent_definition(&author_id)?.is_some());
+    // Authoring creates only definitions. Spawn has a separate attempt door.
+    assert!(
+        crate::attempt_queue::AttemptQueue::new(&vault)
+            .list()?
+            .is_empty()
+    );
+    Ok(())
+}

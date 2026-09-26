@@ -7,8 +7,9 @@ use crate::entity_id::EntityId;
 
 use super::identity::SkillContentHash;
 use super::lifecycle::{SkillGovernanceTier, SkillLifecycle};
+use super::role::{SkillCallContract, SkillRole};
 
-pub const SKILL_RECORD_BODY_KEYS: [&str; 14] = [
+pub const SKILL_RECORD_BODY_KEYS: [&str; 16] = [
     "skillId",
     "desc",
     "version",
@@ -26,6 +27,8 @@ pub const SKILL_RECORD_BODY_KEYS: [&str; 14] = [
     // blueprint wrote it `governance_tier`; the registry's spelling wins,
     // because the wire is the registry.
     "governanceTier",
+    "role",
+    "call",
 ];
 
 pub const SKILL_DEPENDENCY_KEYS: [&str; 2] = ["skillId", "minVersion"];
@@ -65,6 +68,8 @@ pub(super) const KEY_CONTENT_HASH: &str = SKILL_RECORD_BODY_KEYS[11];
 pub(super) const KEY_FORKED_FROM: &str = SKILL_RECORD_BODY_KEYS[12];
 
 pub(super) const KEY_GOVERNANCE_TIER: &str = SKILL_RECORD_BODY_KEYS[13];
+pub(super) const KEY_ROLE: &str = SKILL_RECORD_BODY_KEYS[14];
+pub(super) const KEY_CALL: &str = SKILL_RECORD_BODY_KEYS[15];
 
 pub(super) const KEY_DEP_SKILL_ID: &str = SKILL_DEPENDENCY_KEYS[0];
 
@@ -148,6 +153,10 @@ pub struct SkillRecord {
     /// tripping the fork law. That is what makes "the owner can mark tiers"
     /// true for the imported packs most in need of marking.
     pub governance_tier: Option<SkillGovernanceTier>,
+    /// Absent on older bodies; resolved as knowledge for a record without a role.
+    pub role: SkillRole,
+    /// Present exactly when `role == Callable`.
+    pub call: Option<SkillCallContract>,
 }
 
 impl SkillRecord {
@@ -184,7 +193,17 @@ impl SkillRecord {
             content_hash: None,
             forked_from: None,
             governance_tier: None,
+            role: SkillRole::Knowledge,
+            call: None,
         }
+    }
+
+    /// Assigns the role and its optional callable contract.
+    #[must_use]
+    pub fn with_role(mut self, role: SkillRole, call: Option<SkillCallContract>) -> Self {
+        self.role = role;
+        self.call = call;
+        self
     }
 
     /// Sets the canonical content hash (identity layer).
