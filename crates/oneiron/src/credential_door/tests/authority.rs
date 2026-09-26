@@ -12,24 +12,36 @@ fn every_preset_meet_narrows_and_cannot_restore_verbs() {
         for other in names {
             let other = super::super::verb_class::preset(other).unwrap();
             let mut slip = root.clone();
-            slip.attenuate(crate::authority::SlipCaveat {
-                scope: Some(preset.clone()),
-                ..Default::default()
-            })
-            .unwrap();
-            slip.attenuate(crate::authority::SlipCaveat {
-                scope: Some(other.clone()),
-                ..Default::default()
-            })
-            .unwrap();
-            slip.attenuate(crate::authority::SlipCaveat {
-                scope: Some(crate::federation::Scope::top()),
-                ..Default::default()
-            })
-            .unwrap();
+            issuer
+                .attenuate(
+                    &mut slip,
+                    crate::authority::SlipCaveat {
+                        scope: Some(preset.clone()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            issuer
+                .attenuate(
+                    &mut slip,
+                    crate::authority::SlipCaveat {
+                        scope: Some(other.clone()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            issuer
+                .attenuate(
+                    &mut slip,
+                    crate::authority::SlipCaveat {
+                        scope: Some(crate::federation::Scope::top()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
             let proof = issuer.binding_proof(&slip, b"presets").unwrap();
             let verified = vault
-                .verify_capability_slip(&issuer, &slip, b"presets", &proof)
+                .verify_capability_slip(&issuer.public_key(), &slip, b"presets", &proof)
                 .unwrap();
             assert_eq!(verified.scope(), &preset.meet(&other));
             assert!(verified.scope().is_narrowing_of(&preset));

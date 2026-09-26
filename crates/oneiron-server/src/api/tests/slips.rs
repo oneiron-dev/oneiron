@@ -126,6 +126,32 @@ async fn v2_http_tamper_and_token_without_private_binding_refuse_401() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+    // A different host signs the same claims; a holder proof cannot lend that
+    // foreign signature the authority of this logged mint.
+    let mut foreign_wire = serde_json::to_value(&slip).unwrap();
+    let mut mint_transcript = b"oneiron/capability-slip/v0/mint\0".to_vec();
+    mint_transcript.extend_from_slice(&serde_json::to_vec(&slip.claims).unwrap());
+    foreign_wire["signature"] = json!(
+        SigningKey::from_bytes(&[19; 32])
+            .sign(&mint_transcript)
+            .to_bytes()
+            .to_vec()
+    );
+    let foreign: CapabilitySlip = serde_json::from_value(foreign_wire).unwrap();
+    let (status, _) = route_json(
+        server.clone(),
+        Request::builder()
+            .uri("/v1/core/conversations")
+            .header(
+                AUTHORIZATION,
+                format!("Bearer {}", foreign.to_token().unwrap()),
+            )
+            .header("x-oneiron-binding", proof(&foreign, &holder))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let used_proof = proof(&slip, &holder);
     for expected in [StatusCode::OK, StatusCode::UNAUTHORIZED] {
         let (status, _) = route_json(
@@ -271,7 +297,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_ok()
     );
     let response = app
@@ -292,7 +323,12 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     assert!(
         server
             .vault()
-            .verify_capability_slip(issuer, &slip, b"managed-proof", &binding.to_bytes())
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &slip,
+                b"managed-proof",
+                &binding.to_bytes()
+            )
             .is_err()
     );
 
@@ -573,13 +609,16 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut no_read = slip.clone();
     no_read
-        .attenuate(oneiron::authority::SlipCaveat {
-            scope: Some(Scope {
-                verbs: ScopeAxis::Bottom,
-                ..Scope::top()
-            }),
-            ..Default::default()
-        })
+        .attenuate(
+            oneiron::authority::SlipCaveat {
+                scope: Some(Scope {
+                    verbs: ScopeAxis::Bottom,
+                    ..Scope::top()
+                }),
+                ..Default::default()
+            },
+            &holder,
+        )
         .unwrap();
     for path in paths {
         let (status, _) = route_json(server.clone(), request(&no_read, path)).await;

@@ -116,6 +116,21 @@ fn assert_unauthorized(result: Result<CoreAuth, ApiError>) {
 }
 
 #[test]
+fn logged_slip_authenticates_without_a_configured_shared_secret() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
+    let config = SyncServerConfig::default();
+    let headers = fixture.headers(&slip);
+    let auth = CoreAuth::from_headers(&headers, &config, fixture.vault.as_ref()).unwrap();
+    assert!(auth.has_scope(CoreScope::Read));
+    let proof = BindingProof::from_headers(&headers).unwrap();
+    assert!(
+        CoreAuth::bind_transport_once(&slip.to_token().unwrap(), &proof, fixture.vault.as_ref())
+            .is_ok()
+    );
+}
+
+#[test]
 fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
     let fixture = Fixture::new();
     let mut old_header = HeaderMap::new();
@@ -295,10 +310,13 @@ fn every_capability_axis_and_offline_caveat_excludes_owner_grade() {
         assert!(auth.require_unrestricted_record_scope().is_err());
     }
     let mut slip = fixture.mint(|_| {});
-    slip.attenuate(SlipCaveat {
-        ttl_secs: Some(30),
-        ..Default::default()
-    })
+    slip.attenuate(
+        SlipCaveat {
+            ttl_secs: Some(30),
+            ..Default::default()
+        },
+        &fixture.holder,
+    )
     .unwrap();
     assert!(!fixture.auth(&slip).unwrap().is_owner_grade());
     let single_use = fixture.mint(|claims| {
@@ -321,10 +339,13 @@ fn scoped_slips_enforce_verbs_and_refuse_adapters_without_record_scope() {
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(fixture.actor)]));
     narrow
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let auth = fixture.auth(&narrow).unwrap();
     assert!(auth.require(CoreScope::Read).is_ok());
@@ -482,19 +503,25 @@ fn idempotency_partitions_follow_the_verified_credential_and_attenuation() {
     let mut read = root.clone();
     let mut scope = Scope::top();
     scope.verbs = verbs(&["read"]);
-    read.attenuate(SlipCaveat {
-        scope: Some(scope),
-        ..Default::default()
-    })
+    read.attenuate(
+        SlipCaveat {
+            scope: Some(scope),
+            ..Default::default()
+        },
+        &fixture.holder,
+    )
     .unwrap();
     let mut write = root.clone();
     let mut scope = Scope::top();
     scope.verbs = verbs(&["write"]);
     write
-        .attenuate(SlipCaveat {
-            scope: Some(scope),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                scope: Some(scope),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let sibling = fixture.mint(|claims| claims.scope.verbs = verbs(&["read"]));
     let principals: BTreeSet<_> = [root, read, write, sibling]
@@ -604,7 +631,6 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
         }
         fn verify_slip(
             &self,
-            secret: &str,
             slip: &CapabilitySlip,
             timestamp: u64,
             nonce: &[u8],
@@ -614,7 +640,7 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
             let nonce = std::str::from_utf8(nonce).map_err(drop)?;
             let challenge = format!("oneiron-request:{timestamp}:{nonce}");
             slip.verify(
-                secret.as_bytes(),
+                &self.fixture.issuer.public_key(),
                 &fold,
                 self.now,
                 challenge.as_bytes(),
@@ -648,10 +674,13 @@ fn reconnect_identity_keeps_exact_instrument_not_remaining_ttl() {
     assert_eq!(first.idempotency_principal(), later.idempotency_principal());
     let mut narrowed = CapabilitySlip::from_token(&token).unwrap();
     narrowed
-        .attenuate(SlipCaveat {
-            ttl_secs: Some(30),
-            ..Default::default()
-        })
+        .attenuate(
+            SlipCaveat {
+                ttl_secs: Some(30),
+                ..Default::default()
+            },
+            &fixture.holder,
+        )
         .unwrap();
     let narrowed_auth = CoreAuth::from_headers(
         &fixture.headers(&narrowed),

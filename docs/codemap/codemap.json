@@ -1988,17 +1988,18 @@
      "kind": "src",
      "notable": [
       "CapabilitySlip",
+      "SignedCaveat",
       "SlipCaveat",
       "SlipClaims",
       "SlipMintAction",
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
-     "purpose": "Version-two capability slips: chained keyed MACs, offline narrowing and holder proof",
+     "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
-      "struct": 5
+      "fn": 12,
+      "struct": 6
      }
     },
     {
@@ -2068,7 +2069,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 7,
-      "fn": 15,
+      "fn": 19,
       "struct": 1
      }
     },

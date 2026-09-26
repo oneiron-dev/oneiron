@@ -589,7 +589,7 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     let read_key = |slip: &crate::authority::CapabilitySlip| {
         let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, slip, b"diary-read", &signature)
+            .verify_capability_slip(&issuer.public_key(), slip, b"diary-read", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -600,11 +600,14 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         vault.scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap());
     assert!(unproven.get(&id).unwrap().is_none());
     let mut narrowed = owner_slip;
-    narrowed
-        .attenuate(crate::authority::SlipCaveat {
-            records: Some(std::collections::BTreeSet::from([other.to_hex()])),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut narrowed,
+            crate::authority::SlipCaveat {
+                records: Some(std::collections::BTreeSet::from([other.to_hex()])),
+                ..Default::default()
+            },
+        )
         .unwrap();
     let limited = vault.scoped_read(read_key(&narrowed));
     assert!(limited.get(&id).unwrap().is_none());
@@ -997,7 +1000,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"diary-audience").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"diary-audience", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-audience", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -1068,7 +1071,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"versioned-notes").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"versioned-notes", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"versioned-notes", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
