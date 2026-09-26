@@ -11,12 +11,44 @@ use crate::store::Store;
 use crate::{EntityId, Error, Result};
 
 const WATCH: &[u8] = b"typed_question:watch:v1:";
+const UNIT_WATCH: &[u8] = b"typed_question:unit:v1:";
+pub(super) const PENDING: &[u8] = b"typed_question:pending:v1:";
+
+pub(super) fn unwatch_units(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &QuestionRecord,
+) -> Result<()> {
+    for unit in &record.definition.units {
+        let watch_key = [
+            UNIT_WATCH,
+            unit.as_bytes(),
+            record.definition.question.id.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta.delete(txn, &watch_key)?;
+        // A queued arrival for a still-covered unit survives the edit; all
+        // others are retired by the caller once the new definition is known.
+    }
+    Ok(())
+}
 
 pub(super) fn watch(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &QuestionRecord,
 ) -> Result<()> {
+    if record.definition.refresh.on_arrival {
+        for unit in &record.definition.units {
+            let watch_key = [
+                UNIT_WATCH,
+                unit.as_bytes(),
+                record.definition.question.id.as_bytes(),
+            ]
+            .concat();
+            store.vault_meta.put(txn, &watch_key, &[])?;
+        }
+    }
     let Some(binding) = &record.definition.binding else {
         return Ok(());
     };
@@ -50,7 +82,67 @@ pub(crate) fn project_arrivals_in_txn(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
+    enqueue_arrivals(store, txn, ids)?;
     project(store, txn, ids, None)
+}
+
+fn enqueue_arrivals(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    for unit in ids {
+        let prefix = [UNIT_WATCH, unit.as_bytes()].concat();
+        let questions = store
+            .vault_meta
+            .prefix_iter(txn, &prefix)?
+            .map(|row| {
+                let (key, _) = row?;
+                let bytes = key
+                    .get(prefix.len()..)
+                    .ok_or(Error::CorruptedIndex("question unit watcher"))?;
+                EntityId::from_bytes(
+                    bytes
+                        .try_into()
+                        .map_err(|_| Error::CorruptedIndex("question unit watcher"))?,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for question in questions {
+            let Some(head) = store
+                .vault_meta
+                .get(txn, &super::store::key(question, b"head", &[]))?
+                .map(|raw| decode::<QuestionHead>(&raw))
+                .transpose()?
+            else {
+                continue;
+            };
+            let Some(record) = store
+                .vault_meta
+                .get(
+                    txn,
+                    &super::store::key(question, b"version", &head.version.to_be_bytes()),
+                )?
+                .map(|raw| decode::<QuestionRecord>(&raw))
+                .transpose()?
+            else {
+                continue;
+            };
+            if !head.paused
+                && record.definition.refresh.on_arrival
+                && record.definition.units.contains(unit)
+            {
+                store
+                    .vault_meta
+                    .put(txn, &pending_key(question, *unit), &[])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn pending_key(question: EntityId, unit: EntityId) -> Vec<u8> {
+    [PENDING, question.as_bytes(), unit.as_bytes()].concat()
 }
 
 pub(super) fn project_question_in_txn(
