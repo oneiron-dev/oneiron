@@ -126,6 +126,7 @@
 //! skill. They converge to two open questions a decider answers, never to a
 //! silent double edit — nothing here writes canon.
 
+mod ask_band;
 mod brief;
 mod dials;
 mod gate;
@@ -133,6 +134,7 @@ mod job;
 mod selection;
 mod tier;
 
+pub use self::ask_band::{AskBandLabel, AskBandPolicy};
 pub use self::brief::{
     SKILL_OPTIMIZE_CALL_PURPOSE_NAME, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE,
     SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,

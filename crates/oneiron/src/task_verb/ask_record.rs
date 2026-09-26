@@ -329,6 +329,7 @@ pub(super) fn evidence_in(
             person_ref: person,
             order: fact.order,
             reason: TaskAskEvidenceReason::OutsideElectorate,
+            ladder_changed: None,
         });
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
