@@ -528,6 +528,7 @@
       "AgentScope",
       "CompactionOwnership",
       "ContextBudgetSplit",
+      "DreamingMode",
       "McpRef",
       "MemoryProfile"
      ],
@@ -535,9 +536,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 44,
-      "enum": 3,
-      "fn": 13,
+      "crate-vis": 46,
+      "enum": 4,
+      "fn": 17,
       "struct": 4
      }
     },
