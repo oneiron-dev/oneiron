@@ -1,9 +1,13 @@
 //! Source receipts and admitted-publisher ingress beside content dedup, never in place of it.
 use super::{ForeignSkillPublisher, HubRef, SkillHubAdapter, package_codec::invalid};
-use crate::skill::SkillContentHash;
+use crate::claim::ClaimApprovalStatus;
+use crate::consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts};
+use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::{Vault, entity_id::EntityId, error::Result, temporal::TimeRange};
 
-/// A source receipt for a Candidate import. One content holder can have many source receipts.
+const CODE_AUTO_INSTALL_KEY: &[u8] = b"skill_hub/marketplace-code-auto-install/v1";
+
+/// A source receipt for a marketplace install. One content holder can have many source receipts.
 /// The publisher field is engine-stamped only by the admitted-publisher adapter door.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,12 +20,39 @@ pub struct HubImportReceipt {
     pub pin_value: Option<String>,
     pub publisher: Option<String>,
     pub publisher_grant: Option<String>,
+    /// Lifecycle on this source's install line, not a promise about later updates.
+    #[serde(default)]
+    pub installed_as: Option<String>,
     pub at: u64,
 }
 impl Vault {
-    /// Fetches from the configured source and admits its publisher only as an offerer.
-    /// Candidate import is inert. If the publisher is revoked during fetching or receipt
-    /// attachment this errors; any already-created Candidate remains unable to activate.
+    /// Owner-controlled code policy. Disabled by default. Hosts should enable it
+    /// only after sandbox install tests pass; this flag does not run those tests.
+    /// Importing a code-bearing folder while disabled leaves it Candidate.
+    pub fn set_marketplace_code_auto_install(
+        &self,
+        owner: &AuthenticatedOwner,
+        enabled: bool,
+    ) -> Result<ConsentReceipt> {
+        let effect = ComposedEffect::new(EffectFacts::new(format!(
+            "skill.marketplace.code-auto-install:{enabled}"
+        ))?)
+        .digest();
+        self.with_write_txn(|txn| {
+            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
+            let authorization =
+                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
+                    .ok_or_else(|| invalid("code auto-install consent missing"))?;
+            self.store
+                .vault_meta
+                .put(txn, CODE_AUTO_INSTALL_KEY, &[u8::from(enabled)])?;
+            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            Ok(receipt)
+        })
+    }
+
+    /// Fetches from a configured source and checks the publisher again at commit.
+    /// Import, scan, activation and source receipt share one transaction.
     pub fn import_marketplace_skill_from_adapter<A: SkillHubAdapter>(
         &self,
         adapter: &A,
@@ -47,22 +78,61 @@ impl Vault {
         };
         let package = adapter.fetch_package(source)?;
         let parsed = super::folder::package_from_files(package.files)?;
-        let entity = self.import_skill_from_hub(source, &parsed, occurred, learned_at)?;
         self.with_write_txn(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
                 return Err(invalid("configured hub moved while fetching"));
             }
+            let hash = parsed.content_hash()?;
+            let entity = self.import_skill_from_hub_in_txn(
+                txn,
+                source,
+                &parsed,
+                self.store.clock.entity_id()?,
+                occurred,
+                learned_at,
+            )?;
+            let posture =
+                crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, hash)?;
+            let code_bearing = parsed
+                .files
+                .iter()
+                .any(|file| file.path.starts_with("scripts/"));
+            let code_enabled = match self
+                .store
+                .vault_meta
+                .get(txn, CODE_AUTO_INSTALL_KEY)?
+                .as_deref()
+            {
+                None | Some([0]) => false,
+                Some([1]) => true,
+                Some(_) => {
+                    return Err(crate::error::Error::CorruptedIndex(
+                        "marketplace code auto-install flag",
+                    ));
+                }
+            };
+            let mut record = self.read_skill_record_in_txn(txn, &entity)?;
+            if record.lifecycle_status == SkillLifecycle::Candidate
+                && matches!(posture, crate::skill_scan::ActivationPosture::AutoEligible)
+                && (!code_bearing || code_enabled)
+            {
+                record.lifecycle_status = SkillLifecycle::Active;
+                record.approval_status = ClaimApprovalStatus::Auto;
+                let data = crate::skill::encode_skill_record(&record)?;
+                let proof = super::HubAdmissionProof::marketplace(entity, &data);
+                self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)?;
+            }
             self.write_hub_import_receipt_in_txn(
                 txn,
                 &entity,
-                parsed.content_hash()?,
+                hash,
                 source,
                 Some(publisher),
                 learned_at,
-            )
-        })?;
-        Ok(entity)
+            )?;
+            Ok(entity)
+        })
     }
     pub(super) fn write_hub_import_receipt_in_txn(
         &self,
@@ -82,6 +152,12 @@ impl Vault {
             pin_value: pin_value(&source.pin),
             publisher: publisher.map(|p| p.identity.clone()),
             publisher_grant: publisher.map(|p| p.grant_ref.clone()),
+            installed_as: Some(
+                self.read_skill_record_in_txn(txn, entity)?
+                    .lifecycle_status
+                    .as_str()
+                    .to_owned(),
+            ),
             at,
         };
         let key = import_receipt_key(entity, source);

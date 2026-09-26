@@ -26,6 +26,15 @@ impl HubAdmissionProof {
         self.id == *id && self.binding == blake3::hash(data)
     }
 
+    /// Only the configured, admitted-publisher adapter import may mint this proof.
+    /// The caller checks the scanned content and code-install policy in the same txn.
+    pub(super) fn marketplace(id: EntityId, data: &[u8]) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+        }
+    }
+
     pub(super) fn consent(
         store: &crate::store::Store,
         txn: &mut heed::RwTxn<'_>,

@@ -344,10 +344,123 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
             Some(publisher.grant_ref())
         );
         assert_eq!(receipt.content_hash, index[0].content_hash.to_hex());
+        assert_eq!(receipt.hub_id, hub_id.to_hex());
+        assert_eq!(receipt.ref_string, source.ref_string);
+        assert_eq!(receipt.installed_as, Some("active".to_owned()));
+        assert_eq!(
+            vault
+                .get_skill_record(&entity)?
+                .expect("installed skill")
+                .lifecycle_status,
+            crate::skill::SkillLifecycle::Active,
+        );
+        assert!(vault.hub_admission_receipt(&entity)?.is_none());
         imported.push(entity);
     }
     assert_eq!(imported[0], imported[1]);
     assert_eq!(vault.skill_hub_provenance_count(&imported[0])?, 2);
+    Ok(())
+}
+
+#[test]
+fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Result<()> {
+    use crate::skill::{SkillLifecycle, encode_skill_record};
+    let mut tree = files("fixture.code", "1", "Run the supplied script.");
+    tree[0].content = b"---\nname: fixture.code\ndescription: fixture\nversion: 1\nrequires-bins: [\"python3\"]\n---\nRun the supplied script.\n".to_vec();
+    tree.push(HubFile::new("scripts/run.py", b"print(1)\n"));
+    let server = StaticHttp::new(routes(&tree));
+    let temp = tempfile::tempdir()?;
+    let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+    let owner_id = EntityId::now();
+    let at = crate::TimeRange { start: 10, end: 10 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        10,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:fixture",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub_id = EntityId::now();
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::HttpIndex,
+            server.index_url(),
+            SkillHubTrustTier::Verified,
+            HubSyncPolicy::ContentHashFrozen,
+        )?,
+        at,
+        10,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:fixture", hub_id)?;
+    let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+    let source = HubRef::new(
+        hub_id,
+        "fixture",
+        HubPin::ContentHash(adapter.discover()?[0].content_hash.to_hex()),
+    )?;
+    let id = vault.import_marketplace_skill_from_adapter(&adapter, &source, &publisher, at, 10)?;
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .installed_as,
+        Some("candidate".to_owned())
+    );
+    let mut forged = vault.get_skill_record(&id)?.unwrap();
+    forged.lifecycle_status = SkillLifecycle::Active;
+    assert!(
+        vault
+            .batch()
+            .put(
+                &id,
+                crate::registry::ENTITY_TYPE_SKILL,
+                at,
+                11,
+                &encode_skill_record(&forged)?
+            )
+            .commit()
+            .is_err()
+    );
+    // Host-controlled code flag is separate from sandbox qualification.
+    vault.set_marketplace_code_auto_install(&owner, true)?;
+    // A rules hit still wins over an enabled code flag.
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::Low)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(&adapter, &source, &publisher, at, 12)?,
+        id
+    );
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    crate::skill_scan::set_skill_scan_activation_risk_threshold(&vault, ScanRiskLevel::High)?;
+    assert_eq!(
+        vault.import_marketplace_skill_from_adapter(&adapter, &source, &publisher, at, 13)?,
+        id
+    );
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+        SkillLifecycle::Active
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .installed_as,
+        Some("active".to_owned())
+    );
     Ok(())
 }
 
