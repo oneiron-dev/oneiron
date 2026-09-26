@@ -39,6 +39,12 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
+    pub(crate) fn proposal_check_threshold(&self) -> u64 {
+        self.proposal_check_threshold
+            .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
+    }
+
+    #[must_use]
     pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
         self.on_budget_exhausted.unwrap_or_default()
     }
