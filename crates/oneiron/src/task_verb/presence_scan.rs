@@ -22,6 +22,8 @@ use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
+use super::presence_diagnostics::record_read_failure;
+pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
 use super::rate_limit::task_create_owner;
 use super::route_receipts::TaskCancelTarget;
 use super::terminal_state::{
@@ -150,6 +152,9 @@ pub(super) struct TaskEntityPageScan {
 pub(super) struct TaskPresenceSnapshot {
     pub(super) intents: Vec<TaskIntentPresence>,
     pub(super) bare_jobs: Vec<JobPresence>,
+    /// One typed read failure for each skipped row; the section caller emits
+    /// structured warnings before rendering the surviving rows.
+    pub(super) read_failures: Vec<TaskPresenceReadFailure>,
     pub(super) scanned_task_entities: usize,
     /// `false` means the scan cap stopped the walk before the TASK type index
     /// ran out, so the projection is a PREFIX, not a census. Load-bearing
@@ -276,6 +281,7 @@ pub(super) fn task_presence_with_limits(
     // outbound (or reconciliation) availability.
     let now = vault.store.clock.now_recorded_at();
     let mut intents = Vec::new();
+    let mut read_failures = Vec::new();
     for page in &scan.pages {
         // ONE render-state/hydration transaction per page, replacing the two
         // state transactions per TASK the unpaged loop opened.
@@ -295,15 +301,23 @@ pub(super) fn task_presence_with_limits(
                 // fact, and rendering it as `cancelled: false` would resurrect
                 // it on the active surface — cancel-wins holds under EVERY
                 // merge order, including one that also forked the owner.
-                // Nothing is lost by hiding the row: the skipped row's
-                // realizing jobs re-emit as bare work below (P2 F7), and the
-                // by-id door reads the same task the same way.
+                // Its realizing jobs re-emit as bare work below (P2 F7); the
+                // by-id door returns the read error rather than false state.
                 //
                 // Authority itself stays strict: `Vault::task_authority_state`
                 // still refuses a forked proof, so the cancel / force-cancel
                 // doors keep failing closed on exactly this task.
-                let Ok(state) = TaskIntentPresence::render_state_in(vault, &rtxn, task_ref) else {
-                    continue;
+                let state = match TaskIntentPresence::render_state_in(vault, &rtxn, task_ref) {
+                    Ok(state) => state,
+                    Err(error) => {
+                        record_read_failure(
+                            &mut read_failures,
+                            task_ref,
+                            TaskPresenceReadStage::RenderState,
+                            &error,
+                        );
+                        continue;
+                    }
                 };
                 if state.cancelled {
                     continue;
@@ -316,22 +330,34 @@ pub(super) fn task_presence_with_limits(
                 // fields — is skipped/degraded, never propagated as a hard
                 // error that takes down `describe`.
                 match task_page_slot_in(vault, &rtxn, task_ref, &task_hex, jobs, state.acked, now) {
-                    Ok(Some(slot)) => slots.push(slot),
-                    Ok(None) | Err(_) => continue,
+                    Ok(Some(slot)) => slots.push((task_ref, slot)),
+                    Ok(None) => {}
+                    Err(error) => record_read_failure(
+                        &mut read_failures,
+                        task_ref,
+                        TaskPresenceReadStage::PageSlot,
+                        &error,
+                    ),
                 }
             }
             slots
         };
         // Slot order is type-index order; resolving the deferred shapes here
         // keeps it that way while the page transaction is already closed.
-        for slot in slots {
+        for (task_ref, slot) in slots {
             let task_hex = slot.task_hex().to_owned();
             match slot.resolve(vault) {
                 Ok(Some(intent)) => {
                     realizing.remove(&task_hex);
                     intents.push(intent);
                 }
-                Ok(None) | Err(_) => continue,
+                Ok(None) => {}
+                Err(error) => record_read_failure(
+                    &mut read_failures,
+                    task_ref,
+                    TaskPresenceReadStage::Resolve,
+                    &error,
+                ),
             }
         }
     }
@@ -368,6 +394,7 @@ pub(super) fn task_presence_with_limits(
     let snapshot = TaskPresenceSnapshot {
         intents,
         bare_jobs: bare,
+        read_failures,
         scanned_task_entities: scan.scanned_task_entities,
         source_exhausted: scan.source_exhausted,
     };
@@ -387,37 +414,26 @@ pub(super) fn task_presence_for_id(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<TaskIntentPresence>> {
-    match task_is_cancelled(vault, task_ref) {
-        Ok(false) => {}
-        // Cancelled, or a companion fact set that will not fold at all (owner
-        // fork / malformed fact body / a fact re-pointed at another subject).
-        // Both leave the row off the surface, which is exactly what the board
-        // scan does with the same task — the two doors must agree on a
-        // poisoned companion, and unverifiable facts are never answered as
-        // "not cancelled".
-        Ok(true) | Err(_) => return Ok(None),
+    // A cancelled task is absent. An unreadable companion is NOT absent: a
+    // direct caller can name the row, so return the typed failure rather than
+    // silently reporting EntityNotFound. The board scan keeps row isolation.
+    if task_is_cancelled(vault, task_ref)? {
+        return Ok(None);
     }
     let task_hex = task_ref.to_hex();
     let jobs = job_backlinks(vault)?
         .realizing
         .remove(&task_hex)
         .unwrap_or_default();
-    let Ok(acked) = task_is_acked(vault, task_ref) else {
-        return Ok(None);
-    };
-    match task_intent_presence(
+    let acked = task_is_acked(vault, task_ref)?;
+    task_intent_presence(
         vault,
         task_ref,
         &task_hex,
         jobs,
         acked,
         vault.store.clock.now_recorded_at(),
-    ) {
-        Ok(found) => Ok(found),
-        // A malformed body degrades to "not board-visible" here exactly as it
-        // does in the board scan, so both doors agree on a poisoned row.
-        Err(_) => Ok(None),
-    }
+    )
 }
 
 /// One page row, split by whether it could be finished inside the page's
@@ -473,8 +489,8 @@ impl TaskPageSlot {
 
 /// Projects one surviving (non-cancelled) TASK entity into its board intent
 /// row, or `None` when the entity is not a board-visible TASK. Returns an error
-/// only for that single entity; the board scan degrades one bad entity into a
-/// skip so the whole board survives (P2 F8).
+/// only for that single entity; the board scan warns and skips that row so
+/// the whole board survives (P2 F8).
 pub(super) fn task_intent_presence(
     vault: &Vault,
     task_ref: EntityId,

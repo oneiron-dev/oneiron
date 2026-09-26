@@ -25,6 +25,7 @@ mod follow_up;
 mod lifecycle_facade;
 mod linear_store;
 mod owner_index;
+mod presence_diagnostics;
 mod presence_scan;
 mod query_facade;
 mod rate_limit;

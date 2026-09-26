@@ -59,6 +59,14 @@ impl Memory<'_> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let Some(task_ref) = task_ref else {
             let snapshot = task_presence(self.vault())?;
+            for failure in &snapshot.read_failures {
+                tracing::warn!(
+                    task_ref = %failure.task_ref.to_hex(),
+                    stage = ?failure.stage,
+                    kind = ?failure.kind,
+                    "task presence skipped unreadable row"
+                );
+            }
             return Ok(TaskDescription::Section(TasksSection::render_bounded(
                 &snapshot.intents,
                 &snapshot.bare_jobs,
