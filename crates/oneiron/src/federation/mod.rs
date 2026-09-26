@@ -11,6 +11,10 @@ pub mod derivation;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 mod grant;
+mod membership_gate;
+pub use membership_gate::SharedVaultWrite;
+#[cfg(feature = "sync")]
+pub(crate) use membership_gate::grant_allows_content_write;
 pub(crate) mod grant_scope;
 mod ruling_integrity;
 mod rulings;
@@ -86,6 +90,8 @@ pub(crate) use self::stale::federation_stale_key;
 #[cfg(test)]
 use self::stale::register_foreign_world_for_pact;
 
+#[cfg(test)]
+mod membership_gate_tests;
 #[cfg(test)]
 mod shared_creation_tests;
 #[cfg(test)]

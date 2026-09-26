@@ -28,30 +28,21 @@ pub(super) fn require_workspace_authority_in_txn(
     vault_id: u64,
     writer: &WriteActor,
 ) -> Result<()> {
-    let member_ref = writer.entity_ref();
-    let scope = FederationGrantScope::vault(vault_id);
-    let fold = vault.verify_write_actor_in_txn(txn, writer)?;
-    for entry in vault
-        .store
-        .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
-    {
-        let id = entry?;
-        let Some(grant) = read_federation_grant_in_txn(vault, txn, &id)? else {
-            continue;
-        };
-        if grant.scope == scope
-            && grant.member_ref == member_ref
-            && grant.role.is_admin()
-            && fold
-                .pact_for_grant(&id)
-                .is_none_or(|pact| pact.status == crate::authority::FederationPactStatus::Active)
-        {
-            return Ok(());
-        }
-    }
-    Err(invalid(
-        "workspace onboarding requires an admin federation grant over the target vault",
-    ))
+    vault
+        .authorize_shared_vault_write_in_txn(
+            txn,
+            vault_id,
+            writer,
+            &crate::federation::SharedVaultWrite::Admin(
+                crate::federation::OrgAdminPower::AddMember,
+            ),
+        )
+        .map_err(|error| match error {
+            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+                invalid("workspace onboarding requires a named admin power over the target vault")
+            }
+            other => other,
+        })
 }
 
 /// No read-time authorization result crosses the LMDB writer boundary.

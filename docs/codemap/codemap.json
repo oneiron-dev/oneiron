@@ -15900,13 +15900,35 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SharedVaultWrite"
+     ],
+     "path": "src/federation/membership_gate.rs",
+     "purpose": "Transaction-bound shared-vault membership write authorization",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/membership_gate_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -32938,7 +32960,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
@@ -34315,7 +34337,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 22,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,8 +35046,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
-   "test_files": 710
+   "source_files": 2069,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [

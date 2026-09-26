@@ -49,8 +49,8 @@ fn role_preset(role: Role) -> Result<GrantPreset> {
         Role::Admin => GrantPreset::Admin,
         Role::Member => GrantPreset::Member,
         Role::Viewer => GrantPreset::ReadOnly,
-        Role::Auditor => GrantPreset::Audit,
-        Role::Delegate => {
+        Role::Auditor => GrantPreset::ReadOnly,
+        Role::Delegate | Role::Guest => {
             return Err(invalid(
                 "delegate needs a separately attenuated expiring grant",
             ));
@@ -109,6 +109,11 @@ impl Vault {
             if self.store.entities.get(&txn, member.as_bytes())?.is_none() {
                 return Err(Error::EntityNotFound);
             }
+            let role = if role == Role::Auditor {
+                Role::Viewer
+            } else {
+                role
+            };
             let grant = FederationGrant::new(
                 FederationGrantScope::vault(vault_id),
                 member,

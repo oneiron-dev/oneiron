@@ -20,6 +20,7 @@ pub(super) struct DocumentGrant {
     pub(super) grant: FederationGrant,
     pub(super) fold: AuthorityFold,
     pub(super) position: FederationDirectionScope,
+    pub(super) write: bool,
 }
 
 pub(super) fn authorize_in_txn(
@@ -49,7 +50,10 @@ pub(super) fn authorize_in_txn(
     if writer.is_some()
         && !matches!(
             grant.role,
-            FederationGrantRole::Owner | FederationGrantRole::Admin | FederationGrantRole::Member
+            FederationGrantRole::Owner
+                | FederationGrantRole::Admin
+                | FederationGrantRole::Member
+                | FederationGrantRole::Delegate
         )
     {
         return Err(denied());
@@ -71,6 +75,7 @@ pub(super) fn authorize_in_txn(
         grant,
         fold,
         position,
+        write: writer.is_some(),
     })
 }
 
@@ -162,6 +167,20 @@ impl StoredSelection<'_, '_> {
             || self.vault.store.off_record_sessions.contains_entity(&id)?
         {
             return Ok(None);
+        }
+        if self.admission.write {
+            let Some(scope) = crate::federation::record_scope::scope_for_blob(
+                &self.vault.store,
+                self.txn,
+                id,
+                &raw,
+            )?
+            else {
+                return Ok(None);
+            };
+            if !crate::federation::grant_allows_content_write(&self.admission.grant, &scope) {
+                return Ok(None);
+            }
         }
         let coreference = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;

@@ -110,7 +110,7 @@ pub enum FederationGrantRole {
     Member,
     /// Read-only member privileges.
     Viewer,
-    /// Audit-only read privileges.
+    /// Legacy audit spelling; normalized to Viewer when a grant is minted or decoded.
     Auditor,
     /// One-hop, expiring read privileges attenuated from an admin parent.
     ///
@@ -119,6 +119,8 @@ pub enum FederationGrantRole {
     /// [`FederationGrant::attenuated_delegate`] from an [`Self::is_admin`]
     /// parent.
     Delegate,
+    /// Foreign guest authority lives in FEDERATION_GRANT, not the member roster.
+    Guest,
 }
 
 impl FederationGrantRole {
@@ -130,8 +132,9 @@ impl FederationGrantRole {
             Self::Admin => "admin",
             Self::Member => "member",
             Self::Viewer => "viewer",
-            Self::Auditor => "auditor",
+            Self::Auditor => "viewer",
             Self::Delegate => "delegate",
+            Self::Guest => "guest",
         }
     }
 
@@ -143,8 +146,9 @@ impl FederationGrantRole {
             "admin" => Some(Self::Admin),
             "member" => Some(Self::Member),
             "viewer" => Some(Self::Viewer),
-            "auditor" => Some(Self::Auditor),
+            "auditor" => Some(Self::Viewer),
             "delegate" => Some(Self::Delegate),
+            "guest" => Some(Self::Guest),
             _ => None,
         }
     }
@@ -183,7 +187,7 @@ impl FederationGrantPreset {
             Self::Admin => "admin",
             Self::Member => "member",
             Self::ReadOnly => "read_only",
-            Self::Audit => "audit",
+            Self::Audit => "read_only",
             Self::Delegate => "delegate",
         }
     }
@@ -196,7 +200,7 @@ impl FederationGrantPreset {
             "admin" => Some(Self::Admin),
             "member" => Some(Self::Member),
             "read_only" => Some(Self::ReadOnly),
-            "audit" => Some(Self::Audit),
+            "audit" => Some(Self::ReadOnly),
             "delegate" => Some(Self::Delegate),
             _ => None,
         }
@@ -212,10 +216,15 @@ impl FederationGrantPreset {
     #[must_use]
     pub const fn permits_role(self, role: FederationGrantRole) -> bool {
         match self {
-            Self::Owner => !matches!(role, FederationGrantRole::Delegate),
+            Self::Owner => !matches!(
+                role,
+                FederationGrantRole::Delegate | FederationGrantRole::Guest
+            ),
             Self::Admin => !matches!(
                 role,
-                FederationGrantRole::Owner | FederationGrantRole::Delegate
+                FederationGrantRole::Owner
+                    | FederationGrantRole::Delegate
+                    | FederationGrantRole::Guest
             ),
             Self::Member => matches!(
                 role,
@@ -277,8 +286,16 @@ impl FederationGrant {
             authority_scope: super::grant_scope::membership_preset(role),
             scope,
             member_ref,
-            role,
-            preset,
+            role: if role == FederationGrantRole::Auditor {
+                FederationGrantRole::Viewer
+            } else {
+                role
+            },
+            preset: if preset == FederationGrantPreset::Audit {
+                FederationGrantPreset::ReadOnly
+            } else {
+                preset
+            },
             expires_at: None,
             delegated_by: None,
         }
@@ -315,7 +332,9 @@ impl FederationGrant {
         // `pub` fields make any construction-time invariant unenforceable
         // anyway. Encode and decode remain the validating doors.
         Ok(Self {
-            authority_scope: parent.authority_scope.clone(),
+            authority_scope: parent
+                .authority_scope
+                .meet(&super::scope_codec::read_preset()),
             scope: parent.scope,
             member_ref,
             role: FederationGrantRole::Delegate,
@@ -328,7 +347,14 @@ impl FederationGrant {
     /// Validates scope, role/preset policy, and role-conditional field shape.
     pub fn validate(&self) -> Result<()> {
         self.scope.validate()?;
-        if !self.preset.permits_role(self.role) {
+        // Legacy Auditor is only a decoder input. Guest authority is disjoint
+        // from the member roster and cannot be encoded as a membership grant.
+        if matches!(
+            self.role,
+            FederationGrantRole::Auditor | FederationGrantRole::Guest
+        ) || self.preset == FederationGrantPreset::Audit
+            || !self.preset.permits_role(self.role)
+        {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);

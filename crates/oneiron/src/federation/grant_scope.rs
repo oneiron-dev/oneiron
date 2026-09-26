@@ -15,7 +15,20 @@ pub(crate) fn admits_preset(scope: &Scope, verb: &str) -> bool {
 
 pub(crate) fn membership_preset(role: super::FederationGrantRole) -> Scope {
     match role {
-        super::FederationGrantRole::Owner | super::FederationGrantRole::Admin => Scope::top(),
+        super::FederationGrantRole::Owner => Scope::top(),
+        super::FederationGrantRole::Admin => {
+            let mut scope = Scope::top();
+            scope.verbs = ScopeAxis::Some(BTreeSet::from([
+                "read".to_owned(),
+                "write".to_owned(),
+                "admin".to_owned(),
+                "org:add-member".to_owned(),
+                "org:remove-member".to_owned(),
+                "org:assign-role".to_owned(),
+                "org:reset-shared-project-access".to_owned(),
+            ]));
+            scope
+        }
         super::FederationGrantRole::Member => {
             let mut scope = Scope::top();
             scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
