@@ -421,14 +421,15 @@ pub(in crate::batch) fn apply_put(
         // (occurred/learned) changes are not body changes.
         body_changed = old_record[ENTITY_METADATA_HEADER_LEN..] != *data;
         // Retaining an indexed text revision is not permission to retain a
-        // withdrawn claim in the search index. Lifecycle/approval takes effect
-        // immediately; only still-surfaceable text edits await idle publication.
+        // withdrawn claim or a replicated LWW loser in the search index.
+        // Local, still-surfaceable text edits alone await idle publication.
         let withdrawn_claim = decoded_claim_body
             .as_ref()
             .is_some_and(|body| !crate::claim::claim_surfaceable(body));
         let should_deindex_stale_text = body_changed
             && (withdrawn_claim
-                || ((replicated || !has_later_covering_text_op)
+                || replicated
+                || (!has_later_covering_text_op
                     && !crate::vault::entity_revision::storage_manages_text(
                         store, wtxn, &id, data,
                     )?));

@@ -3447,7 +3447,7 @@ fn forward_remat_refuses_replicated_message_bodies_before_any_mutation() -> Resu
 }
 
 #[test]
-fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() -> Result<()> {
+fn replicated_lww_overwrite_removes_loser_bm25f_before_idle() -> Result<()> {
     use crate::memory::ReadMode;
     let (_dir, vault) = test_vault();
     // Vault::open seeds the bootstrap skills with staged revisions; publish
@@ -3485,13 +3485,16 @@ fn replicated_lww_overwrite_keeps_indexed_body_until_idle_removes_loser_bm25f() 
             .apply(txn)?;
         let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();
         assert_eq!(&row[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"winner");
+        assert!(vault.store.text_forward.get(txn, id.as_bytes())?.is_none());
+        for item in vault.store.text_postings.iter(txn)? {
+            let (_term, posting) = item?;
+            assert!(!posting.starts_with(id.as_bytes()));
+        }
         Ok(())
     })?;
-    // A replicated overwrite advances Live, not the published search frontier.
-    // Retained hits must still hydrate the exact body that owned those postings.
-    let hits = vault.search_text("loseruniquetoken", 10)?;
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].id, id);
+    // The old indexed frontier is still readable, but a replicated LWW loser
+    // cannot be retrieved by its postings while publication awaits idle.
+    assert!(vault.search_text("loseruniquetoken", 10)?.is_empty());
     let indexed = vault.get_raw_with_mode(&id, ReadMode::Indexed)?.unwrap();
     assert_eq!(&indexed[crate::batch::ENTITY_METADATA_HEADER_LEN..], b"old");
     let live = vault.get_raw_with_mode(&id, ReadMode::Live)?.unwrap();
