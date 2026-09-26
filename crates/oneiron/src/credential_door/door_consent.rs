@@ -17,6 +17,19 @@ impl DoorCredential {
     ) -> DoorResult<ComposedEffect> {
         let class = super::verb_class::class_for_verb(verb)
             .ok_or(CredentialDoorError::AuthorityRejected)?;
+        self.ask_effect_for_class(class, verb, record, channel)
+    }
+
+    fn ask_effect_for_class(
+        &self,
+        class: &str,
+        verb: &str,
+        record: &str,
+        channel: &str,
+    ) -> DoorResult<ComposedEffect> {
+        if !super::verb_class::contains(class, verb) {
+            return Err(CredentialDoorError::AuthorityRejected);
+        }
         let bound = GrantBound::action(
             ActorBound::new(self.holder_ref())?,
             ActionClass::new(class)?,
@@ -56,11 +69,18 @@ impl CredentialDoorService {
             Err(CredentialDoorError::UnauthorizedPrincipal {
                 reason: DoorDenyReason::VerbNotInSlip,
             }) => {
-                let effect = credential.ask_effect(verb, record, channel)?;
                 let grants = self.vault().active_standing_consent_grants_in_txn(txn)?;
-                if evaluate_consent(&effect, None, &grants) == ConsentDecision::Auto {
-                    return Ok(());
+                // A standing grant may cover a wider registered class than the
+                // least-privilege class offered by this ASK. Resolve every
+                // matching class at check time; never trust a minted verb list.
+                for class in super::verb_class::classes_for_verb(verb) {
+                    let candidate =
+                        credential.ask_effect_for_class(class, verb, record, channel)?;
+                    if evaluate_consent(&candidate, None, &grants) == ConsentDecision::Auto {
+                        return Ok(());
+                    }
                 }
+                let effect = credential.ask_effect(verb, record, channel)?;
                 let authorization =
                     approve_once_authorization_in_txn(&self.vault().store, txn, &effect.digest())?;
                 if evaluate_consent(&effect, authorization.as_ref(), &grants)

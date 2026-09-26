@@ -12136,9 +12136,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/verb_class.rs",
-     "purpose": "Scope presets for the credential door's operations",
+     "purpose": "Registered verb classes for the credential door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {

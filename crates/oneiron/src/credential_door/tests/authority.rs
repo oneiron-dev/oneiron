@@ -9,6 +9,11 @@ fn every_preset_meet_narrows_and_cannot_restore_verbs() {
     for name in names {
         let preset = super::super::verb_class::preset(name).unwrap();
         assert!(preset.is_narrowing_of(&crate::federation::Scope::top()));
+        assert_eq!(
+            preset.verbs,
+            crate::federation::ScopeAxis::Some([name.to_owned()].into()),
+            "the federation Scope lattice carries class names, not verb snapshots"
+        );
         for other in names {
             let other = super::super::verb_class::preset(other).unwrap();
             let mut slip = root.clone();

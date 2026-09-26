@@ -70,16 +70,16 @@ impl DoorCredential {
         }
     }
 
-    /// Verbs the fixture grants.
+    /// Class names the fixture grants (not expanded verb names).
     #[cfg(test)]
-    pub(super) fn with_verbs<I, S>(mut self, verbs: I) -> Self
+    pub(super) fn with_classes<I, S>(mut self, classes: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
         if let DoorGrant::Witnessed(scope) = &mut self.grant {
             scope.verbs =
-                crate::federation::ScopeAxis::Some(verbs.into_iter().map(Into::into).collect());
+                crate::federation::ScopeAxis::Some(classes.into_iter().map(Into::into).collect());
         }
         self
     }
@@ -116,7 +116,7 @@ impl DoorCredential {
         &self.holder_ref
     }
 
-    /// The ONE evaluator call: `verb ∈ slip ∧ record ⊑ slip ∧ record ⊑ channel`,
+    /// The ONE evaluator call: `verb ∈ class(slip) ∧ record ⊑ slip ∧ record ⊑ channel`,
     /// under the slip's lifetime and revocation state.
     ///
     /// Nothing about the caller's network position enters here. That is the
@@ -135,6 +135,12 @@ impl DoorCredential {
         now: VaultInstant,
     ) -> DoorResult<()> {
         self.reject_floor_naming()?;
+        if names_a_floor(verb) {
+            return Err(CredentialDoorError::FloorNamed {
+                site: "verb",
+                name: verb.to_owned(),
+            });
+        }
         let deny = |reason| Err(CredentialDoorError::UnauthorizedPrincipal { reason });
 
         if self.slip_id.is_empty() || self.holder_ref.is_empty() {
@@ -150,8 +156,15 @@ impl DoorCredential {
         if channel.is_empty() || !self.channels.contains(channel) {
             return deny(DoorDenyReason::ChannelOutsideSlip);
         }
-        let admits = super::verb_class::class_for_verb(verb).is_some()
-            && self.scope().verbs.contains(&verb.to_owned());
+        // The Scope verb axis holds class names. Resolve each class against the
+        // live registry instead of comparing a minted list of verb strings.
+        let admits = match &self.scope().verbs {
+            crate::federation::ScopeAxis::Bottom => false,
+            crate::federation::ScopeAxis::All => super::verb_class::class_for_verb(verb).is_some(),
+            crate::federation::ScopeAxis::Some(classes) => classes
+                .iter()
+                .any(|class| super::verb_class::contains(class, verb)),
+        };
         if !admits {
             return deny(DoorDenyReason::VerbNotInSlip);
         }
@@ -166,8 +179,8 @@ impl DoorCredential {
         }
     }
 
-    /// A slip may not reach a floor either. Verbs, records and channels are
-    /// lattice tokens; floors are not in the lattice.
+    /// A slip may not reach a floor either. Classes, records and channels
+    /// are lattice tokens; floors are not in the lattice.
     fn reject_floor_naming(&self) -> DoorResult<()> {
         let reject = |token: &String| {
             if names_a_floor(token) {
@@ -179,9 +192,9 @@ impl DoorCredential {
                 Ok(())
             }
         };
-        if let crate::federation::ScopeAxis::Some(verbs) = &self.scope().verbs {
-            for verb in verbs {
-                reject(verb)?;
+        if let crate::federation::ScopeAxis::Some(classes) = &self.scope().verbs {
+            for class in classes {
+                reject(class)?;
             }
         }
         for token in self.records.iter().chain(self.channels.iter()) {
