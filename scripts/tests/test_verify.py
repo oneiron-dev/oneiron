@@ -47,13 +47,13 @@ print("PASS error::tests::fixture")
 GATES = [
     ("codemap", ["scripts/codemap/check.sh"]),
     ("fmt", ["cargo", "fmt", "--check"]),
-    ("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
-    ("clippy-featureless", ["cargo", "clippy", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
-    ("clippy-server", ["cargo", "clippy", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
-    ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--workspace", "--all-features", "--no-deps"]),
-    ("test", ["cargo", "nextest", "run", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full"]),
-    ("test-featureless", ["cargo", "test", "-p", "oneiron", "--lib", "--no-default-features"]),
-    ("doctest", ["cargo", "test", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
+    ("clippy", ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"]),
+    ("clippy-featureless", ["cargo", "clippy", "--locked", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
+    ("clippy-server", ["cargo", "clippy", "--locked", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
+    ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--locked", "--workspace", "--all-features", "--no-deps"]),
+    ("test", ["cargo", "nextest", "run", "--locked", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full"]),
+    ("test-featureless", ["cargo", "test", "--locked", "-p", "oneiron", "--lib", "--no-default-features"]),
+    ("doctest", ["cargo", "test", "--locked", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
 ]
 # The recorder sees Cargo, not env's options/assignments or the fixture's path.
 COMMANDS = [["codemap"], *[
@@ -275,9 +275,9 @@ class VerifyCase(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual(self.commands(), [
             COMMAND_BY_STAGE["fmt"],
-            COMMAND_BY_STAGE["clippy"],
+            ["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"],
             ["cargo", "nextest", "run", "--workspace", "--all-features", "--profile", "full"],
-            COMMAND_BY_STAGE["doctest"],
+            ["cargo", "test", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"],
             ["cargo", "doc", "--workspace", "--all-features", "--no-deps"],
             ["cargo", "nextest", "run", "-p", "oneiron", "--features", "sync,test-hooks", "--profile", "full"],
         ])
