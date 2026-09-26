@@ -21,6 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 1 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 1 | 0 |
+| [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 5 | 1 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 6 | 1 | 0 |
 | [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 4 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 1 | 0 |
@@ -285,6 +286,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `backend` | file | 1 | s | Model-local prompt configuration and host-owned HTTP transport |
 | `wire` | file | 1 | s | Buffered `/api/v1/images` request and response mapping |
+
+## oneiron-linear
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `egress` | file | 1 | s | Outbound mutation mapping; host door enforces policy and replay custody |
+| `http` | file | 1 | s | Bounded host-owned GraphQL transport; credentials never enter the engine |
+| `journal` | file | 1 | s | Host-owned durable operation-ID door |
+| `source` | file | 1 | s | Linear issue snapshots from the team-scoped cursor-paged GraphQL connection |
+| `tests` | file | 1 | — | — |
 
 ## oneiron-llm-anthropic
 

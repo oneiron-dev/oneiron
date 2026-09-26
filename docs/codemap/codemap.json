@@ -36920,6 +36920,131 @@
    "source_files": 3,
    "test_files": 1
   },
+  "oneiron-linear": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearHostEgress",
+      "LinearOutboundDoor"
+     ],
+     "path": "src/egress.rs",
+     "purpose": "Outbound mutation mapping; host door enforces policy and replay custody",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQlCall",
+      "GraphQlExecutor",
+      "HttpLinearClient"
+     ],
+     "path": "src/http.rs",
+     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "JournaledLinearOutboundDoor",
+      "LinearOutboundAuthorization"
+     ],
+     "path": "src/journal.rs",
+     "purpose": "Host-owned durable operation-ID door",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearHostChangeSource",
+      "LinearTrackerConfig"
+     ],
+     "path": "src/source.rs",
+     "purpose": "Linear issue snapshots from the team-scoped cursor-paged GraphQL connection",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "egress": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Outbound mutation mapping; host door enforces policy and replay custody"
+    },
+    "http": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine"
+    },
+    "journal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host-owned durable operation-ID door"
+    },
+    "source": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Linear issue snapshots from the team-scoped cursor-paged GraphQL connection"
+    },
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
+   "source_files": 5,
+   "test_files": 1
+  },
   "oneiron-llm-anthropic": {
    "files": [
     {
