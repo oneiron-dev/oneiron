@@ -93,7 +93,7 @@ mod tests {
             purpose: super::super::CallPurpose::Consolidation,
             class: super::super::CallClass::BestEffort,
             tier: super::super::TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: super::super::ModelTierRef("background".into()),

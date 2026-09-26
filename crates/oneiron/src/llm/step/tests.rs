@@ -109,7 +109,7 @@ fn request_fixture() -> LlmRequest {
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("default".to_owned()),

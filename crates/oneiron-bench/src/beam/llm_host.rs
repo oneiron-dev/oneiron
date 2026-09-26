@@ -268,7 +268,7 @@ impl ModelSession {
                 purpose,
                 class: CallClass::BestEffort,
                 tier: TierPrecedence {
-                    per_call: None,
+                    per_seat: None,
                     vault_policy: None,
                     purpose_default: None,
                     global_default: ModelTierRef("eval-pinned".into()),

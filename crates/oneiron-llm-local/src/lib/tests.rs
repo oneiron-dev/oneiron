@@ -259,7 +259,7 @@ fn sample_request() -> LlmRequest {
                 },
             },
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: Some(ModelTierRef("local".to_owned())),
                 purpose_default: Some(ModelTierRef("tiny".to_owned())),
                 global_default: ModelTierRef("standard".to_owned()),
