@@ -111,11 +111,11 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_full_tier_nextest_commands_are_not_replaced_by_cache_setup(self):
         self.assertIn(
-            "run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
+            "run: cargo nextest run --workspace --exclude oneiron-bench --all-features --profile full --no-fail-fast",
             self.text,
         )
         self.assertIn(
-            "run cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
+            "run cargo nextest run --workspace --all-features --profile full --no-fail-fast",
             self.runner,
         )
 
@@ -145,6 +145,10 @@ class CiWorkflowTests(unittest.TestCase):
             self.assertIn("      - name: sccache 0.15.0 (GitHub Actions shared cache)", lines)
         self.assertNotIn("CARGO_INCREMENTAL: '1'", self.text)
         self.assertNotIn("CARGO_INCREMENTAL=1", self.runner)
+
+    def test_scoped_napi_change_runs_its_hostless_rust_tests(self):
+        self.assertIn('case "$p" in oneiron) ;; *) others+=(-p "$p") ;; esac', self.runner)
+        self.assertIn('cargo nextest run "${others[@]}" --all-features', self.runner)
 
     def test_scoped_runner_wraps_test_builds_and_rustdoc_not_clippy(self):
         self.assertIn('if [ "$mode" = test ] || [ "$mode" = featureless ]; then', self.runner)

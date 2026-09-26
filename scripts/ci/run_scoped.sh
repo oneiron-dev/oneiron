@@ -13,10 +13,10 @@ oneiron=${SCOPE_ONEIRON:-false}
 modules=${SCOPE_MODULES:-ALL}
 it=${SCOPE_IT:-false}
 
-# Packages other than the core crate, and the napi addon, which needs a Node host to test.
+# Packages other than the core crate; the napi crate has hostless Rust tests.
 others=()
 for p in $packages; do
-  case "$p" in oneiron | oneiron-napi) ;; *) others+=(-p "$p") ;; esac
+  case "$p" in oneiron) ;; *) others+=(-p "$p") ;; esac
 done
 # nextest filter for the touched top-level modules of the core crate.
 filter=""
@@ -50,7 +50,7 @@ clippy)
   ;;
 test)
   if [ "$full" = true ]; then
-    run cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
+    run cargo nextest run --workspace --all-features --profile full --no-fail-fast
     run cargo test --doc --workspace --exclude oneiron-bench --all-features
     exit 0
   fi

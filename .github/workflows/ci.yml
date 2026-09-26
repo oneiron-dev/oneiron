@@ -197,7 +197,7 @@ jobs:
       - name: Workspace tests (nextest, full tier, macOS recipe)
         env:
           RUSTC_WRAPPER: sccache
-        run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast
+        run: cargo nextest run --workspace --exclude oneiron-bench --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
         env:
           RUSTC_WRAPPER: sccache
