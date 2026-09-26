@@ -81,6 +81,11 @@ pub(super) fn settle_in(
     let mut unmet_sources = BTreeSet::new();
     let (coverage, decision) = reduce(&group.effective, &who, &mut evidence, &mut unmet_sources)?;
     let stale = is_stale(vault, txn, &group)?;
+    if stale {
+        for entry in &mut evidence {
+            entry.ladder_changed = None;
+        }
+    }
     let deadline = group.effective.until.ok_or_else(ask_record::invalid)?;
     let mut all_responded = true;
     for member in &group.members {
@@ -528,6 +533,9 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
     let stale = settlement.reason == TaskAskSettlementReason::Stale;
     if stale {
         decision = TaskAskDecision::Unknown;
+        for entry in &mut evidence {
+            entry.ladder_changed = None;
+        }
     }
     if coverage != result.coverage
         || decision != result.decision

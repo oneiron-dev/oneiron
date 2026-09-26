@@ -15,7 +15,7 @@ test("generated task and room projections keep the caller step and settlement da
   const result: TaskAskResult = {
     coverage: { met: true, required: 1, responded: [actor], unknown: [], unmet_people: [] },
     decision: { first: answer }, fallback: null,
-    evidence: [{ answer, word, source: "human", person_ref: actor, order: 1, reason: "counted" }],
+    evidence: [{ answer, word, source: "human", person_ref: actor, order: 1, reason: "counted", ladder_changed: null }],
     settlement: { group_ref: group, reference: "66".repeat(16), revision: 1, at: 2, cutoff_order: 1,
       reason: "first_word", requested: spec, effective: { ...spec, default: "ask_me", need: { count: 1, of: "any" }, provisional: "inform", on_disagree: { branch: "hold", surface: "card" }, remind: [] },
       base_policy_version: 1, electorate: [actor], question_digest: Array(32).fill(0), unmet_sources: [], outcome_answer_ref: null },

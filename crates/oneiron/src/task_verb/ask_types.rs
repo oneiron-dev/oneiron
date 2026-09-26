@@ -432,6 +432,11 @@ impl TaskAskSpec {
                 effective.remind = Some(class.remind.clone());
             }
         }
+        if effective.what.ladder_answer.is_some() && effective.what.class_key.is_none() {
+            return Err(MemoryError::bad_request(
+                "comparable ask requires a question class",
+            ));
+        }
         if effective.until.is_none_or(|until| until <= now) {
             return Err(MemoryError::bad_request(
                 "ask needs a future deadline or a class deadline policy",

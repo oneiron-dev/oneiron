@@ -87,6 +87,9 @@ impl Memory<'_> {
                 let result =
                     super::ask_settlement::read_result(self.vault(), txn, handle.group_ref)?
                         .ok_or_else(|| MemoryError::bad_request("ask has not settled"))?;
+                if result.settlement.reason == super::TaskAskSettlementReason::Stale {
+                    continue;
+                }
                 for entry in result.evidence {
                     let word = entry.answer.word_ref;
                     let marker = [key.as_slice(), b":", word.as_bytes().as_slice()].concat();
