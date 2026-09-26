@@ -635,3 +635,22 @@ fn longest_valid_pack_ref_and_long_skill_folder_install_and_activate() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn agent_source_cannot_be_installed_as_a_runtime_pack() -> Result<()> {
+    struct UnexpectedQualification;
+    impl PackQualifier for UnexpectedQualification {
+        fn qualify(&self, _: &PackSource) -> Result<PackQualification> {
+            panic!("an inert agent source cannot reach the host qualifier");
+        }
+    }
+    let source = PackSource::from_files(super::tests::agent_files()?)?;
+    let (_dir, vault, _owner, reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let err = vault
+        .prepare_pack_install(id, &reference, &publisher, &UnexpectedQualification)
+        .expect_err("agent sources are not runtime installations");
+    assert!(matches!(err, crate::Error::InvalidConfig(_)));
+    Ok(())
+}
