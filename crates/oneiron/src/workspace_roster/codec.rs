@@ -596,13 +596,14 @@ pub(super) fn verify_mailbox_revision(
         return Ok(None);
     };
     let owner = require_mailbox_owner(intent, owner)?;
+    let now = vault.store.authorization_now()?;
     let revision = vault.store.env.info().last_txn_id;
     let txn = vault.store.env.read_txn()?;
     let identity = read_onboarding_mailbox_in_txn(vault, &txn, intent, mailbox)?
         .ok_or(Error::EntityNotFound)?;
     require_active_mailbox(mailbox, identity.state)?;
     drop(txn);
-    vault.verify_channel_identity_autonomy(&mailbox.autonomy, owner)?;
+    vault.verify_channel_identity_autonomy_at(&mailbox.autonomy, owner, now)?;
     Ok(Some(revision))
 }
 

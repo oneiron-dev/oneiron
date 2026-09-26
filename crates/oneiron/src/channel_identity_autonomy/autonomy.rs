@@ -310,6 +310,20 @@ impl Vault {
         self.verify_autonomy_in_txn(&txn, desired, owner, now)
     }
 
+    /// Check one mailbox proof at an already persisted authorization time.
+    /// Workspace publication captures its revision after that clock write and
+    /// must not invalidate its own fence with a second clock observation.
+    pub(crate) fn verify_channel_identity_autonomy_at(
+        &self,
+        desired: &ChannelIdentityAutonomyRequest,
+        owner: &AuthenticatedOwner,
+        now: u64,
+    ) -> Result<ChannelIdentityAutonomyState> {
+        self.autonomy_owner(owner)?;
+        let txn = self.store.env.read_txn()?;
+        self.verify_autonomy_in_txn(&txn, desired, owner, now)
+    }
+
     fn verify_autonomy_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
