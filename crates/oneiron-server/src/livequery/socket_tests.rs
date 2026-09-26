@@ -275,6 +275,59 @@ async fn barrier(socket: &mut Socket) {
 }
 
 #[tokio::test]
+async fn world_subscription_snapshots_eose_live_data_and_unsubscribe_ceases_delivery() {
+    let f = fixture().await;
+    let mut socket = connect(&f, ACTOR).await;
+    open(&mut socket, 7, WORLD, initial_cursor()).await;
+    assert_eq!(app(&mut socket, TAG_SUB).await["kind"], "gap");
+    // The collector returns the snapshot only on the actual EOSE frame.
+    let mut collector = test_wire::Collector::default();
+    let snapshot = loop {
+        let Message::Binary(frame) = next(&mut socket).await else {
+            panic!("expected subscription snapshot and EOSE");
+        };
+        let envelope: wire::Envelope<serde::de::IgnoredAny> = wire::decode(&frame[1..]).unwrap();
+        if envelope.kind == "sub.eose" {
+            let snapshot = collector.feed(&frame).expect("EOSE completes snapshot");
+            break snapshot;
+        }
+        assert_eq!(envelope.kind, "sub.snapshot");
+        assert!(collector.feed(&frame).is_none());
+    };
+    assert_eq!(snapshot["kind"], "snapshot");
+    assert_eq!(snapshot["result"], 0);
+    assert_eq!(snapshot["subscriptionId"], 7);
+    open(&mut socket, 8, WORLD_B, initial_cursor()).await;
+    assert_eq!(app(&mut socket, TAG_SUB).await["kind"], "gap");
+    let other = app(&mut socket, TAG_SUB).await;
+    assert_eq!(other["subscriptionId"], 8);
+    assert_eq!(other["kind"], "snapshot");
+    barrier(&mut socket).await;
+    write(&f, WORLD, 1).await;
+    let delta = app(&mut socket, TAG_SUB).await;
+    assert_eq!(delta["kind"], "data");
+    assert_eq!(delta["subscriptionId"], 7);
+    assert_eq!(delta["result"], 1);
+    send(
+        &mut socket,
+        TAG_SUB,
+        json!({"method":"sub.close","subscriptionId":7}),
+    )
+    .await;
+    barrier(&mut socket).await;
+    write(&f, WORLD_B, 2).await;
+    let remaining = app(&mut socket, TAG_SUB).await;
+    assert_eq!(remaining["subscriptionId"], 8);
+    assert_eq!(remaining["result"], 2);
+    barrier(&mut socket).await;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), socket.next())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn socket_drop_rebind_replays_all_subs_without_rpc_or_acked_duplicates() {
     let f = fixture().await;
     let mut socket = connect(&f, ACTOR).await;
