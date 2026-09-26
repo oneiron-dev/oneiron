@@ -864,14 +864,14 @@ pub(super) fn seed_disclosure_scope(
         .expect("set disclosure scope");
 }
 
-pub(super) fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
+fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
     use oneiron::federation::{Scope, ScopeAxis, ScopeId};
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some([ScopeId(oneiron::claim::base_world_id())].into());
     scope
 }
 
-pub(super) fn seed_disclosure_claim_in_world(
+fn seed_disclosure_claim_in_world(
     server: &SyncServer,
     subject: oneiron::EntityId,
     text: &str,
@@ -887,6 +887,12 @@ pub(super) fn seed_disclosure_claim_in_world(
         oneiron::ClaimLifecycleStatus::Active,
     );
     claim.world = Some(world);
+    // Tier B is required here: otherwise the tier check rejects this claim
+    // before the test can exercise the contact's world clearance.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("private"),
+    )]));
     server
         .vault
         .put_claim(
