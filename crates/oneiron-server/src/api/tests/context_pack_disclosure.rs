@@ -415,11 +415,11 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         "kenji@example.com",
     );
     let party = seed_text_turn(&server, "hanami party planning needle17");
-    let diary = seed_text_turn(&server, "private diary entry needle17");
+    let diary = seed_text_claim(&server, party, "private diary entry needle17");
     seed_disclosure_scope(&server, contact_principal, vec![party]);
 
     // Scoped bearer whose principal IS the contact row; no block (N13 shape
-    // with a real scope). AbsenceClamp admits only the allowlisted party.
+    // with a real scope). AbsenceClamp admits the TURN band, not the CLAIM.
     let request = json!({ "query": "needle17", "limit": 10 });
     let (status, body) = route_json(
         server,
@@ -580,7 +580,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let diary = seed_text_turn(&server, "private diary needle21");
+    let diary = seed_text_claim(&server, party, "private diary needle21");
     seed_disclosure_scope(&server, contact_id, vec![party]);
 
     let clean = json!({
@@ -590,7 +590,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             "third_parties": [{ "contact_ref": contact_id.to_hex() }]
         }
     });
-    // No request field can name scope entities; smuggled members fall to
+    // No request field can widen the stored band ceiling; smuggled members fall to
     // serde's ignored-unknown-fields floor and change nothing.
     let smuggled = json!({
         "query": "needle21",
