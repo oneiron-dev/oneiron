@@ -18760,7 +18760,7 @@
      "purpose": "Regen request and outcome decision path over behavior fingerprints",
      "surface": {
       "enum": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 3,
       "trait": 1
      }
@@ -18835,6 +18835,20 @@
      "surface": {
       "fn": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensIntentRecord"
+     ],
+     "path": "src/lens/intent.rs",
+     "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -18946,7 +18960,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -18995,6 +19009,14 @@
      "notable": [],
      "path": "src/lens/tests/instrument.rs",
      "purpose": "End-to-end Instrument safety and WorldSet read confinement",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/intent.rs",
+     "purpose": "Vault intent survives reload and drives the upgrade behavior-diff gate",
      "surface": {}
     },
     {
@@ -34315,8 +34337,8 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 37,
-     "impl_vault": false,
+     "files": 39,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
@@ -34898,8 +34920,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

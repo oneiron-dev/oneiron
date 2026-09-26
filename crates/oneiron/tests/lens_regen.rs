@@ -36,7 +36,7 @@ const TIMELINE_FIXTURE: &str = include_str!("fixtures/lens_golden/timeline.json"
 /// The case `CandidateFlavor::DropCase` omits from the candidate corpus.
 const DROPPED_CASE_ID: &str = "empty-state";
 
-/// The regenerator's own input. It never crosses the `regenerate_lens` API.
+/// Intent supplied by the vault or the caller to the regeneration request.
 const BASELINE_PROMPT: &str = "summarize the open claims";
 
 // The result-set node declares all four of these handles in *every* flavor, so the
@@ -452,16 +452,14 @@ fn render_last_good(fixtures: &[FixtureVault]) -> LensEvaluatedRevision {
 
 struct FixtureLensRegenerator {
     fixtures: Vec<FixtureVault>,
-    summary_prompt: String,
     flavor: CandidateFlavor,
     calls: Cell<usize>,
 }
 
 impl FixtureLensRegenerator {
-    fn new(flavor: CandidateFlavor, summary_prompt: &str) -> Self {
+    fn new(flavor: CandidateFlavor) -> Self {
         Self {
             fixtures: corpus(),
-            summary_prompt: summary_prompt.to_owned(),
             flavor,
             calls: Cell::new(0),
         }
@@ -486,10 +484,10 @@ impl LensRegenerator for FixtureLensRegenerator {
             return Err(failure);
         }
 
-        // The summary prompt is the regenerator's own input. Only its trimmed form
+        // The request supplies the saved intent. Only its trimmed form
         // reaches the candidate body, and it lands as chrome text — which the
         // fingerprint ignores — so a whitespace-only prompt edit cannot move behavior.
-        let heading = self.summary_prompt.trim();
+        let heading = request.intent_prompt().trim();
         let stamp = if self.flavor == CandidateFlavor::WrongVersionStamp {
             off_pair_stamp()
         } else {
@@ -542,11 +540,11 @@ fn run(flavor: CandidateFlavor) -> LensRegenOutcome {
 }
 
 fn run_with_prompt(flavor: CandidateFlavor, prompt: &str) -> LensRegenOutcome {
-    let regenerator = FixtureLensRegenerator::new(flavor, prompt);
+    let regenerator = FixtureLensRegenerator::new(flavor);
     let last_good = regenerator.last_good();
     regenerate_lens(
         &regenerator,
-        &LensRegenRequest::new(LensVersionStamp::current()),
+        &LensRegenRequest::new(LensVersionStamp::current(), prompt),
         last_good,
     )
 }
@@ -671,10 +669,10 @@ fn whitespace_only_summary_prompt_change_with_identical_behavior_auto_adopts() {
         baseline.behavior(),
         "the fingerprints compare equal"
     );
-    // The request that crossed the API carries only the target stamp: there is no
-    // prompt, source, or hash field to inspect on it.
-    let request = LensRegenRequest::new(LensVersionStamp::current());
+    // The request carries the intent supplied for this specific regeneration.
+    let request = LensRegenRequest::new(LensVersionStamp::current(), BASELINE_PROMPT);
     assert_eq!(request.target_version(), LensVersionStamp::current());
+    assert_eq!(request.intent_prompt(), BASELINE_PROMPT);
 }
 
 // ── 4-5. Human-stamp lanes ───────────────────────────────────────────────────
@@ -1020,12 +1018,11 @@ fn corpus_case_drift_rolls_back_instead_of_adopting() {
 
 #[test]
 fn candidate_with_wrong_version_stamp_rolls_back() {
-    let regenerator =
-        FixtureLensRegenerator::new(CandidateFlavor::WrongVersionStamp, BASELINE_PROMPT);
+    let regenerator = FixtureLensRegenerator::new(CandidateFlavor::WrongVersionStamp);
     let last_good = regenerator.last_good();
     let outcome = regenerate_lens(
         &regenerator,
-        &LensRegenRequest::new(LensVersionStamp::current()),
+        &LensRegenRequest::new(LensVersionStamp::current(), BASELINE_PROMPT),
         last_good,
     );
 
@@ -1136,11 +1133,11 @@ fn all_outcomes_have_a_nonblank_active_revision() {
 
 #[test]
 fn stale_targeted_request_rolls_back() {
-    let regenerator = FixtureLensRegenerator::new(CandidateFlavor::SameBehavior, BASELINE_PROMPT);
+    let regenerator = FixtureLensRegenerator::new(CandidateFlavor::SameBehavior);
     let last_good = regenerator.last_good();
     let outcome = regenerate_lens(
         &regenerator,
-        &LensRegenRequest::new(stale_target_stamp()),
+        &LensRegenRequest::new(stale_target_stamp(), BASELINE_PROMPT),
         last_good,
     );
 
