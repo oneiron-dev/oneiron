@@ -154,7 +154,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_tool_endpoints.rs` | test | L | — | — | Tool-first vs /mcp listings, setup keyframe, execute_code retirement, narrowed admission, arg gating |
 | `src/api/tests/mcp_write_guards.rs` | test | L | — | — | Legacy MCP adapter read/edit/ask verbs, actor-scoped idempotency, spoof rejection, stale-edit/attest… |
 | `src/api/tests/memory_reason_repairs.rs` | test | m | — | — | — |
-| `src/api/tests/mod.rs` | test | L | 64 crate-vis | — | — |
+| `src/api/tests/mod.rs` | test | L | 65 crate-vis | — | — |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/reactive.rs` | test | m | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
 | `src/api/tests/retrieval_depth_quality.rs` | test | m | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
@@ -305,7 +305,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/mod.rs` | src | s | 1 re-export · 2 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/tests.rs` | test | L | 1 crate-vis | — | — |
 | `src/server/vault_binding.rs` | src | s | 4 crate-vis | — | Hosted API and socket binding to one local vault and one registered device key |
-| `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
+| `src/server/windows.rs` | src | s | 8 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
 | `src/test_credentials.rs` | src | s | 8 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |

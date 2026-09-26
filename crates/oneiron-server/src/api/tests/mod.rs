@@ -972,6 +972,16 @@ pub(super) fn reactive_window_update_frame(window_key: &str) -> Vec<u8> {
     reactive_window_frame(window_key, crate::protocol::window_sub_tags::UPDATE)
 }
 
+pub(super) fn reactive_doc_update_frame(id: oneiron::EntityId) -> Vec<u8> {
+    oneiron::sync::transport::encode_document(
+        id,
+        oneiron::sync::transport::document_sub_tags::UPDATE,
+        b"delta",
+    )
+    .into_result()
+    .expect("document update frame")
+}
+
 /// Every frame shape that reaches the broadcast channel yet must never re-run
 /// an LMDB query: presence/ephemeral state, sync negotiation, lease traffic,
 /// selector requests, malformed bytes, and tags this server does not know
