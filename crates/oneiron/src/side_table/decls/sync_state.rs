@@ -11,6 +11,8 @@ side_tables! {
     /// A control-plane API key record (HMAC-SHA256 digest, scopes, expiry, revoked flag) keyed by its
     /// own digest. Key: hex64.
     AUTH_CONTROL_KEY: SyncState b"auth:control-key:v1:" Named;
+    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
+    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// Marker row (empty value) recording that a legacy 32-hex bearer-token identifier has been
     /// revoked. Key: hex32.
     AUTH_REVOKED_TOKEN_JTI: SyncState b"auth:revoked-token-jti:" Raw;

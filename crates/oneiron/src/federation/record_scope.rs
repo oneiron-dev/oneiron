@@ -166,13 +166,16 @@ pub(crate) fn restamp_document_pointer(
     let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
         return Ok(());
     };
-    let bytes = serde_json::to_vec(&Stamp {
-        version: 1,
-        digest: digest(kind, pointer),
-        scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 1,
+            digest: digest(kind, pointer),
+            scope,
+        },
+    )?;
     Ok(())
 }
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
