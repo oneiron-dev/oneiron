@@ -39,6 +39,9 @@ impl HostSlipIssuer {
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
     }
+    pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
+        self.signing.sign(transcript).to_bytes()
+    }
     pub(super) fn secret(&self) -> &[u8] {
         &self.secret
     }

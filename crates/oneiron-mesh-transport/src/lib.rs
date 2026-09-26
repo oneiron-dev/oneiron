@@ -1,13 +1,14 @@
 //! Vault-scoped mesh transport. The roster supplies addresses; a separate authority door
 //! must authorize each key and ALPN. No transport or relay is itself a trust root.
 
-use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc};
 
-use oneiron::{Vault, entity_id::EntityId, registry::ENTITY_TYPE_MACHINE};
-use serde::{Deserialize, Serialize};
+pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
+use oneiron::{ErrorKind, Vault, entity_id::EntityId};
 
 #[cfg(feature = "iroh")]
 pub mod iroh_transport;
+pub mod transport_key;
 
 /// Protocol-neutral identifier of a MACHINE entity in this vault.
 pub type MachineId = EntityId;
@@ -29,43 +30,13 @@ impl std::fmt::Display for MeshError {
 }
 impl std::error::Error for MeshError {}
 
-/// Network hints stored on a MACHINE. These bytes are never authorization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MachineAddress {
-    pub endpoint_key: [u8; 32],
-    pub direct_addrs: Vec<SocketAddr>,
-    /// Optional home relay, usable only if it is in this endpoint's private relay map.
-    pub relay_url: Option<String>,
-}
-
-/// Explicitly tagged address-only MACHINE envelope. Other existing MACHINE
-/// actors (calendar, connectors, etc.) are not transport roster members.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MachineAddressEnvelope {
-    pub domain: String,
-    pub version: u8,
-    pub address: MachineAddress,
-}
-impl MachineAddressEnvelope {
-    pub const DOMAIN: &'static str = "oneiron/mesh-machine/v1";
-    pub fn new(address: MachineAddress) -> Self {
-        Self {
-            domain: Self::DOMAIN.into(),
-            version: 1,
-            address,
-        }
-    }
-}
-
 /// Read-only, live source of vault MACHINE rows. Missing/deleted rows fail closed.
 pub trait MachineRoster: Send + Sync + std::fmt::Debug {
-    fn by_machine(&self, machine: MachineId) -> Result<Option<MachineAddress>, MeshError>;
+    fn by_machine(&self, machine: MachineId) -> Result<Option<MeshMachineAddress>, MeshError>;
     fn by_endpoint(
         &self,
         endpoint_key: [u8; 32],
-    ) -> Result<Option<(MachineId, MachineAddress)>, MeshError>;
+    ) -> Result<Option<(MachineId, MeshMachineAddress)>, MeshError>;
 }
 
 /// Fetches only MACHINE entities from the supplied vault, never DNS or a relay directory.
@@ -78,77 +49,40 @@ impl std::fmt::Debug for VaultMachineRoster {
     }
 }
 
-impl VaultMachineRoster {
-    fn read(&self, id: MachineId) -> Result<Option<MachineAddress>, MeshError> {
-        // `get_raw` reads type and body from ONE vault snapshot. Separate
-        // `get_entity_type` and `get` transactions could straddle a rewrite.
-        // The engine's current EntityMetadataHeader is 25 bytes; the typed
-        // single-snapshot read door belongs with the MACHINE grant cut.
-        const RAW_BODY_OFFSET: usize = 25;
-        let Some(raw) = self
-            .0
-            .get_raw(&id)
-            .map_err(|e| MeshError::Io(e.to_string()))?
-        else {
-            return Ok(None);
-        };
-        if raw.first() != Some(&ENTITY_TYPE_MACHINE) {
-            return Ok(None);
-        }
-        let body = raw.get(RAW_BODY_OFFSET..).ok_or(MeshError::InvalidRoster)?;
-        // `get_raw` includes stored metadata; `get` additionally excludes an
-        // erased/stale body. A concurrent rewrite must not change the body we
-        // just type-checked. Grants are separately rechecked at admission.
-        if self
-            .0
-            .get(&id)
-            .map_err(|e| MeshError::Io(e.to_string()))?
-            .as_deref()
-            != Some(body)
-        {
-            return Ok(None);
-        }
-        let Ok(envelope) = rmp_serde::from_slice::<MachineAddressEnvelope>(body) else {
-            return Ok(None); // not one of this vault's versioned transport rows
-        };
-        if envelope.domain != MachineAddressEnvelope::DOMAIN || envelope.version != 1 {
-            return Ok(None);
-        }
-        if envelope.address.direct_addrs.len() > 32 {
-            return Err(MeshError::InvalidRoster);
-        }
-        Ok(Some(envelope.address))
+fn roster_error(error: oneiron::Error) -> MeshError {
+    if error.kind() == ErrorKind::InvalidAuthorityLogBody {
+        MeshError::InvalidRoster
+    } else {
+        MeshError::Io(error.to_string())
     }
 }
 impl MachineRoster for VaultMachineRoster {
-    fn by_machine(&self, machine: MachineId) -> Result<Option<MachineAddress>, MeshError> {
-        self.read(machine)
+    fn by_machine(&self, machine: MachineId) -> Result<Option<MeshMachineAddress>, MeshError> {
+        self.0.mesh_machine(machine).map_err(roster_error)
     }
     fn by_endpoint(
         &self,
         endpoint_key: [u8; 32],
-    ) -> Result<Option<(MachineId, MachineAddress)>, MeshError> {
-        // Bound hostile handshake work even when a vault has many non-transport MACHINE actors.
-        const MAX_MACHINE_ROWS: usize = 1024;
-        let ids = self
-            .0
-            .entities_by_type_page(ENTITY_TYPE_MACHINE, None, MAX_MACHINE_ROWS + 1)
-            .map_err(|e| MeshError::Io(e.to_string()))?;
-        if ids.len() > MAX_MACHINE_ROWS {
-            return Err(MeshError::InvalidRoster);
-        }
-        let mut found = None;
-        for id in ids {
-            if let Some(row) = self.read(id)?
-                && row.endpoint_key == endpoint_key
-            {
-                if found.is_some() {
-                    return Err(MeshError::InvalidRoster);
-                }
-                found = Some((id, row));
-            }
-        }
-        Ok(found)
+    ) -> Result<Option<(MachineId, MeshMachineAddress)>, MeshError> {
+        self.0
+            .mesh_machine_by_endpoint(endpoint_key)
+            .map_err(roster_error)
+    }
+}
+
+/// Production grant verifier. It never interprets a MACHINE address as authority.
+#[derive(Clone)]
+pub struct VaultMachineGrants(pub Arc<Vault>);
+impl std::fmt::Debug for VaultMachineGrants {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VaultMachineGrants")
+    }
+}
+impl MachineGrants for VaultMachineGrants {
+    fn permits(&self, machine: MachineId, key: [u8; 32], alpn: &[u8]) -> Result<bool, MeshError> {
+        self.0
+            .mesh_grant_permits(machine, key, alpn)
+            .map_err(|e| MeshError::Io(e.to_string()))
     }
 }
 
@@ -172,7 +106,11 @@ impl AcceptPolicy {
         }
         Ok(machine)
     }
-    pub fn outbound(&self, machine: MachineId, alpn: &[u8]) -> Result<MachineAddress, MeshError> {
+    pub fn outbound(
+        &self,
+        machine: MachineId,
+        alpn: &[u8],
+    ) -> Result<MeshMachineAddress, MeshError> {
         let row = self.roster.by_machine(machine)?.ok_or(MeshError::Refused)?;
         if !self.grants.permits(machine, row.endpoint_key, alpn)? {
             return Err(MeshError::Refused);
