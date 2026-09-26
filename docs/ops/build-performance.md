@@ -167,8 +167,10 @@ only to this command. It is not full verification, does not emit `VERIFY-OK`, an
 must not replace the mandatory shared-process libtest lane.
 
 CI is scoped (owner ruling 2026-09-26). A PR or main push runs
-`scripts/ci/ci_scope.py` on its diff: `Checks` lints only the touched packages,
-`Test` runs nextest for the touched packages and, for `oneiron`, the lib tests of
+`scripts/ci/ci_scope.py` on its diff: `Checks` lints the touched workspace
+packages and their transitive reverse dependents (including dev-dependencies)
+with `--all-targets`, so dependent test code compiles. `Test` still runs nextest
+only for the touched packages and, for `oneiron`, the lib tests of
 the touched top-level modules, and `Test (featureless)` runs the shared-process
 `cargo test` lane for those modules. The full gate runs nightly (03:00 JST), on
 manual dispatch, and when a build file changes: there `Test (featureless)` runs
