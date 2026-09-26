@@ -2,8 +2,12 @@
 
 use super::consent_cards::{BundleApproveCard, ConsentAskCard};
 use super::consent_eval::{ConsentActionKind, append_eirispec_actions};
+use super::project_proposal::ProjectProposalCard;
 use super::receipt_view::ReceiptViewComponent;
-use crate::lens::GeneratedLens;
+use crate::lens::{
+    GENERATED_UI_SEGMENT_CONTENT_TYPE, GeneratedLens, GeneratedUiCatalog, GeneratedUiPrimitive,
+    GeneratedUiSurfaceCapabilities, LENS_ATOM_KIT_VERSION,
+};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -41,6 +45,7 @@ pub enum Of336ComponentKind {
     ReceiptView,
     ConsentAsk,
     BundleApprove,
+    ProjectProposal,
 }
 
 impl Of336ComponentKind {
@@ -50,6 +55,7 @@ impl Of336ComponentKind {
             Self::ReceiptView => "receipt_view",
             Self::ConsentAsk => "consent_ask",
             Self::BundleApprove => "bundle_approve",
+            Self::ProjectProposal => "project_proposal",
         }
     }
 }
@@ -82,6 +88,7 @@ pub enum Of336Component {
     ReceiptView(ReceiptViewComponent),
     ConsentAsk(ConsentAskCard),
     BundleApprove(BundleApproveCard),
+    ProjectProposal(ProjectProposalCard),
 }
 
 impl Of336Component {
@@ -91,6 +98,7 @@ impl Of336Component {
             Self::ReceiptView(component) => &component.component_id,
             Self::ConsentAsk(component) => &component.card_id,
             Self::BundleApprove(component) => &component.card_id,
+            Self::ProjectProposal(component) => &component.card_id,
         }
     }
 
@@ -100,6 +108,7 @@ impl Of336Component {
             Self::ReceiptView(_) => Of336ComponentKind::ReceiptView,
             Self::ConsentAsk(_) => Of336ComponentKind::ConsentAsk,
             Self::BundleApprove(_) => Of336ComponentKind::BundleApprove,
+            Self::ProjectProposal(_) => Of336ComponentKind::ProjectProposal,
         }
     }
 
@@ -109,6 +118,7 @@ impl Of336Component {
             Self::ReceiptView(component) => component.fallback_text(),
             Self::ConsentAsk(component) => component.fallback_text(),
             Self::BundleApprove(component) => component.fallback_text(),
+            Self::ProjectProposal(component) => component.fallback_text(),
         }
     }
 
@@ -118,14 +128,18 @@ impl Of336Component {
             Self::ReceiptView(_) => Vec::new(),
             Self::ConsentAsk(component) => component.actions(),
             Self::BundleApprove(component) => component.actions(),
+            Self::ProjectProposal(component) => component.actions(),
         }
     }
 
     pub fn render(&self, adapter: Of336SurfaceAdapter) -> Result<Of336RenderedComponent> {
+        if let Self::ProjectProposal(card) = self {
+            card.validate()?;
+        }
         let tree = match adapter {
             Of336SurfaceAdapter::EiriSpecCareRegister => self.render_eirispec(),
             Of336SurfaceAdapter::DashboardAtomKitAudit => self.render_atom_kit()?,
-            Of336SurfaceAdapter::McpUi => self.render_mcp_ui(),
+            Of336SurfaceAdapter::McpUi => self.render_mcp_ui()?,
         };
         Ok(Of336RenderedComponent {
             protocol_version: OF336_PROTOCOL_VERSION,
@@ -215,6 +229,31 @@ impl Of336Component {
                 );
                 append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
             }
+            Self::ProjectProposal(component) => {
+                root_children.push("proposal".to_owned());
+                elements.insert(
+                    "proposal".to_owned(),
+                    json!({
+                        "type": "eiriNote",
+                        "props": {
+                            "title": component.goal.goal,
+                            "body": [
+                                component.goal.why,
+                                component.goal.axes.join(", "),
+                                component.leader_agent_def_ref,
+                                component.board_human_refs.join(", "),
+                                component.budget_share_bps.to_string(),
+                                component.starting_skill_refs.join(", "),
+                                component.source_message_ref
+                            ],
+                            "register": "care"
+                        },
+                        "children": [],
+                        "fallbackText": fallback_text
+                    }),
+                );
+                append_eirispec_actions(&mut elements, &mut root_children, &component.actions());
+            }
         }
 
         elements.insert(
@@ -242,14 +281,37 @@ impl Of336Component {
             Self::ReceiptView(component) => component.atom_kit_root()?,
             Self::ConsentAsk(component) => component.atom_kit_root()?,
             Self::BundleApprove(component) => component.atom_kit_root()?,
+            Self::ProjectProposal(component) => component.atom_kit_root()?,
         };
         serde_json::to_value(GeneratedLens::new(root)?).map_err(|error| {
             Error::InvalidConfig(format!("OF-336 atom-kit render failed: {error}"))
         })
     }
 
-    fn render_mcp_ui(&self) -> Value {
-        json!({
+    fn render_mcp_ui(&self) -> Result<Value> {
+        if let Self::ProjectProposal(component) = self {
+            // Foreign hosts consume the existing generic segment envelope. Lower
+            // unsupported Sheet/Receipt nodes to text while retaining the one
+            // declared self.ui action; no project-specific renderer is needed.
+            let surface = GeneratedUiSurfaceCapabilities::new(
+                GeneratedUiCatalog::LensAtomKit,
+                LENS_ATOM_KIT_VERSION,
+                vec![
+                    GeneratedUiPrimitive::TextBlock,
+                    GeneratedUiPrimitive::SelfUi,
+                ],
+            );
+            let segments = component
+                .generated_ui_card()?
+                .segments_for_surface(&surface)?;
+            return Ok(json!({
+                "mime_type": GENERATED_UI_SEGMENT_CONTENT_TYPE,
+                "component_id": component.card_id,
+                "fallback_text": component.fallback_text(),
+                "segments": segments
+            }));
+        }
+        Ok(json!({
             "mime_type": OF336_MCP_UI_MIME,
             "component": self.kind().as_str(),
             "component_id": self.component_id(),
@@ -259,7 +321,8 @@ impl Of336Component {
                 Self::ReceiptView(component) => json!(component),
                 Self::ConsentAsk(component) => json!(component),
                 Self::BundleApprove(component) => json!(component),
+                Self::ProjectProposal(_) => unreachable!("proposal uses the generic envelope"),
             }
-        })
+        }))
     }
 }
