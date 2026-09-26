@@ -1117,8 +1117,7 @@ fn injected_deadline(
 }
 
 /// Backend whose generate future lets the injected deadline pass while the
-/// call is in flight, then completes on the very next poll — modeling a
-/// provider response that arrives after the ceiling.
+/// call is in flight, then completes on the next poll with terminal usage.
 struct ExpireThenCompleteBackend {
     clock: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -1154,7 +1153,7 @@ impl LlmBackend for ExpireThenCompleteBackend {
 }
 
 #[test]
-fn expired_deadline_never_records_finished() -> Result<()> {
+fn admitted_call_finishes_after_deadline_and_refuses_next_step() -> Result<()> {
     let (_dir, vault) = open_vault();
     let fixture = step_fixture(&vault, 10)?;
     let (elapsed, deadline) = injected_deadline(1_000, 180_000);
@@ -1162,39 +1161,99 @@ fn expired_deadline_never_records_finished() -> Result<()> {
     ctx.deadline = Some(&deadline);
     let guard = guard_with_limit(10_000);
     let backend = ExpireThenCompleteBackend { clock: elapsed };
-    // The response ARRIVES, but only after the ceiling passed. Expiry is
-    // checked before the completion poll, so the call loses the race — it
-    // must never be recorded as a finished step.
-    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
-        .expect_err("expired call must never finish");
-    assert!(matches!(error, DurableStepError::DeadlineHardCut));
+
+    let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect("admitted call must finish after deadline");
+    let StepOutcome::Finished {
+        response,
+        memoized,
+        legibility,
+    } = outcome
+    else {
+        panic!("expected finished step");
+    };
+    assert!(!memoized);
+    assert_eq!(response, response_fixture("arrived after the deadline"));
+    let envelope = legibility.expect("wake-pass budget legibility");
+    assert_eq!(envelope.remaining_ms, 0);
+    assert_eq!(envelope.remaining_units, 10_000 - 150);
     let hash = request_fixture().canonical_hash().expect("hash");
     assert!(
-        step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none(),
-        "no terminal step claim for an expired call"
+        step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_some(),
+        "terminal step recorded after the deadline"
     );
-    assert_eq!(guard.read().reserved_units, 0, "lease aborted");
-    assert_eq!(guard.read().used_units, 0, "no spend recorded");
-    let parked = DreamerRunnerStore::new(&vault)
-        .parked_attempt(fixture.attempt_id)?
-        .expect("attempt parked");
+    assert_eq!(guard.read().reserved_units, 0, "lease settled");
     assert_eq!(
-        parked.reason,
-        crate::dreamer_wake::DREAMER_HARD_CUT_PARK_REASON
+        guard.read().used_units,
+        150,
+        "absolute terminal usage settled"
     );
-    // The deadline hard-cut park must also store parked_at in Unix SECONDS:
-    // now_ms=10_000 lands as 10, not 10_000 (#480-1).
-    assert_eq!(
-        parked.parked_at, 10,
-        "deadline hard-cut park must store parked_at in seconds, not milliseconds"
+    assert!(
+        DreamerRunnerStore::new(&vault)
+            .parked_attempt(fixture.attempt_id)?
+            .is_none(),
+        "a completed call must not park its attempt"
     );
+
     let mut next = request_fixture();
     next.model = ModelId::new("other/model@r9").expect("model");
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, next)),
         Err(DurableStepError::FinalizeRefused)
     ));
-    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().used_units, 150, "no new call admitted");
+    Ok(())
+}
+
+/// An invalid JSON response arrives after expiry. The correction would be a
+/// fresh paid call, not a retry on the first call's lease.
+struct ExpireInvalidJsonBackend {
+    clock: Arc<std::sync::atomic::AtomicU64>,
+    calls: AtomicUsize,
+}
+
+impl LlmBackend for ExpireInvalidJsonBackend {
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.clock.store(180_001, Ordering::SeqCst);
+        Box::pin(async { Ok(response_fixture("not json")) })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    }
+}
+
+#[test]
+fn expired_invalid_json_settles_first_call_without_admitting_correction() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let (elapsed, deadline) = injected_deadline(0, 180_000);
+    let mut ctx = ctx(&vault, &fixture, 10_000);
+    ctx.deadline = Some(&deadline);
+    let guard = guard_with_limit(10_000);
+    let backend = ExpireInvalidJsonBackend {
+        clock: elapsed,
+        calls: AtomicUsize::new(0),
+    };
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    let hash = request.canonical_hash().expect("step hash");
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Err(DurableStepError::SpentFinalizeRefused { usage })
+            if usage.input.total == 100 && usage.output.total == 50
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(guard.read().used_units, 150, "first response was paid");
+    assert_eq!(guard.read().reserved_units, 0, "no second lease");
+    assert!(step_index_lookup(&vault, fixture.attempt_id, &hash)?.is_none());
     Ok(())
 }
 
@@ -2131,7 +2190,8 @@ fn schema_shim_three_bad_responses_are_terminal_not_fallback() -> Result<()> {
     let backend = ScriptedBackend::new(vec![Ok(response_fixture("bad")); 3]);
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request)),
-        Err(DurableStepError::SchemaValidation { attempts: 3, .. })
+        Err(DurableStepError::SpentSchemaValidation { attempts: 3, usage, .. })
+            if usage.input.total == 300 && usage.output.total == 150
     ));
     assert_eq!(backend.calls(), 3);
     assert_eq!(guard.read().used_units, 450);
@@ -2546,7 +2606,7 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
         }
     }
     for (schema, output, attempts) in [
-        (json!({"type":"not-a-type"}), "{}", 0),
+        (json!({"type":"not-a-type"}), "{}", 0_u8),
         (
             json!({"$ref":"https://example.invalid/schema.json"}),
             "{}",
@@ -2563,10 +2623,18 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
         request.envelope.response_format = ResponseFormat::Json { schema };
         let hash = request.canonical_hash().unwrap();
         let backend = Native(ScriptedBackend::new(vec![Ok(response_fixture(output))]));
-        assert!(matches!(
-            block_on(call_as_step(&ctx, &backend, &guard, request)),
-            Err(DurableStepError::SchemaValidation { attempts: actual, .. }) if actual == attempts
-        ));
+        let error = block_on(call_as_step(&ctx, &backend, &guard, request))
+            .expect_err("invalid native response or schema");
+        if attempts == 0 {
+            assert!(matches!(
+                error,
+                DurableStepError::SchemaValidation { attempts: 0, .. }
+            ));
+        } else {
+            assert!(matches!(error, DurableStepError::SpentSchemaValidation {
+                attempts: 1, usage, ..
+            } if usage.input.total == 100 && usage.output.total == 50));
+        }
         assert_eq!(backend.0.calls(), attempts as usize);
         assert_eq!(guard.read().used_units, u64::from(attempts) * 150);
         assert_eq!(guard.read().reserved_units, 0);

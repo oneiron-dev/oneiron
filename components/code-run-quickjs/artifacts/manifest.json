@@ -6,13 +6,13 @@
   "upstream_url": "https://bellard.org/quickjs/quickjs-2025-09-13-2.tar.xz",
   "upstream_sha256": "996c6b5018fc955ad4d06426d0e9cb713685a00c825aa5c0418bd53f7df8b0b4",
   "toolchain": {
-    "wit-bindgen": "wit-bindgen-cli 0.46.0 (4c0e9a4ed 2025-09-10)",
+    "wit-bindgen": "wit-bindgen-cli 0.46.0",
     "wasm-tools": "wasm-tools 1.239.0 (35f8671bc 2025-09-09)",
-    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /Volumes/Cinema/w7-build/toolchains/quickjs-20260919/wasi-sdk-27.0-arm64-macos/bin\nConfiguration file: /Volumes/Cinema/w7-build/toolchains/quickjs-20260919/wasi-sdk-27.0-arm64-macos/bin/clang.cfg"
+    "clang": "clang version 20.1.8-wasi-sdk (https://github.com/llvm/llvm-project 87f0227cb60147a26a1eeb4fb06e3b505e9c7261)\nTarget: wasm32-unknown-wasi\nThread model: posix\nInstalledDir: /mnt/wd16/w8-build/lin-2381-toolchain/wasi-sdk-27.0-x86_64-linux/bin\nConfiguration file: /mnt/wd16/w8-build/lin-2381-toolchain/wasi-sdk-27.0-x86_64-linux/bin/clang.cfg"
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "01472b9aa9ae50942e42ab4c1f0d8f73bed8857bea32be0acaeb7760b0995386",
+  "wit_sha256": "9d39a674c18acdf2e5a8f1c4ed3ace0c4e561df3b98797e3bf8b17da9413c795",
   "sources": {
     "guest.c": "aef63e7b6e6f5cf3946db2cc6dcef69de2c943d54e2ee48ce137e9309772f1c0",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
@@ -23,13 +23,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "3ddb36f6ca801c9b19dc59f17960ad139539a6a05a3f74d05de4220dc295f1f6",
-      "bytes": 1040636
+      "sha256": "61deac61e1d83ee3be5b44d8aae6079f3be01ae9b5581d24f887149c98ecd03b",
+      "bytes": 1041817
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "4ae3c57ba74758d5669b6568c2508b76914ce036fde9389788b3704381366a07",
-      "bytes": 1030863
+      "sha256": "3b7b11fbeb6b67812793456591b515b0562825618f07f7b5ecfb700406926d9c",
+      "bytes": 1031139
     }
   }
 }
