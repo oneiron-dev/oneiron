@@ -1161,6 +1161,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ArtifactExportRef",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPublishVerbOutcome",
@@ -1171,16 +1172,17 @@
       "ArtifactSnapshotSelector"
      ],
      "path": "src/artifact_hosting.rs",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 2,
-      "enum": 3,
-      "fn": 12,
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 15,
       "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -33654,7 +33656,7 @@
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
-     "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots"
+     "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
      "files": 36,
@@ -38271,7 +38273,7 @@
      "path": "src/api/artifacts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -39715,7 +39717,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/surface_routes.rs",

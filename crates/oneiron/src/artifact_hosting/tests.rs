@@ -3,10 +3,14 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use super::*;
+use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::codebase::RepoIngestConfig;
 use crate::config::{HnswConfig, TextAnalyzerConfig, VaultConfig};
+use crate::edge::EdgeActorClass;
 use crate::error::ErrorKind;
+use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
 
 fn test_config() -> VaultConfig {
     let mut config = VaultConfig::device();
@@ -233,7 +237,10 @@ fn publish_verb_honors_standing_grant_by_publishing_pointer() -> Result<()> {
 
     assert_eq!(outcome.status, ArtifactPublishVerbStatus::Published);
     let pointer = outcome.pointer.expect("published pointer returned");
-    assert_eq!(pointer.fork_hash, result.snapshot.fork_hash);
+    assert_eq!(
+        pointer.export,
+        ArtifactExportRef::ForkHash(result.snapshot.fork_hash)
+    );
     assert!(
         vault
             .artifact_pointer("site", ArtifactPointerChannel::Published)?
@@ -248,4 +255,228 @@ fn malformed_artifact_fork_hash_fails_closed() {
     let err = parse_codebase_fork_hash_hex("not-a-fork")
         .expect_err("fork hash parser must reject malformed hex");
     assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
+}
+
+fn blob_fixture(vault: &Vault) -> Result<(EntityId, WriteActor)> {
+    let id = EntityId::now();
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"publisher",
+    )?;
+    Ok((id, WriteActor::new(person, EdgeActorClass::Human)))
+}
+
+#[test]
+fn blob_export_published_preview_pin_repoint_unpublish_and_direct_version() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"%PDF-first",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let artifact = id.to_hex();
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    let published = vault.publish_blob_artifact_pointer(
+        &id,
+        ArtifactPointerChannel::Published,
+        first.version,
+    )?;
+    assert_eq!(
+        published.export,
+        ArtifactExportRef::BlobVersion {
+            artifact_id: id,
+            version: 1
+        }
+    );
+    let second = vault.append_blob_artifact_version(
+        &id,
+        b"%PDF-second",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Preview, second.version)?;
+    let served = |selector| -> Result<ArtifactServedFile> {
+        vault
+            .resolve_artifact_file(&artifact, selector, "report.pdf")?
+            .ok_or(Error::EntityNotFound)
+    };
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Published
+        ))?
+        .bytes,
+        b"%PDF-first"
+    );
+    let preview = served(ArtifactSnapshotSelector::Channel(
+        ArtifactPointerChannel::Preview,
+    ))?;
+    assert_eq!(preview.bytes, b"%PDF-second");
+    assert_eq!(preview.media_type.as_deref(), Some("application/pdf"));
+    assert_eq!(
+        served(ArtifactSnapshotSelector::BlobVersion(1))?.bytes,
+        b"%PDF-first"
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(1),
+                "export"
+            )?
+            .expect("stable export route")
+            .bytes,
+        b"%PDF-first"
+    );
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published, second.version)?;
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Published
+        ))?
+        .bytes,
+        b"%PDF-second"
+    );
+    assert!(vault.unpublish_artifact_pointer(&artifact, ArtifactPointerChannel::Published)?);
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        served(ArtifactSnapshotSelector::Channel(
+            ArtifactPointerChannel::Preview
+        ))?
+        .bytes,
+        b"%PDF-second"
+    );
+    assert_eq!(
+        served(ArtifactSnapshotSelector::BlobVersion(1))?.bytes,
+        b"%PDF-first"
+    );
+    assert!(
+        vault
+            .publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Preview, 99)
+            .is_err()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(0),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                "another",
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Preview),
+                "report.pdf"
+            )?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn deleting_blob_export_removes_both_channel_pointers() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    vault.append_blob_artifact_version(
+        &id,
+        b"report",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        vault.publish_blob_artifact_pointer(&id, channel, 1)?;
+    }
+    assert!(vault.delete_entity(&id)?);
+    for channel in [
+        ArtifactPointerChannel::Published,
+        ArtifactPointerChannel::Preview,
+    ] {
+        assert!(
+            !vault.unpublish_blob_artifact_pointer(&id, channel)?,
+            "deletion must already have removed the pointer row"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn blob_publish_verb_needs_grant_and_feature() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    vault.append_blob_artifact_version(
+        &id,
+        b"report",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let request =
+        ArtifactPublishVerbRequest::new_blob(id, ArtifactPointerChannel::Published, 1, false);
+    assert_eq!(
+        vault.request_artifact_publish(&request)?.status,
+        ArtifactPublishVerbStatus::Proposed
+    );
+    assert!(
+        vault
+            .artifact_pointer(&id.to_hex(), ArtifactPointerChannel::Published)?
+            .is_none()
+    );
+    let request =
+        ArtifactPublishVerbRequest::new_blob(id, ArtifactPointerChannel::Published, 1, true);
+    let outcome = vault.request_artifact_publish(&request)?;
+    if cfg!(feature = "artifact-publish-verb") {
+        assert_eq!(outcome.status, ArtifactPublishVerbStatus::Published);
+        assert!(
+            vault
+                .artifact_pointer(&id.to_hex(), ArtifactPointerChannel::Published)?
+                .is_some()
+        );
+    } else {
+        assert_eq!(outcome.status, ArtifactPublishVerbStatus::Proposed);
+        assert!(
+            vault
+                .artifact_pointer(&id.to_hex(), ArtifactPointerChannel::Published)?
+                .is_none()
+        );
+    }
+    Ok(())
 }
