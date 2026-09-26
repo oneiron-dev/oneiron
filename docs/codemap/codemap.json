@@ -2074,7 +2074,7 @@
      "path": "src/authority/stale_roster.rs",
      "purpose": "Clock-free expiry of approvals resting on a subsequently revoked roster",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {

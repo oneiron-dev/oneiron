@@ -74,7 +74,20 @@ impl std::ops::Deref for AuthorityView {
 
 pub(crate) struct AuthorityCachedFold {
     key: AuthorityCacheKey,
+    next_deadline_secs: Option<u64>,
     view: AuthorityView,
+}
+
+impl AuthorityCachedFold {
+    fn matches(&self, key: AuthorityCacheKey) -> bool {
+        self.key.generation == key.generation
+            && self.key.posture == key.posture
+            && self.key.policy == key.policy
+            && key.now_secs >= self.key.now_secs
+            && self
+                .next_deadline_secs
+                .is_none_or(|deadline| key.now_secs < deadline)
+    }
 }
 
 fn authority_cache_key(
@@ -99,31 +112,46 @@ fn cached_fold(store: &Store, key: AuthorityCacheKey) -> Option<AuthorityView> {
     store.authority_fold_cache.lock().ok().and_then(|cache| {
         cache
             .as_ref()
-            .filter(|cached| cached.key == key)
+            .filter(|cached| cached.matches(key))
             .map(|cached| cached.view.clone())
     })
 }
 
-fn cache_fold_if_committed(store: &Store, key: AuthorityCacheKey, view: &AuthorityView) {
+fn cache_fold_if_committed(
+    store: &Store,
+    key: AuthorityCacheKey,
+    next_deadline_secs: Option<u64>,
+    view: &AuthorityView,
+) {
     // LMDB read transactions use a thread-local reader slot. Opening a
     // second read txn on this thread while the caller's snapshot is alive
     // fails with MDB_BAD_RSLOT. Check on a separate thread: an RwTxn's
     // uncommitted generation is invisible there, so aborts never publish.
     // This costs one small committed-row probe only on a full-fold miss.
-    let visible =
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    store.env.read_txn().ok().and_then(|committed| {
-                        authority_cache_key(store, key.posture, &committed).ok()
-                    }) == Some(key)
-                })
-                .join()
-                .unwrap_or(false)
-        });
+    let visible = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                store
+                    .env
+                    .read_txn()
+                    .ok()
+                    .and_then(|committed| authority_cache_key(store, key.posture, &committed).ok())
+                    .is_some_and(|committed| {
+                        AuthorityCachedFold {
+                            key,
+                            next_deadline_secs,
+                            view: view.clone(),
+                        }
+                        .matches(committed)
+                    })
+            })
+            .join()
+            .unwrap_or(false)
+    });
     if visible && let Ok(mut cache) = store.authority_fold_cache.lock() {
         *cache = Some(AuthorityCachedFold {
             key,
+            next_deadline_secs,
             view: view.clone(),
         });
     }
@@ -233,11 +261,28 @@ pub(crate) fn authority_view_readonly_for_store_in_txn(
     {
         return Err(Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_INDETERMINATE));
     }
+    // The fold's two clock-sensitive transitions are widen eligibility and
+    // stale-roster approval expiry. Slip TTL is checked by each caller against
+    // its own snapshot clock, not frozen into this authority view.
+    let next_widen = fold
+        .pending_widens
+        .values()
+        .filter_map(|pending| pending.eligible_at_secs)
+        .filter(|deadline| *deadline > now_secs)
+        .min();
+    let next_stale = next_stale_roster_deadline(
+        &entries,
+        &fold,
+        &first_seen_at_secs,
+        now_secs,
+        key.policy.stale_roster_window_secs,
+    );
+    let next_deadline_secs = next_widen.into_iter().chain(next_stale).min();
     let view = AuthorityView {
         fold: Arc::new(fold),
         generation: key.generation,
     };
-    cache_fold_if_committed(store, key, &view);
+    cache_fold_if_committed(store, key, next_deadline_secs, &view);
     Ok(view)
 }
 

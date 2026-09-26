@@ -115,7 +115,7 @@ use fork_resolution::*;
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
-use stale_roster::apply_stale_roster_window;
+use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 use tier_floor::*;
 use wire_decode::*;
 use wire_encode::*;
