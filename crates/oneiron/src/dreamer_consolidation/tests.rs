@@ -1829,6 +1829,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             ]),
             clock: std::sync::Arc::new(AtomicU64::new(0)),
             expire_on_call,
+            expiry_elapsed_ms: 180_001,
             calls: AtomicUsize::new(0),
             native_json: false,
         };

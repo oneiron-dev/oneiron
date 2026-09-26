@@ -6,6 +6,7 @@ pub(super) struct ExpiringBackend {
     pub(super) inner: ScriptedBackend,
     pub(super) clock: std::sync::Arc<AtomicU64>,
     pub(super) expire_on_call: usize,
+    pub(super) expiry_elapsed_ms: u64,
     pub(super) calls: AtomicUsize,
     pub(super) native_json: bool,
 }
@@ -24,7 +25,7 @@ impl LlmBackend for ExpiringBackend {
         Box::pin(async move {
             let response = self.inner.generate(request, lease).await;
             if call == self.expire_on_call {
-                self.clock.store(180_001, Ordering::SeqCst);
+                self.clock.store(self.expiry_elapsed_ms, Ordering::SeqCst);
             }
             response
         })

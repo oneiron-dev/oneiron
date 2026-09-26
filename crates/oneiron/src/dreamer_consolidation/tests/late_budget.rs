@@ -40,6 +40,8 @@ enum LateCall {
     NativeInvalidJson,
     FinalInvalidCorrection,
     MergeFinalInvalidCorrection,
+    FinalizeInvalidJson,
+    FinalizeMergeInvalidJson,
 }
 
 fn run_case(case: LateCall) -> Result<()> {
@@ -79,15 +81,17 @@ fn run_case(case: LateCall) -> Result<()> {
         LateCall::ExtractionThenMerge
         | LateCall::ExtractionThenMergeNewBudget
         | LateCall::Merge
-        | LateCall::MergeFinalInvalidCorrection => {
+        | LateCall::MergeFinalInvalidCorrection
+        | LateCall::FinalizeMergeInvalidJson => {
             two_candidate_extraction(&subject, &turns[0], &turns[1])
         }
-        LateCall::InvalidJson | LateCall::NativeInvalidJson | LateCall::FinalInvalidCorrection => {
-            text_response("not json".to_owned())
-        }
+        LateCall::InvalidJson
+        | LateCall::NativeInvalidJson
+        | LateCall::FinalInvalidCorrection
+        | LateCall::FinalizeInvalidJson => text_response("not json".to_owned()),
     };
     let expire_on_call = match case {
-        LateCall::Merge => 2,
+        LateCall::Merge | LateCall::FinalizeMergeInvalidJson => 2,
         LateCall::FinalInvalidCorrection => 3,
         LateCall::MergeFinalInvalidCorrection => 4,
         _ => 1,
@@ -97,6 +101,13 @@ fn run_case(case: LateCall) -> Result<()> {
         LateCall::MergeFinalInvalidCorrection => {
             vec![Ok(text_response("not json".to_owned())); 3]
         }
+        LateCall::FinalizeInvalidJson => vec![Ok(extraction_response(&subject, &turns[0]))],
+        LateCall::FinalizeMergeInvalidJson => vec![
+            Ok(text_response("not json".to_owned())),
+            Ok(text_response(
+                "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+            )),
+        ],
         _ => vec![Ok(text_response(
             "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
         ))],
@@ -105,6 +116,14 @@ fn run_case(case: LateCall) -> Result<()> {
         inner: ScriptedBackend::new(std::iter::once(Ok(first_response)).chain(rest).collect()),
         clock: std::sync::Arc::new(AtomicU64::new(0)),
         expire_on_call,
+        expiry_elapsed_ms: if matches!(
+            case,
+            LateCall::FinalizeInvalidJson | LateCall::FinalizeMergeInvalidJson
+        ) {
+            170_000
+        } else {
+            180_001
+        },
         calls: AtomicUsize::new(0),
         native_json: matches!(case, LateCall::NativeInvalidJson),
     };
@@ -147,8 +166,9 @@ fn run_case(case: LateCall) -> Result<()> {
         LateCall::ExtractionThenMerge
         | LateCall::ExtractionThenMergeNewBudget
         | LateCall::InvalidJson
-        | LateCall::NativeInvalidJson => 50,
-        LateCall::Merge => 100,
+        | LateCall::NativeInvalidJson
+        | LateCall::FinalizeInvalidJson => 50,
+        LateCall::Merge | LateCall::FinalizeMergeInvalidJson => 100,
         LateCall::FinalInvalidCorrection => 150,
         LateCall::MergeFinalInvalidCorrection => 200,
     };
@@ -217,21 +237,23 @@ fn run_case(case: LateCall) -> Result<()> {
         LateCall::ExtractionThenMerge
         | LateCall::ExtractionThenMergeNewBudget
         | LateCall::Merge => 100,
+        LateCall::FinalizeInvalidJson => 170,
+        LateCall::FinalizeMergeInvalidJson => 150,
         LateCall::InvalidJson
         | LateCall::NativeInvalidJson
         | LateCall::FinalInvalidCorrection
         | LateCall::MergeFinalInvalidCorrection => unreachable!(),
     };
+    let new_calls = usize::from(matches!(
+        case,
+        LateCall::ExtractionThenMerge
+            | LateCall::ExtractionThenMergeNewBudget
+            | LateCall::FinalizeInvalidJson
+            | LateCall::FinalizeMergeInvalidJson
+    ));
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        if matches!(
-            case,
-            LateCall::ExtractionThenMerge | LateCall::ExtractionThenMergeNewBudget
-        ) {
-            2
-        } else {
-            expire_on_call
-        }
+        expire_on_call + new_calls
     );
     assert_eq!(guard.read().used_units, expected_total);
     let wake_debit = if resume_budget == "wake" {
@@ -283,4 +305,10 @@ fn late_native_terminal_schema_failure_charges_the_wake_ledger() -> Result<()> {
 fn late_final_correction_failure_charges_all_paid_calls() -> Result<()> {
     run_case(LateCall::FinalInvalidCorrection)?;
     run_case(LateCall::MergeFinalInvalidCorrection)
+}
+
+#[test]
+fn finalize_window_refusal_charges_extraction_and_only_new_work_on_resume() -> Result<()> {
+    run_case(LateCall::FinalizeInvalidJson)?;
+    run_case(LateCall::FinalizeMergeInvalidJson)
 }
