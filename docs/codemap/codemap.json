@@ -37799,7 +37799,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -37851,7 +37851,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "NapiBatchEntity",
       "NapiCodebaseFileEntry",
       "NapiCodebaseSnapshot",
       "NapiEdgeInfo",
@@ -37863,7 +37862,8 @@
      "path": "src/types.rs",
      "purpose": "—",
      "surface": {
-      "struct": 8
+      "crate-vis": 1,
+      "struct": 7
      }
     }
    ],
