@@ -335,6 +335,9 @@ pub struct OutboundExecutionRequest<'a> {
     /// Presentation from the immutable send payload, never a live caller dial.
     pub space_posting: Option<crate::channel_identity_autonomy::FrozenSpacePosting>,
     pub counterparty_ref: Option<&'a str>,
+    /// Current host-supplied seat policy for provider-side reads inside the sink.
+    /// The connect-request path requires it before dispatch admits the effect.
+    pub linkedin_sandbox_policy: Option<&'a LinkedInSeatSandboxPolicy>,
     /// CA-05 send-hygiene headers, replayed from the FROZEN payload rather than
     /// re-derived, so an adapter cannot invent a different unsubscribe target
     /// per attempt. Empty for every send that froze none.

@@ -62,6 +62,17 @@ fn connect_dispatch(
     sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
     policy: LinkedInSeatSandboxPolicy,
 ) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
+    connect_dispatch_with_policy(vault, actor, receipt_id, intent_ref, sink, Some(policy))
+}
+
+fn connect_dispatch_with_policy(
+    vault: &Vault,
+    actor: OutboundDispatchActor,
+    receipt_id: &str,
+    intent_ref: &str,
+    sink: &mut LinkedInMcpVerifiedConnectSink<ConnectTransport>,
+    policy: Option<LinkedInSeatSandboxPolicy>,
+) -> std::result::Result<OutboundDispatchResult, Box<dyn std::error::Error>> {
     let intent = OutboundIntent::from_trigger(
         OutboundIntentDraft::new(
             "agent-alpha",
@@ -73,20 +84,20 @@ fn connect_dispatch(
         .content_ref("content:optional-note"),
         OutboundIntentTrigger::agent_immediate("session:linkedin-connect"),
     );
-    Ok(vault.dispatch_outbound_intent(
-        OutboundDispatchRequest::new(
-            receipt_id,
-            intent_ref,
-            intent,
-            actor,
-            OutboundDispatchGate::allow_when_policy_grants(),
-            1_060,
-            OutboundDeliveryWindowDecision::DeliverNow,
-        )
-        .counterparty_ref("linkedin:member:jane-doe")
-        .linkedin_sandbox_policy(policy),
-        sink,
-    )?)
+    let mut request = OutboundDispatchRequest::new(
+        receipt_id,
+        intent_ref,
+        intent,
+        actor,
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_060,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+    .counterparty_ref("linkedin:member:jane-doe");
+    if let Some(policy) = policy {
+        request = request.linkedin_sandbox_policy(policy);
+    }
+    Ok(vault.dispatch_outbound_intent(request, sink)?)
 }
 
 fn connect_fixture() -> std::result::Result<
@@ -460,6 +471,225 @@ fn connect_request_fails_closed_on_wrong_profile_and_observes_after_tool_error()
             .map(String::as_str),
         Some("failed")
     );
+    assert_eq!(sink.transport().calls.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn connect_request_without_seat_policy_refuses_before_provider_reads_or_send()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+        linkedin_adapter()?,
+        ConnectTransport::new(&[
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Pending,
+        ]),
+    )
+    .with_plan(
+        "intent:missing-policy",
+        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?,
+    )?;
+    let outcome = connect_dispatch_with_policy(
+        &vault,
+        actor,
+        "receipt:missing-policy",
+        "intent:missing-policy",
+        &mut sink,
+        None,
+    );
+    assert!(
+        outcome.is_err(),
+        "an omitted policy must not admit the effect"
+    );
+    assert!(sink.transport().reads.is_empty());
+    assert!(sink.transport().calls.is_empty());
+    Ok(())
+}
+
+#[test]
+fn scheduled_connect_without_seat_policy_refuses_before_provider_transport()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::memory::OutboundDraftInput;
+
+    let (_tmp, vault, _actor) = connect_fixture()?;
+    let scheduled = vault
+        .memory(entity(0xD1), crate::edge::EdgeActorClass::Agent)
+        .schedule_outbound(&OutboundDraftInput {
+            verb: "connect_request".to_owned(),
+            channel: LINKEDIN_CHANNEL.to_owned(),
+            target: "linkedin:member:jane-doe".to_owned(),
+            on_behalf_of: Some("owner".to_owned()),
+            content_ref: None,
+            idempotency_key: Some("connect:scheduled:missing-policy".to_owned()),
+            dedupe_key: None,
+            trigger: "agent_immediate".to_owned(),
+            trigger_ref: "session:linkedin-connect".to_owned(),
+            job_ref: None,
+            occurred_at: Some(1_060),
+        });
+    assert!(
+        scheduled.is_err(),
+        "schedule admission must reject missing seat policy"
+    );
+    assert!(vault.connector_send_tasks()?.is_empty());
+    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+        linkedin_adapter()?,
+        ConnectTransport::new(&[
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Pending,
+        ]),
+    );
+    assert_eq!(vault.run_connector_task_executor(&mut sink, 1_061)?, 0);
+    assert!(sink.transport().reads.is_empty());
+    assert!(sink.transport().calls.is_empty());
+    Ok(())
+}
+
+#[test]
+fn exhausted_profile_read_cap_holds_before_connect_transport()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let policy = active_linkedin_policy()?
+        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(25));
+    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+        linkedin_adapter()?,
+        ConnectTransport::new(&[
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Pending,
+        ]),
+    )
+    .with_plan(
+        "intent:profile-cap",
+        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?,
+    )?;
+    let result = connect_dispatch(
+        &vault,
+        actor,
+        "receipt:profile-cap",
+        "intent:profile-cap",
+        &mut sink,
+        policy,
+    )?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("linkedin_engine_policy_reason")
+            .map(String::as_str),
+        Some("linkedin.daily_profile_read_cap")
+    );
+    assert!(sink.transport().reads.is_empty());
+    assert!(sink.transport().calls.is_empty());
+    Ok(())
+}
+
+#[test]
+fn profile_cap_boundary_stops_post_send_verification_without_claiming_delivery()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let policy = active_linkedin_policy()?
+        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(24));
+    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+        linkedin_adapter()?,
+        ConnectTransport::new(&[
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Pending,
+        ]),
+    )
+    .with_plan(
+        "intent:profile-boundary",
+        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?,
+    )?;
+    let result = connect_dispatch(
+        &vault,
+        actor,
+        "receipt:profile-boundary",
+        "intent:profile-boundary",
+        &mut sink,
+        policy,
+    )?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("linkedin_profile_read_policy_reason")
+            .map(String::as_str),
+        Some("linkedin.daily_profile_read_cap")
+    );
+    assert!(!result.receipt.fields.contains_key("provider_ref"));
+    assert_eq!(sink.transport().calls.len(), 1);
+    assert_eq!(
+        sink.transport().reads.len(),
+        1,
+        "the second profile read exceeds the cap"
+    );
+    Ok(())
+}
+
+#[test]
+fn profile_cap_counts_each_verification_attempt_even_when_state_stays_connectable()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (_tmp, vault, actor) = connect_fixture()?;
+    let policy = active_linkedin_policy()?
+        .with_state(LinkedInSeatDispatchState::active().with_profile_reads_today(23));
+    let mut sink = LinkedInMcpVerifiedConnectSink::new(
+        linkedin_adapter()?,
+        ConnectTransport::new(&[
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Connectable,
+            LinkedInConnectionState::Pending,
+        ]),
+    )
+    .with_plan(
+        "intent:profile-attempts",
+        LinkedInVerifiedConnectPlan::new("linkedin:member:jane-doe", None)?
+            .with_max_observation_attempts(2)?,
+    )?;
+    let result = connect_dispatch(
+        &vault,
+        actor,
+        "receipt:profile-attempts",
+        "intent:profile-attempts",
+        &mut sink,
+        policy,
+    )?;
+    assert_eq!(result.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        Some("true")
+    );
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("linkedin_profile_read_policy_reason")
+            .map(String::as_str),
+        Some("linkedin.daily_profile_read_cap")
+    );
+    assert_eq!(
+        result
+            .receipt
+            .fields
+            .get("verification_attempts")
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(sink.transport().reads.len(), 2);
     assert_eq!(sink.transport().calls.len(), 1);
     Ok(())
 }

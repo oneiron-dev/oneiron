@@ -416,7 +416,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                         "linkedin_username": "recipient vanity name or profile key",
                         "note": "optional connection note resolved from content_ref",
                         "verify_after_send": "connect_with_person return is never trusted; re-read get_person_profile connection state before delivered receipt",
-                        "engine_side_safety": "per-seat sandbox policy enforces kill-switch, connect-request cap, cadence, and no sweeps before transport"
+                        "engine_side_safety": "per-seat sandbox policy enforces kill-switch, connect-request and profile-read caps, cadence, and no sweeps before transport"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,

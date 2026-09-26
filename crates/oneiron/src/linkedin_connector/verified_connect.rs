@@ -11,15 +11,20 @@ use super::normalize_keys::normalize_non_blank;
 use super::verified_send::{receipt_error_code, sleep_before_next_linkedin_observation};
 use super::{
     DEFAULT_LINKEDIN_SEND_VERIFY_ATTEMPTS, LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB,
-    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LinkedInMcpConnectorAdapter,
-    MAX_LINKEDIN_INTENT_REF_BYTES, MAX_LINKEDIN_MESSAGE_TEXT_BYTES,
-    MAX_LINKEDIN_RECIPIENT_KEY_BYTES, MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS,
-    RECEIPT_FIELD_DUPLICATE_SEND_GUARD, RECEIPT_FIELD_VERIFICATION_ATTEMPTS,
-    RECEIPT_FIELD_VERIFY_TOOL,
+    LINKEDIN_MCP_CONNECT_WITH_PERSON_TOOL, LinkedInMcpConnectorAdapter, LinkedInSeatPolicyAction,
+    LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy, MAX_LINKEDIN_INTENT_REF_BYTES,
+    MAX_LINKEDIN_MESSAGE_TEXT_BYTES, MAX_LINKEDIN_RECIPIENT_KEY_BYTES,
+    MAX_LINKEDIN_SEND_VERIFY_ATTEMPTS, RECEIPT_FIELD_DUPLICATE_SEND_GUARD,
+    RECEIPT_FIELD_VERIFICATION_ATTEMPTS, RECEIPT_FIELD_VERIFY_TOOL,
 };
 
 const CONNECT_CALLED: &str = "connect_with_person_called";
 const CONNECT_VERIFICATION: &str = "linkedin_connect_verification";
+
+enum ProfileReadError {
+    Policy(LinkedInSeatPolicyDecision),
+    Transport(String),
+}
 
 /// A fresh provider profile read, normalized by the trusted host adapter.
 /// A cached `connect_with_person` result is not an observation.
@@ -208,11 +213,21 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
             return OutboundExecutionOutcome::failed("linkedin_verified_connect_target_mismatch")
                 .with_receipt_fields(fields);
         }
+        let Some(mut seat_policy) = request.linkedin_sandbox_policy.cloned() else {
+            return OutboundExecutionOutcome::failed("linkedin_verified_connect_policy_missing")
+                .with_receipt_fields(fields);
+        };
         let attempted_before = self.attempted.contains(request.intent_ref);
         let guard_retry = plan.guard_retry || attempted_before;
-        let pre = match self.read_state(&plan.recipient_key) {
+        let pre = match self.read_state(&plan.recipient_key, &mut seat_policy) {
             Ok(state) => state,
-            Err(err) => {
+            Err(ProfileReadError::Policy(decision)) => {
+                fields.extend(decision.receipt_fields);
+                fields.insert(CONNECT_VERIFICATION.to_owned(), "precheck_held".to_owned());
+                return OutboundExecutionOutcome::failed("verify_after_connect_precheck_held")
+                    .with_receipt_fields(fields);
+            }
+            Err(ProfileReadError::Transport(err)) => {
                 fields.insert(
                     CONNECT_VERIFICATION.to_owned(),
                     "precheck_failed".to_owned(),
@@ -287,7 +302,7 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
         }
         let mut last_error = None;
         for attempt in 1..=plan.max_observation_attempts {
-            match self.read_state(&plan.recipient_key) {
+            match self.read_state(&plan.recipient_key, &mut seat_policy) {
                 Ok(
                     state @ (LinkedInConnectionState::Pending | LinkedInConnectionState::Connected),
                 ) => {
@@ -304,8 +319,30 @@ impl<T: LinkedInMcpConnectTransport> OutboundExecutionSink for LinkedInMcpVerifi
                 Ok(LinkedInConnectionState::Connectable) => {
                     last_error = None;
                 }
-                Err(err) => {
+                Err(ProfileReadError::Transport(err)) => {
                     last_error = Some(err);
+                }
+                Err(ProfileReadError::Policy(decision)) => {
+                    if let Some(reason) = decision.reason_code.as_deref() {
+                        fields.insert(
+                            "linkedin_profile_read_policy_reason".to_owned(),
+                            reason.to_owned(),
+                        );
+                    }
+                    fields.extend(decision.receipt_fields);
+                    fields.insert(
+                        RECEIPT_FIELD_VERIFICATION_ATTEMPTS.to_owned(),
+                        (attempt - 1).to_string(),
+                    );
+                    fields.insert(
+                        CONNECT_VERIFICATION.to_owned(),
+                        "profile_read_held".to_owned(),
+                    );
+                    return OutboundExecutionOutcome::failed(
+                        "verify_after_connect_profile_read_held",
+                    )
+                    .with_receipt_fields(fields)
+                    .with_possible_delivery();
                 }
             }
             if attempt < plan.max_observation_attempts {
@@ -340,13 +377,23 @@ impl<T: LinkedInMcpConnectTransport> LinkedInMcpVerifiedConnectSink<T> {
     fn read_state(
         &mut self,
         recipient_key: &str,
-    ) -> std::result::Result<LinkedInConnectionState, String> {
+        policy: &mut LinkedInSeatSandboxPolicy,
+    ) -> std::result::Result<LinkedInConnectionState, ProfileReadError> {
+        let decision = policy.evaluate_profile_read();
+        if !matches!(decision.action, LinkedInSeatPolicyAction::Allow) {
+            return Err(ProfileReadError::Policy(decision));
+        }
+        // A provider call consumes the allowance even if its response fails or
+        // cannot be normalized. Never make a retry read using that same slot.
+        policy.state.profile_reads_today = policy.state.profile_reads_today.saturating_add(1);
         let observed = self
             .transport
             .get_person_profile(recipient_key)
-            .map_err(|err| receipt_error_code(&err))?;
+            .map_err(|err| ProfileReadError::Transport(receipt_error_code(&err)))?;
         if observed.recipient_key != recipient_key {
-            return Err("profile_target_mismatch".to_owned());
+            return Err(ProfileReadError::Transport(
+                "profile_target_mismatch".to_owned(),
+            ));
         }
         Ok(observed.state)
     }
