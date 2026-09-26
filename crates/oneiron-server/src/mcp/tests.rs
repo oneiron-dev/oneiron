@@ -3321,6 +3321,39 @@ fn raw_decode_boundary_preserves_advertised_integer_number_text() {
     }
 }
 
+/// Raw fractional epochs must not become rounded integer epochs at admission.
+#[test]
+fn raw_board_expand_refuses_high_precision_fractional_epochs() {
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut args = endpoint_envelope("read_board");
+    args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 0 });
+
+    let integral = raw_args_with_number(&args, "/arguments/frame_epoch", "1.0");
+    let admitted =
+        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(integral))
+            .expect("an exact integral spelling is valid");
+    let McpValidatedToolArgs::Verb(verb) = admitted else {
+        panic!("board.expand is a verb")
+    };
+    assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
+
+    for token in ["1.00000000000000000001", "9007199254740993.5"] {
+        let raw = raw_args_with_number(&args, "/arguments/frame_epoch", token);
+        assert!(
+            matches!(
+                validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw)),
+                Err(McpToolValidationError::Decode {
+                    tool: "board.expand",
+                    ..
+                })
+            ),
+            "fractional raw epoch {token} must be refused before rounding"
+        );
+    }
+}
+
 /// The same raw boundary at the advertised 32-bit positions: restating a
 /// spelling never widens a field, so THIS field's own ceiling still decides.
 #[test]
