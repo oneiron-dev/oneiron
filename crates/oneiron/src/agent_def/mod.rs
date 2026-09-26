@@ -22,8 +22,8 @@ pub use self::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_ID_MAX_BYTES, AGENT_INSTRUCTIONS_MAX_BYTES,
     AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES,
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, CONTEXT_BUDGET_SPLIT_KEYS,
-    CompactionOwnership, ContextBudgetSplit, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef,
-    MemoryProfile,
+    CompactionOwnership, ContextBudgetSplit, DreamingMode, MCP_REF_KEYS, MEMORY_PROFILE_KEYS,
+    McpRef, MemoryProfile,
 };
 
 pub(crate) use self::codec::{
