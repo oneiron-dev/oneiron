@@ -65,7 +65,7 @@
      "path": "src/access_grant/context.rs",
      "purpose": "Relationship read authority built from live grants and stored membership evidence",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "struct": 3
      }
@@ -6671,7 +6671,7 @@
      "path": "src/channel_identity_autonomy/autonomy.rs",
      "purpose": "Scoped-read authorization, the atomic autonomy apply, action-grant mint, verify, mode set/resolve…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -7491,7 +7491,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -11280,7 +11280,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -11695,7 +11695,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -20881,6 +20881,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/recall/authority.rs",
+     "purpose": "Actor-bound recall authority: store-truth identity, owner lane and scoped floor",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/recall/items.rs",
      "purpose": "Builds typed recall items from the exact selected entity revision",
      "surface": {
@@ -21103,7 +21113,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/memory/tests_regressions/recall.rs",
@@ -24576,7 +24586,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 6,
       "struct": 1,
       "trait": 2
@@ -29256,7 +29266,7 @@
      "path": "src/store/root_directory.rs",
      "purpose": "Descriptor-bound directory identity shared by store opens and writer leases",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -32014,7 +32024,7 @@
      "path": "src/vault/read_fixture.rs",
      "purpose": "Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -32938,7 +32948,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
@@ -34490,9 +34500,9 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade"
     },
@@ -35024,7 +35034,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {
@@ -35633,7 +35643,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/fleet/workload.rs",
@@ -36187,7 +36197,7 @@
     "fleet": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
@@ -39887,7 +39897,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {

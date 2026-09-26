@@ -24,7 +24,7 @@ impl Vault {
         self.consume_channel_identity_grant_at(
             grant_ref,
             candidate,
-            self.store.clock.now_recorded_at(),
+            self.store.authorization_now()?,
         )
     }
 
@@ -68,6 +68,7 @@ impl Vault {
             &txn,
             candidate.identity_ref,
             candidate.relationship_context,
+            now,
             now,
         ) {
             Ok(mode) => mode,

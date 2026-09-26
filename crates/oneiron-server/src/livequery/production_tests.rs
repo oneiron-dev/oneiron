@@ -5,11 +5,14 @@ use super::subscriptions::LiveQuerySource;
 use super::*;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::memory::{
     ClaimInput, ClaimListFilter, NeighborOpts, WitnessAuthor, WitnessMessage, WitnessReceipt,
     WitnessTurn,
 };
-use oneiron::{EdgeActorClass, EntityId};
+use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use std::sync::Arc;
 
 pub(super) const SECRET: &str = "production-app-tier-owner";
@@ -17,6 +20,8 @@ pub(super) const ACTOR: &str = "11111111111111111111111111111111";
 pub(super) const JTI: &str = "22222222222222222222222222222222";
 const MACHINE: &str = "33333333333333333333333333333333";
 const CONVERSATION: &str = "44444444444444444444444444444444";
+const SPACE: &str = "55555555555555555555555555555555";
+const READ_GRANT: &str = "66666666666666666666666666666666";
 pub(super) const AT: u64 = 1_772_000_000;
 
 pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
@@ -36,6 +41,27 @@ pub(super) fn server() -> (tempfile::TempDir, Arc<SyncServer>) {
             )
             .unwrap();
     }
+    let actor = EntityId::from_hex(ACTOR).unwrap();
+    vault
+        .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
+        .unwrap();
+    vault
+        .create_access_grant(
+            &EntityId::from_hex(READ_GRANT).unwrap(),
+            &AccessGrant {
+                authority_scope: oneiron::federation::Scope::top(),
+                principal_ref: actor,
+                scope: AccessGrantScope::Messages {
+                    space_ref: EntityId::from_hex(SPACE).unwrap(),
+                },
+                capability: AccessGrantCapability::MessagesRead,
+                status: AccessGrantStatus::Active,
+                created_at: AT,
+                revoked_at: None,
+                expires_at: None,
+            },
+        )
+        .unwrap();
     let server = Arc::new(
         SyncServer::new(
             vault,
@@ -70,7 +96,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: text.to_owned(),
-                metadata: None,
+                metadata: Some(json!({"rel": SPACE})),
                 is_visible: true,
                 order: 0,
             }],

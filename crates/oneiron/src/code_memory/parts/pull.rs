@@ -295,6 +295,7 @@ pub fn pull_code_memory(
         }));
     }
 
+    scoped_read.persist_grant_clock()?;
     let rtxn = vault.store.env.read_txn()?;
     for seed in &request.seed_symbols {
         if entity_type_in_txn(&vault.store, &rtxn, seed)? != Some(ENTITY_TYPE_CODE_SYMBOL) {

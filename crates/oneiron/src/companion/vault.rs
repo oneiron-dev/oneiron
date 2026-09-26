@@ -28,6 +28,7 @@ impl Vault {
         person_ref: &EntityId,
         persona_ref: &EntityId,
     ) -> Result<Option<EntityId>> {
+        let now = self.store.authorization_now()?;
         let rtxn = self.store.env.read_txn()?;
         crate::gate::companion_profile_access_grant(
             &self.store,
@@ -35,6 +36,7 @@ impl Vault {
             principal_ref,
             person_ref,
             persona_ref,
+            now,
         )
     }
 

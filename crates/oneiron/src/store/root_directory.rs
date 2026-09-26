@@ -2,7 +2,7 @@
 
 use std::ffi::CString;
 use std::fs::File;
-use std::os::fd::FromRawFd;
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
@@ -29,6 +29,67 @@ pub(super) fn open_root_directory(root: &Path) -> Result<File> {
         )
     };
     Ok(adopt_descriptor(fd)?)
+}
+
+/// Open a spool under the retained vault root, never through its old pathname.
+/// The staging directory itself is opened no-follow and kept pinned until the
+/// anonymous tempfile has been created through that descriptor.
+pub(super) fn lfs_staging_file(root: &File) -> Result<File> {
+    let name = c"lfs-staging";
+    // SAFETY: `root` holds a live directory descriptor and `name` is a static
+    // NUL-terminated single component. mkdirat does not transfer ownership.
+    let created = unsafe { libc::mkdirat(root.as_raw_fd(), name.as_ptr(), 0o700) };
+    if created < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::AlreadyExists {
+            return Err(error.into());
+        }
+    }
+    // SAFETY: the descriptor is owned by `root` for this call; the static
+    // component remains live. adopt_descriptor takes ownership only on success.
+    let fd = unsafe {
+        libc::openat(
+            root.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_DIRECTORY | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    let staging = adopt_descriptor(fd)?;
+    if root.metadata()?.dev() != staging.metadata()?.dev() {
+        return Err(Error::InvalidConfig(
+            "lfs staging crosses the vault filesystem".to_owned(),
+        ));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let path = format!("/proc/self/fd/{}", staging.as_raw_fd());
+        Ok(tempfile::tempfile_in(path)?)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Other Unix hosts have no guaranteed /proc/self/fd directory walk.
+        // Create exclusively relative to the held directory, then unlink the
+        // name immediately so the returned file is just as anonymous.
+        let name = CString::new(format!(".lfs-spool-{}", uuid::Uuid::now_v7()))
+            .map_err(|_| Error::InvariantViolation("lfs spool name"))?;
+        // SAFETY: the held directory and NUL-terminated name live through
+        // openat; adopt_descriptor owns only a successfully opened new fd.
+        let fd = unsafe {
+            libc::openat(
+                staging.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600,
+            )
+        };
+        let spool = adopt_descriptor(fd)?;
+        // SAFETY: staging still holds the directory fd, name is unchanged,
+        // and unlinkat transfers no descriptor ownership.
+        if unsafe { libc::unlinkat(staging.as_raw_fd(), name.as_ptr(), 0) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(spool)
+    }
 }
 
 /// Identity of the directory the caller's path names RIGHT NOW, without
