@@ -31,6 +31,8 @@ fn spec(vault: &Vault, holder: EntityId) -> TaskAskSpec {
                     noise_weight: 0.8,
                     linked_by: None,
                 }),
+                ladder_answer: None,
+                class_key: None,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,
