@@ -15,7 +15,7 @@ mod surface_dispatch;
 pub use self::mediation_backing::{
     GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan, LensAtomSelectionRequest,
     LensBackingRefToken, LensBackingTarget, LensBackingTargetKind, LensHostBackingRef,
-    LensReadHandle, LensReadReach,
+    LensReadHandle, LensReadReach, LensSpanCursor, LensSpanSelectionRequest,
 };
 pub use self::mediation_frame_read::LensRenderFrame;
 pub use self::mediation_frame_write::{
