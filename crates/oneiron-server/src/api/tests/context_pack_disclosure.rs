@@ -415,11 +415,20 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         "kenji@example.com",
     );
     let party = seed_text_turn(&server, "hanami party planning needle17");
-    let diary = seed_text_turn(&server, "private diary entry needle17");
-    seed_disclosure_scope(&server, contact_principal, vec![party]);
+    let diary = seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "private diary entry needle17",
+        seeded_test_entity_id(0x1517_00f1),
+    );
+    seed_disclosure_scope(
+        &server,
+        contact_principal,
+        disclosure_base_world_clearance(),
+    );
 
     // Scoped bearer whose principal IS the contact row; no block (N13 shape
-    // with a real scope). AbsenceClamp admits only the allowlisted party.
+    // with a base-world clearance). AbsenceClamp excludes the other-world claim.
     let request = json!({ "query": "needle17", "limit": 10 });
     let (status, body) = route_json(
         server,
@@ -451,7 +460,7 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     assert!(result_ids.contains(&party.to_hex().as_str()));
     assert!(
         !result_ids.contains(&diary.to_hex().as_str()),
-        "out-of-scope Tier-B memory absent from the assembled context"
+        "out-of-world Tier-B claim absent from the assembled context"
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());
@@ -580,8 +589,13 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let diary = seed_text_turn(&server, "private diary needle21");
-    seed_disclosure_scope(&server, contact_id, vec![party]);
+    let diary = seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "private diary needle21",
+        seeded_test_entity_id(0x1517_00f2),
+    );
+    seed_disclosure_scope(&server, contact_id, disclosure_base_world_clearance());
 
     let clean = json!({
         "query": "needle21",
@@ -590,14 +604,14 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             "third_parties": [{ "contact_ref": contact_id.to_hex() }]
         }
     });
-    // No request field can name scope entities; smuggled members fall to
-    // serde's ignored-unknown-fields floor and change nothing.
+    // Request fields cannot widen stored world clearance; smuggled fields fall
+    // to serde's ignored-unknown-fields floor and change nothing.
     let smuggled = json!({
         "query": "needle21",
         "interlocutors": {
             "owner_present": false,
             "third_parties": [{ "contact_ref": contact_id.to_hex() }],
-            "scope": { "entities": [diary.to_hex()] },
+            "scope": { "worlds": [seeded_test_entity_id(0x1517_00f2).to_hex()] },
             "entities": [diary.to_hex()]
         }
     });
@@ -634,7 +648,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             results
                 .iter()
                 .all(|entity| entity["id"].as_str() != Some(diary_id.as_str())),
-            "request fields cannot admit the out-of-scope diary",
+            "request fields cannot admit the out-of-world diary",
         );
         let mode = body["disclosure"]["mode"]
             .as_str()
@@ -704,8 +718,8 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
     let identity_ref = seeded_test_entity_id(0x1517_0041);
     let wider_contact = seeded_test_entity_id(0x1517_0042);
     seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
-    let party = seed_text_turn(&server, "party event needle23");
-    seed_disclosure_scope(&server, wider_contact, vec![party]);
+    seed_text_turn(&server, "party event needle23");
+    seed_disclosure_scope(&server, wider_contact, disclosure_base_world_clearance());
     // Principal X has no contact row: it contributes the deny-all scope.
     let principal_ref = seeded_test_entity_id(0x1517_0043).to_hex();
 
