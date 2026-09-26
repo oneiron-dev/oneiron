@@ -94,6 +94,62 @@ impl L2BaseCache {
     }
 }
 
+/// Select vault-owned user and configured persona identities. A generic PERSON
+/// row is not proof that it is this context's user. Evidence from these
+/// identities still passes every retrieval, disclosure, and scoped-read gate.
+pub(super) fn default_l2_subjects(
+    vault: &Vault,
+    reader: Option<&ScopedRead<'_>>,
+) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let principal = if let Some(id) =
+        reader.and_then(|read| EntityId::from_hex(read.actor_key().actor_ref()).ok())
+    {
+        vault
+            .store
+            .entities
+            .get(&txn, id.as_bytes())?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+            .map(|_| id)
+    } else {
+        None
+    };
+    let mut subjects = BTreeSet::new();
+    if vault.store.entities.get(&txn, owner.as_bytes())?.is_some() {
+        subjects.insert(owner);
+    }
+    if let Some(person) = principal {
+        subjects.insert(person);
+    }
+    drop(txn);
+    // Personal persona records belong only to the caller's person; neutral
+    // personas are vault-wide. Shared-vault personas require explicit routing.
+    for (key, _) in vault.companion_register()?.iter() {
+        let in_scope = match &key.scope {
+            crate::companion::CompanionScope::Neutral => true,
+            crate::companion::CompanionScope::Personal { person_ref } => {
+                principal == Some(*person_ref)
+            }
+            crate::companion::CompanionScope::SharedVault { .. } => false,
+        };
+        if in_scope
+            && let crate::companion::CompanionSubject::Persona { persona_ref } = &key.subject
+        {
+            subjects.insert(*persona_ref);
+        }
+    }
+    if subjects.len() > 8 {
+        // An automatically discovered optional prefix must not turn an
+        // otherwise valid context pack into a failed read. Explicit selections
+        // retain the producer's strict eight-subject error.
+        return Ok(Vec::new());
+    }
+    Ok(subjects.into_iter().collect())
+}
+
 pub(super) fn produce_l2_base(
     vault: &Vault,
     pipeline: &PipelineBuilder<'_>,

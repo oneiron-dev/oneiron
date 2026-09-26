@@ -11305,7 +11305,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "L2BaseSummary"
@@ -11313,7 +11313,7 @@
      "path": "src/context_pack/l2_base.rs",
      "purpose": "Content-addressed persona/user evidence prefix",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
