@@ -13,12 +13,25 @@ pub const LFS_CHUNK_MIN: usize = 32 * 1024;
 pub const LFS_CHUNK_AVG: usize = 64 * 1024;
 /// Maximum FastCDC chunk size.
 pub const LFS_CHUNK_MAX: usize = 128 * 1024;
-const PARAM_KEY: &[u8] = b"origin:lfs:cdc:v1";
+pub(super) const PARAM_KEY: &[u8] = b"origin:lfs:cdc:v1";
 const MANIFEST_MAGIC: &[u8; 8] = b"LFSCDC01";
 pub(super) const CHUNK_DOMAIN: &[u8] = b"oneiron:origin-lfs-chunk:v1";
 pub(super) const CHUNK_MARK: &[u8] = b"origin:lfs:chunk:v1:";
 pub(super) const OWNER_REF: &[u8] = b"origin:lfs:owner-ref:v1:";
 pub(super) const REF_PREFIX: &[u8] = b"origin:lfs:chunk-ref:v1:";
+
+/// Stamps the vault-private seed alongside the initial storage version, atomically.
+pub(crate) fn mint_lfs_chunk_parameters_in_txn(
+    vault_meta: &crate::overlay_db::OverlayDb,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    let mut seed = OsRng.next_u64();
+    while seed == 0 {
+        seed = OsRng.next_u64();
+    }
+    vault_meta.put(txn, PARAM_KEY, &seed.to_le_bytes())?;
+    Ok(())
+}
 
 /// Persisted vault-specific boundary randomization, never sent to another vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,30 +124,23 @@ impl LfsManifest {
 }
 
 impl Vault {
-    /// Returns this vault's durable boundary parameters, minting once.
+    /// Returns the boundary parameters minted in this vault's creation transaction.
     pub fn lfs_chunk_parameters(&self) -> Result<LfsChunkParameters> {
-        self.with_write_txn(|txn| {
-            let seed = if let Some(raw) = self.store.vault_meta.get(txn, PARAM_KEY)? {
-                u64::from_le_bytes(
-                    raw.as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("lfs cdc seed"))?,
-                )
-            } else {
-                let mut seed = OsRng.next_u64();
-                while seed == 0 {
-                    seed = OsRng.next_u64();
-                }
-                self.store
-                    .vault_meta
-                    .put(txn, PARAM_KEY, &seed.to_le_bytes())?;
-                seed
-            };
-            if seed == 0 {
-                return Err(Error::CorruptedIndex("lfs cdc zero seed"));
-            }
-            Ok(LfsChunkParameters { seed })
-        })
+        let txn = self.store.env.read_txn()?;
+        let raw = self
+            .store
+            .vault_meta
+            .get(&txn, PARAM_KEY)?
+            .ok_or(Error::CorruptedIndex("missing lfs cdc seed"))?;
+        let seed = u64::from_le_bytes(
+            raw.as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("lfs cdc seed"))?,
+        );
+        if seed == 0 {
+            return Err(Error::CorruptedIndex("lfs cdc zero seed"));
+        }
+        Ok(LfsChunkParameters { seed })
     }
 
     /// Reads and authenticates the manifest before exposing its references.
