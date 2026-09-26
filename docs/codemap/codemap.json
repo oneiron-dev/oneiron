@@ -36651,6 +36651,80 @@
    "source_files": 7,
    "test_files": 2
   },
+  "oneiron-image-openrouter": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenRouterImageBackend",
+      "OpenRouterImageConfig",
+      "OpenRouterImageHttpRequest",
+      "OpenRouterImageHttpResponse",
+      "OpenRouterImageModel",
+      "OpenRouterImageTransport",
+      "PromptShim"
+     ],
+     "path": "src/backend.rs",
+     "purpose": "Model-local prompt configuration and host-owned HTTP transport",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 6,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "OpenRouter Image API adapter",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire.rs",
+     "purpose": "Buffered `/api/v1/images` request and response mapping",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recorded.rs",
+     "purpose": "Recorded OpenRouter Image API envelopes; no live API key or network",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "backend": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Model-local prompt configuration and host-owned HTTP transport"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Buffered `/api/v1/images` request and response mapping"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "OpenRouter Image API adapter",
+   "source_files": 3,
+   "test_files": 1
+  },
   "oneiron-llm-anthropic": {
    "files": [
     {
