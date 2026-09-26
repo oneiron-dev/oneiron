@@ -41,6 +41,8 @@ pub struct ComfyOptions {
     pub poll_interval: Duration,
     pub max_image_bytes: usize,
     pub bearer_token: Option<String>,
+    /// Credential for a protected Salad Container Gateway.
+    pub salad_api_key: Option<String>,
 }
 impl Default for ComfyOptions {
     fn default() -> Self {
@@ -49,6 +51,7 @@ impl Default for ComfyOptions {
             poll_interval: Duration::from_secs(1),
             max_image_bytes: 32 * 1024 * 1024,
             bearer_token: None,
+            salad_api_key: None,
         }
     }
 }
@@ -79,6 +82,9 @@ impl ComfyUiBackend {
             || options.max_polls == 0
             || options.max_image_bytes == 0
             || options.bearer_token.as_ref().is_some_and(String::is_empty)
+            || options.salad_api_key.as_ref().is_some_and(|key| {
+                key.is_empty() || reqwest::header::HeaderValue::from_str(key).is_err()
+            })
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
@@ -113,8 +119,12 @@ impl ComfyUiBackend {
     }
 
     fn auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.options.bearer_token {
+        let request = match &self.options.bearer_token {
             Some(token) => request.bearer_auth(token),
+            None => request,
+        };
+        match &self.options.salad_api_key {
+            Some(key) => request.header("Salad-Api-Key", key.as_str()),
             None => request,
         }
     }

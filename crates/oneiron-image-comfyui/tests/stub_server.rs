@@ -30,8 +30,14 @@ fn reply(method: &'static str, path: &'static str, body: Value) -> Expected {
         body: body.to_string(),
     }
 }
-type CapturedRequests = Vec<(String, Vec<u8>)>;
+type CapturedRequests = Vec<(String, Vec<u8>, Option<String>)>;
 fn stub(steps: Vec<Expected>) -> (String, thread::JoinHandle<CapturedRequests>) {
+    stub_with_gateway(steps, false)
+}
+fn stub_with_gateway(
+    steps: Vec<Expected>,
+    protected: bool,
+) -> (String, thread::JoinHandle<CapturedRequests>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
     let url = format!("http://{}", listener.local_addr().expect("stub address"));
     let handle = thread::spawn(move || {
@@ -50,6 +56,7 @@ fn stub(steps: Vec<Expected>) -> (String, thread::JoinHandle<CapturedRequests>) 
             );
             let mut content_length = 0;
             let mut has_lease = false;
+            let mut salad_key = None;
             loop {
                 line.clear();
                 reader.read_line(&mut line).expect("request headers");
@@ -63,13 +70,23 @@ fn stub(steps: Vec<Expected>) -> (String, thread::JoinHandle<CapturedRequests>) 
                 if name.eq_ignore_ascii_case("x-oneiron-budget-lease") {
                     has_lease = value.trim() == "fixture";
                 }
+                if name.eq_ignore_ascii_case("Salad-Api-Key") {
+                    salad_key = Some(value.trim().to_owned());
+                }
             }
             assert!(has_lease, "lease header missing");
             let mut body = vec![0; content_length];
             reader.read_exact(&mut body).expect("request body");
+            // A protected gateway refuses missing or wrong keys before ComfyUI sees the call.
+            let authorized = !protected || salad_key.as_deref() == Some("fixture-salad-key");
+            let (status, response_body) = if authorized {
+                (step.status, step.body.as_str())
+            } else {
+                (401, "{}")
+            };
             write!(stream, "HTTP/1.1 {} Fixture\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                step.status, step.content_type, step.body.len(), step.body).expect("response");
-            captures.push((step.path.to_owned(), body));
+                status, step.content_type, response_body.len(), response_body).expect("response");
+            captures.push((step.path.to_owned(), body, salad_key));
         }
         captures
     });
@@ -102,6 +119,9 @@ fn workflow(edit: bool) -> ComfyWorkflow {
     }
 }
 fn backend(url: &str, polls: u32) -> ComfyUiBackend {
+    backend_with_salad_key(url, polls, None)
+}
+fn backend_with_salad_key(url: &str, polls: u32, salad_key: Option<&str>) -> ComfyUiBackend {
     let mut generate = workflow(false);
     generate.params.clear();
     let mut edit = workflow(true);
@@ -121,6 +141,7 @@ fn backend(url: &str, polls: u32) -> ComfyUiBackend {
             poll_interval: Duration::ZERO,
             max_image_bytes: 1024,
             bearer_token: Some("test-token".into()),
+            salad_api_key: salad_key.map(str::to_owned),
         },
     )
     .expect("backend")
@@ -262,6 +283,66 @@ async fn incomplete_job_times_out_and_bad_output_is_rejected_without_fetch() {
     ));
     assert_eq!(peer.join().expect("stub").len(), 2);
 }
+#[tokio::test]
+async fn protected_salad_gateway_authenticates_upload_submit_poll_and_fetch() {
+    let (url, peer) = stub_with_gateway(
+        vec![
+            reply(
+                "POST",
+                "/upload/image",
+                json!({"name": "reference.png", "subfolder": "", "type": "input"}),
+            ),
+            reply("POST", "/prompt", json!({"prompt_id": "job-1"})),
+            reply("GET", "/history/job-1", finished()),
+            fetch(),
+        ],
+        true,
+    );
+    let backend = backend_with_salad_key(&url, 1, Some("fixture-salad-key"));
+    let reference = ImageBytes {
+        bytes: b"reference".to_vec(),
+        media_type: "image/png".into(),
+    };
+    let response = backend
+        .reference_edit(
+            intent(true),
+            vec![reference],
+            &BudgetLease::for_test("fixture"),
+        )
+        .await
+        .expect("protected render");
+    assert_eq!(response.image.bytes, b"PNG bytes");
+    let requests = peer.join().expect("protected peer");
+    assert_eq!(requests.len(), 4);
+    for (path, _, key) in requests {
+        assert!(
+            matches!(
+                path.as_str(),
+                "/upload/image" | "/prompt" | "/history/job-1"
+            ) || path.starts_with("/view?")
+        );
+        assert_eq!(
+            key.as_deref(),
+            Some("fixture-salad-key"),
+            "missing key on {path}"
+        );
+    }
+
+    let (url, peer) = stub_with_gateway(
+        vec![reply("POST", "/prompt", json!({"prompt_id": "job-1"}))],
+        true,
+    );
+    let error = backend_with_salad_key(&url, 1, Some("wrong-key"))
+        .generate(intent(false), &BudgetLease::for_test("fixture"))
+        .await
+        .expect_err("protected gateway must reject wrong key");
+    assert!(matches!(error, LlmError::Fatal(FatalLlmError::Auth)));
+    assert_eq!(
+        peer.join().expect("rejecting peer")[0].2.as_deref(),
+        Some("wrong-key")
+    );
+}
+
 #[tokio::test]
 async fn invalid_model_and_references_fail_before_network() {
     let backend = backend("http://127.0.0.1:1", 1);

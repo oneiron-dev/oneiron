@@ -12,4 +12,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/lib.rs` | src | m | 5 struct · 1 fn | ComfyModelShim, ComfyOptions, ComfyUiBackend, ComfyWorkflow, InputField | Self-hosted ComfyUI image adapter |
-| `tests/stub_server.rs` | test | s | — | — | Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport |
+| `tests/stub_server.rs` | test | m | — | — | Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport |
