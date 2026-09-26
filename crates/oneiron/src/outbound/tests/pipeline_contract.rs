@@ -1049,6 +1049,52 @@ fn replicated_suppression_artifact_projects_on_another_vault()
             &raw[ENTITY_METADATA_HEADER_LEN..],
         )?;
     }
+    let asset = source
+        .entities_by_type(ENTITY_TYPE_ASSET)?
+        .into_iter()
+        .find(|id| {
+            source.get_raw(id).expect("read ASSET").is_some_and(|raw| {
+                raw[ENTITY_METADATA_HEADER_LEN..].starts_with(b"oneiron:outbound-suppression:v1\0")
+            })
+        })
+        .expect("suppression ASSET");
+    let raw = source.get_raw(&asset)?.expect("source asset");
+    let at = crate::temporal::TimeRange {
+        start: 1_000,
+        end: 1_000,
+    };
+    // Hostile replica and public API use this same ASSET body gate.
+    assert!(
+        peer.put_entity(
+            &entity(0x85),
+            ENTITY_TYPE_ASSET,
+            at,
+            1_000,
+            &raw[ENTITY_METADATA_HEADER_LEN..]
+        )
+        .is_err(),
+        "wrong ID"
+    );
+    assert!(
+        peer.put_entity(&asset, ENTITY_TYPE_ASSET, at, 1_000, b"ordinary content")
+            .is_err(),
+        "cannot replace a receipt with ordinary content"
+    );
+    assert!(
+        peer.put_entity(
+            &asset,
+            ENTITY_TYPE_ASSET,
+            at,
+            1_000,
+            b"oneiron:outbound-suppression:v1\0"
+        )
+        .is_err(),
+        "cannot truncate a receipt"
+    );
+    // Some ASSET delete paths are a no-op rather than a typed refusal. Either
+    // way this committed receipt must remain queryable and replay-safe.
+    let deletion = peer.delete_entity(&asset);
+    assert!(deletion.is_err() || peer.get_raw(&asset)?.is_some());
     let projected = peer.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(projected, vec![suppressed.receipt]);
     let scan = peer.scan_receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
@@ -1208,5 +1254,36 @@ fn an_earlier_ambiguous_send_is_not_erased_by_a_later_definite_failure()
         OutboundDispatchOutcome::Suppressed
     );
     assert_eq!(sink.calls.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn malformed_unrelated_suppression_asset_is_refused_before_it_can_poison_receipts()
+-> std::result::Result<(), Box<dyn std::error::Error>> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_tmp, vault) = temp_vault();
+    let at = crate::temporal::TimeRange { start: 1, end: 1 };
+    assert!(
+        vault
+            .put_entity(
+                &entity(0x86),
+                crate::registry::ENTITY_TYPE_ASSET,
+                at,
+                1,
+                b"oneiron:outbound-suppression:v1\0"
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound))?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .scan_receipts(ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound))?
+            .records
+            .is_empty()
+    );
     Ok(())
 }

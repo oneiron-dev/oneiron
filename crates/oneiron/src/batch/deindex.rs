@@ -90,6 +90,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     id: &EntityId,
 ) -> Result<(bool, bool, bool, Vec<EntityId>)> {
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
+    crate::receipt::reject_suppression_asset_delete(store, wtxn, id)?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     store

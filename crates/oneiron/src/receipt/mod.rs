@@ -70,8 +70,11 @@ pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_
 pub(crate) use self::send_receipt_txn::{
     delivered_send_exists_in_txn, persist_send_receipt_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::suppression::validate_suppression_asset_body;
 pub(crate) use self::suppression::{
-    put_suppression_in_txn, suppression_for_intent, suppression_receipt_id,
+    put_suppression_in_txn, reject_suppression_asset_delete, stage_suppression_asset_index,
+    suppression_for_intent, suppression_receipt_id, validate_suppression_asset_put,
 };
 
 // The flat receipt.rs module used to provide these names to the test module

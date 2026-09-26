@@ -25226,7 +25226,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 8
      }
     },
@@ -25279,7 +25279,7 @@
      "path": "src/receipt/suppression.rs",
      "purpose": "Replicated, immutable observation of a suppressed outbound intent",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 8
      }
     },
     {

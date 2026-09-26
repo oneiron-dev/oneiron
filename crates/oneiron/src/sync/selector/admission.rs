@@ -380,6 +380,9 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
                 "CompanionRecord storage retired; use PERSON/FACET",
             )));
         }
+        crate::registry::ENTITY_TYPE_ASSET => {
+            crate::receipt::validate_suppression_asset_body(id, body)?;
+        }
         crate::registry::ENTITY_TYPE_TASK => {
             crate::habit::task_role_from_body_bytes(body)?;
         }
@@ -480,4 +483,58 @@ fn validate_federated_pack(store: &crate::store::Store, blob: &[u8]) -> Result<(
     let txn = store.env.read_txn()?;
     let (handle, local) = store.remap_pack_instance_in_txn(&txn, &source)?;
     store.validate_pack_instance_in_txn(&txn, handle, &local.to_bytes()?)
+}
+
+#[cfg(all(test, feature = "sync"))]
+mod suppression_carrier_tests {
+    use super::*;
+    use crate::receipt::{ReceiptKind, ReceiptRecord};
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct ForgedCarrier {
+        intent_id: [u8; 32],
+        receipt: ReceiptRecord,
+    }
+
+    #[test]
+    fn replicated_admission_refuses_truncated_and_wrong_id_suppression_assets() {
+        let id = EntityId::from_bytes([0x87; 16]).expect("fixture id");
+        let magic = b"oneiron:outbound-suppression:v1\0";
+        assert!(
+            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_ASSET, magic)
+                .is_err()
+        );
+        let receipt = ReceiptRecord {
+            receipt_id: format!(
+                "outbound:suppression:{}",
+                crate::entity_id::bytes_to_hex_lower(&[0x88; 32])
+            ),
+            receipt_kind: ReceiptKind::Outbound,
+            occurred_at: 1,
+            actor: None,
+            on_behalf_of: None,
+            outcome: "suppressed".to_owned(),
+            job_ref: None,
+            trigger_ref: None,
+            policy_trace: Vec::new(),
+            fields: [
+                ("suppression".to_owned(), "dedupe".to_owned()),
+                ("dedupe_key".to_owned(), "same".to_owned()),
+            ]
+            .into(),
+        };
+        let mut body = magic.to_vec();
+        body.extend(
+            rmp_serde::to_vec_named(&ForgedCarrier {
+                intent_id: [0x88; 32],
+                receipt,
+            })
+            .expect("encode forged carrier"),
+        );
+        assert!(
+            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_ASSET, &body)
+                .is_err()
+        );
+    }
 }

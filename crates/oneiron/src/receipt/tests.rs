@@ -1911,3 +1911,46 @@ fn brief_share_preserves_legacy_share_receipt_bytes_and_namespaces() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn unrelated_asset_inventory_cannot_disable_outbound_receipt_queries() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let mut config = embedding_test_config();
+    config.map_size = 256 * 1024 * 1024;
+    let vault = Vault::open(tmp.path(), config)?;
+    let asset_type = crate::registry::ENTITY_TYPE_ASSET;
+    let initial_assets = vault.count_entities_by_type(asset_type)?;
+    // Fixture rows in one transaction avoid 100,001 independent commits. They
+    // carry the ordinary entity header and type index used by ASSET queries,
+    // but none is a suppression carrier.
+    vault.with_write_txn(|txn| {
+        let mut raw = vec![asset_type];
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(&1_u64.to_be_bytes());
+        raw.extend_from_slice(b"ordinary asset");
+        for n in 0..=100_000_u64 {
+            let mut bytes = [0_u8; 16];
+            bytes[6] = 0x70;
+            bytes[8..].copy_from_slice(&n.to_be_bytes());
+            bytes[8] = 0x80;
+            let id = EntityId::from_bytes(bytes)?;
+            vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+            vault
+                .store
+                .type_index
+                .put(txn, &Store::encode_type_key(asset_type, &id), &[])?;
+        }
+        Ok(())
+    })?;
+    assert_eq!(
+        vault.count_entities_by_type(asset_type)?,
+        initial_assets + 100_001
+    );
+    let query = ReceiptQuery::new(1).with_kind(ReceiptKind::Outbound);
+    assert!(vault.receipts(query.clone())?.is_empty());
+    let scan = vault.scan_receipts(query)?;
+    assert!(scan.records.is_empty());
+    assert!(scan.complete);
+    Ok(())
+}

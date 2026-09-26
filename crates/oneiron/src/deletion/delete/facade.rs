@@ -68,6 +68,7 @@ impl Vault {
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+            crate::receipt::reject_suppression_asset_delete(&self.store, &rtxn, id)?;
         }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(

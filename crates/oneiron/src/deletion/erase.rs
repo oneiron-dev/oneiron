@@ -404,6 +404,7 @@ impl Vault {
         id: &EntityId,
     ) -> Result<(bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
+        crate::receipt::reject_suppression_asset_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
@@ -572,6 +573,7 @@ impl Vault {
         raw_value: &[u8],
     ) -> Result<ReplayedTombstoneOutcome> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
+        crate::receipt::reject_suppression_asset_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
