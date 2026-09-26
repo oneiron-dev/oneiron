@@ -421,8 +421,18 @@ pub fn run_linkedin_kill_switch<H: LinkedInSandboxHostHarness>(
     occurred_at: u64,
     reason_ref: impl Into<String>,
 ) -> Result<LinkedInSeatSandboxPolicy> {
-    harness.destroy_sandbox(&policy.host)?;
-    harness.revoke_verb_catalog(&policy.host.seat_ref)?;
+    let reason_ref = bounded_ref(
+        reason_ref.into(),
+        "LinkedIn kill-switch reason ref must be non-empty",
+        "LinkedIn kill-switch reason ref exceeds maximum length",
+    )?;
+    // Revoke first so a sandbox that refuses termination cannot still send.
+    // Attempt destruction even when revocation fails; both operations are
+    // idempotent so the host can retry after a partial failure.
+    let revoked = harness.revoke_verb_catalog(&policy.host.seat_ref);
+    let destroyed = harness.destroy_sandbox(&policy.host);
+    revoked?;
+    destroyed?;
     policy.mark_killed(occurred_at, reason_ref)
 }
 
