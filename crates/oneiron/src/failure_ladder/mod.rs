@@ -51,9 +51,7 @@ use crate::Vault;
 #[cfg(test)]
 use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher, HealerSlotOutcome};
 #[cfg(test)]
-use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, FailAttempt, FailOutcome, RetryAttempt, RetryOutcome,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, RetryAttempt, RetryOutcome};
 #[cfg(test)]
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(test)]

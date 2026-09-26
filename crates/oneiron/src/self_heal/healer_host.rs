@@ -375,7 +375,7 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
     ) -> Result<RepairBundle> {
-        self.submit_checked(run, session, proposal, None)
+        self.submit_checked(run, session, proposal, None, || Ok(()))
     }
 
     pub(crate) fn submit_case_bound(
@@ -385,7 +385,20 @@ impl HealerRegistration<'_> {
         proposal: RepairProposal,
         binding: CaseBinding,
     ) -> Result<RepairBundle> {
-        self.submit_checked(run, session, proposal, Some(binding))
+        self.submit_checked(run, session, proposal, Some(binding), || Ok(()))
+    }
+
+    /// Test seam for a policy change after admission preflight and before the
+    /// single transaction that evaluates consent and persists the proposal.
+    #[cfg(test)]
+    pub(super) fn submit_with_pre_write(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        before_write: impl FnOnce() -> Result<()>,
+    ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, None, before_write)
     }
 
     fn submit_checked(
@@ -394,6 +407,7 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
         binding: Option<CaseBinding>,
+        before_write: impl FnOnce() -> Result<()>,
     ) -> Result<RepairBundle> {
         super::validate_ref(run)?;
         if binding
@@ -422,40 +436,42 @@ impl HealerRegistration<'_> {
                 "production healer operation is outside its capability".into(),
             ));
         }
-        let txn = self.vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
-        let drafts = Drafts(proposal);
-        let registration = RegisteredHealer {
-            healer_id: "external_healer",
-            actor: self.actor,
-            agent_definition_ceiling: Some(crate::gate::PolicyApprovalCeiling::Proposed),
-            healer: &drafts,
-        };
-        let bundle = run_healer_proposals(
-            &policy,
-            &registration,
-            run,
-            session,
-            &DiagnosticWorkingSet {
-                scope_ref: run,
-                observations: &[],
-            },
-            &[],
-        )?;
-        drop(txn);
-        let reviewed = &bundle.proposals()[0];
-        if reviewed.route() == RepairConsentRoute::Denied {
-            return Err(Error::InvalidConfig("repair admission denied".into()));
-        }
-        let mut proposal = reviewed.proposal().clone();
-        // Persist authority attribution, not the runner's claimed actor/source.
-        proposal.actor = reviewed.invocation().actor().clone();
-        proposal.source = reviewed.invocation().source();
-        let threshold = PROPOSAL_BURST_THRESHOLD;
+        before_write()?;
+        // The policy and the healer binding are read under the SAME write
+        // transaction that records the proposal. A revocation between preflight
+        // and this snapshot therefore denies admission, not just future runs.
         self.vault.with_write_txn(|txn| {
             if let Some(binding) = &binding {
                 binding.require_in_txn(self.vault, txn)?;
             }
+            let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+            let drafts = Drafts(proposal);
+            let registration = RegisteredHealer {
+                healer_id: "external_healer",
+                actor: self.actor,
+                agent_definition_ceiling: Some(crate::gate::PolicyApprovalCeiling::Proposed),
+                healer: &drafts,
+            };
+            let bundle = run_healer_proposals(
+                &policy,
+                &registration,
+                run,
+                session,
+                &DiagnosticWorkingSet {
+                    scope_ref: run,
+                    observations: &[],
+                },
+                &[],
+            )?;
+            let reviewed = &bundle.proposals()[0];
+            if reviewed.route() == RepairConsentRoute::Denied {
+                return Err(Error::InvalidConfig("repair admission denied".into()));
+            }
+            let mut proposal = reviewed.proposal().clone();
+            // Persist authority attribution, not the runner's claimed actor/source.
+            proposal.actor = reviewed.invocation().actor().clone();
+            proposal.source = reviewed.invocation().source();
+            let threshold = PROPOSAL_BURST_THRESHOLD;
             let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
             if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
                 return Err(Error::InvalidConfig("proposal id already exists".into()));
@@ -513,9 +529,8 @@ impl HealerRegistration<'_> {
                 .store
                 .vault_meta
                 .put(txn, &ck, &encode(&counter)?)?;
-            Ok(())
-        })?;
-        Ok(bundle)
+            Ok(bundle)
+        })
     }
 }
 

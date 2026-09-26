@@ -156,7 +156,7 @@ impl<'a> FailureLadder<'a> {
             // sits in is unreadable, so the ordinal that would drive a retry
             // cannot be trusted. It surfaces as Ambiguous and never mints a
             // HealerCase.
-            let failed_attempt = fail_once(&queue, &input)?;
+            let failed_attempt = fail_once(self.vault, &queue, &input)?;
             return Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                 failed_attempt,
                 FailureClass::Ambiguous,
@@ -184,7 +184,7 @@ impl<'a> FailureLadder<'a> {
                 )
             }
             FailureClass::Ambiguous => {
-                let failed_attempt = fail_once(&queue, &input)?;
+                let failed_attempt = fail_once(self.vault, &queue, &input)?;
                 Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                     failed_attempt,
                     FailureClass::Ambiguous,
@@ -219,7 +219,7 @@ impl<'a> FailureLadder<'a> {
                     },
                 ),
                 FailureEscalationMode::Human => {
-                    let failed_attempt = fail_once(queue, &input)?;
+                    let failed_attempt = fail_once(self.vault, queue, &input)?;
                     Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                         failed_attempt,
                         FailureClass::Transient,

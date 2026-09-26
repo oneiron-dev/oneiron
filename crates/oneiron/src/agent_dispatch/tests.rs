@@ -2949,13 +2949,24 @@ fn fabricated_healer_case_requires_a_ladder_minted_failure() -> Result<()> {
     };
     assert_eq!(leased.id, failing);
     refuse()?; // A valid lease is not a failure or a case mint.
-    queue.fail(crate::attempt_queue::FailAttempt {
+    let untyped = crate::attempt_queue::FailAttempt {
         id: failing,
         lease_owner: "failure-auth".to_owned(),
         attempt_count: leased.attempt_count,
         reason: "direct failure without ladder evidence".to_owned(),
         now: 12,
-    })?;
+    };
+    let before = queue.list()?;
+    let error = queue
+        .fail(untyped.clone())
+        .expect_err("public queue cannot bypass typed failure");
+    assert_eq!(error.kind(), ErrorKind::InvalidAttemptQueueTransition);
+    assert_eq!(queue.list()?, before, "public refusal preserves the lease");
+    // Simulate a storage-level Failed row without a ladder case to prove the
+    // independent case-authentication door also rejects a forged DTO.
+    let mut txn = vault.store.env.write_txn()?;
+    queue.fail_in_txn(&mut txn, untyped)?;
+    txn.commit()?;
     refuse()?; // Even a Failed row alone cannot authenticate the DTO.
     for receipt in vault.emit_healer_oversight(30)? {
         assert_eq!(receipt.counts.proposed, 0);

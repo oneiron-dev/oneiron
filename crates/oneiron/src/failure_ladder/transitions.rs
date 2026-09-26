@@ -106,10 +106,15 @@ pub(crate) fn verified_blocked_reports(
 /// input won it, so the loser routes NOTHING — no healer dispatch, no card, no
 /// surface — and returns the existing typed transition error.
 pub(super) fn fail_once(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
-    new_failure(queue.fail(fail_request(input))?)
+    let mut txn = vault.store.env.write_txn()?;
+    let failed = fail_once_in_txn(queue, &mut txn, input)?;
+    txn.commit()?;
+    vault.store.notify_attempt_observers();
+    Ok(failed)
 }
 
 pub(super) fn fail_once_in_txn(

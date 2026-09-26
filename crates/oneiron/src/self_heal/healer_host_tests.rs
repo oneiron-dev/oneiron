@@ -352,3 +352,33 @@ fn production_refs_refuse_encoded_namespace_components() {
             .is_none()
     );
 }
+
+#[test]
+fn policy_revocation_between_preflight_and_proposal_write_refuses_all_receipts() -> Result<()> {
+    let (_dir, vault, owner, actor) = fixture();
+    let manifest = vault.manifest_contributions()?;
+    assert_eq!(manifest.len(), 1, "fixture has one live policy");
+    let policy_id = EntityId::from_hex(&manifest[0].id)?;
+    let proposal = patch(RepairOperation::DevPatch {
+        repo_ref: "repo".into(),
+        patch_ref: "patch".into(),
+    });
+    let id = proposal.proposal_id;
+    let registration = vault.register_dev_healer(HealerDeployment::Daemon, actor)?;
+    let err = registration
+        .submit_with_pre_write("revoked", "session", proposal, || {
+            // Deterministic interleaving: this would admit under the previous
+            // read-snapshot evaluation, then persist using stale consent.
+            vault.quarantine_manifest_contribution(&owner, policy_id)
+        })
+        .expect_err("the write snapshot must observe manifest revocation");
+    assert_eq!(err.kind(), crate::ErrorKind::InvalidConfig);
+    assert!(vault.healer_proposal(&id)?.is_none());
+    assert!(
+        vault
+            .healer_run_receipt(&actor.entity_ref(), "revoked")?
+            .is_none()
+    );
+    assert!(vault.proposal_burst_check(&actor.entity_ref())?.is_none());
+    Ok(())
+}
