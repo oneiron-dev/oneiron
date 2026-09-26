@@ -114,6 +114,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 return;
             }
 
+            if !crate::sync::types::entity_belongs_to_window(blob, window_key) {
+                entity_error = Some(Error::InvalidConfig(
+                    "entity outside window residence".into(),
+                ));
+                return;
+            }
+
             // Observer-B parity: internal chunk bytes never materialize from
             // Loro, including after GC retired the row but kept its reservation.
             match crate::origin::lfs::is_lfs_chunk_asset_in_txn(&vault.store, &rtxn, &id) {

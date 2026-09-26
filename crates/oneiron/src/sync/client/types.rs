@@ -16,6 +16,9 @@ pub struct SyncClientConfig {
     /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
     /// Only TLS or loopback URLs are accepted for this lane.
     pub note_session: Option<NoteSyncSession>,
+    /// `None` on the home node means sync all worlds; `Some(worlds)` follows
+    /// only the named worlds. The device default follows none until selected.
+    pub followed_worlds: Option<Vec<crate::EntityId>>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
     /// Debounce interval for rapid edits before sending. Default: 50ms.
@@ -36,6 +39,7 @@ impl Default for SyncClientConfig {
             server_url: String::new(),
             auth_token: String::new(),
             note_session: None,
+            followed_worlds: Some(Vec::new()),
             default_window_count: 2,
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,

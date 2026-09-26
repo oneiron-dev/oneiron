@@ -1,4 +1,5 @@
 use super::*;
+use crate::Vault;
 
 /// ONE-1132 OWNER-DECISION literals: reason wire bytes and their
 /// soft/hard effect class. A transposed byte table (e.g. gdpr=2) fails
@@ -605,4 +606,42 @@ fn cooperative_request_rejects_noncanonical_scope_and_wrong_domain() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn deleting_world_claim_preserves_its_world_month_tombstone_address() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::device())?;
+    let world = EntityId::from_bytes([0x73; 16])?;
+    let claim = EntityId::from_bytes([0x74; 16])?;
+    let at = 1_771_027_200;
+    let occurred = crate::temporal::TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"project",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.world_deletion",
+        crate::claim::ClaimSubject::Entity(world),
+        rmpv::Value::from("value"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault.delete_entity_with_reason(&claim, DeleteReason::UserHardDelete)?;
+    let window = format!("2026-02@{}", world.to_hex());
+    let rtxn = vault.store.env.read_txn()?;
+    let saved = vault
+        .store
+        .sync_state
+        .get(&rtxn, &format!("m:dw:{}", claim.to_hex()))?;
+    assert_eq!(saved.as_deref(), Some(window.as_bytes()));
+    drop(rtxn);
+    assert!(vault.entity_deletion_metadata(&claim, at)?.is_some());
+    Ok(())
 }

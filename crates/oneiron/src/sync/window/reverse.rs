@@ -39,7 +39,24 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         .ok_or_else(|| Error::InvalidConfig("invalid window key".to_string()))?;
 
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
-    let entities_in_range = vault.entities_in_learned_range(start_ts, end_ts)?;
+    // Partition before either carrier or edge backfill. A month-only scan in a
+    // world window would duplicate every other project's payload into it.
+    let mut entities_in_range = Vec::new();
+    let mut base_edge_sources = Vec::new();
+    for id in vault.entities_in_learned_range(start_ts, end_ts)? {
+        if let Some(raw) = vault.get_raw_unsealed(&id)? {
+            if super::types::entity_belongs_to_window(&raw, window_key) {
+                entities_in_range.push(id);
+            } else if window_key.world().is_some()
+                && super::types::entity_world(&raw).ok() == Some(None)
+            {
+                // Base rows do not duplicate into this world document, but an
+                // outgoing base→world edge belongs beside its world target.
+                // Unassignable local rows cannot enter a world partition.
+                base_edge_sources.push(id);
+            }
+        }
+    }
     let device_only = {
         let rtxn = vault.store.env.read_txn()?;
         crate::settings::device_only_worlds_in(&vault.store, &rtxn)?
@@ -224,6 +241,19 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         backfill_sources.push(*id);
     }
 
+    // A base source is resident in the shared monthly document, not here.
+    // Only its edges reaching this world are packed below. Apply the same
+    // locality and egress gates before adding it to the edge-only pass.
+    for id in base_edge_sources {
+        if window_packing_excludes_entity(vault, &device_only, &id)?
+            || !local_claim_sync_allowed(vault, &id)?
+            || local_entity_is_unsyncable_companion(vault, &id)?
+        {
+            continue;
+        }
+        backfill_sources.push(id);
+    }
+
     // PHASE 2 — edge backfill for every source that cleared phase 1's gates
     // (egress door, tombstone, unsyncable-companion, missing local row). Ordered
     // after ALL dominance sweeps, so an edge with local backing is always
@@ -250,6 +280,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             {
                 continue;
             }
+            if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)? {
+                continue;
+            }
             if !local_claim_sync_allowed(vault, &edge.target)?
                 || local_entity_is_unsyncable_companion(vault, &edge.target)?
             {
@@ -272,7 +305,9 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
 
     // NOTE text, mutable workflows and head moves change even when the
     // entity carrier already exists. Refresh through the same export gates.
-    wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+    if window_key.world().is_none() {
+        wrote_any |= crate::sync::note::refresh(vault, doc, window_key)?;
+    }
 
     // Commit all bridge writes with origin tag
     if wrote_any {

@@ -223,6 +223,19 @@ async fn next_binary(ws: &mut WsStream) -> Vec<u8> {
     }
 }
 
+/// A first window touch also advertises its new root-index entry. Legacy
+/// window assertions drain that distinct root notice before the update.
+async fn next_window_frame(ws: &mut WsStream) -> Vec<u8> {
+    loop {
+        let frame = next_binary(ws).await;
+        match frame.first().copied() {
+            Some(TAG_SYNC_UPDATE) => continue,
+            Some(TAG_WINDOW_SYNC) => return frame,
+            _ => panic!("unexpected frame while waiting for window sync"),
+        }
+    }
+}
+
 async fn expect_no_binary(ws: &mut WsStream, duration: Duration) {
     let result = tokio::time::timeout(duration, async {
         loop {
@@ -401,8 +414,7 @@ async fn send_window_vv_request(ws: &mut WsStream, key: &str) {
 
 async fn drain_vv_request_responses(ws: &mut WsStream, expected_key: &str) {
     for _ in 0..2 {
-        let frame = next_binary(ws).await;
-        assert_eq!(frame[0], TAG_WINDOW_SYNC);
+        let frame = next_window_frame(ws).await;
         let (window_key, _sub_tag, _payload) = transport::decode_window_sync(&frame[1..]).unwrap();
         assert_eq!(window_key, expected_key);
     }
@@ -772,8 +784,7 @@ async fn revoked_token_stops_serving_its_already_open_socket() {
     // Both are drained here, so the post-revocation assertion below cannot
     // pass on a frame that was merely still in flight from the baseline.
     for expected_sub_tag in [window_sub_tags::UPDATE, window_sub_tags::VV_RESPONSE] {
-        let served = next_binary(&mut ws).await;
-        assert_eq!(served[0], TAG_WINDOW_SYNC);
+        let served = next_window_frame(&mut ws).await;
         let (_key, sub_tag, _payload) = transport::decode_window_sync(&served[1..]).unwrap();
         assert_eq!(
             sub_tag, expected_sub_tag,
@@ -835,7 +846,7 @@ async fn revoked_token_stops_broadcast_fan_out_to_its_open_socket() {
         .unwrap();
 
     // Baseline: A is on the fan-out path before the revocation.
-    let relayed = next_binary(&mut client_a).await;
+    let relayed = next_window_frame(&mut client_a).await;
     assert_eq!(
         relayed[0], TAG_WINDOW_SYNC,
         "A receives relayed updates while its token is live"
@@ -1983,8 +1994,7 @@ async fn ephemeral_frames_coexist_with_window_sync_updates() {
         .await
         .unwrap();
 
-    let relayed = next_binary(&mut client_b).await;
-    assert_eq!(relayed[0], TAG_WINDOW_SYNC);
+    let relayed = next_window_frame(&mut client_b).await;
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
     assert_eq!(sub_tag, window_sub_tags::UPDATE);
@@ -2020,7 +2030,7 @@ async fn imported_update_relays_to_second_client_and_persists_contract_keys() {
     client_a.send(Message::Binary(msg.into())).await.unwrap();
 
     // B receives the relayed WindowSync UPDATE with the exact payload.
-    let relayed = next_binary(&mut client_b).await;
+    let relayed = next_window_frame(&mut client_b).await;
     assert_eq!(relayed[0], TAG_WINDOW_SYNC);
     let (key, sub_tag, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(key, "2026-02");
@@ -2452,7 +2462,7 @@ async fn diagnostic_update_is_refused_before_live_state_persistence_and_relay() 
     let ordinary = author.export(ExportMode::all_updates()).unwrap();
     let frame = transport::encode_window_sync("2026-02", window_sub_tags::UPDATE, &ordinary);
     sender.send(Message::Binary(frame.into())).await.unwrap();
-    let relayed = next_binary(&mut receiver).await;
+    let relayed = next_window_frame(&mut receiver).await;
     let (_, _, payload) = transport::decode_window_sync(&relayed[1..]).unwrap();
     assert_eq!(payload, ordinary.as_slice());
     let before = author.oplog_vv();

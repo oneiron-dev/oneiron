@@ -90,6 +90,18 @@ pub(super) fn materialize_edges_from_delta(
                         continue;
                     };
 
+                    let window = crate::sync::WindowKey::try_new(window_key)
+                        .ok_or(Error::InvalidKey)?;
+                    if !crate::sync::types::edge_belongs_to_window_in(
+                        vault, wtxn, doc, &src, &tgt, &window,
+                    )? {
+                        quarantine_rejected_op_in_txn(
+                            vault, wtxn, window_key, QuarantineContainer::Edges,
+                            key, &Error::InvalidConfig("edge outside window residence".into()), buf,
+                        )?;
+                        continue;
+                    }
+
                     // Decode BEFORE endpoint hydration: a malformed value is
                     // a remote rejection regardless of endpoint state, and
                     // decode has no side effects.

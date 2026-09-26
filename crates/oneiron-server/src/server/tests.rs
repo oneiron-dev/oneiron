@@ -75,6 +75,28 @@ fn window_key_for_known_timestamps() {
     assert_eq!(SyncServer::window_key_for_timestamp(0), "1970-01");
 }
 
+#[tokio::test]
+async fn world_window_creation_announces_root_index_after_persistence() {
+    let (_dir, vault) = test_vault();
+    let server = SyncServer::new(vault, SyncServerConfig::default()).unwrap();
+    let world = oneiron::EntityId::from_bytes([0x42; 16]).unwrap();
+    let key = WindowKey::for_world(1_771_027_200, world);
+    let replica = LoroDoc::from_snapshot(&server.export_root_snapshot().unwrap()).unwrap();
+    let mut updates = server.broadcast_tx.subscribe();
+    server.get_or_create_window(&key).await.unwrap();
+    let message = tokio::time::timeout(std::time::Duration::from_secs(5), updates.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let BroadcastPayload::Frame(0, frame) = message else {
+        panic!("expected root index notice");
+    };
+    assert_eq!(frame[0], crate::protocol::TAG_SYNC_UPDATE);
+    replica.import(&frame[1..]).unwrap();
+    assert_eq!(read_window_list(&replica), vec![key.clone()]);
+    assert!(server.vault.sync_state_get("d:root").unwrap().is_some());
+}
+
 #[test]
 fn root_doc_initialization() {
     let (_dir, vault) = test_vault();

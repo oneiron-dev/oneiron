@@ -98,6 +98,7 @@ impl SyncClient {
                     self.root_doc = restored;
                     return Err(TransportError::Storage(format!("persist root doc: {err}")));
                 }
+                responses.extend(self.newly_followed_window_requests()?);
             }
             TAG_EPHEMERAL => {
                 if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
@@ -151,10 +152,18 @@ impl SyncClient {
             }
             TAG_BULK_TRANSFER => {
                 let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
+                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+                if !self.follows_window(&key) {
+                    return Err(TransportError::InvalidPayload("unfollowed world window"));
+                }
                 self.handle_bulk_transfer(window_key, compressed)?;
             }
             TAG_BULK_TRANSFER_DONE => {
                 let (window_key, doc_state) = transport::decode_bulk_transfer_done(payload)?;
+                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+                if !self.follows_window(&key) {
+                    return Err(TransportError::InvalidPayload("unfollowed world window"));
+                }
                 self.handle_bulk_transfer_done(window_key, doc_state)?;
             }
             _ => return Err(TransportError::UnknownTag(tag)),
@@ -177,6 +186,10 @@ impl SyncClient {
         sub_tag: u8,
         payload: &[u8],
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        if self.config.federation_peer.is_none() && !self.follows_window(&key) {
+            return Err(TransportError::InvalidPayload("unfollowed world window"));
+        }
         if self.config.federation_peer.is_some()
             && matches!(
                 sub_tag,
@@ -302,6 +315,8 @@ impl SyncClient {
         // would durably append an unvalidated frame as a `u:w:` row, and
         // window load is fail-closed on pending updates — one malformed frame
         // would brick every future open of this window.
+        crate::sync::window::validate_window_update_residence(&window.doc, payload, &window.key)
+            .map_err(|_| TransportError::InvalidPayload("entity outside window residence"))?;
         let vv_before = window.doc.oplog_vv();
         window
             .doc

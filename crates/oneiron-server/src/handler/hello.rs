@@ -78,7 +78,11 @@ mod document_version_tests {
     #[test]
     fn document_and_app_tier_protocols_are_negotiated() {
         assert_eq!(validate_protocol_hello(&[3, 9]), Ok(9));
-        assert_eq!(validate_protocol_hello(&[3, 10]), Ok(10));
+        assert_eq!(validate_protocol_hello(&[3, 11]), Ok(11));
+        assert_eq!(
+            validate_protocol_hello(&[3, 10]),
+            Err(close_codes::VERSION_MISMATCH)
+        );
         assert_eq!(
             validate_protocol_hello(&[3, 8]),
             Ok(protocol::APP_TIER_PROTOCOL_VERSION_VERSION)

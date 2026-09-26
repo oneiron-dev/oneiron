@@ -316,6 +316,12 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             }
         };
 
+        if !super::types::entity_belongs_to_window(&raw, window_key) {
+            return Err(crate::Error::InvalidConfig(
+                "pending mirror outside window residence".into(),
+            ));
+        }
+
         // Defer-sync egress door: a live overlay member is device-local until
         // explicit promotion. Keep the pending marker so the promoted turn can
         // flow through this ordinary path later.
@@ -391,7 +397,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
                 // purge). Plain containment = skip on this branch (legacy
                 // values are hard); becomes reason-aware (skip iff the
                 // tombstone decodes HARD) once tombstone v2 lands in M4-06.
-                if !local_claim_sync_allowed(vault, &edge.target)?
+                if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
+                    || !local_claim_sync_allowed(vault, &edge.target)?
                     || tombstone_map_contains_id(&tombstones_map, &edge.target)
                     || window_packing_excludes_entity(vault, &device_only, &edge.target)?
                 {
@@ -444,7 +451,8 @@ pub fn replay_pending_mirrors(vault: &Vault, doc: &LoroDoc, window_key: &WindowK
             let edge_key = format_edge_key(id, edge.kind, &edge.target);
             // Same tombstoned-target gate as the byte-equal path above:
             // the full mirror must not re-insert edges to deleted targets.
-            if !local_claim_sync_allowed(vault, &edge.target)?
+            if !super::types::edge_belongs_to_window(vault, id, &edge.target, window_key)?
+                || !local_claim_sync_allowed(vault, &edge.target)?
                 || tombstone_map_contains_id(&tombstones_map, &edge.target)
                 || window_packing_excludes_entity(vault, &device_only, &edge.target)?
             {
