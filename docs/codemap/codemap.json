@@ -35739,6 +35739,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer_shadow.rs",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -36198,6 +36208,13 @@
      "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
+    "oneironer_shadow": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
+    },
     "perf": {
      "files": 37,
      "impl_vault": false,
@@ -36236,7 +36253,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 97,
+   "source_files": 98,
    "test_files": 18
   },
   "oneiron-driver": {
