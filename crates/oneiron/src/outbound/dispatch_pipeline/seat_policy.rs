@@ -1,0 +1,81 @@
+//! Connector-neutral seat wall and its host-supplied LinkedIn policy adapter.
+use std::collections::BTreeMap;
+
+use crate::linkedin_connector::{LinkedInSeatPolicyAction, LinkedInSeatPolicyDecision};
+use crate::outbound::capability::OutboundVerbContract;
+use crate::outbound::dispatch_types::OutboundDispatchRequest;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum SeatPolicyAction {
+    Allow,
+    Hold,
+    Suppress,
+}
+
+/// The dispatch wall consumes this value, not a connector-specific decision.
+pub(in crate::outbound) struct SeatPolicyDecision {
+    pub(super) action: SeatPolicyAction,
+    pub(in crate::outbound) receipt_fields: BTreeMap<String, String>,
+    pub(in crate::outbound) policy_trace: Vec<String>,
+}
+
+impl From<LinkedInSeatPolicyDecision> for SeatPolicyDecision {
+    fn from(value: LinkedInSeatPolicyDecision) -> Self {
+        let action = match value.action {
+            LinkedInSeatPolicyAction::Allow => SeatPolicyAction::Allow,
+            LinkedInSeatPolicyAction::Hold => SeatPolicyAction::Hold,
+            LinkedInSeatPolicyAction::Suppress => SeatPolicyAction::Suppress,
+        };
+        Self {
+            action,
+            receipt_fields: value.receipt_fields,
+            policy_trace: value.policy_trace,
+        }
+    }
+}
+
+pub(super) fn evaluate_seat_policy(
+    request: &OutboundDispatchRequest,
+    verb_contract: &OutboundVerbContract,
+) -> Option<SeatPolicyDecision> {
+    request.linkedin_sandbox_policy.as_ref().map(|policy| {
+        policy
+            .evaluate_outbound(
+                &request.intent.channel,
+                &verb_contract.kind,
+                request.occurred_at,
+            )
+            .into()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connector_policy_evidence_survives_neutral_wall_conversion() {
+        for (source, expected) in [
+            (LinkedInSeatPolicyAction::Allow, SeatPolicyAction::Allow),
+            (LinkedInSeatPolicyAction::Hold, SeatPolicyAction::Hold),
+            (
+                LinkedInSeatPolicyAction::Suppress,
+                SeatPolicyAction::Suppress,
+            ),
+        ] {
+            let decision = LinkedInSeatPolicyDecision {
+                action: source,
+                reason_code: Some("seat.reason".to_owned()),
+                receipt_fields: BTreeMap::from([("seat_field".to_owned(), "value".to_owned())]),
+                policy_trace: vec!["seat.reason".to_owned()],
+            };
+            let wall: SeatPolicyDecision = decision.into();
+            assert_eq!(wall.action, expected);
+            assert_eq!(
+                wall.receipt_fields.get("seat_field").map(String::as_str),
+                Some("value")
+            );
+            assert_eq!(wall.policy_trace, ["seat.reason"]);
+        }
+    }
+}
