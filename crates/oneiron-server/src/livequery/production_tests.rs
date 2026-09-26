@@ -805,3 +805,132 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     assert_eq!(queries.pending(3).unwrap().len(), 1);
     assert!(queries.pending(2).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
+    let (_dir, server) = server();
+    let id = EntityId::from_hex("abababababababababababababababab").unwrap();
+    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("indexedcursor old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "indexed-subscription".into(),
+    ));
+    let queries = subscriptions::LiveQueries::new(1, source.clone());
+    let view = ScopedView {
+        query: Some("indexedcursor".into()),
+        ..Default::default()
+    };
+    let opened = queries
+        .open(7, view.clone(), Channel::View, None, None)
+        .unwrap();
+    let cursor = opened[0].cursor.clone();
+    assert!(
+        opened[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("old")
+    );
+    let editor = server.vault().memory(actor, EdgeActorClass::Human);
+    put("indexedcursor live");
+    assert_ne!(server.vault().pin_entity_revision(&id).unwrap(), indexed);
+    assert_eq!(
+        editor
+            .get_entity(&id.to_hex())
+            .unwrap()
+            .unwrap()
+            .body
+            .unwrap()["content"],
+        "indexedcursor live"
+    );
+    assert_eq!(server.vault().indexed_revision(&id).unwrap(), Some(indexed));
+    // Journal writes, editor reads, and an unindexed edit cannot move a sub VV.
+    assert_eq!(
+        source
+            .derive(&view, Channel::View)
+            .unwrap()
+            .cursor
+            .version_vector,
+        cursor.version_vector
+    );
+    queries.close(7).unwrap();
+    let resumed = queries
+        .open(7, view.clone(), Channel::View, Some(&cursor), None)
+        .unwrap();
+    assert!(
+        resumed.is_empty(),
+        "the live edit must not appear in catch-up"
+    );
+    queries.close(7).unwrap();
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    assert!(
+        report
+            .refreshed
+            .contains(&(id, server.vault().indexed_revision(&id).unwrap().unwrap()))
+    );
+    let resumed = queries
+        .open(7, view.clone(), Channel::View, Some(&cursor), None)
+        .unwrap();
+    assert_eq!(resumed.len(), 1);
+    assert_eq!(resumed[0].kind, "data");
+    assert!(
+        resumed[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("live")
+    );
+    assert_ne!(resumed[0].cursor.version_vector, cursor.version_vector);
+    assert!(source.can_resume(&cursor).unwrap());
+
+    // A metadata-only index publication changes the indexed position while
+    // the body text stays unchanged. The pinned short ref and cursor move.
+    let before = source.derive(&view, Channel::View).unwrap();
+    let indexed_before = server.vault().indexed_revision(&id).unwrap();
+    server
+        .vault()
+        .batch()
+        .put(
+            &id,
+            oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+            oneiron::temporal::TimeRange {
+                start: AT + 1,
+                end: AT + 1,
+            },
+            AT + 1,
+            &rmp_serde::to_vec_named(&json!({"content": "indexedcursor live"})).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    assert_ne!(
+        server.vault().indexed_revision(&id).unwrap(),
+        indexed_before
+    );
+    let after = source.derive(&view, Channel::View).unwrap();
+    assert_eq!(after.value[0]["value_text"], before.value[0]["value_text"]);
+    assert_ne!(after.cursor.version_vector, before.cursor.version_vector);
+}

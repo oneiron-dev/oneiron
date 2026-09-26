@@ -112,16 +112,10 @@ impl History {
         channel: Channel,
         cursor: &Cursor,
     ) -> Result<Option<Vec<Push>>, AppError> {
-        // Reconstruct the retained tail through Loro's actual delta door.
-        // The fork is scoped app state only, never a full sync window.
-        let vv = loro::VersionVector::decode(&cursor.version_vector).map_err(|_| error())?;
-        let delta = doc
-            .export(loro::ExportMode::updates(&vv))
-            .map_err(|_| error())?;
-        let replay = doc
-            .fork_at(&doc.vv_to_frontiers(&vv))
-            .map_err(|_| error())?;
-        replay.import(&delta).map_err(|_| error())?;
+        // The caller has validated the indexed projection's export since the
+        // cursor. Delivery entries live in a separate, bounded journal: they
+        // must never advance that projection's version vector.
+        let replay = doc;
         let mut entries = Vec::new();
         let mut failed = false;
         replay.get_map("history").for_each(|_, value| {
