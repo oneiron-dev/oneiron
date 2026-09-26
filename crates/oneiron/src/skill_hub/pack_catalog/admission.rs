@@ -7,7 +7,7 @@ use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts, UndoFidelity},
     entity_id::EntityId,
-    error::Result,
+    error::{Error, RegistryError, Result},
     skill_hub::{ForeignSkillPublisher, HubAskSurface, HubPin, HubRef, SkillHubTrustTier},
 };
 use heed::RoTxn;
@@ -30,6 +30,7 @@ impl Vault {
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
+        refuse_agent_runtime(&source)?;
         // Real host suite runs outside the writer lock over immutable source bytes.
         let qualification = qualifier.qualify(&source)?;
         let txn = self.store.env.read_txn()?;
@@ -76,7 +77,13 @@ impl Vault {
                 if let Some(prior) = self.store.vault_meta.get(txn, &predicate_key(predicate))?
                     && prior.as_ref() != source.manifest.name.as_bytes()
                 {
-                    return Err(invalid("predicate name owned by another pack"));
+                    let installed_pack = std::str::from_utf8(&prior)
+                        .map_err(|_| invalid("pack predicate catalog corrupt"))?;
+                    return Err(Error::Registry(RegistryError::PackPredicateNameCollision {
+                        predicate: predicate.clone(),
+                        installed_pack: installed_pack.to_owned(),
+                        installing_pack: source.manifest.name.clone(),
+                    }));
                 }
             }
             let old = self.installed_pack_in_txn(txn, &source.manifest.name)?;
@@ -218,7 +225,16 @@ impl Vault {
         Ok((binding, surface))
     }
 }
+fn refuse_agent_runtime(source: &PackSource) -> Result<()> {
+    if source.manifest.kind == PackKind::Agent {
+        return Err(invalid(
+            "agent packs are inert sources, not runtime installations",
+        ));
+    }
+    Ok(())
+}
 fn validate_qualification(source: &PackSource, result: &PackQualification) -> Result<()> {
+    refuse_agent_runtime(source)?;
     if !result.passed
         || !result.advisory_accepted
         || result.suite.is_empty()
