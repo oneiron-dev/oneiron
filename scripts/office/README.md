@@ -66,6 +66,14 @@ change the expectation. `test_deck_oracle.py` pins timeout handling without
 requiring a flaky real hang. The local clean source was generated with
 `python-pptx` from one textbox; no external document content is shipped.
 
+## Recorded Mac mini result
+
+The passing live fixture run and hashed outputs are committed under
+[`results/mac-mini-006/`](results/mac-mini-006/). Its summary and host pin are
+in [`results/README.md`](results/README.md). Use a **new** result directory for
+each later run; the command above shows the invocation shape, not a reusable
+output path.
+
 ## PPTArena preservation matrix
 
 `pptarena.json` pins all 100 case names, source/ground-truth paths, SHA-256
