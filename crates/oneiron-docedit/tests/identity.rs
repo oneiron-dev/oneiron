@@ -193,13 +193,14 @@ fn signed_duplicate_and_unsafe_paths_refuse_mutation_or_open() {
 }
 
 #[test]
+#[ignore = "requires locally acquired pinned PPTArena-001 pair"]
 fn optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks() {
     let folder =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pptarena-001");
-    if !folder.exists() {
-        eprintln!("PPTArena corpus absent: acquire pinned pptarena-001 for the opt-in run");
-        return;
-    }
+    assert!(
+        folder.exists(),
+        "acquire pinned PPTArena-001 before running the ignored test"
+    );
     for (file, digest) in [
         (
             "original.pptx",

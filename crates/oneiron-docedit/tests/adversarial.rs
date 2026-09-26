@@ -1,0 +1,120 @@
+use oneiron_docedit::retained_opc::{Error, Limits, Package};
+const PART: &str = "word/document.xml";
+const PATH: &[&str] = &["root", "item"];
+
+fn edit_must_refuse(bytes: &[u8], prior: &str) {
+    let mut package = Package::open(bytes, Limits::default()).expect("well-formed ZIP");
+    assert_eq!(package.export().expect("no-op"), bytes);
+    let before = package.part(PART).expect("part read");
+    assert!(matches!(
+        package.replace_text(PART, PATH, prior, "changed"),
+        Err(Error::Edit(_))
+    ));
+    assert_eq!(package.part(PART).expect("part read after refusal"), before);
+    assert_eq!(package.export().expect("unchanged archive"), bytes);
+}
+
+#[test]
+fn empty_children_before_between_and_after_text_cannot_be_deleted() {
+    for bytes in [
+        include_bytes!("fixtures/adversarial/empty-before.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/empty-child.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/empty-after.zip").as_slice(),
+    ] {
+        edit_must_refuse(bytes, "beforeafter");
+    }
+}
+
+#[test]
+fn malformed_touched_xml_refuses_without_touching_archive() {
+    for bytes in [
+        include_bytes!("fixtures/adversarial/multiple-roots.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/outer-text.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/unknown-entity.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/invalid-char.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/duplicate-attr.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/unbound-prefix.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/xml-version.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/xml-prolog.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/xml-pi.zip").as_slice(),
+    ] {
+        edit_must_refuse(bytes, "old");
+    }
+}
+
+#[test]
+fn nonstandard_signature_location_and_case_refuse_edits_but_keep_noop() {
+    edit_must_refuse(
+        include_bytes!("fixtures/adversarial/custom-signature.zip"),
+        "old",
+    );
+    edit_must_refuse(
+        include_bytes!("fixtures/adversarial/mixed-case-signature.zip"),
+        "old",
+    );
+}
+
+#[test]
+fn unsigned_descriptor_crc_equal_to_signature_is_still_valid() {
+    let bytes = include_bytes!("fixtures/adversarial/crc-signature.zip");
+    let package = Package::open(bytes, Limits::default()).expect("unsigned descriptor");
+    assert_eq!(package.export().expect("no-op"), bytes);
+}
+
+#[test]
+fn raw_crlf_and_cr_are_normalized_but_character_reference_is_not() {
+    for bytes in [
+        include_bytes!("fixtures/adversarial/cr-input.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/cr-lone.zip").as_slice(),
+    ] {
+        let mut package = Package::open(bytes, Limits::default()).expect("input ZIP");
+        package
+            .replace_text(PART, PATH, "a\nb", "changed")
+            .expect("normalized raw EOL");
+        assert!(
+            package
+                .part(PART)
+                .expect("part")
+                .expect("XML")
+                .windows(b"changed".len())
+                .any(|w| w == b"changed")
+        );
+    }
+    let bytes = include_bytes!("fixtures/adversarial/cr-ref.zip");
+    let mut package = Package::open(bytes, Limits::default()).expect("reference ZIP");
+    assert!(matches!(
+        package.replace_text(PART, PATH, "a\nb", "changed"),
+        Err(Error::Edit(_))
+    ));
+    assert_eq!(package.export().expect("no-op"), bytes);
+    package
+        .replace_text(PART, PATH, "a\rb", "changed")
+        .expect("reference is literal CR");
+}
+
+#[test]
+fn emitted_carriage_return_is_a_character_reference() {
+    let mut package = Package::open(
+        include_bytes!("fixtures/adversarial/plain.zip"),
+        Limits::default(),
+    )
+    .expect("input ZIP");
+    package
+        .replace_text(PART, PATH, "old", "a\rb")
+        .expect("patch");
+    assert_eq!(
+        package.part(PART).expect("part").expect("XML"),
+        b"<root><item>a&#13;b</item></root>"
+    );
+}
+
+#[test]
+fn malformed_signature_metadata_makes_package_read_only() {
+    for bytes in [
+        include_bytes!("fixtures/adversarial/bad-types.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/bad-rels.zip").as_slice(),
+        include_bytes!("fixtures/adversarial/case-rels.zip").as_slice(),
+    ] {
+        edit_must_refuse(bytes, "old");
+    }
+}

@@ -10,9 +10,12 @@ ZIP64, overlapping records, unsafe or duplicate part names, and CRC errors.
 edit door today, `replace_text`, targets a unique leaf by QName path and prior
 text; it splices escaped text into the retained XML bytes, leaving unknown
 attributes, node order, namespace context, extensions, and alternate content
-at their original offsets. Changed parts retain their compression method;
-other local records, compressed payloads, and central metadata pass through.
-An edit on a signed package refuses. This is a substrate, not a docx/xlsx/pptx
+at their original offsets. The touched part must be well-formed UTF-8 XML 1.0
+without a DTD; ambiguous or mixed-content targets refuse without mutation.
+Changed parts retain their compression method; other local records, compressed
+payloads, and central metadata pass through. Digital-signature relationships
+and content types, including non-default locations, make the package read-only.
+Malformed signature metadata also refuses edits; no-op export remains exact. This is a substrate, not a docx/xlsx/pptx
 semantic writer or a relationship linker: callers must still validate the
 format-specific closure and transaction's allowed-part set before settle.
 
@@ -21,8 +24,10 @@ checked-in office oracle's clean PPTX. To run the opt-in, hash-pinned PPTArena
 pair (which has mixed asset provenance and **must not be committed**):
 
 ```sh
-python3 scripts/office/deck_oracle.py acquire pptarena-001   crates/oneiron-docedit/tests/fixtures/pptarena-001
-cargo test -p oneiron-docedit --test identity --all-features   optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks
+python3 scripts/office/deck_oracle.py acquire pptarena-001 \
+  crates/oneiron-docedit/tests/fixtures/pptarena-001
+cargo test -p oneiron-docedit --test identity --all-features \
+  optional_pinned_pptarena_pair_proves_identity_without_redistributing_decks -- --ignored
 ```
 
 The pinned manifest is `scripts/office/pptarena.json`. This pair proves ZIP

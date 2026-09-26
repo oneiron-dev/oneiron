@@ -36363,14 +36363,22 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/retained_opc/xml.rs",
-     "purpose": "Lexical XML patcher: retain all unaddressed nodes, namespace declarations, processing instructions and…",
+     "purpose": "Byte-span XML patcher",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/adversarial.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -36393,7 +36401,7 @@
    "over_bar": 0,
    "purpose": "Native document editing organ crate and retained OPC substrate",
    "source_files": 4,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-driver": {
    "files": [

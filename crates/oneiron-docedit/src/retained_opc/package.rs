@@ -189,18 +189,21 @@ impl Package {
                 return Err(Error::Invalid("local size or checksum mismatch"));
             }
             let trailer = if flags & 8 != 0 {
-                let base = if get32(source, data_end)? == 0x0807_4b50 {
-                    data_end + 4
-                } else {
-                    data_end
-                };
-                if get32(source, base)? != crc
-                    || get32(source, base + 4)? as usize != compressed
-                    || get32(source, base + 8)? as usize != uncompressed
-                {
-                    return Err(Error::Invalid("data descriptor mismatch"));
+                // The CRC of an unsigned descriptor can equal the optional
+                // signature word. Compare both complete layouts, never infer
+                // the layout from that first word alone.
+                let unsigned = get32(source, data_end).ok() == Some(crc)
+                    && get32(source, data_end + 4).ok() == Some(compressed as u32)
+                    && get32(source, data_end + 8).ok() == Some(uncompressed as u32);
+                let signed = get32(source, data_end).ok() == Some(0x0807_4b50)
+                    && get32(source, data_end + 4).ok() == Some(crc)
+                    && get32(source, data_end + 8).ok() == Some(compressed as u32)
+                    && get32(source, data_end + 12).ok() == Some(uncompressed as u32);
+                match (unsigned, signed) {
+                    (true, false) => data_end + 12,
+                    (false, true) => data_end + 16,
+                    _ => return Err(Error::Invalid("ambiguous or invalid data descriptor")),
                 }
-                base + 12
             } else {
                 data_end
             };
@@ -254,17 +257,44 @@ impl Package {
             }
             entries[index].local.end = next; // Includes descriptor and non-entry padding.
         }
-        let signed = entries
-            .iter()
-            .any(|entry| entry.name.starts_with("_xmlsignatures/"));
-        Ok(Self {
+        let mut package = Self {
             source: source.to_vec(),
             entries,
             cd_offset,
             eocd,
             limits,
-            signed,
-        })
+            signed: false,
+        };
+        package.signed = package.signature_or_unsafe_metadata();
+        Ok(package)
+    }
+
+    /// Detect OPC digital signatures by type declarations and relationships,
+    /// not only their conventional path. Invalid metadata leaves the package
+    /// open for byte-exact no-op export but makes every edit read-only.
+    fn signature_or_unsafe_metadata(&self) -> bool {
+        if self.entries.iter().any(|entry| {
+            entry
+                .name
+                .to_ascii_lowercase()
+                .starts_with("_xmlsignatures/")
+        }) {
+            return true;
+        }
+        self.entries
+            .iter()
+            .filter(|entry| {
+                entry.name == "[Content_Types].xml" || {
+                    let lower = entry.name.to_ascii_lowercase();
+                    lower.ends_with(".rels")
+                        && (lower.starts_with("_rels/") || lower.contains("/_rels/"))
+                }
+            })
+            .any(|entry| {
+                self.expanded(entry)
+                    .and_then(|data| xml::signature_metadata(&data))
+                    .unwrap_or(true)
+            })
     }
 
     /// Names in central-directory order, including unreachable entries.
