@@ -157,6 +157,61 @@ pub struct LensAtomSelectionRequest {
     pub handle: LensHandleName,
 }
 
+/// A client names only scalar offsets into the host-bound entity document.
+/// Neither a document id nor a cursor/version may be supplied by the client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LensSpanSelectionRequest {
+    pub card_id: LensRenderId,
+    pub atom_id: LensAtomId,
+    pub handle: LensHandleName,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A half-open Unicode-scalar span and its engine-minted Loro cursor pair.
+/// Cursor bytes and the causal frontier identify the source, not the selected text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LensSpanCursor {
+    start: usize,
+    end: usize,
+    frontier: Vec<u8>,
+    start_cursor: Vec<u8>,
+    end_cursor: Vec<u8>,
+}
+
+impl LensSpanCursor {
+    #[must_use]
+    pub fn range(&self) -> (usize, usize) {
+        (self.start, self.end)
+    }
+    #[must_use]
+    pub fn frontier(&self) -> &[u8] {
+        &self.frontier
+    }
+    #[must_use]
+    pub fn cursors(&self) -> (&[u8], &[u8]) {
+        (&self.start_cursor, &self.end_cursor)
+    }
+
+    #[cfg(feature = "sync")]
+    pub(super) fn from_anchor(
+        anchor: &crate::entity_doc::TextAnchor,
+        start: usize,
+        end: usize,
+    ) -> Self {
+        let (start_cursor, end_cursor) = anchor.cursors();
+        Self {
+            start,
+            end,
+            frontier: anchor.frontier().to_vec(),
+            start_cursor: start_cursor.to_vec(),
+            end_cursor: end_cursor.to_vec(),
+        }
+    }
+}
+
 /// The read reach a selection may carry: [`LensHandleRole`] minus
 /// [`LensHandleRole::ActionTarget`]. An action-target binding is reach for the action
 /// backchannel, so it can never be laundered into a selection handle.
@@ -202,6 +257,8 @@ pub struct LensReadHandle {
     /// disclosing it widens nothing. The stored body it locates is never disclosed.
     pub(super) short_ref: String,
     pub(super) backing_token: LensBackingRefToken,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) span: Option<LensSpanCursor>,
 }
 
 impl LensReadHandle {
@@ -228,6 +285,10 @@ impl LensReadHandle {
     #[must_use]
     pub fn short_ref(&self) -> &str {
         &self.short_ref
+    }
+    #[must_use]
+    pub fn span(&self) -> Option<&LensSpanCursor> {
+        self.span.as_ref()
     }
 }
 

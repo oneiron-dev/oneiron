@@ -261,6 +261,14 @@ impl Vault {
             self.store
                 .entities
                 .put(txn, entity.as_bytes(), &replacement)?;
+            crate::federation::record_scope::restamp_document_pointer(
+                &self.store,
+                txn,
+                *entity,
+                header.entity_type,
+                body,
+                &pointer,
+            )?;
             let mut h = Head {
                 entity: entity.to_hex(),
                 incarnation: EntityId::now().to_hex(),

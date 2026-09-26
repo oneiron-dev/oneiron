@@ -15276,7 +15276,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -15918,7 +15918,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -18839,7 +18839,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GeneratedUiResultSetScope",
@@ -18850,14 +18850,17 @@
       "LensBackingTargetKind",
       "LensHostBackingRef",
       "LensReadHandle",
-      "LensReadReach"
+      "LensReadReach",
+      "LensSpanCursor",
+      "LensSpanSelectionRequest"
      ],
      "path": "src/lens/mediation/mediation_backing.rs",
      "purpose": "Backing refs, selection requests, and engine-issued read handles",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
-      "fn": 21,
-      "struct": 6
+      "fn": 25,
+      "struct": 8
      }
     },
     {
@@ -18870,7 +18873,7 @@
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
       "crate-vis": 3,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },

@@ -31,6 +31,11 @@ impl TextAnchor {
     pub fn frontier(&self) -> &[u8] {
         &self.frontier
     }
+    /// Encoded Loro cursors at the captured document version.
+    #[must_use]
+    pub fn cursors(&self) -> (&[u8], &[u8]) {
+        (&self.start, &self.end)
+    }
 }
 
 /// Three anchored verbs. Each uses the live cursor, never stale integer offsets.
