@@ -265,37 +265,23 @@ fn policy_value_selectors(label: &str, value: Option<&Value>) -> Vec<String> {
     selectors
 }
 
-/// Projects an active contact clearance to an exact Scope identity selector.
-/// This legacy selector envelope cannot model lattice containment: a digest
-/// admits only an identical Scope, never a wider axis or an entity allowlist.
-/// Actual disclosure admission evaluates the Scope against the record stamp.
+/// Projects an active contact clearance into a typed Scope-valued bound.
+/// An empty or revoked Scope cannot project a reusable disclosure grant.
 pub fn disclosure_grant_from_disclosure_scope(
     clearance: &DisclosureScope,
     interlocutor_ref: &str,
     class: &str,
 ) -> Result<DisclosureGrant> {
     clearance.validate()?;
-    let scope = &clearance.scope;
-    if clearance.status != DisclosureScopeStatus::Active
-        || scope.worlds.is_bottom()
-        || scope.bands.is_bottom()
-        || scope.audience.is_bottom()
-        || scope.verbs.is_bottom()
-        || scope.sensitivity == crate::federation::SensitivityCeiling::Bottom
-    {
+    if clearance.status != DisclosureScopeStatus::Active {
         return Err(invalid_bound(
-            "empty or revoked contact clearance projects to no bound",
+            "revoked contact clearance projects to no bound",
         ));
     }
     let audience = AudienceBound::singleton(interlocutor_ref)?;
-    let value = crate::federation::scope_codec::encode_scope_value(scope)?;
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &value)
-        .map_err(|_| invalid_bound("contact Scope encoding failed"))?;
-    let selectors = vec![format!("scope:{}", blake3::hash(&bytes).to_hex())];
     DisclosureGrant::new(GrantBound::disclosure(
         audience,
         DisclosureClass::new(class)?,
-        DisclosureEnvelope::new(selectors)?,
+        DisclosureEnvelope::from_scope(clearance.scope.clone())?,
     )?)
 }

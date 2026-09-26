@@ -571,7 +571,6 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         InterlocutorSet::without_owner(vec![Interlocutor::unknown("guest", true)]),
     )?;
     assert_eq!(ctx.mode(), DisclosureMode::AbsenceClamp);
-    assert_eq!(ctx.scope, Some(crate::federation::Scope::default()));
     check_admission(&ctx, [false, false, false])?;
 
     // Contact without a scope row -> bottom.
@@ -579,7 +578,6 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_a, "a@example.com")]),
     )?;
-    assert_eq!(ctx.scope, Some(crate::federation::Scope::default()));
     check_admission(&ctx, [false, false, false])?;
 
     // Two live clearances meet on the sensitivity axis, not on entity ids.
@@ -587,7 +585,7 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
     let mut public_only = crate::federation::Scope::top();
     public_only.sensitivity =
         crate::federation::SensitivityCeiling::AtMost(crate::federation::Sensitivity::Public);
-    let scope_b = DisclosureScope::new(public_only.clone(), "beta", 100)?;
+    let scope_b = DisclosureScope::new(public_only, "beta", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_a, &scope_a)?;
     vault.set_counterparty_disclosure_scope(&contact_b, &scope_b)?;
     let ctx = DisclosureContext::resolve(
@@ -602,7 +600,6 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
             known(contact_b, "b@example.com"),
         ]),
     )?;
-    assert_eq!(ctx.scope, Some(public_only));
     check_admission(&ctx, [false, false, false])?;
 
     // A revoked scope contributes bottom.
@@ -614,7 +611,6 @@ fn resolve_folds_scopes_fail_closed() -> Result<()> {
         &vault,
         InterlocutorSet::without_owner(vec![known(contact_b, "b@example.com")]),
     )?;
-    assert_eq!(ctx.scope, Some(crate::federation::Scope::default()));
     check_admission(&ctx, [false, false, false])?;
     Ok(())
 }

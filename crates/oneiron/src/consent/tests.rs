@@ -1267,7 +1267,8 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
         panic!("disclosure envelope");
     };
     assert_eq!(envelope.selectors().len(), 1);
-    assert!(envelope.selectors()[0].starts_with("scope:"));
+    assert_eq!(envelope.selectors(), &["scope:clearance"]);
+    assert_eq!(envelope.scope(), Some(&crate::federation::Scope::top()));
     let mut repurposed = scope.clone();
     repurposed.purpose = "same clearance, new purpose".into();
     assert_eq!(
@@ -1289,6 +1290,78 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     assert_eq!(
         crate::disclosure::decode_disclosure_scope_body(&after).expect("decode"),
         scope
+    );
+}
+
+#[test]
+fn projected_contact_scope_preserves_lattice_containment_and_silent_reuse() {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    use std::collections::BTreeSet;
+
+    let wide = DisclosureScope::new(Scope::top(), "health", 1).expect("wide clearance");
+    let mut narrow_scope = Scope::top();
+    narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    narrow_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x31))]));
+    narrow_scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
+    let narrow = DisclosureScope::new(narrow_scope.clone(), "health", 1).expect("narrow");
+    let project = |clearance: &DisclosureScope| {
+        disclosure_grant_from_disclosure_scope(clearance, "contact:doctor", "health")
+            .expect("projection")
+    };
+    let wide_grant = project(&wide);
+    let narrow_grant = project(&narrow);
+    assert!(wide_grant.bound().contains(narrow_grant.bound()));
+    assert!(!narrow_grant.bound().contains(wide_grant.bound()));
+
+    // Facets are masks, not authority; changing only this axis cannot ask again.
+    narrow_scope.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x32))]));
+    let other_facet =
+        project(&DisclosureScope::new(narrow_scope, "health", 1).expect("facet-only change"));
+    assert!(narrow_grant.bound().contains(other_facet.bound()));
+    assert!(other_facet.bound().contains(narrow_grant.bound()));
+    assert_eq!(other_facet.bound().digest(), narrow_grant.bound().digest());
+    assert_ne!(wide_grant.bound().digest(), narrow_grant.bound().digest());
+
+    // Standing-grant persistence must retain the typed Scope and its digest.
+    let row = ConsentGrantRow {
+        grant: StandingConsentGrant::Disclosure(wide_grant.clone()),
+        status: ConsentGrantStatus::Active,
+        owner_stamp: ConsentOwnerStamp {
+            actor: entity(0x51),
+            principal_ref: "principal:owner".to_owned(),
+            decision_id: GateDecisionId::now(),
+        },
+        created_at: 1,
+    };
+    let stored =
+        decode_consent_grant_row(&encode_consent_grant_row(&row).expect("encode")).expect("decode");
+    assert_eq!(stored, row);
+    assert_eq!(stored.grant.bound().digest(), wide_grant.bound().digest());
+    assert!(stored.grant.bound().contains(narrow_grant.bound()));
+
+    let grants = [stored.grant];
+    let required = ComposedEffect::new(
+        EffectFacts::new("disclosure.share")
+            .expect("facts")
+            .with_external_observers(true),
+    )
+    .with_disclosure_requirement(narrow_grant.bound().clone())
+    .expect("requirement");
+    assert_eq!(
+        evaluate_consent(&required, None, &grants),
+        ConsentDecision::Auto
+    );
+    let wider = ComposedEffect::new(
+        EffectFacts::new("disclosure.share")
+            .expect("facts")
+            .with_external_observers(true),
+    )
+    .with_disclosure_requirement(project(&wide).bound().clone())
+    .expect("requirement");
+    let narrow_grants = [StandingConsentGrant::Disclosure(narrow_grant)];
+    assert_eq!(
+        evaluate_consent(&wider, None, &narrow_grants),
+        ConsentDecision::Hide
     );
 }
 
@@ -1387,6 +1460,7 @@ fn consent_grant_row_round_trips_and_rejects_malformed_bodies() {
                 (Value::from(ENVELOPE_KEYS[1]), Value::Nil),
                 (Value::from(ENVELOPE_KEYS[2]), Value::Nil),
                 (Value::from(ENVELOPE_KEYS[3]), Value::from(false)),
+                (Value::from(ENVELOPE_KEYS[4]), Value::Nil),
             ]),
         ),
         (Value::from(KEY_STATUS), Value::from("active")),

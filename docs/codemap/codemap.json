@@ -10147,7 +10147,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
@@ -10189,7 +10189,7 @@
       "const": 3,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 33,
+      "fn": 35,
       "struct": 7
      }
     },
@@ -12536,9 +12536,9 @@
      "purpose": "Contact clearance envelope and canonical six-axis Scope codec",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 7,
+      "fn": 6,
       "struct": 1
      }
     },

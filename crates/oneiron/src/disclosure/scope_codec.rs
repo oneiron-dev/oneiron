@@ -98,7 +98,7 @@ impl DisclosureScope {
 
     /// Revoked clearance is bottom; never re-use its stored scope for admission.
     #[must_use]
-    pub fn effective_scope(&self) -> Scope {
+    pub(super) fn effective_scope(&self) -> Scope {
         if self.status == DisclosureScopeStatus::Active {
             self.scope.clone()
         } else {

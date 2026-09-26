@@ -299,7 +299,7 @@ impl Vault {
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
-    pub(super) scope: Option<Scope>,
+    scope: Option<Scope>,
 }
 
 impl DisclosureContext {
