@@ -828,14 +828,25 @@ fn recall_default_effort_reads_last_week_from_the_query() {
     );
     assert!(!refs.contains(&older.as_str()), "outside window: {refs:?}");
 
-    assert!(matches!(
-        vault
-            .query()
-            .search_text("window seat next week", 10)
-            .retrieval_effort(Effort::Medium, &[])
-            .run(),
-        Err(crate::Error::InvalidTemporalExpression(_))
-    ));
+    for query in [
+        "window seat next week",
+        "window seat next 2 weeks",
+        "window seat last weekend",
+        "window seat next weekend",
+        "window seat this weekend",
+    ] {
+        assert!(
+            matches!(
+                vault
+                    .query()
+                    .search_text(query, 10)
+                    .retrieval_effort(Effort::Medium, &[])
+                    .run(),
+                Err(crate::Error::InvalidTemporalExpression(_))
+            ),
+            "{query}"
+        );
+    }
 }
 
 #[test]

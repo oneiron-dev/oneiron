@@ -403,3 +403,52 @@ fn assert_first(status: &TaskAskStatus, task: EntityId, actor: EntityId, result:
     );
     assert!(result_state.coverage.met);
 }
+
+#[test]
+fn nonmember_option_consult_replays_without_changing_ask_evidence() {
+    let (_dir, vault) = open_vault();
+    let asker = own_agent(&vault);
+    let delegate = consult_peer(&vault, 0x95);
+    let owner = consult_peer(&vault, 0x96);
+    grant_scope(&vault, owner, delegate, "review");
+    let memory = vault.memory(asker, EdgeActorClass::Agent);
+    let spec = scope_spec(&vault, "nonmember-option-replay");
+    let receipt = memory.tasks_ask(&spec).unwrap();
+    let forged = memory
+        .tasks_create(
+            &TaskCreateSpec::new(Value::Nil, None, None, Some(unix_seconds_now()))
+                .with_kind(TaskKind::Consult)
+                .with_consult(ConsultPayload::question(
+                    spec.what.reference,
+                    vec![],
+                    receipt.handle.group_ref,
+                ))
+                .with_assignee(TaskAssignee::Peer {
+                    actor_ref: delegate,
+                })
+                .with_ttl(TaskTtl::at(spec.until.unwrap())),
+        )
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let evidence_before = memory.tasks_ask_evidence(receipt.handle).unwrap();
+    let result = consult_turn(&vault, 0x82);
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: result.entity_ref(),
+            option: Some(TaskAskOptionId::new("yes").unwrap()),
+            evidence_refs: vec![result],
+        },
+        completed_at: unix_seconds_now(),
+    };
+    let peer = vault.memory(delegate, EdgeActorClass::Human);
+    let first = peer.land_consult_result(forged, &input).unwrap();
+    assert!(!first.idempotent_replay);
+    let replay = peer.land_consult_result(forged, &input).unwrap();
+    assert!(replay.idempotent_replay);
+    assert_eq!(first.terminal, replay.terminal);
+    assert_eq!(
+        memory.tasks_ask_evidence(receipt.handle).unwrap(),
+        evidence_before
+    );
+}

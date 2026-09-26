@@ -109,31 +109,45 @@ fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("loopback peer");
     let address = listener.local_addr().unwrap();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let peer = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("witness request");
-        let mut reader = BufReader::new(&mut stream);
-        let mut content_length = 0;
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).expect("request headers");
-            if line == "\r\n" {
-                break;
+        'connections: loop {
+            let (mut stream, _) = listener.accept().expect("witness request");
+            let mut reader = BufReader::new(&mut stream);
+            let mut content_length = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).expect("request headers") == 0 {
+                    if !matches!(
+                        done_rx.try_recv(),
+                        Err(std::sync::mpsc::TryRecvError::Empty)
+                    ) {
+                        return false;
+                    }
+                    continue 'connections;
+                }
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':')
+                    && key.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().unwrap();
+                }
             }
-            if let Some((key, value)) = line.split_once(':')
-                && key.eq_ignore_ascii_case("content-length")
-            {
-                content_length = value.trim().parse::<usize>().unwrap();
+            let mut body = vec![0; content_length];
+            reader.read_exact(&mut body).expect("request body");
+            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            if request["conversation_ref"] != "conversation" {
+                return false;
             }
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").unwrap();
+            return true;
         }
-        let mut body = vec![0; content_length];
-        reader.read_exact(&mut body).expect("request body");
-        let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        if request["conversation_ref"] != "conversation" {
-            return false;
-        }
-        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}").unwrap();
-        true
     });
+    // A cleanup connection can close before sending a request; the peer must
+    // accept the following real request rather than waiting forever at EOF.
+    drop(TcpStream::connect(address).expect("cleanup connection"));
     let client = OneironClient::connect(&format!("http://{address}"), "fixture").unwrap();
     let result = client.witness(&oneiron::memory::WitnessTurn {
         conversation_ref: "conversation".into(),
@@ -141,7 +155,8 @@ fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
         messages: vec![],
         occurred_at: 1,
     });
-    // Release the peer even if a regression fails before making the request.
+    // Release the peer even if the client failed before making the request.
+    let _ = done_tx.send(());
     drop(TcpStream::connect(address));
     assert!(peer.join().expect("peer"), "request must reach the peer");
     let error = result.expect_err("a success response is not a witness receipt");

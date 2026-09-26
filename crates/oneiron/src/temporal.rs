@@ -122,7 +122,15 @@ pub fn temporal_expression_from_query(
                         expression: format!("{} {next}", tokens[index]),
                     });
                 }
-                _ => None,
+                Some(_) => {
+                    if let Some(expression) =
+                        unsupported_temporal_quantity_expression(&tokens, index)
+                    {
+                        return Err(TemporalExpressionParseError::Unsupported { expression });
+                    }
+                    None
+                }
+                None => None,
             },
             "last" => match tokens.get(index + 1).map(String::as_str) {
                 None => None,
@@ -144,7 +152,9 @@ pub fn temporal_expression_from_query(
                     });
                 }
                 Some(_) => {
-                    if let Some(expression) = unsupported_last_quantity_expression(&tokens, index) {
+                    if let Some(expression) =
+                        unsupported_temporal_quantity_expression(&tokens, index)
+                    {
                         return Err(TemporalExpressionParseError::Unsupported { expression });
                     }
                     None
@@ -189,6 +199,8 @@ fn is_temporal_unit_token(token: &str) -> bool {
             | "seconds"
             | "week"
             | "weeks"
+            | "weekend"
+            | "weekends"
             | "month"
             | "months"
             | "year"
@@ -243,8 +255,11 @@ fn is_temporal_quantity_token(token: &str) -> bool {
         )
 }
 
-fn unsupported_last_quantity_expression(tokens: &[String], last_index: usize) -> Option<String> {
-    let mut index = last_index + 1;
+fn unsupported_temporal_quantity_expression(
+    tokens: &[String],
+    anchor_index: usize,
+) -> Option<String> {
+    let mut index = anchor_index + 1;
     let mut saw_quantity = false;
 
     while let Some(token) = tokens.get(index).map(String::as_str) {
@@ -260,7 +275,7 @@ fn unsupported_last_quantity_expression(tokens: &[String], last_index: usize) ->
         }
 
         if saw_quantity && (is_temporal_unit_token(token) || is_weekday_token(token)) {
-            return Some(tokens[last_index..=index].join(" "));
+            return Some(tokens[anchor_index..=index].join(" "));
         }
 
         return None;
@@ -536,6 +551,39 @@ mod tests {
                 if expression == "this month"
         ));
         assert_eq!(temporal_expression_from_query("next steps").unwrap(), None);
+    }
+
+    #[test]
+    fn quantified_next_queries_fail_closed() {
+        for (query, phrase) in [
+            ("plans for next 2 weeks", "next 2 weeks"),
+            ("plans for next two weeks", "next two weeks"),
+        ] {
+            assert_eq!(
+                temporal_expression_from_query(query),
+                Err(TemporalExpressionParseError::Unsupported {
+                    expression: phrase.into(),
+                }),
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn weekend_queries_fail_closed() {
+        for (query, phrase) in [
+            ("plans for last weekend", "last weekend"),
+            ("plans for next weekend", "next weekend"),
+            ("plans for this weekend", "this weekend"),
+        ] {
+            assert_eq!(
+                temporal_expression_from_query(query),
+                Err(TemporalExpressionParseError::Unsupported {
+                    expression: phrase.into(),
+                }),
+                "{query}"
+            );
+        }
     }
 
     #[test]

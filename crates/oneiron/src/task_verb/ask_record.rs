@@ -316,7 +316,7 @@ pub(super) fn evidence_in(
         {
             return Err(invalid());
         }
-        validate_word(group, &fact.word)?;
+        validate_word(group, &fact.word).map_err(|_| Error::CorruptedIndex("tasks.ask.word"))?;
         evidence.push(TaskAskEvidence {
             answer: TaskAskAnswer {
                 task_ref: fact.task,
@@ -474,18 +474,21 @@ pub(super) fn replay_answer_option_matches(
     terminal: &super::TaskTerminalRecord,
     option: Option<&super::TaskAskOptionId>,
 ) -> Result<bool> {
+    // Outside an ask-group member there is no durable ask word to compare.
+    // The terminal equality check already established the replay payload;
+    // the option was irrelevant on first settlement and remains so here.
     let Some(payload) = &body.consult else {
-        return Ok(option.is_none());
+        return Ok(true);
     };
     let Some(group) = read_group(vault, txn, payload.correlation_ref)? else {
-        return Ok(option.is_none());
+        return Ok(true);
     };
     if !group
         .members
         .iter()
         .any(|member| member.task == task.to_hex() && member.actor == actor.to_hex())
     {
-        return Ok(option.is_none());
+        return Ok(true);
     }
     let Some(super::ConsultResultSummary::Answer { evidence_refs }) = &terminal.summary else {
         return Ok(false);
@@ -692,3 +695,6 @@ pub(crate) fn ask_notice_at_in(
         .transpose()?;
     Ok(Some((due, deadline)))
 }
+
+#[cfg(test)]
+mod tests;

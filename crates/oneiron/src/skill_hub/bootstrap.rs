@@ -163,18 +163,29 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
     let occurred = TimeRange { start: 0, end: 0 };
     for (name, markdown) in FILES {
         let package = package(name, markdown)?;
+        let seed_id = stable_id(name)?;
+        let content_hash = package.content_hash()?;
+        // A prior import already holds these exact files. Its entity ID is
+        // not bootstrap admission, even when it equals our deterministic ID.
+        // Check before the import door can attach provenance, scans, receipts
+        // or capabilities, and promote only a record minted by this pass.
+        if vault
+            .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
+            .is_some()
+        {
+            continue;
+        }
         let hub_ref = HubRef::new(
             stable_id("hub")?,
             name,
-            HubPin::ContentHash(package.content_hash()?.to_hex()),
+            HubPin::ContentHash(content_hash.to_hex()),
         )?;
-        let seed_id = stable_id(name)?;
         let id = vault
             .import_skill_from_hub_in_txn(&mut wtxn, &hub_ref, &package, seed_id, occurred, 0)?;
         if id != seed_id {
-            // An earlier import owns these bytes. Keep its lifecycle and content;
-            // the remaining embedded skills still need their first-open pass.
-            continue;
+            // A different holder cannot appear while this write transaction owns
+            // the preflight and import; roll back rather than mutate it.
+            return Err(Error::InvariantViolation("bootstrap skill holder changed"));
         }
         let mut record = vault.read_skill_record_in_txn(&wtxn, &id)?;
         // Local seed admission, not a remote package's approval stamp. The

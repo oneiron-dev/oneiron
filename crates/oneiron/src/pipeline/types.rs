@@ -143,6 +143,9 @@ pub(super) struct TemporalSearchConfig {
     pub(super) anchor_mode: TemporalAnchorMode,
     pub(super) adaptive: bool,
     pub(super) limit: usize,
+    /// Query-derived occurred restriction. Applied before temporal scan caps
+    /// and score truncation; host-supplied temporal modes leave this unset.
+    pub(super) query_occurred_range: Option<(u64, u64)>,
     /// The effort dial's default now anchor, not a host-supplied window.
     /// Only a host window ranks by time on its own and switches the
     /// recency blend off; the default anchor keeps it (ARCH-0004: the

@@ -213,6 +213,7 @@ jobs:
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
+          python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v
           python3 scripts/sdk/generate.py --check
           python3 -m unittest discover -s scripts/tests -p 'test_agent_sdk.py' -v
           python3 scripts/code-sandbox/generate.py --check
@@ -316,7 +317,7 @@ jobs:
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast
+        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
       - name: Doctests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features
@@ -402,7 +403,8 @@ jobs:
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
-        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
       - name: Doctests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test --doc --workspace --exclude oneiron-bench --all-features

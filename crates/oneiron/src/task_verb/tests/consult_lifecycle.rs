@@ -287,6 +287,31 @@ fn one_replica_settles_once_and_replays_idempotently() {
     assert_eq!(stored.terminal(), Some(&first.terminal));
 }
 
+#[test]
+fn standalone_consult_with_option_replays_identically() {
+    let (_dir, vault) = open_vault();
+    let (task_ref, peer, question) = open_consult(&vault);
+    let result_ref = consult_turn(&vault, 0x82).entity_ref();
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref,
+            option: Some(TaskAskOptionId::new("yes").unwrap()),
+            evidence_refs: vec![question],
+        },
+        completed_at: CONSULT_NOW + 10,
+    };
+    let facade = vault.memory(peer, EdgeActorClass::Agent);
+    let first = facade
+        .land_consult_result(task_ref, &input)
+        .expect("accepted");
+    assert!(!first.idempotent_replay);
+    let replay = facade
+        .land_consult_result(task_ref, &input)
+        .expect("identical replay");
+    assert!(replay.idempotent_replay);
+    assert_eq!(first.terminal, replay.terminal);
+}
+
 /// An answer that beat the sweep keeps the task out of the expiry path,
 /// and an expired task refuses a later answer — one local transition.
 #[test]

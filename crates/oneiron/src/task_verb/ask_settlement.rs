@@ -404,7 +404,7 @@ fn reduce(
                 TaskAskDecision::Conflict
             } else if yes >= threshold {
                 TaskAskDecision::Answer(answer.clone())
-            } else if yes + decision_seats.len().saturating_sub(words.len()) < threshold {
+            } else if yes + decision_seats.difference(&coverage.responded).count() < threshold {
                 TaskAskDecision::No
             } else {
                 TaskAskDecision::Unknown
