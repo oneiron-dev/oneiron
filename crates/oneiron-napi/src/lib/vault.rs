@@ -11,8 +11,9 @@ use oneiron::{
 
 use super::boundary::{
     DEFAULT_NAPI_SEARCH_LIMIT, entity_ids_to_buffers, parse_created_at, parse_edge_kind,
-    parse_entity_id, parse_search_limit, parse_u8, to_napi_err, ts_to_u64, validate_batch_size,
-    validate_dimensions, validate_entity_payload_len, validate_query_len, validate_vector_len,
+    parse_entity_id, parse_search_limit, parse_u8, read_bounded_array, read_codebase_snapshot,
+    read_query, read_vector, to_napi_err, ts_to_u64, validate_batch_size, validate_dimensions,
+    validate_entity_payload_len,
 };
 use super::codebase::{
     apply_codebase_context_filters, apply_codebase_filters, core_codebase_snapshot,
@@ -183,13 +184,11 @@ impl NapiVault {
     #[napi]
     pub fn search_vector(
         &self,
-        query: Vec<f64>,
+        query: Array<'_>,
         limit: u32,
     ) -> napi::Result<Vec<NapiScoredEntity>> {
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
-        validate_vector_len(query.len(), self.dimensions, "query vector")
-            .map_err(napi::Error::from_reason)?;
-        let f32_query: Vec<f32> = query.iter().map(|&v| v as f32).collect();
+        let f32_query = read_vector(&query, self.dimensions, "query vector")?;
         let results = self
             .vault
             .search_vector(&f32_query, limit)
@@ -205,8 +204,12 @@ impl NapiVault {
 
     /// Search for entities by BM25 text matching.
     #[napi]
-    pub fn search_text(&self, query: String, limit: u32) -> napi::Result<Vec<NapiScoredEntity>> {
-        validate_query_len(&query).map_err(napi::Error::from_reason)?;
+    pub fn search_text(
+        &self,
+        query: napi::JsString<'_>,
+        limit: u32,
+    ) -> napi::Result<Vec<NapiScoredEntity>> {
+        let query = read_query(query)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
         let results = self.vault.search_text(&query, limit).map_err(to_napi_err)?;
         Ok(results
@@ -222,12 +225,12 @@ impl NapiVault {
     #[napi]
     pub fn search_text_scoped(
         &self,
-        query: String,
+        query: napi::JsString<'_>,
         limit: u32,
         repo_ref: Option<String>,
         project_id: Option<String>,
     ) -> napi::Result<Vec<NapiScoredEntity>> {
-        validate_query_len(&query).map_err(napi::Error::from_reason)?;
+        let query = read_query(query)?;
         let limit = parse_search_limit(limit).map_err(napi::Error::from_reason)?;
         let builder = self.vault.query().search_text(&query, limit).limit(limit);
         let results = apply_codebase_filters(builder, repo_ref, project_id)?
@@ -246,11 +249,9 @@ impl NapiVault {
 
     /// Store a vector embedding for an entity.
     #[napi]
-    pub fn put_vector(&self, id: Buffer, vector: Vec<f64>) -> napi::Result<()> {
+    pub fn put_vector(&self, id: Buffer, vector: Array<'_>) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
-        validate_vector_len(vector.len(), self.dimensions, "vector")
-            .map_err(napi::Error::from_reason)?;
-        let f32_vec: Vec<f32> = vector.iter().map(|&v| v as f32).collect();
+        let f32_vec = read_vector(&vector, self.dimensions, "vector")?;
         self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)
     }
 
@@ -258,12 +259,9 @@ impl NapiVault {
 
     /// Attach or replace codebase snapshot metadata for a CODE_ARTIFACT entity.
     #[napi]
-    pub fn put_codebase_snapshot(
-        &self,
-        id: Buffer,
-        snapshot: NapiCodebaseSnapshot,
-    ) -> napi::Result<()> {
+    pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
+        let snapshot = read_codebase_snapshot(snapshot)?;
         // Take the bodies before conversion consumes the boundary struct, so
         // custody filtering can hash-check each declared entry.
         let file_count = snapshot.files.len();
@@ -340,8 +338,8 @@ impl NapiVault {
     #[napi]
     pub fn context_pack(
         &self,
-        query_text: Option<String>,
-        query_vector: Option<Vec<f64>>,
+        query_text: Option<napi::JsString<'_>>,
+        query_vector: Option<Array<'_>>,
         limit: Option<u32>,
         format: Option<String>,
     ) -> napi::Result<String> {
@@ -356,18 +354,18 @@ impl NapiVault {
             _ => oneiron::PackFormat::Json,
         };
 
+        let query_text = query_text.map(read_query).transpose()?;
+        let query_vector = query_vector
+            .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
+            .transpose()?;
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
-            validate_query_len(text).map_err(napi::Error::from_reason)?;
             builder = builder.search_text(text, limit);
         }
 
         if let Some(vec) = &query_vector {
-            validate_vector_len(vec.len(), self.dimensions, "query vector")
-                .map_err(napi::Error::from_reason)?;
-            let f32_vec: Vec<f32> = vec.iter().map(|&v| v as f32).collect();
-            builder = builder.search_vector(&f32_vec, limit);
+            builder = builder.search_vector(vec, limit);
         }
 
         let output = builder.run_serialized().map_err(to_napi_err)?;
@@ -379,8 +377,8 @@ impl NapiVault {
     #[napi]
     pub fn context_pack_scoped(
         &self,
-        query_text: Option<String>,
-        query_vector: Option<Vec<f64>>,
+        query_text: Option<napi::JsString<'_>>,
+        query_vector: Option<Array<'_>>,
         limit: Option<u32>,
         format: Option<String>,
         repo_ref: Option<String>,
@@ -396,18 +394,18 @@ impl NapiVault {
             _ => oneiron::PackFormat::Json,
         };
 
+        let query_text = query_text.map(read_query).transpose()?;
+        let query_vector = query_vector
+            .map(|vec| read_vector(&vec, self.dimensions, "query vector"))
+            .transpose()?;
         let mut builder = self.vault.context_pack().format(pack_format).limit(limit);
 
         if let Some(text) = &query_text {
-            validate_query_len(text).map_err(napi::Error::from_reason)?;
             builder = builder.search_text(text, limit);
         }
 
         if let Some(vec) = &query_vector {
-            validate_vector_len(vec.len(), self.dimensions, "query vector")
-                .map_err(napi::Error::from_reason)?;
-            let f32_vec: Vec<f32> = vec.iter().map(|&v| v as f32).collect();
-            builder = builder.search_vector(&f32_vec, limit);
+            builder = builder.search_vector(vec, limit);
         }
 
         let output = apply_codebase_context_filters(builder, repo_ref, project_id)?
@@ -442,8 +440,8 @@ impl NapiVault {
 
     /// Write multiple entities in a single atomic transaction.
     #[napi]
-    pub fn batch_put_entities(&self, entities: Vec<NapiBatchEntity>) -> napi::Result<()> {
-        validate_batch_size(entities.len()).map_err(napi::Error::from_reason)?;
+    pub fn batch_put_entities(&self, entities: Array<'_>) -> napi::Result<()> {
+        let entities: Vec<NapiBatchEntity> = read_bounded_array(&entities, validate_batch_size)?;
         for e in &entities {
             validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
         }

@@ -55,6 +55,35 @@ try {
   assert.equal(vault.getEntity(id), null)
   assert.equal(vault.deleteEntity(id), false)
 
+  // ONE-479: reject JS-owned input before napi-rs builds owned String/Vec/DTO.
+  // Throwing index getters prove oversized arrays are rejected without traversal.
+  const unvisited = (size) => {
+    const items = new Array(size)
+    Object.defineProperty(items, 0, { get() { throw new Error("element was visited") } })
+    return items
+  }
+  const longQuery = "🧠".repeat(20000) // UTF-16 length != UTF-8 bytes.
+  const queryError = /query must be <= .* bytes, got 80000/
+  assert.throws(() => vault.searchText(longQuery, 1), queryError)
+  assert.throws(() => vault.searchTextScoped(longQuery, 1), queryError)
+  assert.throws(() => vault.contextPack(longQuery), queryError)
+  assert.throws(() => vault.contextPackScoped(longQuery), queryError)
+  assert.throws(() => vault.searchVector(unvisited(5), 1), /query vector length must equal vault dimensions/)
+  assert.throws(() => vault.putVector(id, unvisited(5)), /vector length must equal vault dimensions/)
+  assert.throws(() => vault.contextPack(undefined, unvisited(5)), /query vector length must equal vault dimensions/)
+  assert.throws(() => vault.contextPackScoped(undefined, unvisited(5)), /query vector length must equal vault dimensions/)
+  assert.throws(() => vault.batchPutEntities(unvisited(100001)), /batch_put_entities accepts at most/)
+  assert.throws(() => vault.putCodebaseSnapshot(id, { files: unvisited(100001) }), /codebase snapshot accepts at most/)
+  // A getter cannot swap the checked manifest for an oversized one during DTO conversion.
+  let fileReads = 0
+  const swappingSnapshot = {
+    projectId: "test", repoRef: "bad-repo-ref",
+    get files() { return ++fileReads === 1 ? [] : unvisited(100001) },
+  }
+  try { vault.putCodebaseSnapshot(id, swappingSnapshot) } catch (_) { /* invalid repo is expected */ }
+  assert.equal(fileReads, 1)
+  console.log("NODE-HOST-OK: JS string and array caps precede native DTO allocation")
+
   const client2 = NativeClient.open(join(dir, "client"), 4)
   assert.deepEqual(client2.receipts(10), [])
   // Exercise real Node-API exception conversion, not a hostless Rust helper.
