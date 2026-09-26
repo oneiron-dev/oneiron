@@ -20662,7 +20662,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -20897,6 +20897,21 @@
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemorySubscriptionOwner",
+      "ScopedView"
+     ],
+     "path": "src/memory/subscriptions.rs",
+     "purpose": "Transport-neutral subscription verbs",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -34371,7 +34386,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34898,7 +34913,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {
@@ -40447,7 +40462,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
