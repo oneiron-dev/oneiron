@@ -38,22 +38,30 @@ impl LensRegenFailure {
     }
 }
 
-/// A regeneration request carries the target contract stamp and nothing else — no
-/// prompt, no source, no hash. The concrete regenerator is already bound to the lens
-/// artifact's summary prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A regeneration request carries the live contract stamp and the vault-sourced
+/// intent. Regenerators must use the supplied intent rather than a cached prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensRegenRequest {
     target_version: LensVersionStamp,
+    intent_prompt: String,
 }
 
 impl LensRegenRequest {
     #[must_use]
-    pub const fn new(target_version: LensVersionStamp) -> Self {
-        Self { target_version }
+    pub fn new(target_version: LensVersionStamp, intent_prompt: impl Into<String>) -> Self {
+        Self {
+            target_version,
+            intent_prompt: intent_prompt.into(),
+        }
     }
 
     #[must_use]
-    pub const fn target_version(self) -> LensVersionStamp {
+    pub fn intent_prompt(&self) -> &str {
+        &self.intent_prompt
+    }
+
+    #[must_use]
+    pub const fn target_version(&self) -> LensVersionStamp {
         self.target_version
     }
 }
