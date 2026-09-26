@@ -1442,9 +1442,14 @@ struct ExpiringBackend {
     clock: std::sync::Arc<AtomicU64>,
     expire_on_call: usize,
     calls: AtomicUsize,
+    native_json: bool,
 }
 
 impl LlmBackend for ExpiringBackend {
+    fn supports(&self, _: &crate::ModelId, capability: crate::LlmCapability) -> bool {
+        self.native_json && capability == crate::LlmCapability::JsonResponse
+    }
+
     fn generate<'a>(
         &'a self,
         request: LlmRequest,
@@ -1857,6 +1862,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             clock: std::sync::Arc::new(AtomicU64::new(0)),
             expire_on_call,
             calls: AtomicUsize::new(0),
+            native_json: false,
         };
         let clock = std::sync::Arc::clone(&backend.clock);
         let deadline = WakePassDeadline::with_clock(

@@ -36,6 +36,9 @@ enum LateCall {
     ExtractionThenMerge,
     Merge,
     InvalidJson,
+    NativeInvalidJson,
+    FinalInvalidCorrection,
+    MergeFinalInvalidCorrection,
 }
 
 fn run_case(case: LateCall) -> Result<()> {
@@ -72,26 +75,34 @@ fn run_case(case: LateCall) -> Result<()> {
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let first_response = match case {
         LateCall::ExtractionOnly => extraction_response(&subject, &turns[0]),
-        LateCall::ExtractionThenMerge | LateCall::Merge => {
+        LateCall::ExtractionThenMerge | LateCall::Merge | LateCall::MergeFinalInvalidCorrection => {
             two_candidate_extraction(&subject, &turns[0], &turns[1])
         }
-        LateCall::InvalidJson => text_response("not json".to_owned()),
+        LateCall::InvalidJson | LateCall::NativeInvalidJson | LateCall::FinalInvalidCorrection => {
+            text_response("not json".to_owned())
+        }
     };
-    let expire_on_call = if matches!(case, LateCall::Merge) {
-        2
-    } else {
-        1
+    let expire_on_call = match case {
+        LateCall::Merge => 2,
+        LateCall::FinalInvalidCorrection => 3,
+        LateCall::MergeFinalInvalidCorrection => 4,
+        _ => 1,
+    };
+    let rest = match case {
+        LateCall::FinalInvalidCorrection => vec![Ok(text_response("not json".to_owned())); 2],
+        LateCall::MergeFinalInvalidCorrection => {
+            vec![Ok(text_response("not json".to_owned())); 3]
+        }
+        _ => vec![Ok(text_response(
+            "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+        ))],
     };
     let backend = ExpiringBackend {
-        inner: ScriptedBackend::new(vec![
-            Ok(first_response),
-            Ok(text_response(
-                "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
-            )),
-        ]),
+        inner: ScriptedBackend::new(std::iter::once(Ok(first_response)).chain(rest).collect()),
         clock: std::sync::Arc::new(AtomicU64::new(0)),
         expire_on_call,
         calls: AtomicUsize::new(0),
+        native_json: matches!(case, LateCall::NativeInvalidJson),
     };
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -129,8 +140,10 @@ fn run_case(case: LateCall) -> Result<()> {
     assert!(store.parked_attempt(attempt_id)?.is_some());
     let first_spend = match case {
         LateCall::ExtractionOnly => 120,
-        LateCall::ExtractionThenMerge | LateCall::InvalidJson => 50,
+        LateCall::ExtractionThenMerge | LateCall::InvalidJson | LateCall::NativeInvalidJson => 50,
         LateCall::Merge => 100,
+        LateCall::FinalInvalidCorrection => 150,
+        LateCall::MergeFinalInvalidCorrection => 200,
     };
     assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
     assert_eq!(guard.read().used_units, first_spend);
@@ -142,8 +155,14 @@ fn run_case(case: LateCall) -> Result<()> {
         store.budget("wake")?.expect("wake budget").reserved_units,
         0
     );
-    if matches!(case, LateCall::InvalidJson) {
-        return Ok(()); // no correction call, and the failed response is not memoized
+    if matches!(
+        case,
+        LateCall::InvalidJson
+            | LateCall::NativeInvalidJson
+            | LateCall::FinalInvalidCorrection
+            | LateCall::MergeFinalInvalidCorrection
+    ) {
+        return Ok(()); // failed response(s) are paid, never memoized
     }
 
     backend.clock.store(0, Ordering::SeqCst);
@@ -184,7 +203,10 @@ fn run_case(case: LateCall) -> Result<()> {
     let expected_total = match case {
         LateCall::ExtractionOnly => 120,
         LateCall::ExtractionThenMerge | LateCall::Merge => 100,
-        LateCall::InvalidJson => unreachable!(),
+        LateCall::InvalidJson
+        | LateCall::NativeInvalidJson
+        | LateCall::FinalInvalidCorrection
+        | LateCall::MergeFinalInvalidCorrection => unreachable!(),
     };
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
@@ -218,4 +240,15 @@ fn late_terminal_checkpoint_resume_charges_only_unpaid_steps() -> Result<()> {
 #[test]
 fn late_invalid_json_checkpoints_actual_spend_in_shared_budget() -> Result<()> {
     run_case(LateCall::InvalidJson)
+}
+
+#[test]
+fn late_native_terminal_schema_failure_charges_the_wake_ledger() -> Result<()> {
+    run_case(LateCall::NativeInvalidJson)
+}
+
+#[test]
+fn late_final_correction_failure_charges_all_paid_calls() -> Result<()> {
+    run_case(LateCall::FinalInvalidCorrection)?;
+    run_case(LateCall::MergeFinalInvalidCorrection)
 }

@@ -2190,7 +2190,8 @@ fn schema_shim_three_bad_responses_are_terminal_not_fallback() -> Result<()> {
     let backend = ScriptedBackend::new(vec![Ok(response_fixture("bad")); 3]);
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request)),
-        Err(DurableStepError::SchemaValidation { attempts: 3, .. })
+        Err(DurableStepError::SpentSchemaValidation { attempts: 3, usage, .. })
+            if usage.input.total == 300 && usage.output.total == 150
     ));
     assert_eq!(backend.calls(), 3);
     assert_eq!(guard.read().used_units, 450);
@@ -2605,7 +2606,7 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
         }
     }
     for (schema, output, attempts) in [
-        (json!({"type":"not-a-type"}), "{}", 0),
+        (json!({"type":"not-a-type"}), "{}", 0_u8),
         (
             json!({"$ref":"https://example.invalid/schema.json"}),
             "{}",
@@ -2622,10 +2623,18 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
         request.envelope.response_format = ResponseFormat::Json { schema };
         let hash = request.canonical_hash().unwrap();
         let backend = Native(ScriptedBackend::new(vec![Ok(response_fixture(output))]));
-        assert!(matches!(
-            block_on(call_as_step(&ctx, &backend, &guard, request)),
-            Err(DurableStepError::SchemaValidation { attempts: actual, .. }) if actual == attempts
-        ));
+        let error = block_on(call_as_step(&ctx, &backend, &guard, request))
+            .expect_err("invalid native response or schema");
+        if attempts == 0 {
+            assert!(matches!(
+                error,
+                DurableStepError::SchemaValidation { attempts: 0, .. }
+            ));
+        } else {
+            assert!(matches!(error, DurableStepError::SpentSchemaValidation {
+                attempts: 1, usage, ..
+            } if usage.input.total == 100 && usage.output.total == 50));
+        }
         assert_eq!(backend.0.calls(), attempts as usize);
         assert_eq!(guard.read().used_units, u64::from(attempts) * 150);
         assert_eq!(guard.read().reserved_units, 0);

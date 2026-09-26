@@ -142,9 +142,10 @@ pub(super) async fn generate(
             return Ok(response);
         }
         if attempt == max_attempts {
-            return Err(DurableStepError::SchemaValidation {
+            return Err(DurableStepError::SpentSchemaValidation {
                 attempts: attempt,
                 errors,
+                usage: Box::new(usage),
             });
         }
         wire.messages.push(response.message);

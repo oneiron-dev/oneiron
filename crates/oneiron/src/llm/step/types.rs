@@ -154,6 +154,13 @@ pub enum DurableStepError {
     },
     #[error("JSON schema validation failed after {attempts} attempts: {errors:?}")]
     SchemaValidation { attempts: u8, errors: Vec<String> },
+    /// Terminal provider response(s) failed schema validation after real spend.
+    #[error("JSON schema validation failed after {attempts} spent attempts: {errors:?}")]
+    SpentSchemaValidation {
+        attempts: u8,
+        errors: Vec<String>,
+        usage: Box<super::super::LlmUsage>,
+    },
     /// A fresh correction was refused after prior provider responses spent units.
     #[error("durable step correction refused at wake-pass deadline after spent usage")]
     SpentFinalizeRefused { usage: Box<super::super::LlmUsage> },

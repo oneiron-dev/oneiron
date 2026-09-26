@@ -123,7 +123,10 @@ impl ConsolidationExecutor<'_> {
                 response
             }
             Ok(StepOutcome::Trapped(_)) => return Ok(PartitionRun::Trapped),
-            Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
+            Err(
+                crate::llm::DurableStepError::SpentFinalizeRefused { usage }
+                | crate::llm::DurableStepError::SpentSchemaValidation { usage, .. },
+            ) if ctx.deadline.expired() => {
                 charges.record_usage(&usage);
                 return Ok(PartitionRun::Checkpoint);
             }
@@ -257,7 +260,10 @@ impl ConsolidationExecutor<'_> {
                     // this merge re-runs to a real resolution.
                     return Ok(PartitionRun::Trapped);
                 }
-                Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
+                Err(
+                    crate::llm::DurableStepError::SpentFinalizeRefused { usage }
+                    | crate::llm::DurableStepError::SpentSchemaValidation { usage, .. },
+                ) if ctx.deadline.expired() => {
                     charges.record_usage(&usage);
                     return Ok(PartitionRun::Checkpoint);
                 }
