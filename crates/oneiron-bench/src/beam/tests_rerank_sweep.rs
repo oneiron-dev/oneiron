@@ -15,7 +15,9 @@ impl Reranker for ReverseBlock {
 #[test]
 fn beam_top_n_sweep_30_vs_50_keeps_membership_scale_and_trace_forks() -> super::BeamResult<()> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), super::util::beam_vault_config())?;
+    let mut config = super::util::beam_vault_config();
+    config.retrieval_telemetry_capture = true;
+    let vault = Vault::open(dir.path(), config)?;
     for index in 0_u8..60 {
         let mut bytes = [0x73; 16];
         bytes[15] = index;
