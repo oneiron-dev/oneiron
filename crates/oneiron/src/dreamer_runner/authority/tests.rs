@@ -89,6 +89,10 @@ fn job_types_share_facets_without_minting_new_agents() {
     ] {
         assert_eq!(dreamer_facet_for_job_type(job), Some(facet));
     }
+    assert_eq!(
+        dreamer_facet_for_job_type(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE),
+        Some("dreamer.magistrate")
+    );
     assert_eq!(dreamer_facet_for_job_type("agent_dispatch"), None);
     assert_eq!(dreamer_facet_for_job_type("unknown"), None);
 
@@ -119,4 +123,29 @@ fn job_types_share_facets_without_minting_new_agents() {
             ..original
         }
     ));
+}
+
+#[test]
+fn shared_facet_does_not_dedupe_distinct_job_types() -> Result<()> {
+    use crate::dreamer_runner::EnqueueDreamerAttempt;
+
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let runner = DreamerRunnerStore::new(&vault);
+    let input = |attempt_type: &str| EnqueueDreamerAttempt {
+        attempt_type: attempt_type.into(),
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: Some("same-key".into()),
+        run_id: None,
+        now: 10,
+    };
+    let first = runner.enqueue(input("micro"))?;
+    assert!(matches!(first, EnqueueDreamerAttemptOutcome::Enqueued(_)));
+    assert!(matches!(
+        runner.enqueue(input("meso")),
+        Err(Error::InvalidConfig(_))
+    ));
+    let replay = runner.enqueue(input("micro"))?;
+    assert!(matches!(replay, EnqueueDreamerAttemptOutcome::Existing(_)));
+    Ok(())
 }

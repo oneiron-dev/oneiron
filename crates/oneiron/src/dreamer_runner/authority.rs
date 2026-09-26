@@ -165,7 +165,7 @@ impl Vault {
             .transpose()
     }
 }
-pub(super) fn stamp_attempt(
+pub(crate) fn stamp_attempt(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
@@ -178,6 +178,13 @@ pub(super) fn stamp_attempt(
             && !record.kind.starts_with("dreamer."))
     {
         return Ok(());
+    }
+    // The queue dedupes by kind and key, not by payload. Do not let two
+    // different job types sharing a facet replay each other's queue row.
+    if super::decode_dreamer_attempt_payload(&record.payload)?.attempt_type != facet {
+        return Err(Error::InvalidConfig(
+            "Dreamer dedupe key refers to another job type".into(),
+        ));
     }
     let actor = vault.dreamer_authority_in_txn(txn, record.created_at)?;
     let facet = dreamer_facet_for_job_type(facet).unwrap_or(facet);

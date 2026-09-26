@@ -31,6 +31,9 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         super::super::maintenance::representation::REPRESENTATION_FACET => {
             Some(super::super::maintenance::representation::REPRESENTATION_FACET)
         }
+        crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE => {
+            Some(crate::consult_ladder::DREAMER_MAGISTRATE_ATTEMPT_TYPE)
+        }
         DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE => Some(DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE),
         super::super::connector_event::CONNECTOR_EVENT_FACET => {
             Some(super::super::connector_event::CONNECTOR_EVENT_FACET)
