@@ -19550,6 +19550,7 @@
       "RsiBudgetError",
       "RsiBudgetRead",
       "RsiBudgetShare",
+      "RsiExplorationRead",
       "RsiSettlement",
       "RsiSpendPurpose"
      ],
@@ -19557,8 +19558,8 @@
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
       "enum": 3,
-      "fn": 7,
-      "struct": 3
+      "fn": 10,
+      "struct": 4
      }
     },
     {
