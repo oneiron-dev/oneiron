@@ -42,7 +42,7 @@ pub struct NapiSubtreeEntry {
 
 /// An entity to write in a batch operation.
 #[napi(object)]
-pub struct NapiBatchEntity {
+pub(crate) struct NapiBatchEntity {
     /// Entity ID (16 bytes).
     pub id: Buffer,
     /// Entity type discriminant.

@@ -26,6 +26,7 @@ mod identity_key;
 pub use identity_key::identity_fields_for_kind;
 pub(crate) use identity_key::reindex_identity_hints;
 mod admission;
+mod bulk_review;
 pub mod image;
 pub mod meeting_audio;
 mod provider;
@@ -46,6 +47,9 @@ pub use self::admission::{
     admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
     admit_imported_mention_claim,
 };
+pub use self::bulk_review::{
+    ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt,
+};
 pub use self::registry::{
     FILE_DROP_TRANSCRIPT_SOURCE_ID, ICS_FEED_SOURCE_ID, INGEST_SOURCE_REGISTRY,
     IngestAdapterSkillRef, IngestHarnessConfig, IngestSource, IngestSourceConfig,
@@ -63,6 +67,8 @@ pub use self::types::{
     NormalizedIngestRecord,
 };
 
+#[cfg(test)]
+mod bulk_review_tests;
 #[cfg(test)]
 mod docs_tests;
 #[cfg(test)]
