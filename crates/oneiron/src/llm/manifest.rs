@@ -268,12 +268,19 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
-    /// Call-path binding: absent manifest preserves explicit host configuration.
+    /// Call-path binding: absent manifest and resident policy preserves explicit host configuration.
     pub fn bind_model_role(&self, role: ModelRole, request: &mut LlmRequest) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        if let Some(manifest) = read_manifest(&self.store, &txn)? {
-            manifest.bind_request(role, &read_routes(&self.store, &txn)?, request)?;
+        // Only an explicitly stored resident policy changes host-supplied
+        // envelopes. The owner manifest still has higher tier precedence.
+        let mut bound = request.clone();
+        if let Some(table) = super::defaults::read_stored_defaults(&self.store, &txn)? {
+            table.apply(&mut bound.envelope);
         }
+        if let Some(manifest) = read_manifest(&self.store, &txn)? {
+            manifest.bind_request(role, &read_routes(&self.store, &txn)?, &mut bound)?;
+        }
+        *request = bound;
         Ok(())
     }
 }

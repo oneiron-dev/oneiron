@@ -1,0 +1,50 @@
+{
+  "purposes": {
+    "extraction": {
+      "tier": "extraction",
+      "locality": "on_device"
+    },
+    "consolidation": {
+      "tier": "consolidation",
+      "locality": "own_server"
+    },
+    "answer_gen": {
+      "tier": "answer",
+      "locality": "on_device"
+    },
+    "auto_check": {
+      "tier": "cheap",
+      "locality": "own_server"
+    },
+    "tool_routing": {
+      "tier": "tiny-fast",
+      "locality": "on_device"
+    },
+    "voice": {
+      "tier": "voice",
+      "locality": "on_device"
+    },
+    "eval": {
+      "tier": "eval-pinned",
+      "locality": "on_device"
+    }
+  },
+  "voice": {
+    "asr_live": {
+      "tier": "asr-live",
+      "locality": "third_party"
+    },
+    "asr_batch": {
+      "tier": "asr-batch",
+      "locality": "own_server"
+    },
+    "tts_live": {
+      "tier": "tts-live",
+      "locality": "own_server"
+    },
+    "tts_batch": {
+      "tier": "tts-deferred",
+      "locality": "own_server"
+    }
+  }
+}

@@ -19841,16 +19841,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "PurposeDefault"
+      "PurposeDefault",
+      "PurposeDefaultTable",
+      "VoiceLane"
      ],
      "path": "src/llm/defaults.rs",
-     "purpose": "Central purpose policy",
+     "purpose": "Vault-local inference defaults",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 12,
+      "struct": 2
      }
     },
     {

@@ -242,12 +242,10 @@ fn sample_request() -> LlmRequest {
                     config: None,
                 },
             },
-            tier: TierPrecedence {
-                per_call: None,
-                vault_policy: None,
-                purpose_default: None,
-                global_default: ModelTierRef("standard".to_owned()),
-            },
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AnswerGen,
+                ModelTierRef("standard".into()),
+            ),
             response_format: ResponseFormat::Json {
                 schema: json!({ "type": "object" }),
             },
