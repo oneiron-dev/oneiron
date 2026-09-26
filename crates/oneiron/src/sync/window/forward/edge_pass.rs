@@ -102,6 +102,35 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
+            let residence = (|| {
+                let txn = vault.store.env.read_txn()?;
+                crate::sync::types::edge_belongs_to_window_in(
+                    vault, &txn, ctx.doc, &src, &tgt, window_key,
+                )
+            })();
+            match residence {
+                Ok(true) => {}
+                Ok(false) => {
+                    if let Err(err) = quarantine::quarantine_rejected_op(
+                        vault,
+                        window_key.as_str(),
+                        QuarantineContainer::Edges,
+                        key,
+                        &Error::InvalidConfig("edge outside window residence".into()),
+                        buf,
+                    ) {
+                        edge_error = Some(err);
+                    } else {
+                        terminal_quarantines.push(src);
+                    }
+                    return;
+                }
+                Err(err) => {
+                    edge_error = Some(err);
+                    return;
+                }
+            }
+
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
             // ANY-value, entity-canonical presence — a non-binary tombstone
             // gates too, and a case-shifted hex alias still names the id.

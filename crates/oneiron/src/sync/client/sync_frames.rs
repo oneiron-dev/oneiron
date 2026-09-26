@@ -27,6 +27,10 @@ impl SyncClient {
             self.manager.discard_window(&key);
         }
         self.server_vvs.clear();
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -81,7 +85,7 @@ impl SyncClient {
     pub(in crate::sync) fn try_generate_initial_sync(
         &self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        // v10 carries own-device windows and grant-backed entity documents
+        // v11 carries own-device windows and grant-backed entity documents
         // on the same connection; authentication uses a paired capability.
         // Device lease requests are retired (C07); the NOTE session bind
         // (HEAD) still rides along when configured.
@@ -122,10 +126,25 @@ impl SyncClient {
         for _ in 0..self.config.default_window_count {
             let Some(key) = next else { break };
             next = key.previous_month();
+            if let Some(worlds) = &self.config.followed_worlds {
+                for world in worlds {
+                    let scoped = WindowKey::for_month_world(&key, *world);
+                    if !keys.contains(&scoped) {
+                        keys.push(scoped);
+                    }
+                }
+            }
             keys.push(key);
         }
         for key in self.manager.loaded_keys() {
-            if !keys.contains(&key) {
+            if self.follows_window(&key) && !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        // A newly followed project backfills every month advertised by root;
+        // the thin enrol index owns discovery, not a guess from wall time.
+        for key in crate::sync::schema::read_window_list(&self.root_doc) {
+            if key.world().is_some() && self.follows_window(&key) && !keys.contains(&key) {
                 keys.push(key);
             }
         }
@@ -136,7 +155,7 @@ impl SyncClient {
                 )));
                 continue;
             };
-            if !keys.contains(&window_key) {
+            if self.follows_window(&window_key) && !keys.contains(&window_key) {
                 keys.push(window_key);
             }
         }
@@ -155,6 +174,10 @@ impl SyncClient {
                             "Initial sync frame encode for window {key} failed: {e}"
                         )));
                     })?;
+                    self.requested_windows
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .insert(key);
                     messages.push(frame);
                 }
                 Err(e) => {
@@ -173,6 +196,40 @@ impl SyncClient {
                 .map_err(|error| TransportError::Storage(error.to_string()))?,
         );
         Ok(messages)
+    }
+
+    /// The root document may arrive after initial frames on a new device.
+    /// Request newly advertised, followed world windows only after the root
+    /// import is durable. A repeat root update never requests the same key.
+    pub(super) fn newly_followed_window_requests(
+        &self,
+    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
+        let mut frames = Vec::new();
+        for key in crate::sync::schema::read_window_list(&self.root_doc) {
+            if key.world().is_none() || !self.follows_window(&key) {
+                continue;
+            }
+            if self
+                .requested_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&key)
+            {
+                continue;
+            }
+            let vv = self
+                .window_vv_for_initial_sync(&key)
+                .map_err(|e| TransportError::Storage(e.to_string()))?;
+            let frame =
+                transport::encode_window_sync(key.as_str(), window_sub_tags::VV_REQUEST, &vv)
+                    .into_result()?;
+            self.requested_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key);
+            frames.push(frame);
+        }
+        Ok(frames)
     }
 
     /// Resolves the wire VV (Loro binary `VersionVector::encode()` bytes)

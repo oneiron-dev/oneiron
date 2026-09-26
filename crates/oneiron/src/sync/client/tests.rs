@@ -249,6 +249,92 @@ fn federated_tombstone_update(id: &EntityId) -> Vec<u8> {
 }
 
 #[test]
+fn subscribed_world_windows_only_request_followed_projects_and_backfill_on_follow() {
+    let manager = test_manager();
+    let (mut client, _rx) = test_client(&manager);
+    let worlds: Vec<_> = (1..=5).map(test_entity_id).collect();
+    let month = WindowKey::new("2026-03");
+    client.root_doc = create_root_doc(
+        "owner",
+        "vault",
+        &worlds
+            .iter()
+            .map(|world| WindowKey::for_month_world(&month, *world))
+            .collect::<Vec<_>>(),
+    );
+    client.follow_world(worlds[0]);
+    let requests = client.generate_initial_sync();
+    let keys: Vec<_> = requests
+        .iter()
+        .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+        .map(|frame| {
+            transport::decode_window_sync(&frame[1..])
+                .unwrap()
+                .0
+                .to_string()
+        })
+        .collect();
+    assert!(keys.contains(&WindowKey::for_month_world(&month, worlds[0]).to_string()));
+    for other in &worlds[1..] {
+        assert!(!keys.contains(&WindowKey::for_month_world(&month, *other).to_string()));
+    }
+    client.follow_world(worlds[1]);
+    let followed_key = WindowKey::for_month_world(&month, worlds[1]);
+    assert!(
+        client
+            .generate_initial_sync()
+            .iter()
+            .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+            .any(
+                |frame| transport::decode_window_sync(&frame[1..]).unwrap().0
+                    == followed_key.as_str()
+            )
+    );
+    client.follow_all_worlds();
+    let keys: Vec<_> = client
+        .generate_initial_sync()
+        .iter()
+        .filter(|frame| frame.first() == Some(&TAG_WINDOW_SYNC))
+        .map(|frame| {
+            transport::decode_window_sync(&frame[1..])
+                .unwrap()
+                .0
+                .to_string()
+        })
+        .collect();
+    for world in &worlds {
+        assert!(keys.contains(&WindowKey::for_month_world(&month, *world).to_string()));
+    }
+}
+
+#[test]
+fn fresh_device_requests_followed_history_after_root_arrives() {
+    let manager = test_manager();
+    let (mut client, _events) = test_client(&manager);
+    let world = test_entity_id(0x54);
+    let other = test_entity_id(0x55);
+    client.follow_world(world);
+    client.generate_initial_sync(); // New client does not yet know server windows.
+    let root = create_root_doc(
+        "server",
+        "vault",
+        &[
+            WindowKey::for_world(1_771_027_200, world),
+            WindowKey::for_world(1_771_027_200, other),
+        ],
+    );
+    let mut frame = vec![TAG_SYNC_UPDATE];
+    frame.extend_from_slice(&root.export(ExportMode::snapshot()).unwrap());
+    let requests = client.handle_server_message(&frame).unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        transport::decode_window_sync(&requests[0][1..]).unwrap().0,
+        WindowKey::for_world(1_771_027_200, world).as_str()
+    );
+    assert!(client.handle_server_message(&frame).unwrap().is_empty());
+}
+
+#[test]
 fn sync_client_rejects_invalid_window_creation() {
     let manager = test_manager();
     let (client, _rx) = test_client(&manager);

@@ -107,6 +107,20 @@ pub(super) fn materialize_entities_from_delta(
                         )?;
                         continue;
                     }
+                    if let Some(window) = crate::sync::types::WindowKey::try_new(window_key)
+                        && !crate::sync::types::entity_belongs_to_window(blob, &window)
+                    {
+                        quarantine_rejected_op_in_txn(
+                            vault,
+                            wtxn,
+                            window_key,
+                            QuarantineContainer::Entities,
+                            key.as_ref(),
+                            &Error::InvalidConfig("entity outside window residence".into()),
+                            blob,
+                        )?;
+                        continue;
+                    }
                     // ONE-1133 (ARCH-0038): a tombstone always wins over
                     // concurrent entities-map state. A re-put merged after
                     // the delete must never (re)materialize the body — no

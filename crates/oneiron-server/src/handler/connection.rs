@@ -293,12 +293,16 @@ async fn handle_connection(
                             }
                             continue;
                         }
-                        if (should_forward_broadcast(protocol_version, &data)
-                            || (conn_state.window_sync_mode
-                                == super::conn_state::WindowSyncMode::FullWindow
-                                && data.first() == Some(&protocol::TAG_WINDOW_SYNC)))
-                            && !transport.send_binary(data).await
+                        // New owner peers receive only subscribed keys. Legacy
+                        // v6 peers cannot decode world-month keys, so they keep
+                        // base-month broadcasts but never receive world frames.
+                        let subscribed_window = if data.first() == Some(&protocol::TAG_WINDOW_SYNC)
                         {
+                            window_broadcast_allowed(protocol_version, &conn_state, &data)
+                        } else {
+                            should_forward_broadcast(protocol_version, &data)
+                        };
+                        if subscribed_window && !transport.send_binary(data).await {
                             break;
                         }
                     }
@@ -306,7 +310,10 @@ async fn handle_connection(
                     Err(crate::broadcast::BroadcastError::Lagged(n)) => {
                         // Reconnect replays persisted document subscriptions and VVs.
                         // App replay alone cannot repair a missed text-document notice.
-                        if !conn_state.documents.is_empty() {
+                        if !conn_state.documents.is_empty()
+                            || conn_state.window_sync_mode
+                                == super::conn_state::WindowSyncMode::FullWindow
+                        {
                             transport.close().await;
                             break;
                         }
@@ -566,6 +573,26 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
     }
 }
 
+fn window_broadcast_allowed(
+    protocol_version: u8,
+    state: &super::conn_state::ConnState,
+    frame: &[u8],
+) -> bool {
+    let key = frame
+        .get(1..)
+        .and_then(|payload| oneiron::sync::transport::decode_window_sync(payload).ok())
+        .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key));
+    match protocol_version {
+        version if version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION => {
+            key.is_some_and(|key| state.receives_window(&key))
+        }
+        version if version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION => {
+            key.is_some_and(|key| key.world().is_none())
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> bool {
     if matches!(
         data.first(),
@@ -576,4 +603,72 @@ pub(super) fn should_forward_broadcast(protocol_version: u8, data: &[u8]) -> boo
     (protocol_version == protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION
         || protocol_version == protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION)
         || data.first().copied() != Some(protocol::TAG_WINDOW_SYNC)
+}
+
+#[cfg(test)]
+mod window_broadcast_tests {
+    use super::*;
+    use oneiron::sync::WindowKey;
+    use oneiron::sync::transport::{encode_window_sync, window_sub_tags};
+
+    #[test]
+    fn a_socket_only_receives_followed_project_windows() {
+        let mut device =
+            super::super::conn_state::ConnState::new(protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION);
+        let month = WindowKey::new("2026-03");
+        let worlds: Vec<_> = (1..=5)
+            .map(|byte| oneiron::EntityId::from_bytes([byte; 16]).unwrap())
+            .collect();
+        let keys: Vec<_> = worlds
+            .iter()
+            .map(|world| WindowKey::for_month_world(&month, *world))
+            .collect();
+        let frames: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                encode_window_sync(key.as_str(), window_sub_tags::UPDATE, b"update")
+                    .into_result()
+                    .unwrap()
+            })
+            .collect();
+        device.touch_window(keys[0].clone(), 32).unwrap();
+        device.subscribe_window(&keys[0]);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| window_broadcast_allowed(
+                    protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION,
+                    &device,
+                    frame
+                ))
+                .count(),
+            1
+        );
+        device.touch_window(keys[1].clone(), 32).unwrap();
+        device.subscribe_window(&keys[1]);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| window_broadcast_allowed(
+                    protocol::CHUNK_FULL_WINDOW_PROTOCOL_VERSION,
+                    &device,
+                    frame
+                ))
+                .count(),
+            2
+        );
+        assert!(frames.iter().all(|frame| !window_broadcast_allowed(
+            protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+            &device,
+            frame
+        )));
+        let base = encode_window_sync(month.as_str(), window_sub_tags::UPDATE, b"base")
+            .into_result()
+            .unwrap();
+        assert!(window_broadcast_allowed(
+            protocol::LEGACY_FULL_WINDOW_PROTOCOL_VERSION,
+            &device,
+            &base
+        ));
+    }
 }

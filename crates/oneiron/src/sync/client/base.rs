@@ -1,7 +1,8 @@
 //! SyncClient construction, window and ephemeral accessors, and root persistence.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use loro::{LoroDoc, VersionVector};
 use tokio::sync::mpsc;
@@ -39,6 +40,7 @@ pub struct SyncClient {
     /// may only be cleared once the server's OWN vv proves it holds every op
     /// the local doc holds.
     pub(crate) server_vvs: HashMap<String, VersionVector>,
+    pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -139,6 +141,7 @@ impl SyncClient {
             client_id,
             config,
             server_vvs: HashMap::new(),
+            requested_windows: Mutex::new(HashSet::new()),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -237,6 +240,28 @@ impl SyncClient {
     pub fn remove_outdated_ephemeral(&self) {
         self.ephemeral_store.remove_outdated();
         self.vault.message_streams.presence.store.remove_outdated();
+    }
+
+    /// Follow another project. The next sync negotiation requests all its known
+    /// historical windows, so following late backfills rather than starting now.
+    pub fn follow_world(&mut self, world: crate::EntityId) {
+        if let Some(worlds) = &mut self.config.followed_worlds
+            && !worlds.contains(&world)
+        {
+            worlds.push(world);
+        }
+    }
+
+    /// Home-node / explicit sync-all mode.
+    pub fn follow_all_worlds(&mut self) {
+        self.config.followed_worlds = None;
+    }
+
+    pub(crate) fn follows_window(&self, key: &WindowKey) -> bool {
+        match (key.world(), &self.config.followed_worlds) {
+            (None, _) | (_, None) => true,
+            (Some(world), Some(worlds)) => worlds.contains(&world),
+        }
     }
 
     /// Returns the list of window keys from the root doc (set by server).

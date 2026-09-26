@@ -120,6 +120,43 @@ pub(super) fn materialize_tombstones_from_delta(
                     continue;
                 }
 
+                let residence = (|| {
+                    let txn = vault.store.env.read_txn()?;
+                    let window =
+                        crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
+                    crate::sync::types::tombstone_residence_in(vault, &txn, &id, &window)
+                })();
+                match residence {
+                    Ok(crate::sync::types::TombstoneResidence::Wrong) => {
+                        if let Err(error) = quarantine_rejected_op(
+                            vault,
+                            window_key,
+                            QuarantineContainer::Tombstones,
+                            key.as_ref(),
+                            &Error::InvalidConfig("tombstone outside window residence".into()),
+                            raw_value,
+                        ) {
+                            tracing::error!(%error, "failed to quarantine cross-world tombstone");
+                        }
+                        continue;
+                    }
+                    Ok(crate::sync::types::TombstoneResidence::Unknown)
+                        if window_key.contains('@') =>
+                    {
+                        // The CRDT tombstone itself gates this window. Do not
+                        // mint a global dt: marker for an unproven ID.
+                        continue;
+                    }
+                    Err(error) => {
+                        let _ = vault.with_write_txn(|txn| {
+                            quarantine::set_remat_marker_in_txn(vault, txn, window_key, &id)
+                        });
+                        tracing::error!(%error, "tombstone residence check failed");
+                        continue;
+                    }
+                    _ => {}
+                }
+
                 staged.push(TombstoneWork {
                     id,
                     crdt_key: key.as_ref().to_string(),
@@ -358,6 +395,17 @@ fn apply_tombstone_in_savepoint(
         .nested_write_txn(parent)
         .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))?;
 
+    if let Some(window) = crate::sync::WindowKey::try_new(window_key)
+        && window.world().is_some()
+        && crate::sync::types::tombstone_residence_in(vault, &child, &work.id, &window)
+            .map_err(|e| (TombstoneFailureStage::Replay, e))?
+            != crate::sync::types::TombstoneResidence::Match
+    {
+        return Err((
+            TombstoneFailureStage::Replay,
+            Error::InvalidConfig("unproven world tombstone residence".into()),
+        ));
+    }
     let applied = quarantine::apply_replayed_tombstone_for_sync_in_txn(
         vault,
         &mut child,
@@ -375,9 +423,23 @@ fn apply_tombstone_in_savepoint(
     };
 
     match item {
-        Ok(()) => child
-            .commit()
-            .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e))),
+        Ok(()) => {
+            if crate::sync::WindowKey::try_new(window_key).is_some_and(|key| key.world().is_some())
+            {
+                vault
+                    .store
+                    .sync_state
+                    .put(
+                        &mut child,
+                        &format!("m:dw:{}", work.id.to_hex()),
+                        window_key.as_bytes(),
+                    )
+                    .map_err(|e| (TombstoneFailureStage::Replay, e))?;
+            }
+            child
+                .commit()
+                .map_err(|e| (TombstoneFailureStage::Replay, Error::from(e)))
+        }
         Err(failure) => {
             // Savepoint abort: this item's entity/index/receipt/sweep/outbox
             // writes never reach the parent, while its siblings' do.

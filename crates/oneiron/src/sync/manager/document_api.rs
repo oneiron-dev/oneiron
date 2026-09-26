@@ -49,7 +49,10 @@ impl WindowManager {
         let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(|| {
             Error::sync_protocol(crate::error::SyncProtocolValidation::DocumentAdmissionDenied)
         })?;
-        let key = WindowKey::from_timestamp(header.learned_at);
+        let key = match crate::sync::types::entity_world(&raw)? {
+            Some(world) => WindowKey::for_world(header.learned_at, world),
+            None => WindowKey::from_timestamp(header.learned_at),
+        };
         let window = self.open_window(&key)?;
         self.documents
             .export_selected(id, &window.doc, &key, scope, selector, remote_vv)

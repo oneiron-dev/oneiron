@@ -3717,3 +3717,254 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     assert!(!named);
     Ok(())
 }
+
+#[test]
+fn world_month_recovery_mirrors_only_its_project_and_base_excludes_world_claims() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let month = WindowKey::new("2026-03");
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let person = EntityId::from_bytes([0x51; 16])?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    let mut pairs = Vec::new();
+    for i in 1..=5 {
+        let world = EntityId::from_bytes([i; 16])?;
+        let claim = EntityId::from_bytes([i + 20; 16])?;
+        vault.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        let mut body = crate::claim::ClaimBody::new(
+            "test.project_fact",
+            crate::claim::ClaimSubject::Entity(person),
+            Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.world = Some(world);
+        vault.put_claim(&claim, &body, occurred, at)?;
+        vault
+            .batch()
+            .edge(&claim, EdgeKind::About, &person, 1.0)
+            .commit()?;
+        pairs.push((world, claim));
+    }
+    let base = crate::sync::schema::create_window_doc("owner", &month);
+    reverse_rematerialize(&vault, &base, &month)?;
+    for (_, claim) in &pairs {
+        assert!(base.get_map("entities").get(&claim.to_hex()).is_none());
+        let edge = crate::sync::bridge::format_edge_key(claim, EdgeKind::About, &person);
+        assert!(base.get_map("edges").get(&edge).is_none());
+    }
+    for (world, claim) in &pairs {
+        let key = WindowKey::for_month_world(&month, *world);
+        let doc = crate::sync::schema::create_window_doc("owner", &key);
+        reverse_rematerialize(&vault, &doc, &key)?;
+        assert!(doc.get_map("entities").get(&claim.to_hex()).is_some());
+        let edge = crate::sync::bridge::format_edge_key(claim, EdgeKind::About, &person);
+        assert!(doc.get_map("edges").get(&edge).is_some());
+        for (_, other) in &pairs {
+            if other != claim {
+                assert!(doc.get_map("entities").get(&other.to_hex()).is_none());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn world_window_admission_refuses_other_project_even_hidden_history() -> Result<()> {
+    let world_a = EntityId::from_bytes([0x31; 16])?;
+    let world_b = EntityId::from_bytes([0x32; 16])?;
+    let claim = EntityId::from_bytes([0x33; 16])?;
+    let key = WindowKey::for_month_world(&WindowKey::new("2026-03"), world_a);
+    let mut body = crate::claim::ClaimBody::new(
+        "test.window_boundary",
+        crate::claim::ClaimSubject::Entity(world_b),
+        Value::from("other world"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world_b);
+    let raw = make_entity_blob(
+        crate::registry::ENTITY_TYPE_CLAIM,
+        key.start_timestamp().unwrap() + 1,
+        &crate::claim::encode_claim_body(&body)?,
+    );
+    let source = create_window_doc("source", &key);
+    map_insert_bytes(&source.get_map("entities"), &claim.to_hex(), &raw)?;
+    source.commit();
+    let target = create_window_doc("target", &key);
+    let snapshot = source.export(loro::ExportMode::snapshot()).unwrap();
+    assert!(validate_window_update_residence(&target, &snapshot, &key).is_err());
+    // The same world still cannot smuggle a March row into February's doc.
+    let own_world_key = WindowKey::for_month_world(&WindowKey::new("2026-03"), world_b);
+    let same_world = create_window_doc("source", &own_world_key);
+    map_insert_bytes(&same_world.get_map("entities"), &claim.to_hex(), &raw)?;
+    same_world.commit();
+    let same_world_snapshot = same_world.export(loro::ExportMode::snapshot()).unwrap();
+    let february = own_world_key.previous_month().unwrap();
+    assert!(
+        validate_window_update_residence(
+            &create_window_doc("target", &february),
+            &same_world_snapshot,
+            &february,
+        )
+        .is_err()
+    );
+    let before = source.oplog_vv();
+    map_delete(&source.get_map("entities"), &claim.to_hex())?;
+    source.commit();
+    let updates = source.export(loro::ExportMode::all_updates()).unwrap();
+    assert!(validate_window_update_residence(&target, &updates, &key).is_err());
+    assert_ne!(before, source.oplog_vv());
+    assert_eq!(target.get_map("entities").len(), 0);
+    Ok(())
+}
+
+#[test]
+fn foreign_and_unknown_world_tombstones_do_not_delete_or_poison_other_projects() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let materializer = Arc::new(Materializer::new());
+    let world_a = EntityId::from_bytes([0x61; 16])?;
+    let world_b = EntityId::from_bytes([0x62; 16])?;
+    let existing = EntityId::from_bytes([0x63; 16])?;
+    let absent = EntityId::from_bytes([0x64; 16])?;
+    let month = WindowKey::new("2026-03");
+    let key = WindowKey::for_month_world(&month, world_a);
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world_b,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"project",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.world_tombstone",
+        crate::claim::ClaimSubject::Entity(world_b),
+        Value::from("world B"),
+        1.0,
+        ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world_b);
+    vault.put_claim(&existing, &body, occurred, at)?;
+    let window = LoadedWindow::new("owner", key, &vault, &materializer);
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: at,
+        request_id: [0x39; 16],
+    }
+    .encode();
+    for id in [existing, absent] {
+        map_insert_bytes(&window.doc.get_map("tombstones"), &id.to_hex(), &tombstone)?;
+        window.doc.commit();
+    }
+    assert!(vault.get_raw_unsealed(&existing)?.is_some());
+    let txn = vault.store.env.read_txn()?;
+    for id in [existing, absent] {
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
+                .is_none()
+        );
+        assert!(
+            vault
+                .store
+                .sync_state
+                .get(&txn, &format!("m:dw:{}", id.to_hex()))?
+                .is_none()
+        );
+    }
+    drop(txn);
+    // The unproven A tombstone may stay in A's CRDT, but cannot poison the
+    // globally keyed delete marker before a later valid B claim arrives.
+    vault.put_claim(&absent, &body, occurred, at)?;
+    assert!(vault.get_raw_unsealed(&absent)?.is_some());
+    Ok(())
+}
+
+#[test]
+fn world_window_admission_rejects_cross_project_edges_before_relay() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let month = WindowKey::new("2026-03");
+    let at = month.start_timestamp().unwrap() + 60;
+    let occurred = TimeRange { start: at, end: at };
+    let world_a = EntityId::from_bytes([0x41; 16])?;
+    let world_b = EntityId::from_bytes([0x42; 16])?;
+    let claim_a = EntityId::from_bytes([0x43; 16])?;
+    let claim_b = EntityId::from_bytes([0x44; 16])?;
+    let person = EntityId::from_bytes([0x45; 16])?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    for (world, claim) in [(world_a, claim_a), (world_b, claim_b)] {
+        vault.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"project",
+        )?;
+        let mut body = crate::claim::ClaimBody::new(
+            "test.edge_residence",
+            crate::claim::ClaimSubject::Entity(person),
+            Value::from("fact"),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            crate::claim::ClaimLifecycleStatus::Active,
+        );
+        body.world = Some(world);
+        vault.put_claim(&claim, &body, occurred, at)?;
+    }
+    let key = WindowKey::for_month_world(&month, world_a);
+    let source = create_window_doc("source", &key);
+    let good = crate::sync::bridge::format_edge_key(&claim_a, EdgeKind::About, &person);
+    let foreign = crate::sync::bridge::format_edge_key(&claim_a, EdgeKind::About, &claim_b);
+    map_insert_bytes(&source.get_map("edges"), &good, b"value")?;
+    source.commit();
+    let target = create_window_doc("target", &key);
+    assert!(
+        validate_window_update_residence_with_vault(
+            &vault,
+            &target,
+            &source.export(loro::ExportMode::all_updates()).unwrap(),
+            &key
+        )
+        .is_ok()
+    );
+    map_insert_bytes(&source.get_map("edges"), &foreign, b"value")?;
+    source.commit();
+    map_delete(&source.get_map("edges"), &foreign)?;
+    source.commit();
+    assert!(
+        validate_window_update_residence_with_vault(
+            &vault,
+            &target,
+            &source.export(loro::ExportMode::all_updates()).unwrap(),
+            &key
+        )
+        .is_err()
+    );
+    assert!(target.get_map("edges").get(&foreign).is_none());
+    Ok(())
+}

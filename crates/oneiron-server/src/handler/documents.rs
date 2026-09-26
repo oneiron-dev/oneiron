@@ -182,7 +182,7 @@ pub(super) fn handle_document(
     }
 }
 
-/// An own device's owner REQUEST: a v10 connection that is not
+/// An own device's owner REQUEST: a v11 connection that is not
 /// selector-scoped, with a bound NOTE session whose principal is the vault
 /// owner. The connection is then an owner connection for good. A REQUEST for
 /// a NOTE this server does not hold yet waits for the NOTE's next notice.
@@ -273,7 +273,7 @@ fn owner_document(
     }
 }
 
-/// The owner lane's gate: v10, never selector-scoped, and a bound NOTE
+/// The owner lane's gate: v11, never selector-scoped, and a bound NOTE
 /// session whose principal is the vault owner.
 fn owner_auth<'a>(
     server: &SyncServer,

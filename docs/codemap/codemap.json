@@ -12403,7 +12403,7 @@
      "path": "src/deletion/timeline.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
       "fn": 4,
       "struct": 3
@@ -29813,8 +29813,8 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 2,
-      "fn": 14,
+      "crate-vis": 3,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -29901,7 +29901,7 @@
      "path": "src/sync/client/sync_frames.rs",
      "purpose": "Initial-connect and re-bootstrap sync frame builders",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -30647,8 +30647,8 @@
      "path": "src/sync/types.rs",
      "purpose": "Sync-specific types for the CRDT sync layer",
      "surface": {
-      "crate-vis": 2,
-      "fn": 9,
+      "crate-vis": 9,
+      "fn": 12,
       "struct": 3
      }
     },
@@ -30659,7 +30659,7 @@
      "path": "src/sync/window/admission.rs",
      "purpose": "Full-window UPDATE locality admission without live document side effects",
      "surface": {
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -30695,7 +30695,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass.rs",
@@ -40570,7 +40570,7 @@
      "path": "src/handler/conn_state.rs",
      "purpose": "Per-connection budgets, quotas, and sync-mode binding",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {

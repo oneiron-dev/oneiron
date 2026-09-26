@@ -999,7 +999,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/rendezvous.rs` | src | s | 15 crate-vis | — | — |
 | `src/deletion/sweep_queue.rs` | src | s | 1 fn · 13 crate-vis | — | — |
 | `src/deletion/tests.rs` | test | m | — | — | — |
-| `src/deletion/timeline.rs` | src | m | 3 struct · 5 enum · 4 fn · 4 crate-vis | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb | — |
+| `src/deletion/timeline.rs` | src | m | 3 struct · 5 enum · 4 fn · 5 crate-vis | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState, NamedMemoryVerb | — |
 | `src/deletion/tombstone.rs` | src | m | 2 struct · 2 enum · 7 fn · 2 const · 17 crate-vis | DecodedTombstoneValue, DeleteReason, TombstoneReason, TombstoneValueV2 | — |
 | `src/delivery_window/claims.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | DeliveryWindowPolicyClaim | Policy claim parsing and per-claim restriction gating |
 | `src/delivery_window/context.rs` | src | s | 1 struct · 8 fn | DeliveryWindowEvaluationContext | Frozen execute-time evaluation context and its builder |
@@ -2428,7 +2428,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/chunks.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 const · 1 re-export · 2 crate-vis | ChunkSyncRequest, ChunkSyncResponse | Authenticated manifest-scoped have/want exchange |
 | `src/sync/chunks/download.rs` | src | s | 1 struct · 4 fn | ChunkDownload | One bounded in-flight have/want transfer, driven by real socket replies |
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
-| `src/sync/client/base.rs` | src | m | 1 struct · 14 fn · 2 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
+| `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 3 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/documents.rs` | src | s | 2 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/federated.rs` | src | m | 1 enum · 5 fn · 1 crate-vis | ImportTier | Federated admission and staged vault-import confirmation |
 | `src/sync/client/federation_replay.rs` | src | s | 2 fn | — | Durable inbound federation drain, entered on startup, receive and timer ticks |
@@ -2436,7 +2436,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/lfs.rs` | src | s | 3 fn · 1 crate-vis | — | Object-scoped have/want state on the existing owner-authenticated sync client |
 | `src/sync/client/mod.rs` | src | s | 4 re-export | — | Client-side sync over WebSocket |
 | `src/sync/client/note_session.rs` | src | s | 2 crate-vis | — | The existing app-tier MessagePack auth.bind handshake on the sync socket |
-| `src/sync/client/sync_frames.rs` | src | s | 4 fn · 2 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
+| `src/sync/client/sync_frames.rs` | src | s | 4 fn · 3 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
 | `src/sync/client/tests.rs` | test | XL | — | — | — |
 | `src/sync/client/types.rs` | src | s | 2 struct · 3 enum · 1 fn · 9 crate-vis | EphemeralChangeOrigin, NoteSyncSession, SyncClientConfig, SyncEvent, SyncStatus | Sync client configuration, events, and sync_state key constants |
 | `src/sync/connection/converge.rs` | src | s | 3 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
@@ -2501,12 +2501,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/transport.rs` | src | m | 2 struct · 1 enum · 20 fn · 29 const · 1 mod · 1 re-export | EncodedFrame, EphemeralWireState, TransportError | Wire protocol encoding/decoding for WebSocket transport |
 | `src/sync/transport/documents.rs` | src | s | 1 struct · 4 fn · 8 const · 1 mod | DocumentFrame | Entity-key frames and bounded, non-nesting document batches |
 | `src/sync/transport/tests.rs` | test | m | — | — | — |
-| `src/sync/types.rs` | src | m | 3 struct · 9 fn · 2 crate-vis | LocalUpdate, SyncConfig, WindowKey | Sync-specific types for the CRDT sync layer |
-| `src/sync/window/admission.rs` | src | s | 1 fn | — | Full-window UPDATE locality admission without live document side effects |
+| `src/sync/types.rs` | src | m | 3 struct · 12 fn · 9 crate-vis | LocalUpdate, SyncConfig, WindowKey | Sync-specific types for the CRDT sync layer |
+| `src/sync/window/admission.rs` | src | s | 3 fn | — | Full-window UPDATE locality admission without live document side effects |
 | `src/sync/window/egress.rs` | src | m | 4 fn · 5 crate-vis | — | Window egress: packing policy, local-only scrub, exports, and mirror replay |
 | `src/sync/window/forward.rs` | src | s | 1 fn · 1 crate-vis | — | Forward rematerialization of window state into the CRDT doc |
 | `src/sync/window/forward/calendar.rs` | src | s | 1 crate-vis | — | Deferred calendar-origin binding after entity/claim/edge replay settles |
-| `src/sync/window/forward/edge_pass.rs` | src | s | 1 crate-vis | — | Edge pass of forward rematerialization: materialize window edge rows into LMDB |
+| `src/sync/window/forward/edge_pass.rs` | src | m | 1 crate-vis | — | Edge pass of forward rematerialization: materialize window edge rows into LMDB |
 | `src/sync/window/forward/entity_pass.rs` | src | m | 1 crate-vis | — | Entity pass of forward rematerialization: materialize window entity blobs into LMDB |
 | `src/sync/window/forward/tombstone_pass.rs` | src | s | 2 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
 | `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 5 re-export · 9 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
