@@ -10,8 +10,8 @@ use super::collect_live_entity_page;
 use super::core_body_for_write;
 use super::core_engine_error;
 use super::core_entity_timestamps;
-use super::core_list_entities_by_type;
 use super::core_list_limit;
+use super::count_live_entities_by_type;
 use super::encode_core_body;
 use super::is_deleted_shell_for_core_list;
 use super::json_payload;
@@ -40,8 +40,8 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use oneiron::EdgeKind;
-use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -130,7 +130,7 @@ pub(crate) async fn list_core_conversations(
         count_mode: query.count_mode,
     };
     if query.kind.is_none() && query.external_id.is_none() {
-        return core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params);
+        return list_conversations_unfiltered(&server.vault, params);
     }
     let after = params
         .after
@@ -146,7 +146,7 @@ pub(crate) async fn list_core_conversations(
             core_list_limit(params.limit),
         )
         .map_err(|e| core_engine_error("conversation list failed", e))?;
-    let items = project_entity_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
+    let items = project_conversation_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
@@ -177,6 +177,210 @@ pub(crate) async fn list_core_conversations(
         next.map(|id| id.to_hex()),
         meta,
     )))
+}
+
+/// The generic list projection's `standard` view omits ids. Keep the
+/// in-memory ids from the page so every view can receive its preview.
+fn list_conversations_unfiltered(
+    vault: &oneiron::Vault,
+    params: CoreListQuery,
+) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+    let after = params
+        .after
+        .as_deref()
+        .map(|id| parse_entity_id_param(id, "after"))
+        .transpose()?;
+    let (ids, next) = collect_live_entity_page(
+        vault,
+        after,
+        core_list_limit(params.limit),
+        |after, limit| {
+            vault
+                .entities_by_type_page(ENTITY_TYPE_CONVERSATION, after, limit)
+                .map_err(|e| core_engine_error("conversation list failed", e).into())
+        },
+    )?;
+    let items = project_conversation_ids(vault, ids, params.view.unwrap_or(View::Summary))?;
+    let meta = match params.count_mode {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
+        CountMode::Exact => ResponseMeta::new(
+            count_live_entities_by_type(vault, ENTITY_TYPE_CONVERSATION)?,
+            CountMode::Exact,
+        ),
+    };
+    Ok(Json(PaginatedResponse::new(items, next, meta)))
+}
+
+fn project_conversation_ids(
+    vault: &oneiron::Vault,
+    ids: Vec<oneiron::EntityId>,
+    view: View,
+) -> Result<Vec<Value>, EnvelopedApiError> {
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
+        }
+        let Some(mut item) = projection::project_entity(vault, &id, view)
+            .map_err(|e| core_engine_error("conversation projection failed", e))?
+        else {
+            continue;
+        };
+        let snippet = last_message_snippet(vault, &id)?;
+        if let Value::Object(fields) = &mut item {
+            fields.insert("lastMessageSnippet".to_owned(), serde_json::json!(snippet));
+        }
+        items.push(item);
+    }
+    Ok(items)
+}
+
+fn last_message_snippet(
+    vault: &oneiron::Vault,
+    conversation: &oneiron::EntityId,
+) -> Result<Option<String>, EnvelopedApiError> {
+    // The selected DAG HEAD is a TURN. Witnessed MESSAGE rows live under that
+    // TURN via PartOf; legacy text turns carry `txt` on the TURN itself.
+    if let Some(head) = vault
+        .selected_head_snapshot(conversation)
+        .map_err(|e| core_engine_error("conversation HEAD read failed", e))?
+        && let Some(text) = turn_snippet(vault, &head)?
+    {
+        return Ok(Some(text));
+    }
+    // No selected HEAD (legacy), or the head has no visible message. Scan the
+    // existing ChildOf index, using learned_at instead of lexicographic ids.
+    let mut after = None;
+    let mut latest: Option<(u64, oneiron::EntityId, String)> = None;
+    loop {
+        let ids = vault
+            .sources_page(
+                conversation,
+                EdgeKind::ChildOf,
+                Some(ENTITY_TYPE_TURN),
+                after.as_ref(),
+                CORE_MAX_LIST_LIMIT,
+            )
+            .map_err(|e| core_engine_error("conversation message scan failed", e))?;
+        if ids.is_empty() {
+            break;
+        }
+        for id in &ids {
+            if let Some(text) = turn_snippet(vault, id)? {
+                let at = vault
+                    .get_learned_at(id)
+                    .map_err(|e| core_engine_error("conversation message time failed", e))?;
+                if latest
+                    .as_ref()
+                    .is_none_or(|(time, previous, _)| (at, id) > (*time, previous))
+                {
+                    latest = Some((at, *id, text));
+                }
+            }
+        }
+        after = ids.last().copied();
+        if ids.len() < CORE_MAX_LIST_LIMIT {
+            break;
+        }
+    }
+    Ok(latest.map(|(_, _, text)| text))
+}
+
+fn turn_snippet(
+    vault: &oneiron::Vault,
+    turn: &oneiron::EntityId,
+) -> Result<Option<String>, EnvelopedApiError> {
+    if !vault
+        .is_unarchived_live_record(turn)
+        .map_err(|e| core_engine_error("conversation turn visibility failed", e))?
+    {
+        return Ok(None);
+    }
+    let mut after = None;
+    let mut latest: Option<(u64, oneiron::EntityId, String)> = None;
+    loop {
+        let ids = vault
+            .sources_page(
+                turn,
+                EdgeKind::PartOf,
+                Some(ENTITY_TYPE_MESSAGE),
+                after.as_ref(),
+                CORE_MAX_LIST_LIMIT,
+            )
+            .map_err(|e| core_engine_error("conversation turn messages failed", e))?;
+        if ids.is_empty() {
+            break;
+        }
+        for id in &ids {
+            if let Some((order, text)) = visible_message(vault, id)?
+                && latest
+                    .as_ref()
+                    .is_none_or(|(previous_order, previous_id, _)| {
+                        (order, id) > (*previous_order, previous_id)
+                    })
+            {
+                latest = Some((order, *id, text));
+            }
+        }
+        after = ids.last().copied();
+        if ids.len() < CORE_MAX_LIST_LIMIT {
+            break;
+        }
+    }
+    if let Some((_, _, text)) = latest {
+        return Ok(Some(text));
+    }
+    let body = vault
+        .get(turn)
+        .map_err(|e| core_engine_error("conversation turn read failed", e))?;
+    let text = body
+        .as_deref()
+        .and_then(|body| rmp_serde::from_slice::<Value>(body).ok())
+        .and_then(|body| body.get("txt").and_then(Value::as_str).map(str::to_owned));
+    Ok(text.map(|text| truncate_snippet(&text)))
+}
+
+fn visible_message(
+    vault: &oneiron::Vault,
+    id: &oneiron::EntityId,
+) -> Result<Option<(u64, String)>, EnvelopedApiError> {
+    if !vault
+        .is_unarchived_live_record(id)
+        .map_err(|e| core_engine_error("conversation message visibility failed", e))?
+    {
+        return Ok(None);
+    }
+    let body = vault
+        .get(id)
+        .map_err(|e| core_engine_error("conversation message read failed", e))?;
+    let Some(body) = body
+        .as_deref()
+        .and_then(|body| rmp_serde::from_slice::<Value>(body).ok())
+    else {
+        return Ok(None);
+    };
+    if body.get("is_visible").and_then(Value::as_bool) != Some(true) {
+        return Ok(None);
+    }
+    let Some(content) = body.get("content").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    Ok(Some((
+        body.get("order").and_then(Value::as_u64).unwrap_or(0),
+        truncate_snippet(content),
+    )))
+}
+
+fn truncate_snippet(source: &str) -> String {
+    if source.chars().count() <= 50 {
+        return source.to_owned();
+    }
+    source
+        .chars()
+        .take(49)
+        .chain(std::iter::once('…'))
+        .collect()
 }
 
 /// Create a conversation entity.

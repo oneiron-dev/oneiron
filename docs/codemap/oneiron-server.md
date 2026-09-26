@@ -42,7 +42,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
 | `src/api/companion/errors.rs` | src | s | 4 crate-vis | — | Companion error constructors |
-| `src/api/companion/mod.rs` | src | s | 8 crate-vis | — | Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record… |
+| `src/api/companion/lists.rs` | src | s | 7 crate-vis | — | Bounded, authorization-checked companion list projections |
+| `src/api/companion/mod.rs` | src | s | 9 crate-vis | — | Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record… |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
 | `src/api/companion/register.rs` | src | m | 18 crate-vis | — | Companion register record routes and DTOs |
 | `src/api/companion/register_wire.rs` | src | s | 14 crate-vis | — | Register wire-format converters and validators |
@@ -67,7 +68,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/core/hydrate.rs` | src | m | 21 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
 | `src/api/core/mod.rs` | src | s | 6 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 3 crate-vis | — | Proposal-only cloud leg |
-| `src/api/core/query.rs` | src | m | 17 crate-vis | — | Query/list/capability routes and their paging helpers |
+| `src/api/core/query.rs` | src | m | 16 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
 | `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |

@@ -5,6 +5,7 @@
 mod access_grants;
 mod auth;
 mod errors;
+mod lists;
 mod profiles;
 mod register;
 mod register_wire;
@@ -44,4 +45,10 @@ pub(crate) use self::register::{
 pub(crate) use self::register_wire::{
     CompanionEndRelationshipResponse, CompanionGoodbyeArtifactHookPayload,
     CompanionRegisterRecordResponse,
+};
+
+pub(crate) use self::lists::{
+    __path_list_access_requests, __path_list_personas, AccessRequestListRow,
+    AccessRequestsListResponse, PersonaListQuery, PersonaListRow, PersonasListResponse,
+    list_access_requests, list_personas,
 };

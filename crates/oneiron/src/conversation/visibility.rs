@@ -8,6 +8,19 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+impl Vault {
+    /// Read-only live, non-archived eligibility for an unrestricted list preview.
+    /// This does not grant audience access; the caller must first enforce its
+    /// own record-scope authority.
+    pub fn is_unarchived_live_record(&self, id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            crate::vault::live_entity_row_in_txn(&self.store, &txn, id)?.is_live()
+                && self.archive_tombstone_in_txn(&txn, id)?.is_none(),
+        )
+    }
+}
+
 /// Immutable ledger snapshots, keyed by the version read in the caller's
 /// transaction. Reusing a ScopedRead after a kick cannot reuse stale authority.
 #[derive(Default)]

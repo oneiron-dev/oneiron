@@ -123,6 +123,31 @@ impl Vault {
             .transpose()
     }
 
+    /// Read pending requests from the existing request keyspace, without minting authority.
+    /// The caller must enforce the owner/control-plane boundary before surfacing them.
+    pub fn pending_access_requests(&self, limit: usize) -> Result<Vec<AccessRequest>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let txn = self.store.env.read_txn()?;
+        let prefix = b"access-request:v1:";
+        let mut requests = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(&txn, prefix)? {
+            let (key, value) = entry?;
+            let suffix: [u8; 16] = key.as_ref()[prefix.len()..]
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("access request key"))?;
+            let request = AccessRequest::decode(EntityId::from_bytes(suffix)?, &value)?;
+            if request.status == AccessRequestStatus::Pending {
+                requests.push(request);
+                if requests.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(requests)
+    }
+
     /// Owner-bound response. The request id is also the resulting grant id,
     /// so the request/grant link is stable and cannot point at another grant.
     pub fn respond_access_request(
@@ -209,6 +234,11 @@ mod tests {
                 AccessRequestStatus::Pending
             );
             assert!(vault.get_access_grant(&id)?.is_none());
+            assert!(vault.pending_access_requests(0)?.is_empty());
+            assert_eq!(
+                vault.pending_access_requests(1)?,
+                vec![vault.get_access_request(id)?.unwrap()]
+            );
             let answered = vault.respond_access_request(&owner, id, approve, 2)?;
             assert_eq!(
                 answered.status,
@@ -219,6 +249,7 @@ mod tests {
                 }
             );
             assert_eq!(vault.get_access_request(id)?, Some(answered));
+            assert!(vault.pending_access_requests(1)?.is_empty());
             assert_eq!(vault.get_access_grant(&id)?, approve.then_some(grant));
             assert!(
                 vault

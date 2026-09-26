@@ -117,6 +117,8 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/turns/annotate", "post"),
         ("/v1/companion/access-grants", "post"),
         ("/v1/companion/access-grants/{grant_id}/revoke", "post"),
+        ("/v1/companion/personas", "get"),
+        ("/v1/companion/personas/access-requests", "get"),
         ("/v1/companion/profiles/{persona_ref}", "get"),
         ("/v1/companion/profiles/{persona_ref}", "post"),
         ("/v1/companion/register/records", "post"),

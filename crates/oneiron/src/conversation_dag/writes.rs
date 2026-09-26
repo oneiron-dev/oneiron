@@ -308,6 +308,13 @@ impl Vault {
         })
     }
 
+    /// Read the already-selected HEAD without migrating or writing legacy rooms.
+    /// `None` lets read-only list projections fall back to legacy ChildOf rows.
+    pub fn selected_head_snapshot(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        read_id(&self.store, &txn, HEAD, conversation)
+    }
+
     /// Local HEAD; legacy conversations migrate before the first read.
     pub fn head(&self, conversation: &EntityId) -> Result<Option<EntityId>> {
         Ok(self

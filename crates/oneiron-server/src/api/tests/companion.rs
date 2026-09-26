@@ -1309,3 +1309,128 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_gets() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x0002_1201);
+    let other = seeded_test_entity_id(0x0002_1202);
+    let person = seeded_test_entity_id(0x0002_1203);
+    let first = seeded_test_entity_id(0x0002_1204);
+    let second = seeded_test_entity_id(0x0002_1205);
+    let hidden = seeded_test_entity_id(0x0002_1206);
+    for (n, p, persona) in [
+        (7, principal, first),
+        (8, principal, second),
+        (9, other, hidden),
+    ] {
+        seed_companion_profile_access(
+            &server,
+            seeded_test_entity_id(0x0002_1200 + n),
+            p,
+            person,
+            persona,
+        );
+    }
+    let literal = "O:45 C:82 E:78 A:35 N:40 — direct and kind";
+    server
+        .vault
+        .put_psych_profile(
+            &first,
+            &oneiron::PsychProfile::new(
+                first,
+                literal,
+                "text tier",
+                "narrative tier",
+                vec![seeded_test_entity_id(0x0002_1210)],
+                oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let (status, response) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &path,
+            "companion:profile:read",
+            &principal.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let items = response["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items
+            .iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"],
+        literal
+    );
+    assert!(
+        items
+            .iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"]
+            .is_null()
+    );
+    assert!(
+        !items
+            .iter()
+            .any(|row| row["persona_ref"] == hidden.to_hex())
+    );
+    let (status, _) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &path,
+            "companion:profile:read",
+            &other.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK); // Other principal cannot see the first two.
+    let request_id = seeded_test_entity_id(0x0002_1220);
+    server
+        .vault
+        .request_access(
+            request_id,
+            oneiron::AccessGrant::companion_profile_read(principal, person, first, 10),
+        )
+        .unwrap();
+    let request_path = "/v1/companion/personas/access-requests";
+    let (forbidden, _) = route_json(
+        server.clone(),
+        core_request("GET", request_path, "companion:profile:read", None),
+    )
+    .await;
+    assert_eq!(forbidden, StatusCode::FORBIDDEN);
+    let (status, response) =
+        route_json(server, core_request("GET", request_path, "core:auth", None)).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    assert_eq!(response["items"][0]["id"], request_id.to_hex());
+    let preview = response["items"][0]["grantContentPreview"]
+        .as_str()
+        .unwrap();
+    assert!(preview.contains("companion_profile"));
+    assert!(preview.contains(&first.to_hex()));
+}
+
+#[test]
+fn old_companion_list_fixtures_deserialize_without_previews() {
+    let personas: super::super::companion::PersonasListResponse =
+        serde_json::from_value(json!({"items":[{"persona_ref":"a", "person_ref":"b"}]})).unwrap();
+    assert!(serde_json::to_value(personas).unwrap()["items"][0]["personalityCompact"].is_null());
+    let requests: super::super::companion::AccessRequestsListResponse = serde_json::from_value(
+        json!({"items":[{"id":"a", "principal_ref":"b", "capability":"messages.read"}]}),
+    )
+    .unwrap();
+    assert!(serde_json::to_value(requests).unwrap()["items"][0]["grantContentPreview"].is_null());
+}

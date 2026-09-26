@@ -319,6 +319,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
+        .route("/personas", get(list_personas))
+        .route("/personas/access-requests", get(list_access_requests))
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),

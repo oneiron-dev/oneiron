@@ -110,7 +110,7 @@
      "purpose": "Durable request/response lifecycle",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -11747,7 +11747,7 @@
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
       "crate-vis": 4,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -11901,7 +11901,7 @@
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -38546,10 +38546,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/companion/lists.rs",
+     "purpose": "Bounded, authorization-checked companion list projections",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/companion/mod.rs",
      "purpose": "Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -38799,7 +38809,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -41672,7 +41682,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 156,
+     "files": 157,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -41849,7 +41859,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
+   "source_files": 231,
    "test_files": 96
   },
   "oneiron-uniffi": {

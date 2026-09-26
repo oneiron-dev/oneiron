@@ -593,6 +593,7 @@
             "id": "7e000000000000000000000012210002",
             "kind": "CONVERSATION",
             "label": "Contract dream",
+            "lastMessageSnippet": null,
             "name": "Contract dream",
             "type": 4,
             "updatedAt": 1782357735
@@ -602,6 +603,7 @@
             "id": "<home-room-id>",
             "kind": "CONVERSATION",
             "label": "<home-room-id>",
+            "lastMessageSnippet": null,
             "memberIds": [
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaa1709"
             ],
