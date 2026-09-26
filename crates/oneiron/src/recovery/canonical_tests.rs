@@ -146,6 +146,7 @@ fn canonical_carry_list_round_trips_with_blake3_and_fresh_documents() -> Result<
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn canonical_snapshot_writer_persists_per_document_entries_and_head_receipts() -> Result<()> {
     let fixture = fixture()?;
@@ -195,6 +196,7 @@ fn canonical_snapshot_writer_persists_per_document_entries_and_head_receipts() -
     Ok(())
 }
 
+#[cfg(unix)]
 #[test]
 fn canonical_snapshot_writer_refuses_invalid_capture_without_publishing() -> Result<()> {
     let fixture = fixture()?;
@@ -205,6 +207,43 @@ fn canonical_snapshot_writer_refuses_invalid_capture_without_publishing() -> Res
     assert!(write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path).is_err());
     assert!(!path.exists());
     assert_eq!(fs::read_dir(dir.path())?.count(), 0);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn canonical_snapshot_writer_syncs_filename_only_destination_and_refuses_overwrite() -> Result<()> {
+    let fixture = fixture()?;
+    let window = rebuild_vault_window_from_canonical(&fixture.snapshot)?;
+    // Keep a cleanup guard, but publish through a filename-only path. Changing
+    // process CWD would race other tests in this shared-process test binary.
+    let guard = tempfile::NamedTempFile::new_in(".")?.into_temp_path();
+    let relative = std::path::PathBuf::from(guard.file_name().unwrap());
+    fs::remove_file(&guard)?;
+    let digest = write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative)?;
+    let bytes = fs::read(&relative)?;
+    assert_eq!(digest, *blake3::hash(&bytes).as_bytes());
+    assert_eq!(CanonicalSnapshot::decode(&bytes)?, fixture.snapshot);
+    assert!(matches!(
+        write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &relative),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(fs::read(&relative)?, bytes);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+#[test]
+fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifact() -> Result<()> {
+    let vault_dir = tempfile::tempdir()?;
+    let vault = Vault::open(vault_dir.path(), VaultConfig::default())?;
+    let output_dir = tempfile::tempdir()?;
+    let path = output_dir.path().join("window.canonical");
+    assert!(matches!(
+        write_canonical_window_snapshot(&vault, "2026-09", &LoroDoc::new(), &path),
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::Unsupported
+    ));
+    assert_eq!(fs::read_dir(output_dir.path())?.count(), 0);
     Ok(())
 }
 
