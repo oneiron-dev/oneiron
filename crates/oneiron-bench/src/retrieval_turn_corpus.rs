@@ -119,6 +119,22 @@ fn export(vault: &Vault, turn_ids: &[[u8; 16]], writer: &mut impl Write) -> Resu
     Ok(turn_ids.len())
 }
 
+/// Stage beside the destination so invalid turns or write failures never
+/// truncate an existing corpus. Stdout intentionally remains streaming.
+fn export_to_file(vault: &Vault, turn_ids: &[[u8; 16]], path: &std::path::Path) -> Result<usize> {
+    let directory = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let mut pending = tempfile::NamedTempFile::new_in(directory)?;
+    let count = export(vault, turn_ids, &mut pending)?;
+    pending.flush()?;
+    pending
+        .persist(path)
+        .map_err(|err| CorpusError::Io(err.error))?;
+    Ok(count)
+}
+
 fn load(reader: impl BufRead) -> Result<Vec<TurnRow>> {
     let mut turns = Vec::new();
     let mut seen_turns = HashSet::new();
@@ -238,7 +254,7 @@ fn execute(args: &[String]) -> Result<usize> {
             cfg.embedding_model = embedding_model;
             let vault = Vault::open(path, cfg)?;
             match output {
-                Some(path) => export(&vault, &turn_ids, &mut File::create(path)?),
+                Some(path) => export_to_file(&vault, &turn_ids, &path),
                 None => export(&vault, &turn_ids, &mut std::io::stdout().lock()),
             }
         }
@@ -265,17 +281,18 @@ fn write_replay(turns: &[ReplayTurn], writer: &mut impl Write) -> Result<usize> 
 pub(crate) fn run(args: &[String]) -> ExitCode {
     match execute(args) {
         Ok(count) => {
-            eprintln!("processed {count} turn(s)");
+            let _ = writeln!(std::io::stderr().lock(), "processed {count} turn(s)");
             ExitCode::SUCCESS
         }
         Err(CorpusError::Help) => {
-            println!(
+            let _ = writeln!(
+                std::io::stdout().lock(),
                 "usage: oneiron-bench beam corpus-export --vault PATH --turn-id HEX32 [--turn-id HEX32 ...] [--out PATH] [--dimensions N] [--embedding-model MODEL]\n       oneiron-bench beam corpus-replay --in PATH [--out PATH]\nReplay emits recorded packs, states and traces; it does not rerun retrieval."
             );
             ExitCode::SUCCESS
         }
         Err(err) => {
-            eprintln!("BEAM turn corpus failed: {err}");
+            let _ = writeln!(std::io::stderr().lock(), "BEAM turn corpus failed: {err}");
             ExitCode::FAILURE
         }
     }
@@ -365,6 +382,67 @@ mod tests {
                 assert_eq!(run.trace, source.trace);
             }
         }
+    }
+
+    #[test]
+    fn file_export_failure_keeps_previous_corpus() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault_path = dir.path().join("vault");
+        let output = dir.path().join("corpus.jsonl");
+        let turn = RetrievalTurn {
+            turn_id: [1; 16],
+            episode_id: [2; 16],
+            turn_idx: 0,
+        };
+        let vault = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+        let result = vault
+            .query()
+            .search_text("missing", 2)
+            .retrieval_turn(turn)
+            .run_with_telemetry()
+            .unwrap();
+        assert!(
+            vault
+                .retrieval_run(result.run_id.unwrap())
+                .unwrap()
+                .is_some()
+        );
+        drop(vault);
+
+        let prior = b"previous complete corpus\n";
+        std::fs::write(&output, prior).unwrap();
+        for ids in [
+            vec!["03".repeat(16)],
+            vec!["01".repeat(16), "03".repeat(16)],
+            vec!["01".repeat(16), "01".repeat(16)],
+        ] {
+            let mut args = vec![
+                "corpus-export".to_owned(),
+                "--vault".to_owned(),
+                vault_path.display().to_string(),
+                "--out".to_owned(),
+                output.display().to_string(),
+                "--dimensions".to_owned(),
+                "1024".to_owned(),
+            ];
+            for id in ids {
+                args.extend(["--turn-id".to_owned(), id]);
+            }
+            assert!(execute(&args).is_err());
+            assert_eq!(std::fs::read(&output).unwrap(), prior);
+        }
+        let args = [
+            "corpus-export".to_owned(),
+            "--vault".to_owned(),
+            vault_path.display().to_string(),
+            "--out".to_owned(),
+            output.display().to_string(),
+            "--turn-id".to_owned(),
+            "01".repeat(16),
+        ];
+        assert_eq!(execute(&args).unwrap(), 1);
+        let rows = load(BufReader::new(File::open(&output).unwrap())).unwrap();
+        assert_eq!(rows[0].turn, turn);
     }
 
     #[test]
