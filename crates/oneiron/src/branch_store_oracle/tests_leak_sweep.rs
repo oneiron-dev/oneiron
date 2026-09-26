@@ -54,7 +54,8 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 /// while the transcript and receipt counts continue to hold.
 #[test]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     let mut session = seam::SessionVault::enter(&vault, "oracle-close").expect("enter session");
     // The witness door requires a base-resident actor, so bind it BEFORE the
     // baseline: the room must be charged for its own rows, not for its actor.
