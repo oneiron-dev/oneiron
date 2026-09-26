@@ -26,8 +26,8 @@ def main() -> int:
             result = oracle(Path(__file__).with_name('fixtures') / case['file'],
                             args.results / case['id'], timeout=timeout)
             print(f"{case['id']}: {result['status']} — {result['detail']}", flush=True)
-            if result.get('cleanup_warning'):
-                print('STOP: PowerPoint document custody was not restored', file=sys.stderr)
+            if result.get('cleanup_warning') or result['status'] == 'unsupported':
+                print('STOP: PowerPoint custody or environment is unsupported', file=sys.stderr)
                 break
     finally:
         report = classify_manifest(manifest, args.results)

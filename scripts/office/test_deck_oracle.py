@@ -245,6 +245,21 @@ class OfflineContracts(unittest.TestCase):
         self.assertEqual(result['status'], 'unsupported')
         self.assertIn('dialog', result['cleanup_warning'].lower())
 
+    def test_matrix_stops_after_unsupported_oracle(self):
+        runner_spec = importlib.util.spec_from_file_location('run_fixture_matrix', ROOT / 'run_fixture_matrix.py')
+        runner = importlib.util.module_from_spec(runner_spec)
+        with mock.patch.dict(sys.modules, {'deck_oracle': oracle}):
+            runner_spec.loader.exec_module(runner)
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(runner.sys, 'platform', 'darwin'), \
+             mock.patch.object(runner, 'APP', ROOT / 'fixtures/clean.pptx'), \
+             mock.patch.object(runner, 'app_pid', return_value=123), \
+             mock.patch.object(runner, 'oracle', return_value={
+                 'status': 'unsupported', 'detail': 'Grant File Access'}) as run_case, \
+             mock.patch.object(runner.sys, 'argv', ['run_fixture_matrix.py', str(Path(tmp) / 'run')]):
+            self.assertEqual(runner.main(), 1)
+        run_case.assert_called_once()
+
     def test_linux_skips_with_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(oracle.sys, 'platform', 'linux'):
             output = Path(tmp) / 'run'
