@@ -691,3 +691,27 @@ fn state_strings_round_trip() {
     }
     assert_eq!(DemotionReason::parse("nonsense"), None);
 }
+
+#[test]
+fn mail_09_cold_mail_graduation_bound_is_identity_scoped() -> crate::Result<()> {
+    let identity = EntityId::now();
+    let scope = RampScope::new(
+        "send",
+        format!("recipient:cold_external:{}", identity.to_hex()),
+        "agent-a",
+    )?;
+    let bound = scope.to_grant_bound()?;
+    let second = RampScope::new(
+        "send",
+        format!("recipient:cold_external:{}", EntityId::now().to_hex()),
+        "agent-a",
+    )?;
+    assert_ne!(bound.digest(), second.to_grant_bound()?.digest());
+    assert_eq!(scope.grant_ref()?, bound.digest().to_hex());
+    assert!(
+        RampScope::new("send", "recipient:cold_external:invalid", "agent-a")?
+            .to_grant_bound()
+            .is_err()
+    );
+    Ok(())
+}

@@ -116,6 +116,24 @@ impl RampScope {
     ///
     /// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when a field cannot be a bound axis.
     pub fn to_grant_bound(&self) -> Result<GrantBound> {
+        // MAIL-09's cold-external email scope maps onto the SAME composed
+        // action bound the external-effect gate evaluates. A generic send
+        // grant must not silently graduate the cold-recipient class.
+        if self.op_kind == "send"
+            && let Some(identity) = self.target_class.strip_prefix("recipient:cold_external:")
+        {
+            let identity = crate::entity_id::EntityId::from_hex(identity)?;
+            return GrantBound::action(
+                ActorBound::new(self.actor.clone())?,
+                ActionClass::new("send")?,
+                ActionEnvelope::new([
+                    "verb:send".to_owned(),
+                    "recipient:cold_external".to_owned(),
+                    format!("identity:{}", identity.to_hex()),
+                ])?
+                .with_target("email")?,
+            );
+        }
         GrantBound::action(
             ActorBound::new(self.actor.clone())?,
             ActionClass::new(self.op_kind.clone())?,

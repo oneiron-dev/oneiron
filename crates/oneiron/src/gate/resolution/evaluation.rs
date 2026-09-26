@@ -382,6 +382,18 @@ impl PolicyManifestResolution {
         if !effect.has_opted_in {
             return false;
         }
+        // MAIL-09: the engine-verified owner tap on an earned OF-399 offer
+        // supplies the missing external-effect authority as well as DEC-0006
+        // consent. A caller cannot assert this flag; the gate reads the exact
+        // live grant in the same transaction used for its decision.
+        if effect.mail_graduated
+            && input
+                .consent
+                .as_ref()
+                .is_some_and(|consent| consent.decision == crate::consent::ConsentDecision::Auto)
+        {
+            return true;
+        }
 
         self.scoped_grants().iter().any(|grant| {
             grant.budget.is_none() && external_effect_grant_matches(grant, &input.actor, effect)

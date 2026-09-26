@@ -6944,8 +6944,9 @@
      "path": "src/channel_identity_provider/native_mail.rs",
      "purpose": "Native mail fulfillment adapter",
      "surface": {
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "struct": 1,
       "trait": 1
      }
@@ -10362,7 +10363,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/consent_graduation/doors.rs",

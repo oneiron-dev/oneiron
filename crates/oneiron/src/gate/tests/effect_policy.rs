@@ -100,6 +100,111 @@ fn external_effect_public_first_touch_applies_hold_floor_and_receipt() -> Result
 }
 
 #[test]
+fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        SelfHeldShape,
+    };
+    use crate::channel_identity_lifecycle::ChannelIdentityLifecycleActor;
+    use crate::channel_identity_provider::ChannelIdentityProviderProvision;
+    let (_tmp, vault) = temp_vault();
+    let identity = test_id(0xD9);
+    let actor = test_id(0xC5);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::temporal::TimeRange { start: 1, end: 1 },
+        1,
+        b"sender",
+    )?;
+    let address = format!("mail-{}@side.example.test", identity.to_hex());
+    vault.create_channel_identity(
+        &identity,
+        &ChannelIdentity::requested(
+            "email",
+            &address,
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::agent(actor),
+            1,
+        ),
+    )?;
+    vault.transition_channel_identity(
+        &identity,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        2,
+        None,
+    )?;
+    let provision = ChannelIdentityProviderProvision {
+        provider_key: "native_mail".into(),
+        identity_id: identity,
+        channel: "email".into(),
+        address_or_handle: address,
+        fulfillment_mode: ChannelIdentityFulfillment::Api,
+        provider_identity_ref: "mailbox:test".into(),
+        fulfilled_at: 3,
+    };
+    vault.fulfill_channel_identity(
+        provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(actor)),
+    )?;
+    let known = CounterpartyContactRecord::user_introduction(identity, "known@example.test", 1)?;
+    vault.create_counterparty_contact(&test_id(0xDA), &known)?;
+    let public = CounterpartyContactRecord::public(identity, "public@example.test", 1)?;
+    vault.create_counterparty_contact(&test_id(0xDB), &public)?;
+
+    let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(
+        "sender",
+        "send",
+        Value::Map(vec![
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_CHANNEL_KEY),
+                Value::from("email"),
+            ),
+            (
+                Value::from(EXTERNAL_EFFECT_SCOPE_POLICY_RISK_KEY),
+                Value::from(ExternalEffectPolicyRisk::Normal.as_str()),
+            ),
+        ]),
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0xD0), &data)?;
+    let policy = resolve(&vault)?;
+    let mut effect = external_effect_gate_input("sender", "send", "email");
+    effect.channel_identity_ref = Some(identity);
+    effect.counterparty = Some("new@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+    assert!(gate_reason_strs(&decision).contains(&"gate.pending.external_effect_authority"));
+
+    effect.counterparty = Some("known@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    assert_eq!(
+        decision.receipt_reasons(),
+        &["counterparty_first_touch_user_introduction"]
+    );
+
+    effect.counterparty = Some("public@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Pending);
+
+    // A non-native email connector still sees its original normal-risk policy.
+    effect.channel_identity_ref = None;
+    effect.counterparty = Some("new@example.test".into());
+    let (_, decision, _) = vault.with_write_txn(|txn| {
+        check_external_effect_policy(&vault.store, txn, &effect, &policy, true)
+    })?;
+    assert_eq!(decision.outcome(), GateOutcome::Allow);
+    Ok(())
+}
+
+#[test]
 fn external_effect_requires_opt_in_and_permission() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let data = encode_policy_manifest(vec![external_effect_scoped_grant_entry(

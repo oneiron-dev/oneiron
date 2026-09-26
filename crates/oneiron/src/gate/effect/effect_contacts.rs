@@ -70,6 +70,29 @@ pub(super) fn hydrate_external_effect_contact(
         }
     }
 
+    // MAIL-09: an unintroduced external email address is cold even when CID-7
+    // has no row at all. Known recipients (owner-introduced or inbound-first)
+    // retain the ordinary grant path. A public-list contact stays cold.
+    // This is a default asking posture, not a ban: the owner's explicit
+    // scoped/standing grant can still authorize the send at this same door.
+    let native_mail = if channel_class == "email" && effect.verb == "send" {
+        effect.channel_identity_ref.map_or(Ok(false), |identity| {
+            crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+                store, txn, identity,
+            )
+        })?
+    } else {
+        false
+    };
+    if native_mail
+        && !matches!(
+            hydrated.counterparty_first_touch,
+            Some(CounterpartyFirstTouch::UserIntroduction | CounterpartyFirstTouch::InboundFirst)
+        )
+    {
+        hydrated.policy_risk = ExternalEffectPolicyRisk::HoldToProposal;
+    }
+
     fold_matching_comm_do_not_contact_heads(store, txn, party_ref, &channel_class, &mut hydrated)?;
     let send_override = if hydrated.counterparty_opted_out {
         counterparty_send_override_in_txn(

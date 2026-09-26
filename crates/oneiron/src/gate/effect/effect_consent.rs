@@ -98,7 +98,27 @@ pub(in crate::gate) fn external_effect_action_requirement(
     // channel mirrors the `Channel` dial's target arm, so `Channel{email}`
     // contains an email-send while a `BriefVerbClass{brief}` grant covers only
     // its own brief; a verb-class grant with NO target pin covers both.
-    let mut envelope = crate::consent::ActionEnvelope::new([format!("verb:{verb_class}")]).ok()?;
+    // MAIL-09 keeps cold-external email on a separate grant selector from
+    // introduced/inbound correspondents. The class is derived from the
+    // gate-hydrated CID-7 contact, never asserted by the caller.
+    let mut selectors = vec![format!("verb:{verb_class}")];
+    if effect.channel == "email"
+        && verb_class == "send"
+        && effect.policy_risk == crate::gate::ExternalEffectPolicyRisk::HoldToProposal
+        && !matches!(
+            effect.counterparty_first_touch,
+            Some(
+                crate::counterparty_contact::CounterpartyFirstTouch::UserIntroduction
+                    | crate::counterparty_contact::CounterpartyFirstTouch::InboundFirst
+            )
+        )
+    {
+        selectors.push("recipient:cold_external".to_owned());
+        if let Some(identity) = effect.channel_identity_ref {
+            selectors.push(format!("identity:{}", identity.to_hex()));
+        }
+    }
+    let mut envelope = crate::consent::ActionEnvelope::new(selectors).ok()?;
     let target = effect
         .brief_ref
         .as_deref()

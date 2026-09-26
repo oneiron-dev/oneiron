@@ -224,6 +224,9 @@ pub(crate) struct ExternalEffectGateContext {
     pub(crate) standing_grant_ref: Option<String>,
     pub(crate) scoped_mcp_call: Option<ScopedMcpCallContext>,
     pub(crate) scoped_mcp_grant_authorized: bool,
+    /// Native-mail cold send: the exact owner-accepted OF-399 grant was read
+    /// from storage for this actor and sending identity in the gate txn.
+    pub(crate) mail_graduated: bool,
     pub(crate) counterparty_first_touch: Option<CounterpartyFirstTouch>,
     pub(crate) counterparty_opted_out: bool,
     pub(crate) counterparty_opt_out_receipt_reason: Option<&'static str>,
@@ -288,6 +291,7 @@ impl ExternalEffectGateInput {
                 standing_grant_ref: self.standing_grant_ref.clone(),
                 scoped_mcp_call: self.scoped_mcp_call.clone(),
                 scoped_mcp_grant_authorized: false,
+                mail_graduated: false,
                 counterparty_first_touch: self.counterparty_first_touch,
                 counterparty_opted_out: self.counterparty_opted_out,
                 counterparty_opt_out_receipt_reason: self.counterparty_opt_out_receipt_reason,

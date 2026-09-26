@@ -197,6 +197,12 @@ pub(crate) fn evaluate_external_effect_policy(
         .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+        effect.mail_graduated =
+            crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
+                store,
+                &*wtxn,
+                &hydrated_effect,
+            )?;
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
