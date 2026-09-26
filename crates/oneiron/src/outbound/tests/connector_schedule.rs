@@ -86,6 +86,40 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
             .len(),
         1
     );
+    // No separate manual comm event is needed: the projector consumes the
+    // durable send receipt. A second pass cannot duplicate the standing head.
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            "counterparty:durable-idempotency",
+            "email",
+        )
+        .expect("comm claim query"),
+        0
+    );
+    crate::comm::run_comm_projector(&vault).expect("project send receipts");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            "counterparty:durable-idempotency",
+            "email",
+        )
+        .expect("comm claim query"),
+        1
+    );
+    crate::comm::run_comm_projector(&vault).expect("project send receipts");
+    assert_eq!(
+        crate::comm::count_total_comm_claim_rows(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            "counterparty:durable-idempotency",
+            "email",
+        )
+        .expect("comm claim query"),
+        1
+    );
     assert_eq!(
         vault
             .store
@@ -193,6 +227,17 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     let failed_receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(failed_receipts.len(), 1);
     assert_eq!(failed_receipts[0].outcome, "failed");
+    crate::comm::run_comm_projector(&vault).expect("project failed send");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            &draft.target,
+            "email",
+        )
+        .expect("comm claim query"),
+        0
+    );
     // The Failed projection is strictly after the durable failure receipt: a
     // crash before that record must leave outcome unknown, never Failed.
     assert_eq!(
@@ -290,6 +335,17 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
         vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(delivered_receipts.len(), 2);
     assert_eq!(delivered_receipts[0].outcome, "delivered_to_channel");
+    crate::comm::run_comm_projector(&vault).expect("project delivered retry");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            &draft.target,
+            "email",
+        )
+        .expect("comm claim query"),
+        1
+    );
     assert_eq!(delivered_receipts[1], failed_receipts[0]);
     assert_ne!(
         delivered_receipts[0].receipt_id,

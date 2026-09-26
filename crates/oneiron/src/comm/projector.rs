@@ -23,6 +23,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::EntityStoreRead;
+use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +76,7 @@ const PROJECTOR_RULES: [ProjectorRule; 5] = [
 /// RECORDED after this pass's snapshot are not observed at all; they are the
 /// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
+    import_delivered_send_receipts(vault)?;
     let records = {
         let rtxn = vault.store.env.read_txn()?;
         comm_records_in_txn(vault, &rtxn)?
@@ -96,6 +98,85 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
         }
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
+    Ok(())
+}
+
+/// Folds durable connector-send receipts into the event input of this projector.
+/// The TASK ref is the stable source identity: retries may emit failed audit
+/// receipts first, but only one delivered receipt can settle that TASK.
+/// Import and event projection are independently replayable after a crash.
+fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
+    for receipt in crate::receipt::durable_send_receipts(vault)? {
+        if receipt.outcome != "delivered_to_channel"
+            || receipt.fields.get("verb").map(String::as_str) != Some("send")
+        {
+            continue;
+        }
+        let channel = receipt
+            .fields
+            .get("channel")
+            .ok_or(CommError::InvalidRecord)?;
+        let party = receipt
+            .fields
+            .get("target")
+            .ok_or(CommError::InvalidRecord)?;
+        validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
+        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+        let task_ref = EntityId::from_hex(
+            receipt
+                .fields
+                .get(FIELD_TASK_REF)
+                .ok_or(CommError::InvalidRecord)?,
+        )
+        .map_err(|_| CommError::InvalidRecord)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron.comm.connector_send_event.v1\0");
+        hash.update(task_ref.as_bytes());
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+        bytes[6] = (bytes[6] & 0x0f) | 0x70;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let event_id = EntityId::from_bytes(bytes).map_err(|_| CommError::InvalidRecord)?;
+        vault.try_with_write_txn(|txn| {
+            let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
+            if let Some(raw) = vault.store.port_entity_record(&*txn, &event_id)? {
+                if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
+                    return Err(CommError::InvalidRecord);
+                }
+                match decode_comm_record(&raw.body)? {
+                    CommRecord::Event {
+                        kind: CommEventKind::SendSucceeded,
+                        party_ref: resident_party,
+                        channel_class: Some(resident_channel),
+                        thread_ref: None,
+                        occurred_at,
+                        ..
+                    } if resident_party == party_ref
+                        && resident_channel == *channel
+                        && occurred_at == receipt.occurred_at =>
+                    {
+                        return Ok(());
+                    }
+                    _ => return Err(CommError::InvalidRecord),
+                }
+            }
+            let sequence = next_event_sequence_in_txn(vault, txn)?;
+            put_comm_record_in_txn(
+                vault,
+                txn,
+                event_id,
+                &CommRecord::Event {
+                    sequence,
+                    kind: CommEventKind::SendSucceeded,
+                    party_ref,
+                    channel_class: Some(channel.clone()),
+                    thread_ref: None,
+                    occurred_at: receipt.occurred_at,
+                    projected: false,
+                },
+            )
+        })?;
+    }
     Ok(())
 }
 
