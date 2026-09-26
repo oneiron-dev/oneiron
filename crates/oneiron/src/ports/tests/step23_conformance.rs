@@ -232,7 +232,7 @@ fn authorization_clock_read_does_not_commit_unwritten_id_allocations() -> Result
             .store
             .vault_meta
             .get(&txn, crate::ports::ID_FLOOR)?
-            .map(|bytes| bytes.into_owned()))
+            .map(std::borrow::Cow::into_owned))
     };
     let before = id_floor(&vault)?;
     vault.new_entity_id()?;
