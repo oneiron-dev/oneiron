@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::pin;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::task::{Context, Poll, Waker};
 
 use crate::attempt_queue::AttemptQueue;
@@ -24,10 +24,13 @@ use crate::{
 use super::*;
 
 mod contradictions;
+mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
+mod support;
+use support::ExpiringBackend;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -1797,6 +1800,107 @@ fn admitted_attempt_fixture<'a>(
         panic!("expected admitted consolidation attempt");
     };
     Ok((*admitted, turns, conversation))
+}
+
+#[test]
+fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Result<()> {
+    for expire_on_call in [1, 2] {
+        let (_dir, vault) = open_vault();
+        let store = DreamerRunnerStore::new(&vault);
+        let (admitted, turns, _) = admitted_attempt_fixture(
+            &vault,
+            &store,
+            0x79 + expire_on_call as u8,
+            &[("user", "call me Oleksii"), ("user", "or Alex")],
+        )?;
+        let subject = EntityId::now();
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+        let extraction = if expire_on_call == 1 {
+            extraction_response(&subject, &turns[0]) // conflict-free path
+        } else {
+            two_candidate_extraction(&subject, &turns[0], &turns[1])
+        };
+        let backend = ExpiringBackend {
+            inner: ScriptedBackend::new(vec![
+                Ok(extraction),
+                Ok(text_response(
+                    "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
+                )),
+            ]),
+            clock: std::sync::Arc::new(AtomicU64::new(0)),
+            expire_on_call,
+            expiry_elapsed_ms: 180_001,
+            calls: AtomicUsize::new(0),
+            native_json: false,
+        };
+        let clock = std::sync::Arc::clone(&backend.clock);
+        let deadline = WakePassDeadline::with_clock(
+            180_000,
+            std::sync::Arc::new(move || clock.load(Ordering::SeqCst)),
+        );
+        let guard = crate::BudgetGuard::with_reserve_units(
+            "wake",
+            10_000,
+            100,
+            BudgetExhaustionPolicy::Suspend,
+        );
+        let mut sink = CapturingSink::default();
+        let mut executor = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+            scope: None,
+        };
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            budget_id: "wake",
+            now_ms: 21_000,
+        };
+        let expected_spend = if expire_on_call == 1 { 120 } else { 100 };
+        assert!(matches!(
+            block_on_ready(executor.execute(&admitted, &mut ctx))?,
+            DreamerAttemptExecution::ParkWithSpend { completed_units, .. }
+                if completed_units == expected_spend
+        ));
+        drop(executor);
+        assert!(sink.accepted.is_empty(), "no post-deadline publication");
+        assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
+        assert_eq!(guard.read().used_units, expected_spend);
+        assert_eq!(guard.read().reserved_units, 0);
+        assert_eq!(
+            claim_predicates_in_store(&vault)?
+                .iter()
+                .filter(|predicate| predicate.as_str() == "dreamer.step")
+                .count(),
+            expire_on_call,
+            "each terminal response remains replayable"
+        );
+
+        // A new wake consumes the terminal memo(s) without another call.
+        // Neither the conflict-free extraction nor the merge is lost.
+        backend.clock.store(0, Ordering::SeqCst);
+        let mut resumed = ConsolidationExecutor {
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").expect("model"),
+            sink: &mut sink,
+            scope: None,
+        };
+        assert!(matches!(
+            block_on_ready(resumed.execute(&admitted, &mut ctx))?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+        drop(resumed);
+        assert_eq!(backend.calls.load(Ordering::SeqCst), expire_on_call);
+        assert_eq!(sink.accepted.len(), 1, "output lands on the later wake");
+    }
+    Ok(())
 }
 
 #[test]

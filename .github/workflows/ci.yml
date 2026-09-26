@@ -1,215 +1,145 @@
 name: CI
 
-# Triggers (2026-09-11): every non-draft pull request, every push to main,
-# and manual dispatch. There is no `paths` filter on purpose. The repository
-# ruleset on main requires the `Checks` and `Test` contexts, and a filtered
-# trigger starts no run at all, so a docs-only PR reported neither context and
-# could never merge (PR #921 had to be merged with --admin). The `changes` job
-# still detects a rust-relevant diff, but it now decides which STEPS run, not
-# whether the run happens. Both required contexts therefore always report, and
-# a docs-only run costs one checkout per job plus the cheap always-on steps
-# (code-map pin, tooling tests, typos, and the cargo-deny policy).
+# Scoped CI (owner ruling 2026-09-26: "test only the part that was relevant ... radically cut and minimize it").
 #
-# Wave affordance: setting the repository variable CI_PAUSED=true skips
-# every job (each job's `if:` checks it). A wave that lands many commits
-# fast flips it on and flips it off when the wave closes. Draft PRs also
-# skip every job; `ready_for_review` starts the first real run.
+# A PR or main push tests only what its diff touched and lints the touched packages and their dependents:
+#   * `changes` runs scripts/ci/ci_scope.py on the diff: touched workspace packages, their reverse dependents,
+#     and for `oneiron` the touched top-level modules (more than 12, or a crate-root file, means all of it).
+#   * `Checks`: fmt, then clippy -D warnings for touched packages and dependents (plus the featureless build
+#     when `oneiron` changed); cargo-deny only when Cargo.lock or deny.toml changed; tooling tests only when scripts/ or
+#     .github/ changed.
+#   * `Test`: nextest for the touched packages; for `oneiron`, the lib tests of the touched modules, and the
+#     integration tests only when crates/oneiron/tests changed. No doctests on PRs.
+#   * `Test (featureless)`: the shared-process featureless lane (`cargo test`) for the touched modules.
+# The full gate runs once a night (schedule, 03:00 JST), on manual dispatch, and whenever a build file changes
+# (root Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/, clippy/rustfmt/nextest config): workspace clippy
+# in three feature graphs, strict rustdoc, the whole nextest suite, doctests, and both featureless process
+# models (W8-T41: libtest threads in one process, then nextest one process per test). The macOS recipe and the
+# mutation audit run on dispatch only.
+#
+# `Checks`, `Test` and `Test (featureless)` are required contexts on main, so the three jobs always report; a
+# diff with nothing Rust-relevant runs their cheap steps and goes green. Draft PRs skip every job.
+# CI_PAUSED=true skips every job.
+#
+# Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on Linux; the Macs
+# take the dispatch-only macOS recipe, cache proof and mutation audit. Each runner keeps its
+# persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache also stores compiler results in
+# GitHub's cross-run cache. Never set CARGO_TARGET_DIR here. The toolchain is host rustup via
+# rust-toolchain.toml. `clean: true` on every checkout because `_work` persists between runs.
 on:
   workflow_dispatch:
+    inputs:
+      cache_proof:
+        description: Run a cold-artifact shared-cache comparison instead of the full gate
+        type: boolean
+        default: false
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  schedule:
+    - cron: '0 18 * * *'
 
 env:
   CARGO_TERM_COLOR: always
-  # No RUSTFLAGS on purpose (proving run, 2026-09-08): `-Dwarnings` there
-  # also reaches the vendored `crates/heed` path dependency, which cargo
-  # does not lint-cap, and its 1.96 lifetime-elision warnings turned every
-  # test build red. Warnings are gated where scripts/verify.sh gates them —
-  # clippy's `-D warnings` over the workspace crates — and with no flags the
-  # runner caches share fingerprints with developer builds.
+  SCCACHE_GHA_ENABLED: 'on'
 
-# One run per workflow+ref. A superseded PR push's in-flight run is pure
-# spend, and a rapid main-merge burst only needs the newest sha's run — the
-# older ones are cancelled.
+# One run per PR (a newer push cancels the older run); every main push keeps its own run.
 concurrency:
-  # PR pushes supersede themselves, so cancelling saves real spend. Main
-  # pushes must not: each merge is a distinct state someone may need the
-  # result for, and a merge burst would otherwise cancel the run for the
-  # commit before it. Per-sha group on push, per-PR group on pull_request.
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  # A proof dispatch must not be cancelled when the PR's scoped run starts for the same SHA.
+  group: ${{ inputs.cache_proof && format('ci-proof-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Runners (2026-09-08, HYG-06b): every job runs on our own machines, not a
-# cloud pool. The MacBook and the Mac mini carry the
-# `self-hosted,macos,arm64` labels; the Arch box, and during a wave a rented
-# box, carry `self-hosted,linux,x64`. Since 2026-09-25 (owner: own machines
-# before a paid CI service) PR CI uses the Linux boxes as well: `changes`,
-# `checks` and `mutation-audit` take any runner, and the required `Test`
-# context is the Linux reference run. The macOS recipe runs on main pushes
-# and dispatch as `Test (macOS)`. A runner runs ONE job at a time, so the
-# cheap checks share a single job (one checkout, one slot).
-#
-# Caches are the host's, not the workflow's: each runner's `.env` exports a
-# persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
-# with ~/.cargo/bin; the toolchain is the host rustup resolving
-# rust-toolchain.toml. So: no rust-cache action, no toolchain action, and
-# never set CARGO_TARGET_DIR here. The macOS checks/test jobs end with
-# scripts/ci/cap-target-cache.sh: at 20 GiB, Cargo removes workspace outputs
-# first, retaining third-party dependencies; a full reset is the fallback.
-# The Linux jobs below currently have no cap step. `clean: true` on every
-# checkout because `_work` persists between runs. Pinned CI-only tools live under
-# ~/ci/tools — a job installs one on first use and every later run reuses it.
-#
-# Gate layout: `changes` detects rust-relevant diffs and gates STEPS, never
-# jobs. `checks` (code-map pin, fmt, clippy workspace + featureless + server,
-# strict rustdoc, tool tests, typos, cargo-deny policy) and `test-linux` (named `Test`, the
-# Linux reference recipe) both run on every non-draft PR, on every push to main and on
-# dispatch, so the two required contexts always report. Inside each, the cargo steps run only when the diff
-# is rust-relevant — always on dispatch and on tags, and fail-open if the
-# detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
-# therefore a checkout, a toolchain print and the always-on policy steps, and
-# it goes green on real work rather than on an absent report. Main pushes
-# were added 2026-09-09: PR CI validates the merge result against main AS IT
-# WAS, so a merge burst can land a state no `checks` run ever saw, and a
-# direct push to main saw none at all. The runners are ours, so the honest
-# fix is to re-run the gate on the commit that actually became main rather
-# than to reason about when it is safe to skip. It also gives the advisory
-# policy a second, regular route: a newly published RUSTSEC advisory no
-# longer waits for someone to open a PR. On a main push `test` keeps its
-# rust-diff gate at the job level (fail-open if the detector breaks; tag pushes
-# always run); `test-linux` runs the unfiltered suite on the Linux reference
-# host for main pushes and dispatch only; `package` (publish-integrity) runs
-# on release tags only.
-#
-# Every job's `if:` starts with the pause/draft guard from the header,
-#   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-# AND-ed with that job's own gate.
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    # paths-filter reads PR changed-files via the REST API — grant it
-    # explicitly so a restricted default GITHUB_TOKEN can't strand PRs.
-    permissions:
-      contents: read
-      pull-requests: read
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
+      rust: ${{ steps.scope.outputs.rust }}
+      full: ${{ steps.scope.outputs.full }}
+      packages: ${{ steps.scope.outputs.packages }}
+      dependents: ${{ steps.scope.outputs.dependents }}
+      oneiron: ${{ steps.scope.outputs.oneiron }}
+      modules: ${{ steps.scope.outputs.modules }}
+      it: ${{ steps.scope.outputs.it }}
+      deny: ${{ steps.scope.outputs.deny }}
+      pytools: ${{ steps.scope.outputs.pytools }}
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          # docs/ops/** and the root skills pack are include_str!'d /
-          # compared by contract tests (ops_docs.rs, skills_pack.rs) —
-          # they are rust-relevant despite living outside crates/.
-          filters: |
-            rust:
-              - 'crates/**'
-              - 'Cargo.toml'
-              - 'Cargo.lock'
-              - 'rust-toolchain.toml'
-              - 'rustfmt.toml'
-              - 'clippy.toml'
-              - 'deny.toml'
-              - '.config/nextest.toml'
-              - '.cargo/**'
-              - '.github/workflows/ci.yml'
-              - 'docs/ops/**'
-              - 'oneiron.skills.md'
-              - 'packages/prompts/**'
+          fetch-depth: 0
+      - name: Scope of this run
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            schedule | workflow_dispatch) python3 scripts/ci/ci_scope.py --full ;;
+            pull_request) python3 scripts/ci/ci_scope.py --base "$PR_BASE" --head HEAD ;;
+            *) python3 scripts/ci/ci_scope.py --base "$PUSH_BEFORE" --head HEAD ;;
+          esac
 
   checks:
     name: Checks
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
     needs: changes
-    # The former fmt / clippy / typos / cargo-deny jobs, folded into one so a
-    # PR takes one runner slot and one checkout for all of them. Runs on every
-    # non-draft PR, on every push to main and on dispatch — unconditionally,
-    # because `Checks` is a required context and a job that never starts never
-    # reports. The cargo steps below gate themselves on a
-    # rust-relevant diff (always on dispatch: a manual run is the full gate;
-    # fail-open if the detector broke). Navigation/tool tests, typos and deny
-    # always run, so a docs-only PR reports checks it really ran. Inside
-    # always(): dispatch is the deny gate's unconditional route (ONE-335), so a broken
-    # `changes` job must not skip it; the pause/draft guard still applies.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    env:
+      SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
+      SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
+      SCOPE_DEPENDENTS: ${{ needs.changes.outputs.dependents }}
+      SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.15.0)
-        run: |
-          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
-          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
-          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           cargo --version
-          cargo fmt --version
-          cargo clippy --version
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: Secret blocklist is a policy superset
         run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
         if: ${{ !cancelled() }}
         run: scripts/codemap/check.sh
-      # Honor the workspace's heed exclusion; --all also follows local path dependencies.
       - name: Format
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
-      - name: Clippy (workspace, all features)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
-      # crate and its test targets must compile and lint with no features.
-      - name: Clippy (oneiron, featureless)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
-      # Match verify.sh's production server graph: no dev-dependency feature
-      # unification from --all-targets (notably sync without test-hooks).
-      - name: Clippy (standalone server production graph)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy -p oneiron-server --all-features -- -D warnings
-      # Existing mandatory documentation policy, kept in the scripted gate too.
-      # Encoded flags override RUSTDOCFLAGS even when empty; unset only for this
-      # child command. Never set workspace-wide RUSTFLAGS.
-      - name: Rustdoc (workspace, warnings denied)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-      # typos, pinned like cargo-deny: the exact version matters (its
-      # dictionary changes between releases, and a host's own typos is
-      # whatever brew last installed), and the crate-ci action re-downloads
-      # its binary from github.com on every run (the first proving run lost
-      # that download to a DNS blip). Config is typos.toml.
+      - name: Clippy (touched packages and dependents; the full gate nightly)
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
+        run: scripts/ci/run_scoped.sh clippy
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
         run: |
           cargo install --locked typos-cli@1.45.1 --root "$HOME/ci/tools"
-          "$HOME/ci/tools/bin/typos" --version
           "$HOME/ci/tools/bin/typos"
-      - name: cargo-deny 0.19.4 (host-local pin under ~/ci/tools)
-        if: ${{ !cancelled() }}
+      - name: cargo-deny 0.19.4 (only when the dependency policy inputs changed)
+        if: ${{ !cancelled() && (needs.changes.outputs.deny == 'true' || needs.changes.outputs.full == 'true' || needs.changes.result != 'success') }}
         run: |
           cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
-          "$HOME/ci/tools/bin/cargo-deny" --version
           "$HOME/ci/tools/bin/cargo-deny" --locked check
-
-      - name: Test build and navigation tools (no live cache changes)
-        if: ${{ !cancelled() }}
+      - name: Test build and navigation tools (only when scripts or CI changed)
+        if: ${{ !cancelled() && (needs.changes.outputs.pytools == 'true' || needs.changes.outputs.full == 'true' || needs.changes.result != 'success') }}
         run: |
+          # The deny-policy tests call the pinned cargo-deny.
+          cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
@@ -223,172 +153,92 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
-
-      # Keep dependency artifacts when workspace cleanup is enough to meet
-      # the unchanged cap. Runs after a failure too; never changes the verdict.
-      - name: Compiler cache statistics
-        if: always()
-        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
+
   test:
     name: Test (macOS)
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
-    needs: changes
-    # PRs: EVERY non-draft one, because `Test` is a required context and a
-    # job that never starts never reports it. The rust-diff gate moved down to
-    # the heavy steps below, so a docs-only PR pays one checkout and a
-    # toolchain print and goes green.
-    # Dispatch: always (a manual run is the full gate).
-    # Main pushes: rust diffs (the changes job
-    # runs the same filter on push), but fail OPEN — if the detector job
-    # didn't succeed, run anyway so a filter hiccup can't skip the record
-    # of truth. Tag pushes always run (release validation — the filter has
-    # no sane diff base on a tag event); that clause is inert until a
-    # tag-push trigger returns to `on:` (see `package`). The pause/draft
-    # guard sits inside always() so a paused wave or a draft PR still skips.
-    if: >-
-      always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (
-        github.event_name == 'workflow_dispatch'
-        || (github.event_name == 'push' && (
-          startsWith(github.ref, 'refs/tags/')
-          || needs.changes.outputs.rust == 'true'
-          || needs.changes.result != 'success'
-        ))
-      )
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.15.0)
-        run: |
-          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
-          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
-          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           cargo --version
-      # nextest is part of the host contract; if a host lacks it, install the
-      # pinned copy under ~/ci/tools once and reuse it on every later run.
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"
           if ! cargo nextest --version >/dev/null 2>&1; then
             cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
           fi
-          cargo nextest --version
-      # The macOS recipe from AGENTS.md ("macOS test host"), full tier
-      # (ONE-1144: process-per-test isolation, retries = 2, slow set in):
-      #   * no `--exclude oneiron-napi` here: on macOS the napi build script
-      #     lets the test binary resolve the napi_* symbols at load time; the
-      #     Linux lane still excludes the crate (ONE-1997);
-      #   * the filterset drops the 7 oneiron-bench eval::tests that fail on
-      #     macOS with `VaultRootPreflight … UnsupportedPlatform` (ONE-1996)
-      #     and pass on Linux. Exact names, not a prefix: the 13 sibling
-      #     eval_outcome_ingest_* / eval_tune_* tests pass here and stay in.
-      # The bench carve-out runs unfiltered on the Linux reference lane below.
       - name: Workspace tests (nextest, full tier, macOS recipe)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: |
-          MACOS_SKIP='not (package(oneiron-bench) & (
-              test(=eval::tests::eval_outcome_ingest_applies_a_jsonl_file_against_the_named_vault)
-            | test(=eval::tests::eval_outcome_ingest_opens_a_non_device_vault_through_the_explicit_config)
-            | test(=eval::tests::eval_outcome_ingest_refuses_a_wrong_dict_root_on_an_empty_text_index)
-            | test(=eval::tests::eval_reopens_a_custom_dictionary_vault_for_outcome_ingest_and_tune)
-            | test(=eval::tests::eval_tune_honors_the_max_runs_bound)
-            | test(=eval::tests::eval_tune_opens_a_non_device_vault_through_the_explicit_config)
-            | test(=eval::tests::eval_tune_persists_and_prints_the_bounded_weight_table_entry)
-          ))'
-          cargo nextest run --workspace --all-features --profile full --no-fail-fast -E "$MACOS_SKIP"
-      # The two stages scripts/verify.sh runs after nextest: the featureless
-      # library build is a Wave-6 acceptance gate, and nextest does not run
-      # doctests.
+        env:
+          RUSTC_WRAPPER: sccache
+        run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
-      - name: Doctests
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
-
-      # Rust libtests do not exercise Node-API calls. Build the ordinary addon
-      # separately so dev-only napi features cannot replace the production graph.
-      - name: Node.js for the production addon test
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Production addon in a real Node host
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: |
-          cargo build -p oneiron-napi --lib
-          node crates/oneiron-napi/tests/node_host.cjs "${CARGO_TARGET_DIR:-target}/debug/liboneiron_napi.dylib"
-
-      # Bound the host's persistent build cache (see ci.yml `checks`).
-      - name: Compiler cache statistics
-        if: always()
-        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
+
   test-linux:
     name: Test
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 90
     needs: changes
-    # Linux is the reference host (AGENTS.md): this lane runs the suite with
-    # no bench carve-out — the 7 ONE-1996 bench tests pass here — so it is
-    # the record of truth for what the macOS job cannot run. oneiron-napi is
-    # excluded here: on Linux its test binary needs symbols from a Node host.
-    # The macOS recipe above retains it via that crate's dynamic-lookup link flags.
-    # Since 2026-09-25 this is also the required `Test` on every non-draft PR:
-    # the Linux boxes (Arch, a rented wave box) carry the PR load, and the
-    # macOS recipe runs on main pushes. Same push gate as before (rust diff,
-    # fail-open, tags), same pause/draft guard inside always(); on a PR the
-    # cargo steps gate themselves on a rust-relevant diff so a docs-only PR
-    # still reports the context.
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (
-        github.event_name == 'workflow_dispatch'
-        || github.event_name == 'pull_request'
-        || (github.event_name == 'push' && (
-          startsWith(github.ref, 'refs/tags/')
-          || needs.changes.outputs.rust == 'true'
-          || needs.changes.result != 'success'
-        ))
-      )
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    env:
+      SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
+      SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
+      SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
+      SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
+      SCOPE_IT: ${{ needs.changes.outputs.it }}
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - name: Shared compiler cache (sccache 0.15.0)
-        run: |
-          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
-          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
-          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           cargo --version
-      # nextest is part of the host contract; if a host lacks it, install the
-      # pinned copy under ~/ci/tools once and reuse it on every later run.
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/ci/tools/bin:$PATH"
@@ -396,33 +246,122 @@ jobs:
             cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
           fi
           cargo nextest --version
-      - name: Workspace tests (nextest, full tier, bench included)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
-      - name: Featureless oneiron library tests
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test -p oneiron --lib --no-default-features
-      - name: Featureless oneiron library tests (nextest, no retries)
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
-      - name: Doctests
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+      - name: Tests (touched packages and modules; everything nightly)
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
+        run: scripts/ci/run_scoped.sh test
+
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
+  test-linux-featureless:
+    name: Test (featureless)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+    needs: changes
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    env:
+      SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
+      SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
+      SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
+          cargo nextest --version
+      - name: Featureless oneiron library tests (touched modules; both process models nightly)
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
+        run: scripts/ci/run_scoped.sh featureless
+
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
+  cache-proof-populate:
+    name: Cache proof (baseline and populate)
+    runs-on: [self-hosted, macos, arm64, mini]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Host-target-only baseline, then shared-cache population (fresh artifacts)
+        run: python3 scripts/audit/ci_cache_proof.py populate --output "$RUNNER_TEMP/oneiron-cache-proof-populate.json"
+      - name: Retain baseline and population receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-populate.json
+          if-no-files-found: error
+
+  cache-proof-repeat:
+    name: Cache proof (repeat)
+    needs: cache-proof-populate
+    runs-on: [self-hosted, macos, arm64, mini]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Read population receipt from prior job
+        uses: actions/download-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-input
+      - name: Repeat build from fresh artifacts using shared cache
+        run: python3 scripts/audit/ci_cache_proof.py repeat --baseline "$RUNNER_TEMP/oneiron-cache-proof-input/oneiron-cache-proof-populate.json" --output "$RUNNER_TEMP/oneiron-cache-proof-repeat.json"
+      - name: Retain repeat receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-repeat-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-repeat.json
+          if-no-files-found: error
 
   package:
     name: Package oneiron-server
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
-    # Publish-integrity + standalone-build check. Not needed per-merge at
-    # 0.1.0 (we don't publish every merge) — gate to release tags only. A
-    # packaging/standalone break surfaces when a `v*` tag is cut; revisit
-    # (weekly cron / paths-gate) if that release-window ever bites. Linux
-    # because the published artefact is validated on the reference host.
-    #
-    # This job can only run when a `push: tags: ['v*']` trigger is present
-    # in `on:`. Today `push` is `branches: [main]` only, so the gate below
-    # is unreachable — unchanged behaviour, now stated. Re-add the tag
-    # trigger to turn release validation back on.
     if: >-
       vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -435,19 +374,10 @@ jobs:
         with:
           persist-credentials: false
           clean: true
-      - name: Shared compiler cache (sccache 0.15.0)
-        run: |
-          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
-          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
-          "$HOME/ci/tools/bin/sccache" --version
       - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
         run: |
           rustup show active-toolchain
           cargo --version
-      # The runner's .env points CARGO_TARGET_DIR outside the checkout, so
-      # the package staging dir lives there, never under ./target.
       - run: rm -rf "${CARGO_TARGET_DIR:-target}/package/oneiron-server-"*
       - run: cargo package -p oneiron-server --list --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
       - run: cargo package -p oneiron-server --no-metadata --config "${LOCAL_ONEIRON_PATCH}"
@@ -463,42 +393,19 @@ jobs:
       contents: read
     runs-on: [self-hosted]
     timeout-minutes: 180
-    needs: changes
-    if: >-
-      always()
-      && vars.CI_PAUSED != 'true'
-      && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-      && (needs.changes.outputs.rust == 'true' || github.event_name == 'workflow_dispatch' || needs.changes.result != 'success')
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
           persist-credentials: false
           fetch-depth: 0
-      - name: Shared compiler cache (sccache 0.15.0)
-        run: |
-          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
-          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
-          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
-          "$HOME/ci/tools/bin/sccache" --version
       - name: Pinned mutant runner
         run: |
           cargo install --locked cargo-mutants@27.1.0 --root "$HOME/ci/tools"
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
-      - name: Enforce touched-engine mutation baseline
-        env:
-          AUDIT_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
-          AUDIT_EVENT: ${{ github.event_name }}
-        run: |
-          if [ "$AUDIT_EVENT" = workflow_dispatch ]; then
-            python3 scripts/audit/mutation.py --all-engine
-          else
-            python3 scripts/audit/mutation.py --base "$AUDIT_BASE" --allow-no-changes
-          fi
-      - name: Compiler cache statistics
-        if: always()
-        run: '"$HOME/ci/tools/bin/sccache" --show-stats'
+      - name: Mutation audit of the whole engine
+        run: python3 scripts/audit/mutation.py --all-engine
       - name: Mutation evidence
         if: always()
         uses: actions/upload-artifact@v4
