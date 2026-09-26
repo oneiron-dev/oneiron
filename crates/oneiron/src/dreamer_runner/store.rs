@@ -378,15 +378,27 @@ impl<'a> DreamerRunnerStore<'a> {
     /// Marks a leased Dreamer attempt complete through the generic queue.
     pub fn complete(&self, input: CompleteDreamerAttempt) -> Result<CompleteDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
-        match self.attempts.complete(CompleteAttempt {
-            id: input.id,
-            lease_owner: input.lease_owner,
-            attempt_count: input.attempt_count,
-            now: input.now,
-        })? {
-            CompleteOutcome::Completed(record) => Ok(CompleteDreamerAttemptOutcome::Completed(
-                decode_dreamer_attempt_status(record)?,
-            )),
+        let attempt_id = input.id;
+        let outcome = self.vault.with_write_txn(|wtxn| {
+            let outcome = self.attempts.complete_in_txn(
+                wtxn,
+                CompleteAttempt {
+                    id: input.id,
+                    lease_owner: input.lease_owner,
+                    attempt_count: input.attempt_count,
+                    now: input.now,
+                },
+            )?;
+            self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            Ok(outcome)
+        })?;
+        match outcome {
+            CompleteOutcome::Completed(record) => {
+                self.vault.store.notify_attempt_observers();
+                Ok(CompleteDreamerAttemptOutcome::Completed(
+                    decode_dreamer_attempt_status(record)?,
+                ))
+            }
             CompleteOutcome::AlreadyCompleted(record) => {
                 Ok(CompleteDreamerAttemptOutcome::AlreadyCompleted(
                     decode_dreamer_attempt_status(record)?,
@@ -398,16 +410,28 @@ impl<'a> DreamerRunnerStore<'a> {
     /// Marks a leased Dreamer attempt terminally failed through the generic queue.
     pub fn fail(&self, input: FailDreamerAttempt) -> Result<FailDreamerAttemptOutcome> {
         self.ensure_terminal_transition_target(input.id)?;
-        match self.attempts.fail(FailAttempt {
-            id: input.id,
-            lease_owner: input.lease_owner,
-            attempt_count: input.attempt_count,
-            reason: input.reason,
-            now: input.now,
-        })? {
-            FailOutcome::Failed(record) => Ok(FailDreamerAttemptOutcome::Failed(
-                decode_dreamer_attempt_status(record)?,
-            )),
+        let attempt_id = input.id;
+        let outcome = self.vault.with_write_txn(|wtxn| {
+            let outcome = self.attempts.fail_in_txn(
+                wtxn,
+                FailAttempt {
+                    id: input.id,
+                    lease_owner: input.lease_owner,
+                    attempt_count: input.attempt_count,
+                    reason: input.reason,
+                    now: input.now,
+                },
+            )?;
+            self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            Ok(outcome)
+        })?;
+        match outcome {
+            FailOutcome::Failed(record) => {
+                self.vault.store.notify_attempt_observers();
+                Ok(FailDreamerAttemptOutcome::Failed(
+                    decode_dreamer_attempt_status(record)?,
+                ))
+            }
             FailOutcome::AlreadyFailed(record) => Ok(FailDreamerAttemptOutcome::AlreadyFailed(
                 decode_dreamer_attempt_status(record)?,
             )),

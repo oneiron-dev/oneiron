@@ -244,6 +244,14 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
     {
         Err("unlinked capability".into())
     }
+    fn report_blocked(
+        &mut self,
+        _: String,
+        _: String,
+    ) -> std::result::Result<crate::code_sandbox::wasmtime_boundary::bindings::BlockedOutput, String>
+    {
+        Err("unlinked capability".into())
+    }
     fn ask_human(
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::PromptInput,
