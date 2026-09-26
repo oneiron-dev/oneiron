@@ -6,21 +6,21 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
-    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error 1.0.4 is unmaintained (informational advisory, no safe upgrade); transitive via glib-macros@0.18.5, gtk3-macros@0.18.2; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2025-0081", reason = "unic-char-property 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2025-0075", reason = "unic-char-range 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-char-property@0.9.0, unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2025-0080", reason = "unic-common 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-version@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via urlpattern@0.3.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version 0.9.0 is unmaintained (informational advisory, no safe upgrade); transitive via unic-ucd-ident@0.9.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2026-0247", reason = "bitmaps 2.1.0 is unmaintained (informational advisory, no safe upgrade); transitive via im@15.1.0, sized-chunks@0.6.5; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2026-0248", reason = "im 15.1.0 is unmaintained (informational advisory, no safe upgrade); transitive via loro-internal 1.16.2; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2026-0251", reason = "sized-chunks 0.6.5 is unmaintained (informational advisory, no safe upgrade); transitive via im@15.1.0; accepted maintenance risk, not fixed; ONE-335; review by 2026-10-07" },
-    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill is unmaintained (informational advisory, no patched release); transitive via postcard -> heapless -> atomic-polyfill; https://rustsec.org/advisories/RUSTSEC-2023-0089; https://linear.app/oneiron/issue/ONE-335" },
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is unmaintained (informational advisory, no patched release); transitive via heed -> heed-types -> bincode; https://rustsec.org/advisories/RUSTSEC-2025-0141; https://linear.app/oneiron/issue/ONE-335" },
-    { id = "RUSTSEC-2026-0215", reason = "smallstr unmaintained (all versions, no safe upgrade); transitive DEV-only via yrs 0.25 (oneiron dev-deps, sync test harness); unmaintained != vulnerability; remove when yrs migrates off smallstr; see ONE-1923" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error@1.0.4 unmaintained; glib-macros@0.18.5 / gtk3-macros@0.18.2 -> proc-macro-error; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property@0.9.0 unmaintained; unic-ucd-ident@0.9.0 -> unic-char-property; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range@0.9.0 unmaintained; unic-ucd-ident@0.9.0 / unic-char-property@0.9.0 -> unic-char-range; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common@0.9.0 unmaintained; unic-ucd-ident@0.9.0 -> unic-ucd-version@0.9.0 -> unic-common; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident@0.9.0 unmaintained; urlpattern@0.3.0 -> unic-ucd-ident; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version@0.9.0 unmaintained; urlpattern@0.3.0 -> unic-ucd-ident@0.9.0 -> unic-ucd-version; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2026-0247", reason = "bitmaps@2.1.0 unmaintained; loro-internal@1.16.2 -> im@15.1.0 -> bitmaps (also im -> sized-chunks@0.6.5 -> bitmaps); no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2026-0248", reason = "im@15.1.0 unmaintained; loro-internal@1.16.2 -> im; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2026-0251", reason = "sized-chunks@0.6.5 unmaintained; loro-internal@1.16.2 -> im@15.1.0 -> sized-chunks; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2023-0089", reason = "atomic-polyfill@1.0.3 unmaintained; postcard@1.1.3 -> heapless@0.7.17 -> atomic-polyfill; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode@1.3.3 unmaintained; heed@0.20.5 -> heed-types@0.20.1 -> bincode; no patched release; ONE-335; review by 2026-11-07" },
+    { id = "RUSTSEC-2026-0215", reason = "smallstr@0.3.1 unmaintained (not a vulnerability); oneiron dev-dep yrs@0.25.0 -> smallstr; no patched release, remove when yrs migrates; ONE-1923; review by 2026-11-07" },
     # ONE-1837 GATE-1 amendment A1 (card crypto:gseal): the rsa 0.9 line has no
     # patched release; oneiron-seal's exposure is signing-only.
-    { id = "RUSTSEC-2023-0071", reason = "rsa 0.9 Marvin oracle; signing-only exposure in oneiron-seal, no decryption path; no patched 0.9 release; ONE-1837 A1" },
+    { id = "RUSTSEC-2023-0071", reason = "rsa@0.9.10 Marvin oracle; oneiron-seal@0.1.0 / pkix-path@0.3.2 -> rsa; signing-only in oneiron-seal, no decryption path; no patched release; ONE-1837 A1; review by 2026-11-07" },
 ]
 
 [licenses]
@@ -40,6 +40,13 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# The iroh-relay wasm-only WebSocket path pulls these three Unlicense (OSI/FSF
+# permissive) crates. Keep approval package-specific, not a blanket license add.
+exceptions = [
+    { crate = "async_io_stream", allow = ["Unlicense"] },
+    { crate = "pharos", allow = ["Unlicense"] },
+    { crate = "ws_stream_wasm", allow = ["Unlicense"] },
+]
 
 [bans]
 multiple-versions = "warn"
@@ -51,4 +58,5 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # Sudachi (Apache-2.0) comes from the org fork: upstream v0.6.11 plus the Android
 # loader branch, pinned by rev. See docs/ops/forked-dependencies.md.
-allow-git = ["https://github.com/oneiron-dev/sudachi.rs"]
+# Iroh is the pinned oneiron-dev fork for the opt-in mesh transport crate.
+allow-git = ["https://github.com/oneiron-dev/sudachi.rs", "https://github.com/oneiron-dev/iroh"]

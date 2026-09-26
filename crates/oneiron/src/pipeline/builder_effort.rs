@@ -2,6 +2,7 @@
 use super::PipelineBuilder;
 use crate::entity_id::EntityId;
 use crate::memory::Effort;
+use crate::pipeline::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 use crate::retrieval_depth::RetrievalDeadline;
 
 impl<'a> PipelineBuilder<'a> {
@@ -43,11 +44,12 @@ impl<'a> PipelineBuilder<'a> {
             }
         }
         if effort != Effort::Light {
-            self = self
-                .search_ppr(seeds, 1)
-                .boost_salience()
-                .boost_confidence();
+            self = self.search_ppr(seeds, 1);
         }
+        self = self
+            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+            .boost_salience()
+            .boost_confidence();
         if effort.requires_rerank() {
             self = self.expand_ppr(seeds, effort.graph_depth());
         }
