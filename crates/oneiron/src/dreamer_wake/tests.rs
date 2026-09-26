@@ -784,6 +784,7 @@ fn late_terminal_checkpoint_parks_and_charges_without_marking_done() -> Result<(
             Ok(DreamerAttemptExecution::ParkWithSpend {
                 reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
                 completed_units: 50,
+                step_hashes: Vec::new(),
             })
         }
     }

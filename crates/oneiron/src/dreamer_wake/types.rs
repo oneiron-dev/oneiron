@@ -115,6 +115,9 @@ pub enum DreamerAttemptExecution {
     ParkWithSpend {
         reason: String,
         completed_units: u64,
+        /// Terminal step identities this checkpoint charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
     },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {

@@ -1247,7 +1247,8 @@ fn expired_invalid_json_settles_first_call_without_admitting_correction() -> Res
     let hash = request.canonical_hash().expect("step hash");
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request)),
-        Err(DurableStepError::FinalizeRefused)
+        Err(DurableStepError::SpentFinalizeRefused { usage })
+            if usage.input.total == 100 && usage.output.total == 50
     ));
     assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
     assert_eq!(guard.read().used_units, 150, "first response was paid");

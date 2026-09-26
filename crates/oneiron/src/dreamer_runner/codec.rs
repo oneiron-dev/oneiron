@@ -14,13 +14,13 @@ use super::constants::{
     DREAMER_BUDGET_SCHEMA_VERSION, DREAMER_HOME_NODE_DESIGNATION_KEYS,
     DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_PARKED_KEYS,
     DREAMER_PARKED_SCHEMA_VERSION, DREAMER_PRIVATE_BUDGET_PREFIX,
-    DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX, DREAMER_PRIVATE_PARKED_PREFIX,
-    DREAMER_PRIVATE_RUN_TREE_PREFIX, DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION,
-    KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CLASS, KEY_CREATED_AT, KEY_ELECTED_AT,
-    KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON,
-    KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS, KEY_UPDATED_AT,
-    MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN, MAX_DREAMER_PARK_OWNER_LEN,
-    MAX_DREAMER_PARK_REASON_LEN,
+    DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX, DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX,
+    DREAMER_PRIVATE_PARKED_PREFIX, DREAMER_PRIVATE_RUN_TREE_PREFIX, DREAMER_RUN_TREE_KEYS,
+    DREAMER_RUN_TREE_SCHEMA_VERSION, KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CLASS,
+    KEY_CREATED_AT, KEY_ELECTED_AT, KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER,
+    KEY_PARKED_AT, KEY_REASON, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION,
+    KEY_TOTAL_UNITS, KEY_UPDATED_AT, MAX_DREAMER_ATTEMPT_TYPE_LEN, MAX_DREAMER_BUDGET_ID_LEN,
+    MAX_DREAMER_PARK_OWNER_LEN, MAX_DREAMER_PARK_REASON_LEN,
 };
 use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
@@ -652,6 +652,26 @@ pub(super) fn budget_reservation_key(budget_id: &str, attempt_id: AttemptId) -> 
     out.extend_from_slice(&budget_id_len.to_be_bytes());
     out.extend_from_slice(budget_id.as_bytes());
     out.extend_from_slice(attempt_id.as_bytes());
+    Ok(out)
+}
+
+/// A checkpoint receipt is scoped to one budget, attempt, and canonical step.
+pub(super) fn budget_step_charge_key(
+    budget_id: &str,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Vec<u8>> {
+    validate_budget_id(budget_id)?;
+    let mut out = Vec::with_capacity(
+        DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX.len() + 2 + budget_id.len() + 16 + 32,
+    );
+    out.extend_from_slice(DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX);
+    let len = u16::try_from(budget_id.len())
+        .map_err(|_| invalid_dreamer_runner("dreamer budget_id exceeds 128 bytes"))?;
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(budget_id.as_bytes());
+    out.extend_from_slice(attempt_id.as_bytes());
+    out.extend_from_slice(step_hash);
     Ok(out)
 }
 

@@ -637,17 +637,21 @@ impl<'a> DreamerWakeDriver<'a> {
                 DreamerAttemptExecution::ParkWithSpend {
                     reason,
                     completed_units,
+                    step_hashes,
                 } => {
                     // The in-flight call finished and was charged. Stop the run
                     // at this boundary without refunding its real spend or
                     // publishing post-deadline output.
                     let reason = clamp_park_reason(reason);
-                    self.store.settle_budget(SettleDreamerBudget {
-                        budget_id: self.budget_id.clone(),
-                        child_attempt: attempt_id,
-                        actual_units: completed_units,
-                        now: input.now,
-                    })?;
+                    self.store.settle_checkpoint_budget(
+                        SettleDreamerBudget {
+                            budget_id: self.budget_id.clone(),
+                            child_attempt: attempt_id,
+                            actual_units: completed_units,
+                            now: input.now,
+                        },
+                        &step_hashes,
+                    )?;
                     self.park_attempt(attempt_id, reason, input.lease_owner.clone(), input.now)?;
                     self.write_milestone(
                         attempt_id,

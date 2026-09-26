@@ -90,7 +90,9 @@ pub(super) async fn generate(
             // A correction is a new paid call with a new lease, not a retry
             // under the admitted call's lease. The prior response is settled.
             if deadline.is_some_and(WakePassDeadline::in_finalize_window) {
-                return Err(DurableStepError::FinalizeRefused);
+                return Err(DurableStepError::SpentFinalizeRefused {
+                    usage: Box::new(usage),
+                });
             }
             correction = CorrectionLease {
                 guard,

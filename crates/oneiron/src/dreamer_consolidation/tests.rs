@@ -24,6 +24,7 @@ use crate::{
 use super::*;
 
 mod contradictions;
+mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
