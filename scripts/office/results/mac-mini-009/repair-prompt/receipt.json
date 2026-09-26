@@ -1,0 +1,21 @@
+{
+  "detail": "open: PowerPoint window: ['DIALOG:', 'DIALOG:PowerPoint found a problem with content in /Users/olety/Library/Containers/com.microsoft.Powerpoint/Data/tmp/w8-oracle/repair-10119-b10ad3ad/repair-10119-fe16968f.pptx.\\nPowerPoint can attempt to repair the presentation.\\n\\nIf you trust the source of this presentation, click Repair.', 'DIALOG:']",
+  "environment": {
+    "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "input": {
+    "bytes": 27742,
+    "sha256": "d6ee2daa8847430ec9f13ffabefec1e934d4a167d255afd751b700dee6e196d8"
+  },
+  "outputs": {},
+  "staged_input_sha256": "d6ee2daa8847430ec9f13ffabefec1e934d4a167d255afd751b700dee6e196d8",
+  "status": "repaired"
+}
