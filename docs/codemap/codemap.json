@@ -14786,6 +14786,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx.rs",
+     "purpose": "Native DOCX edit entry",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/edit_roundtrip/docx_tests.rs",
+     "purpose": "Native DOCX proposal proofs at the public edit door",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CrossSheetDep",
       "SheetSummary",
@@ -14823,7 +14841,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -34328,7 +34346,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35107,8 +35125,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2072,
-   "test_files": 712
+   "source_files": 2073,
+   "test_files": 713
   },
   "oneiron-android": {
    "files": [
@@ -36321,6 +36339,45 @@
    "purpose": "oneiron-bench — benchmark harness skeleton",
    "source_files": 97,
    "test_files": 18
+  },
+  "oneiron-docedit": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DoceditError"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/revisions.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
+   "source_files": 1,
+   "test_files": 1
   },
   "oneiron-driver": {
    "files": [

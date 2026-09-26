@@ -1,0 +1,14 @@
+# ONE-2522 Word measurement packet
+
+The native DOCX writer is **not** certified by schema validation alone. ARCH-0075 §3 and `docengine:docx-pass` require a measured comparison of the pinned stemma fork and LibreOffice on **the same** fixtures against Word for Mac, no repair prompt, accurate revision rendering, retained comments, and a correct paragraph join. These scripts produce evidence; they do not declare a pass without Word.
+
+- Fork: `stemma-sh/stemma@ad1e70deac0a828d5162ac3b3f2186c2bb0c075e`, Apache-2.0 selected, see `crates/oneiron-docedit/PROVENANCE.md`. Its conformance fixtures and tests are copied unmodified into `vendor/stemma-engine`.
+- POI: `apache/poi@942d95d85b15d0dfdb3bc9ba1b4f273f277757c8`, change-tracking and document-protection sample files.
+- docx4j: `plutext/docx4j@882f2d2cc72cae794f9e4be4a8712afa948ef309`, `CompareDocuments` sample pair and accept-change path.
+- Paragraph join: use stemma's `spec_para_mark_join_blocked_target` synthesized conformance test plus a manually checked Word output. A zero-repair score requires that case, not only these sample files.
+
+Fixture custody: execute `python3 scripts/docx-oracle/measure.py acquire /tmp/docx-cases`. It fetches exact commit URLs, computes SHA-256, parses package spines, and writes `sources.json`. POI/docx4j are Apache-2.0 projects, but redistribution rights for each binary fixture have **not** been individually verified; keep downloaded bytes outside this public repository. Then on a host with LibreOffice, run `python3 scripts/docx-oracle/measure.py lo /tmp/docx-cases /tmp/docx-lo`. The runner uses a temporary user profile and a private input copy. `lo-receipt.json` deliberately has `rate: null` until Word outcomes exist. Passing `--convert-to docx` can fail when the input and output format match; such a case is a recorded failure, not a score.
+
+Word seat: owner MacBook with Word for Mac, not Linux or a Mac mini. Stage **one distinct copy per case** outside this repository. Visually observe the repair dialog and rendered changes/comments, save it through Word, then execute `python3 scripts/docx-oracle/measure.py word <input> <word-saved-copy> <receipt.json> --repair-observed yes|no` on that Mac. The script refuses Linux and same-path inputs, records package/semantic digests, and never calls a changed ZIP hash a repair (Word may rewrite on every normal save). An operator no-repair report is not a certified pass: review XML, rendered revision state, comment anchors and paragraph join against Word's reference before a rate can be computed. Do not mint golden values or rates on this host.
+
+`python3 -m unittest discover -s scripts/docx-oracle -p 'test_*.py' -v` exercises the fail-closed paths offline. The current Linux host has no LibreOffice and cannot route to the owner MacBook, so no comparison rate or zero-repair claim exists yet.

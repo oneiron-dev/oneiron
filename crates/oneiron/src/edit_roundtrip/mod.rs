@@ -55,6 +55,7 @@
 //!   the manifest bytes to receipt.
 
 mod address;
+mod docx;
 mod inspect;
 mod manifest;
 mod opc;
@@ -63,6 +64,7 @@ mod pipeline;
 mod session_validate;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
+pub use self::docx::run_docx_revision;
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};
 pub use self::manifest::{
     EDIT_MANIFEST_SCHEMA_VERSION, EditManifest, EditWarning, MutationMode, WarningCode,
@@ -73,6 +75,8 @@ pub use self::session_validate::{
     AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport,
 };
 
+#[cfg(test)]
+mod docx_tests;
 #[cfg(test)]
 mod tests;
 

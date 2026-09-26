@@ -16,7 +16,7 @@ use crate::batch::secret_scan;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn, require_entity_type,
 };
-use crate::edit_roundtrip::{EditProposal, OfficeFormat};
+use crate::edit_roundtrip::{EditOp, EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -360,11 +360,32 @@ impl Vault {
                 "proposal has no bytes to settle",
             )));
         }
-        // The op vocabulary and re-anchor replay are spreadsheet-specific, the
-        // same gate ARTL-3 applies.
-        if !matches!(proposal.format, OfficeFormat::Xlsx) {
+        // Reject a cross-format manifest. The spreadsheet and native Word
+        // writers have separate entry doors and cannot substitute one another's
+        // operations at settlement.
+        if proposal.format == OfficeFormat::Docx
+            && oneiron_docedit::validate_blocking(&proposal.new_bytes).is_err()
+        {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "native docx proposal fails the Word package linker",
+            )));
+        }
+        if proposal.format != proposal.manifest.format
+            || match proposal.format {
+                OfficeFormat::Xlsx => proposal
+                    .manifest
+                    .ops
+                    .iter()
+                    .any(|op| matches!(op, EditOp::DocxRevision { .. })),
+                OfficeFormat::Docx => !matches!(
+                    proposal.manifest.ops.as_slice(),
+                    [EditOp::DocxRevision { transaction }] if !transaction.trim().is_empty()
+                ),
+                OfficeFormat::Pptx => true,
+            }
+        {
             return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "settle supports only xlsx proposals; docx and pptx are not yet supported",
+                "settle refuses a cross-format or unsupported office edit manifest",
             )));
         }
         Ok(())

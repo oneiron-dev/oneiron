@@ -97,6 +97,17 @@ pub fn run_edit_roundtrip<S: EditSession>(
         )));
     }
 
+    // The spreadsheet seam must not pass native DOCX transactions to an
+    // arbitrary external session, even if it reports them as applied.
+    if plan
+        .ops
+        .iter()
+        .any(|op| matches!(op, EditOp::DocxRevision { .. }))
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+            "a docx revision must use the native docx writer",
+        )));
+    }
     // Reject a malformed plan before it can reach a session: cells, ranges, and
     // axis positions are 1-based, but the unchecked constructors let 0 through.
     validate_ops(&plan.ops)?;

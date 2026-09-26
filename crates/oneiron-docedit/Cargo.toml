@@ -1,0 +1,19 @@
+[package]
+name = "oneiron-docedit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Native DOCX revision writer over the Apache-2.0 stemma fork"
+repository.workspace = true
+
+[dependencies]
+stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+zip = "0.6.6"
+
+[lints]
+workspace = true

@@ -770,3 +770,30 @@ fn settle_standing_grant_revocation_is_atomic_with_the_settle_txn() -> Result<()
     ));
     Ok(())
 }
+
+#[test]
+fn settlement_rechecks_native_docx_bytes_and_refuses_cross_format_ops() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let mut forged = proposal("run:docx-forged", b"not a Word package", Vec::new());
+    forged.format = OfficeFormat::Docx;
+    forged.manifest.format = OfficeFormat::Docx;
+    forged.manifest.ops = vec![EditOp::DocxRevision {
+        transaction: "{}".to_owned(),
+    }];
+    assert!(matches!(
+        vault.settle_select_edit_proposal(&artifact, &forged, &owner(), actor, test_time(11), 11),
+        Err(Error::Artifact(ArtifactError::EditRoundtripFailed(_)))
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+
+    forged.format = OfficeFormat::Xlsx;
+    forged.manifest.format = OfficeFormat::Xlsx;
+    assert!(matches!(
+        vault.settle_select_edit_proposal(&artifact, &forged, &owner(), actor, test_time(11), 11),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    Ok(())
+}

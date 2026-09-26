@@ -48,6 +48,9 @@ pub struct CellWrite {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EditOp {
+    /// One schema-validated native Word revision transaction. The organ crate
+    /// owns its versioned JSON syntax and the writer, not the spreadsheet seam.
+    DocxRevision { transaction: String },
     /// Write a single cell.
     SetCell {
         sheet: String,
@@ -96,6 +99,7 @@ impl EditOp {
     #[must_use]
     pub fn sheet(&self) -> Option<&str> {
         match self {
+            Self::DocxRevision { .. } => None,
             Self::SetCell { sheet, .. }
             | Self::SetRange { sheet, .. }
             | Self::AddFormulaColumn { sheet, .. }
@@ -140,6 +144,7 @@ impl EditOp {
     #[must_use]
     pub fn anchor_effect(&self) -> Option<AnchorEffect> {
         match self {
+            Self::DocxRevision { .. } => None,
             Self::InsertRows { sheet, at, count } => Some(AnchorEffect::Shift(StructuralShift {
                 sheet: sheet.clone(),
                 axis: Axis::Row,
@@ -189,6 +194,7 @@ impl EditOp {
     #[must_use]
     pub fn render(&self) -> String {
         match self {
+            Self::DocxRevision { .. } => "apply tracked Word revision".to_owned(),
             Self::SetCell {
                 sheet,
                 cell,

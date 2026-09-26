@@ -722,3 +722,21 @@ fn minimal_mutation_mode_refuses_structural_ops() {
     let proposal = propose(&FixtureSession::faithful(), &input, &cell, "run:cell-ok");
     assert_eq!(proposal.manifest.mutation_mode, MutationMode::Minimal);
 }
+
+#[test]
+fn spreadsheet_session_cannot_apply_native_docx_revisions() {
+    let input = xlsx_bytes(&base_parts());
+    let plan = EditPlan::new(vec![EditOp::DocxRevision {
+        transaction: "{}".to_owned(),
+    }]);
+    assert!(matches!(
+        run_edit_roundtrip(
+            &FixtureSession::faithful(),
+            &input,
+            OfficeFormat::Xlsx,
+            &plan,
+            "run"
+        ),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+}

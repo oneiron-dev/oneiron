@@ -200,7 +200,10 @@ pub(super) fn validate_ops(ops: &[EditOp]) -> Result<()> {
                 check_range(*from)?;
                 check_cell(*to)?;
             }
-            EditOp::AddSheet { .. } | EditOp::RemoveSheet { .. } | EditOp::RenameSheet { .. } => {}
+            EditOp::DocxRevision { .. }
+            | EditOp::AddSheet { .. }
+            | EditOp::RemoveSheet { .. }
+            | EditOp::RenameSheet { .. } => {}
         }
     }
     Ok(())
