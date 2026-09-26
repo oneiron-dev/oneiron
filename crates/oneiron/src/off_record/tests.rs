@@ -1271,29 +1271,36 @@ fn anonymous_witness_read_and_close_retain_no_rows_or_receipts() -> Result<()> {
             .kind(),
         ErrorKind::OffRecordTalkOnly
     );
+    let anon_rows: crate::side_table::SideTable<String, Vec<u8>, crate::side_table::Raw> =
+        crate::side_table::SideTable::new(&crate::side_table::CODE_RUN_RAW_OUTPUT);
+    let anon_tally: crate::side_table::SideTable<String, u64, crate::side_table::Raw> =
+        crate::side_table::SideTable::new(&crate::side_table::CODE_RUN_HEAL_COUNT);
+    let (raw_key, raw_value) = ("anon".to_owned(), b"private".to_vec());
     assert_eq!(
         session
-            .vault_meta_put_routed(&route, b"anon:raw", b"private")
+            .side_table_put_routed(&route, &anon_rows, &raw_key, &raw_value)
             .expect_err("no raw output")
             .kind(),
         ErrorKind::OffRecordTalkOnly
     );
     assert_eq!(
         session
-            .vault_meta_compare_and_put_routed(&route, b"anon:replay", b"private", |_| Ok(()),)
+            .side_table_compare_and_put_routed(&route, &anon_rows, &raw_key, &raw_value, |_| Ok(()))
             .expect_err("no replay")
             .kind(),
         ErrorKind::OffRecordTalkOnly
     );
     assert_eq!(
         session
-            .vault_meta_compare_and_put_with_counter_routed(
+            .side_table_compare_and_put_with_counter_routed(
                 &route,
-                b"anon:replay",
-                b"private",
+                &anon_rows,
+                &raw_key,
+                &raw_value,
                 |_| Ok(()),
-                b"anon:heal",
-                |_, _, _| Ok((1_u64.to_be_bytes().to_vec(), 1)),
+                &anon_tally,
+                &raw_key,
+                |_, _, _| Ok((1, 1)),
             )
             .expect_err("no heal count")
             .kind(),

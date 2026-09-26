@@ -120,13 +120,13 @@ impl DepthAccumulator {
             .order
             .iter()
             .filter_map(|id| {
-                self.revisions
-                    .get(id)
-                    .map(|revision| (*id, crate::vault::ReadMode::Pinned(*revision)))
+                self.revisions.get(id).map(|revision| {
+                    crate::claim::PointRead::id(*id).at(crate::vault::ReadMode::Pinned(*revision))
+                })
             })
             .collect();
         let requested = self.applied_filter();
-        let read = scoped.get_entities_parts_with_modes_with_receipt(&refs, requested.as_ref())?;
+        let read = scoped.read(&refs, requested.as_ref())?;
         self.narrowing.push(read.receipt);
         let mut projected = read.value.into_iter();
         let mut bodies = Vec::with_capacity(self.order.len());
@@ -136,7 +136,11 @@ impl DepthAccumulator {
                 continue;
             }
             bodies.push(match projected.next().flatten() {
-                Some((ENTITY_TYPE_CLAIM, _, body)) => Some(decode_claim_body(&body, true)?),
+                Some(crate::claim::ReadRow {
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    body: Some(body),
+                    ..
+                }) => Some(decode_claim_body(&body, true)?),
                 _ => None,
             });
         }
@@ -203,18 +207,18 @@ impl DepthAccumulator {
             .hits
             .iter()
             .filter_map(|hit| {
-                result
-                    .revisions
-                    .get(&hit.id)
-                    .map(|revision| (hit.id, crate::vault::ReadMode::Pinned(*revision)))
+                result.revisions.get(&hit.id).map(|revision| {
+                    crate::claim::PointRead::id(hit.id)
+                        .at(crate::vault::ReadMode::Pinned(*revision))
+                })
             })
             .collect();
-        let filtered =
-            scoped.get_entities_parts_with_modes_with_receipt(&refs, requested.as_ref())?;
-        let admitted: std::collections::HashSet<_> = refs
+        let filtered = scoped.read(&refs, requested.as_ref())?;
+        let admitted: std::collections::HashSet<_> = filtered
+            .value
             .into_iter()
-            .zip(filtered.value)
-            .filter_map(|((id, _), parts)| parts.map(|_| id))
+            .flatten()
+            .map(|row| row.id)
             .collect();
         result.narrowing.push(filtered.receipt);
         result.hits.retain(|hit| admitted.contains(&hit.id));
@@ -293,7 +297,7 @@ mod receipt_tests {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ))
+            )?)
         };
         let original = claim("original")?;
         vault
@@ -334,15 +338,14 @@ mod receipt_tests {
         assert_eq!(result.revisions[&id], revision);
         assert_eq!(result.narrowing.len(), 2);
         assert_eq!(result.narrowing[0], receipt);
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = scoped.get_entity_parts_with_mode_with_receipt(
-            &id,
-            crate::vault::ReadMode::Pinned(revision),
-            None,
-        )?;
-        assert_eq!(value.map(|(_, _, body)| body), Some(original));
+        let pinned = scoped
+            .read(
+                &[crate::claim::PointRead::id(id).at(crate::vault::ReadMode::Pinned(revision))],
+                None,
+            )?
+            .single();
+        assert_eq!(pinned.receipt.suppressed_count, 0);
+        assert_eq!(pinned.value.and_then(|row| row.body), Some(original));
         Ok(())
     }
 }

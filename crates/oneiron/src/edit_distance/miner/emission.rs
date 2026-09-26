@@ -5,18 +5,17 @@ use rmpv::Value;
 use super::config::{
     GATE_OUTCOME_REJECTED, MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
-    MINER_PREFERENCE_CONFIDENCE, MINER_REJECTION_COOLDOWN_SECS, MINT_MARK_KEY_PREFIX,
-    MINT_MARK_ROW_LABEL, PREDICATE_PREFERENCE_PHRASING, PREFERENCE_VALUE_KEY_CLASS,
-    PREFERENCE_VALUE_KEY_FROM, PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO,
-    PROVENANCE_KEY_CLUSTER, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE,
-    ROW_VERSION, SKILL_EDIT_KEY_PREFIX, SKILL_EDIT_ROW_LABEL,
+    MINER_PREFERENCE_CONFIDENCE, MINER_REJECTION_COOLDOWN_SECS, MINT_MARK_ROW_LABEL,
+    PREDICATE_PREFERENCE_PHRASING, PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM,
+    PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO, PROVENANCE_KEY_CLUSTER,
+    PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE, ROW_VERSION,
 };
 use super::mining::classify_substitution;
 use super::model::{
     MinedOutcome, MinedSkillEditVerdict, MinerRun, StoredMinedEvidence, StoredMintMark,
     StoredSkillEdit, SubstitutionClass, SubstitutionCluster,
 };
-use super::store::{decode_row, encode_row, meta_key, mined_skill_edit_in_txn};
+use super::store::{SKILL_EDIT, decode_row, encode_row, mined_skill_edit_in_txn};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
@@ -24,8 +23,30 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
+
+/// Mint-mark preventing a re-mint of the same substitution cluster, keyed by
+/// cluster handle.
+pub(super) const MINT_MARK: SideTable<[u8; 32], StoredMintMark, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_MINER_MINT_MARK);
+
+impl RawValue for StoredMintMark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, MINT_MARK_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: StoredMintMark = decode_row(bytes, MINT_MARK_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(
+                MINT_MARK_ROW_LABEL,
+            )));
+        }
+        Ok(row)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // The chooser
@@ -262,11 +283,7 @@ pub(super) fn emit_preference_value(
     .with_evidence(mined_evidence_candidate(cluster, evidence_id))
     .with_scope(super::feedback::preference_scope(&cluster.scope, principal))
     .with_validity(Some(cluster.at), None);
-    let mark = encode_row(
-        &StoredMintMark::new(MARK_KIND_PREFERENCE, &claim_id),
-        MINT_MARK_ROW_LABEL,
-    )?;
-    let mark_key = mint_mark_key(handle);
+    let mark = StoredMintMark::new(MARK_KIND_PREFERENCE, &claim_id);
     let occurred = TimeRange {
         start: cluster.at,
         end: cluster.at,
@@ -292,7 +309,7 @@ pub(super) fn emit_preference_value(
             .batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, cluster.at)
             .apply_recording_gate_decisions(wtxn)?;
-        vault.store.vault_meta.put(wtxn, &mark_key, &mark)?;
+        MINT_MARK.put(&vault.store, wtxn, handle, &mark)?;
         Ok(Some(claim_id))
     })
 }
@@ -365,27 +382,19 @@ fn emit_skill_edit(
 ) -> Result<Option<EntityId>> {
     let proposal_id = vault.store.clock.entity_id()?;
     let class = SubstitutionClass::Content;
-    let row = encode_row(
-        &StoredSkillEdit {
-            principal: cluster.principal,
-            v: ROW_VERSION,
-            skill: skill.to_hex(),
-            scope: cluster.scope.clone(),
-            from: cluster.from.clone(),
-            to: cluster.to.clone(),
-            evidence_receipts: cluster.receipt_refs.clone(),
-            rationale: class.rationale().to_owned(),
-            at: cluster.at,
-            decision: None,
-        },
-        SKILL_EDIT_ROW_LABEL,
-    )?;
-    let mark = encode_row(
-        &StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id),
-        MINT_MARK_ROW_LABEL,
-    )?;
-    let row_key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
-    let mark_key = mint_mark_key(handle);
+    let row = StoredSkillEdit {
+        principal: cluster.principal,
+        v: ROW_VERSION,
+        skill: skill.to_hex(),
+        scope: cluster.scope.clone(),
+        from: cluster.from.clone(),
+        to: cluster.to.clone(),
+        evidence_receipts: cluster.receipt_refs.clone(),
+        rationale: class.rationale().to_owned(),
+        at: cluster.at,
+        decision: None,
+    };
+    let mark = StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id);
     vault.with_write_txn(|wtxn| {
         if !cluster_is_eligible(vault, wtxn, handle, now)? {
             return Ok(None);
@@ -393,8 +402,8 @@ fn emit_skill_edit(
         // Inside the transaction with the row it proposes to edit: a proposal
         // naming a skill that is not there is one ONE-1448 could only fail on.
         vault.read_skill_record_in_txn(&*wtxn, &skill)?;
-        vault.store.vault_meta.put(wtxn, &row_key, &row)?;
-        vault.store.vault_meta.put(wtxn, &mark_key, &mark)?;
+        SKILL_EDIT.put(&vault.store, wtxn, &proposal_id, &row)?;
+        MINT_MARK.put(&vault.store, wtxn, handle, &mark)?;
         Ok(Some(proposal_id))
     })
 }
@@ -510,21 +519,10 @@ pub(super) fn cluster_handle(cluster: &SubstitutionCluster) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-pub(super) fn mint_mark_key(handle: &[u8; 32]) -> Vec<u8> {
-    meta_key(MINT_MARK_KEY_PREFIX, handle)
-}
-
 pub(super) fn mint_mark_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     handle: &[u8; 32],
 ) -> Result<Option<StoredMintMark>> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &mint_mark_key(handle))? else {
-        return Ok(None);
-    };
-    let row: StoredMintMark = decode_row(&raw, MINT_MARK_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(MINT_MARK_ROW_LABEL));
-    }
-    Ok(Some(row))
+    MINT_MARK.get(&vault.store, txn, handle)
 }

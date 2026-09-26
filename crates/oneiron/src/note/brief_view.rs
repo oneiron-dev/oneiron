@@ -2,7 +2,7 @@
 
 use super::document::invalid;
 use super::{NoteKind, NoteSpanResolution};
-use crate::claim::{ClaimLifecycleStatus, ScopedRead, decode_claim_body};
+use crate::claim::{ClaimLifecycleStatus, ScopedRead, ScopedReadResult, decode_claim_body};
 use crate::lens::{
     InstrumentAtoms, InstrumentView, LensAtom, LensRenderFrame, LensText, LensTextSpan,
     TextBlockAtom, render_instrument,
@@ -29,12 +29,13 @@ pub struct BriefView {
 impl Vault {
     /// Resolves a vault-resident brief every time it is viewed. The returned
     /// Instrument is not a stored format and no edit/regeneration occurs here.
+    /// The receipt folds the brief, every citation and every interpolated read.
     pub fn render_brief(
         &self,
         id: EntityId,
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
-    ) -> Result<Option<BriefView>> {
+    ) -> Result<ScopedReadResult<Option<BriefView>>> {
         self.render_brief_with_claims(id, frame, read, None)
     }
 
@@ -47,12 +48,18 @@ impl Vault {
         narrowing: Option<&crate::share::ShareViewerScope>,
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
-    ) -> Result<Option<BriefView>> {
+    ) -> Result<ScopedReadResult<Option<BriefView>>> {
         if read.actor_key().actor_ref() != viewer.to_hex() {
             return Err(invalid("brief viewer key mismatch"));
         }
+        let unresolved = || -> Result<ScopedReadResult<Option<BriefView>>> {
+            Ok(ScopedReadResult {
+                value: None,
+                receipt: read.read_receipt(None, 0)?,
+            })
+        };
         let Some(share) = self.get_share(&share_id)? else {
-            return Ok(None);
+            return unresolved();
         };
         let id = EntityId::from_hex(&share.brief_ref)
             .map_err(|_| invalid("brief handle must name a vault NOTE"))?;
@@ -60,7 +67,7 @@ impl Vault {
         let refs: Vec<_> = document.pins.iter().map(|pin| pin.claim).collect();
         let Some(resolved) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &refs)?
         else {
-            return Ok(None);
+            return unresolved();
         };
         self.render_brief_with_claims(id, frame, read, Some(&resolved.visible_claim_refs))
     }
@@ -71,12 +78,17 @@ impl Vault {
         frame: &LensRenderFrame,
         read: &ScopedRead<'_>,
         visible: Option<&[EntityId]>,
-    ) -> Result<Option<BriefView>> {
-        if !std::ptr::eq(self, read.vault()) {
+    ) -> Result<ScopedReadResult<Option<BriefView>>> {
+        if self.vault_id() != read.vault().vault_id() {
             return Err(invalid("brief read frame belongs to another vault"));
         }
-        let Some(raw) = frame.scoped_body(read, &id)? else {
-            return Ok(None);
+        let brief = frame.scoped_body(read, &id)?;
+        let mut receipt = brief.receipt;
+        let Some(raw) = brief.value else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
         };
         if super::decode_note_body(&raw)?.kind != NoteKind::Plugin("brief".into()) {
             return Err(invalid("NOTE is not a brief"));
@@ -88,15 +100,22 @@ impl Vault {
         let mut citations = Vec::new();
         for pin in &document.pins {
             let admitted = if visible.is_none_or(|ids| ids.contains(&pin.claim)) {
-                frame.scoped_body(read, &pin.claim)?
+                let claim = frame.scoped_body(read, &pin.claim)?;
+                receipt.restrict_with(&claim.receipt);
+                claim.value
             } else {
                 None
             };
             let live = match admitted {
-                Some(body) if frame.scoped_body(read, &pin.document)?.is_some() => {
-                    Some(decode_claim_body(&body, true)?)
+                Some(body) => {
+                    let document = frame.scoped_body(read, &pin.document)?;
+                    receipt.restrict_with(&document.receipt);
+                    document
+                        .value
+                        .map(|_| decode_claim_body(&body, true))
+                        .transpose()?
                 }
-                _ => None,
+                None => None,
             };
             let Some(live) = live else {
                 // A redacted reference reveals neither current lifecycle nor
@@ -143,9 +162,15 @@ impl Vault {
             }));
         }
         let instrument = render_instrument(&InstrumentAtoms::new(atoms)?, frame, read)?;
-        Ok(Some(BriefView {
-            instrument,
-            citations,
-        }))
+        if let Some(rendered) = &instrument.receipt {
+            receipt.restrict_with(rendered);
+        }
+        Ok(ScopedReadResult {
+            value: Some(BriefView {
+                instrument,
+                citations,
+            }),
+            receipt,
+        })
     }
 }

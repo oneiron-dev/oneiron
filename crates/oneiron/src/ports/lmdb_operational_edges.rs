@@ -9,6 +9,18 @@ use crate::provenance::EdgeRef;
 use crate::store::Store;
 use heed::RwTxn;
 impl EdgeStoreMaintenance for Store {
+    #[cfg(test)]
+    fn port_raw_outgoing_edge_seed(
+        &self,
+        txn: &mut RwTxn<'_>,
+        source: &crate::EntityId,
+        kind: crate::EdgeKind,
+        target: &crate::EntityId,
+        value: &[u8],
+    ) -> Result<()> {
+        let key = Store::encode_edge_key(source, kind, target);
+        self.edges_out.put(txn, &key, value)
+    }
     fn port_revision_link(
         &self,
         txn: &mut RwTxn<'_>,

@@ -2581,7 +2581,7 @@ fn scoped_pull_bridge_claim(vault: &Vault, byte: u8, subject: EntityId) -> Resul
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&id, &body, fixture_range(at), at)?;
     Ok(id)
 }

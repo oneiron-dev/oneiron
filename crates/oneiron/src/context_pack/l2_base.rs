@@ -110,7 +110,7 @@ pub(super) fn produce_l2_base(
             "L2 summaries allow at most eight explicit subjects".into(),
         ));
     }
-    if reader.is_some_and(|reader| !std::ptr::eq(reader.vault(), vault)) {
+    if reader.is_some_and(|reader| reader.vault().vault_id() != vault.vault_id()) {
         return Err(Error::InvalidConfig(
             "L2 reader belongs to another vault".into(),
         ));

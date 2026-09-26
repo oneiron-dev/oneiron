@@ -4,8 +4,8 @@ use rmpv::Value;
 
 use super::provenance::{PromotionCandidate, source_meet};
 use super::support::{
-    DREAMER_BUCKET_HASH_DOMAIN, DREAMER_CLAIM_ID_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN,
-    TURN_BODY_FACET_REF_KEY, encode_value, hash_optional_entity, invalid_consolidation,
+    DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, TURN_BODY_FACET_REF_KEY,
+    encode_value, hash_optional_entity, invalid_consolidation,
 };
 use super::watermark::entity_ref_from_value;
 use crate::claim::{
@@ -14,6 +14,7 @@ use crate::claim::{
 };
 use crate::dreamer_runner::{DreamerTurnRole, dreamer_extraction_role_admissible};
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::DREAMER_CLAIM;
 use crate::error::Result;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -80,8 +81,8 @@ pub(super) fn candidate_facts(candidate: &ClaimCandidate) -> Result<CandidateFac
     );
     let body = candidate.clone().into_claim_body(
         &envelope,
-        crate::claim::substrate_facet_id(candidate_probe_actor()),
-    );
+        crate::claim::substrate_facet_id(candidate_probe_actor())?,
+    )?;
     let ClaimSubject::Entity(subject) = body.subject else {
         return Err(invalid_consolidation(
             "consolidation candidates must have entity subjects",
@@ -403,11 +404,10 @@ pub fn detect_conflicts(
 /// identity to surface under, not a queue row. The id is minted from the
 /// SAME `deterministic_claim_id` law every consolidation claim uses, so an
 /// at-least-once re-run re-mints the same marker instead of a second one.
-#[must_use]
 pub fn conflict_open_marker_id(
     conflict: &ConflictSet,
     attempt_id: crate::attempt_queue::AttemptId,
-) -> EntityId {
+) -> Result<EntityId> {
     deterministic_claim_id(
         attempt_id,
         conflict.identity.subject,
@@ -466,40 +466,26 @@ pub(super) fn deterministic_claim_id(
     facet: Option<EntityId>,
     rel: Option<EntityId>,
     topic: Option<&[u8]>,
-) -> EntityId {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DREAMER_CLAIM_ID_HASH_DOMAIN);
-    hasher.update(attempt_id.as_bytes());
-    hasher.update(subject.as_bytes());
-    hasher.update(&(predicate.len() as u64).to_le_bytes());
-    hasher.update(predicate.as_bytes());
-    let value_bytes = canonical_value_bytes(value).unwrap_or_default();
-    hasher.update(&(value_bytes.len() as u64).to_le_bytes());
-    hasher.update(&value_bytes);
-    hasher.update(&[u8::from(world.is_some())]);
-    if let Some(world) = world {
-        hasher.update(world.as_bytes());
-    }
-    hasher.update(&[u8::from(facet.is_some())]);
-    if let Some(facet) = facet {
-        hasher.update(facet.as_bytes());
-    }
-    hash_optional_entity(&mut hasher, rel.as_ref());
-    hasher.update(&[u8::from(topic.is_some())]);
-    if let Some(topic) = topic {
-        hasher.update(&(topic.len() as u64).to_le_bytes());
-        hasher.update(topic);
-    }
-    let digest = hasher.finalize();
-    let mut raw = [0_u8; 16];
-    raw.copy_from_slice(&digest.as_bytes()[..16]);
-    // A blake3 prefix colliding with a reserved id is ~2^-120; perturb
-    // deterministically rather than fall back to a non-deterministic id.
-    EntityId::from_bytes(raw).unwrap_or_else(|_| {
-        raw[0] ^= 0x01;
-        raw[15] ^= 0x01;
-        EntityId::from_bytes(raw).expect("perturbed derived claim id is non-reserved")
-    })
+) -> Result<EntityId> {
+    let value_bytes = canonical_value_bytes(value)?;
+    let optional = |part: Option<&[u8]>| part.map(|bytes| [&[1][..], bytes].concat());
+    let world = optional(world.as_ref().map(|id| &id.as_bytes()[..]));
+    let facet = optional(facet.as_ref().map(|id| &id.as_bytes()[..]));
+    let rel = optional(rel.as_ref().map(|id| &id.as_bytes()[..]));
+    let topic = optional(topic);
+    EntityId::derive(
+        DREAMER_CLAIM,
+        &[
+            attempt_id.as_bytes(),
+            subject.as_bytes(),
+            predicate.as_bytes(),
+            &value_bytes,
+            world.as_deref().unwrap_or_default(),
+            facet.as_deref().unwrap_or_default(),
+            rel.as_deref().unwrap_or_default(),
+            topic.as_deref().unwrap_or_default(),
+        ],
+    )
 }
 
 /// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded

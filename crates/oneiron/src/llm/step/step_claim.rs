@@ -7,7 +7,6 @@ use super::codec::{
 };
 use super::step_state::{StepStateRow, step_state_put_in_txn, step_state_read};
 use super::types::{
-    DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX, DREAMER_PRIVATE_STEP_INDEX_PREFIX,
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
     ENVELOPE_PROVENANCE_ATTEMPT_KEY, ENVELOPE_PROVENANCE_RUN_KEY, ENVELOPE_PROVENANCE_SURFACE_KEY,
@@ -23,12 +22,62 @@ use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY, WriteEnvelope, WriteProvenance,
 };
 use rmpv::Value;
+
+/// Key of one forward step-index row: id16(attempt) + hash32(step) -> claim id16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct StepIndexKey {
+    pub(super) attempt_id: AttemptId,
+    pub(super) step_hash: [u8; 32],
+}
+
+impl SideKey for StepIndexKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.attempt_id.as_bytes());
+        out.extend_from_slice(&self.step_hash);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (attempt, hash) = bytes.split_at_checked(16)?;
+        Some(Self {
+            attempt_id: AttemptId::from_bytes(attempt).ok()?,
+            step_hash: hash.try_into().ok()?,
+        })
+    }
+}
+
+/// Key of the reverse "i:" sub-index row: claim id16 -> the forward row's full stored key
+/// bytes. Both shapes share the `DREAMER_STEP_INDEX` declaration; they cannot collide because
+/// a forward row's key is always 48 bytes (id16 + hash32) and a reverse row's is always 18
+/// (`i:` + id16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct StepIndexClaimKey(pub(super) EntityId);
+
+impl SideKey for StepIndexClaimKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(b"i:");
+        out.extend_from_slice(self.0.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let rest = bytes.strip_prefix(b"i:")?;
+        Some(Self(EntityId::from_bytes(rest.try_into().ok()?).ok()?))
+    }
+}
+
+/// The forward memo-index row: (attempt, step hash) -> the claim id that answered it.
+pub(super) const STEP_INDEX_FORWARD: SideTable<StepIndexKey, EntityId, Raw> =
+    SideTable::new(&side_table::DREAMER_STEP_INDEX);
+/// The reverse "i:" sub-index: claim id -> the forward row's full stored key bytes, so a
+/// deindex can find (and verify) the forward row it must retire without knowing its key.
+const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
+    SideTable::new(&side_table::DREAMER_STEP_INDEX);
 
 // ---------------------------------------------------------------------------
 // Terminal step claim (checkpoint-in-append) + memo index
@@ -474,13 +523,17 @@ pub(crate) fn index_dreamer_step_claim_for_put(
         return Ok(());
     }
 
-    let forward_key = step_index_key(decoded.attempt_id, &decoded.step_hash);
-    store
-        .vault_meta
-        .put(wtxn, &forward_key, claim_id.as_bytes())?;
-    store
-        .vault_meta
-        .put(wtxn, &step_index_claim_key(claim_id), &forward_key)?;
+    let forward_key = StepIndexKey {
+        attempt_id: decoded.attempt_id,
+        step_hash: decoded.step_hash,
+    };
+    STEP_INDEX_FORWARD.put(store, wtxn, &forward_key, claim_id)?;
+    STEP_INDEX_CLAIM.put(
+        store,
+        wtxn,
+        &StepIndexClaimKey(*claim_id),
+        &STEP_INDEX_FORWARD.key_bytes(&forward_key),
+    )?;
     Ok(())
 }
 
@@ -542,21 +595,19 @@ pub(crate) fn deindex_dreamer_step_claim(
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<()> {
-    let claim_key = step_index_claim_key(claim_id);
-    let Some(forward_key) = store
-        .vault_meta
-        .get(wtxn, &claim_key)?
-        .map(|value| value.to_vec())
-    else {
+    let claim_key = StepIndexClaimKey(*claim_id);
+    let Some(forward_key_bytes) = STEP_INDEX_CLAIM.get(store, wtxn, &claim_key)? else {
         return Ok(());
     };
     // Only delete the forward row if it still points at THIS claim.
-    if let Some(current) = store.vault_meta.get(wtxn, &forward_key)?
-        && *current == *claim_id.as_bytes()
+    if let Some(forward_key) = forward_key_bytes
+        .strip_prefix(STEP_INDEX_FORWARD.decl().prefix)
+        .and_then(StepIndexKey::decode_key)
+        && STEP_INDEX_FORWARD.get(store, wtxn, &forward_key)?.as_ref() == Some(claim_id)
     {
-        store.vault_meta.delete(wtxn, &forward_key)?;
+        STEP_INDEX_FORWARD.delete(store, wtxn, &forward_key)?;
     }
-    store.vault_meta.delete(wtxn, &claim_key)?;
+    STEP_INDEX_CLAIM.delete(store, wtxn, &claim_key)?;
     Ok(())
 }
 
@@ -566,29 +617,12 @@ pub(super) fn step_index_lookup(
     step_hash: &[u8; 32],
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let key = step_index_key(attempt_id, step_hash);
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &key)? else {
-        return Ok(None);
-    };
-    let bytes: [u8; 16] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("dreamer step index row"))?;
-    EntityId::from_bytes(bytes).map(Some)
-}
-
-pub(super) fn step_index_key(attempt_id: AttemptId, step_hash: &[u8; 32]) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(DREAMER_PRIVATE_STEP_INDEX_PREFIX.len() + 16 + step_hash.len());
-    key.extend_from_slice(DREAMER_PRIVATE_STEP_INDEX_PREFIX);
-    key.extend_from_slice(attempt_id.as_bytes());
-    key.extend_from_slice(step_hash);
-    key
-}
-
-fn step_index_claim_key(claim_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX.len() + 16);
-    key.extend_from_slice(DREAMER_PRIVATE_STEP_INDEX_CLAIM_PREFIX);
-    key.extend_from_slice(claim_id.as_bytes());
-    key
+    STEP_INDEX_FORWARD.get(
+        &vault.store,
+        &rtxn,
+        &StepIndexKey {
+            attempt_id,
+            step_hash: *step_hash,
+        },
+    )
 }

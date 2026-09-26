@@ -1,12 +1,52 @@
 //! Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites.
 
 use crate::error::{Error, RecordError, Result};
+use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
 use loro::cursor::{Cursor, Side};
 use loro::{ExportMode, Frontiers, LoroDoc, UpdateOptions};
 use serde::{Deserialize, Serialize};
 
+use super::side_keys::HexPair;
+
 const TEXT: &str = "body";
+
+/// A NOTE's current head document id and head-move sequence number
+/// (`note_head:v1:`): 16 raw id bytes then an 8-byte big-endian sequence,
+/// unchanged from the pre-typed layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NoteHeadRow {
+    head: EntityId,
+    seq: u64,
+}
+
+impl RawValue for NoteHeadRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok([self.head.as_bytes().as_slice(), &self.seq.to_be_bytes()].concat())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let (head, seq) = bytes
+            .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
+            .ok_or_else(|| invalid("NOTE head row"))?;
+        let head = EntityId::from_bytes(head.try_into().map_err(|_| invalid("NOTE head row"))?)
+            .map_err(|_| invalid("NOTE head row"))?;
+        let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE head row"))?);
+        Ok(Self { head, seq })
+    }
+}
+
+pub(super) const NOTE_HEAD: SideTable<EntityId, NoteHeadRow, Raw> =
+    SideTable::new(&side_table::NOTE_HEAD);
+
+/// Marker: one row per head document a NOTE's text plane ever held. Key: the
+/// note id then the head id, raw-concatenated with no separator.
+pub(super) const NOTE_HEAD_DOC: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::NOTE_HEAD_DOC);
+
+/// Loro snapshot bytes of a proposal (non-live) NOTE document head.
+pub(super) const NOTE_PROPOSAL_DOC: SideTable<HexPair, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAnchor {
@@ -287,14 +327,6 @@ pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
-pub(crate) fn head_key(note: EntityId) -> Vec<u8> {
-    [b"note_head:v1:".as_slice(), note.as_bytes()].concat()
-}
-/// One row per head a NOTE's text plane ever held, so erasure reaches every
-/// head document a `Switch` left behind.
-pub(crate) fn head_doc_prefix(note: EntityId) -> Vec<u8> {
-    [b"note_head_doc:v1:".as_slice(), note.as_bytes()].concat()
-}
 /// The NOTE's current head and head sequence. A NOTE that never switched is
 /// its own head at sequence 0.
 pub(crate) fn head_in(
@@ -302,16 +334,10 @@ pub(crate) fn head_in(
     txn: &heed::RoTxn<'_>,
     note: EntityId,
 ) -> Result<(EntityId, u64)> {
-    let Some(raw) = store.vault_meta.get(txn, &head_key(note))? else {
-        return Ok((note, 0));
-    };
-    let (head, seq) = raw
-        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
-        .ok_or(invalid("NOTE head row"))?;
-    let head = EntityId::from_bytes(head.try_into().map_err(|_| invalid("NOTE head row"))?)
-        .map_err(|_| invalid("NOTE head row"))?;
-    let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE head row"))?);
-    Ok((head, seq))
+    Ok(match NOTE_HEAD.get(store, txn, &note)? {
+        Some(row) => (row.head, row.seq),
+        None => (note, 0),
+    })
 }
 pub(crate) fn set_head(
     store: &crate::store::Store,
@@ -320,18 +346,11 @@ pub(crate) fn set_head(
     head: EntityId,
     seq: u64,
 ) -> Result<()> {
-    store.vault_meta.put(
-        txn,
-        &head_key(note),
-        &[head.as_bytes().as_slice(), &seq.to_be_bytes()].concat(),
-    )?;
-    store.vault_meta.put(
-        txn,
-        &[head_doc_prefix(note).as_slice(), head.as_bytes()].concat(),
-        &[],
-    )?;
+    NOTE_HEAD.put(store, txn, &note, &NoteHeadRow { head, seq })?;
+    NOTE_HEAD_DOC.put(store, txn, &(note, head), &())?;
     Ok(())
 }
+#[cfg(any(feature = "sync", test))]
 pub(crate) fn doc_key(note: EntityId, head: EntityId) -> String {
     format!("note_proposal_doc:v1:{}:{}", note.to_hex(), head.to_hex())
 }
@@ -351,9 +370,10 @@ pub(crate) fn store_doc(
     super::ensure_citations_ready(&vault.store, txn, doc.note)?;
     super::verbs::note_core(vault, txn, doc.note)?;
     super::document::NoteDocument::from_loro(doc.note, doc.doc.fork())?;
-    vault.store.sync_state.put(
+    NOTE_PROPOSAL_DOC.put(
+        &vault.store,
         txn,
-        &doc_key(doc.note, doc.head),
+        &HexPair(HexId(doc.note), HexId(doc.head)),
         &snapshot(&proposal_value(doc.note, &doc.text())?)?,
     )
 }
@@ -408,10 +428,8 @@ pub(crate) fn load_head(
     }
     super::verbs::note_core(vault, txn, note)?;
     super::ensure_citations_ready(&vault.store, txn, note)?;
-    let raw = vault
-        .store
-        .sync_state
-        .get(txn, &doc_key(note, head))?
+    let raw = NOTE_PROPOSAL_DOC
+        .get(&vault.store, txn, &HexPair(HexId(note), HexId(head)))?
         .ok_or(invalid("missing proposal document"))?;
     let canonical = super::document::NoteDocument::load(note, &raw)?;
     super::citation_erase::validate_pins(vault, txn, &canonical.pins()?)?;

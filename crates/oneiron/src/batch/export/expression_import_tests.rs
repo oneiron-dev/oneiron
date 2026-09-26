@@ -163,7 +163,7 @@ fn archive(origins: [ExpressionPreferenceOrigin; 2]) -> Result<Archive> {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         at(30),
         30,
     )?;

@@ -7,6 +7,7 @@ use super::super::env_blueprint::MaterializationSpec;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::side_table::{FixedSideKey, SideKey};
 
 pub const CHECKOUT_LEASE_SCHEMA_VERSION: u8 = 1;
 pub const CHECKOUT_LEASE_KEY_PREFIX: &[u8] = b"checkout:lease:v1:";
@@ -37,6 +38,29 @@ impl fmt::Display for CheckoutId {
         }
         Ok(())
     }
+}
+/// The side tables' key spelling: the same lower-hex text [`fmt::Display`] writes, 32 bytes.
+impl SideKey for CheckoutId {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        for byte in self.0 {
+            out.extend_from_slice(format!("{byte:02x}").as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(bytes).ok()?;
+        if text.len() != 32 {
+            return None;
+        }
+        let mut out = [0_u8; 16];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).ok()?;
+        }
+        Self::from_bytes(out).ok()
+    }
+}
+impl FixedSideKey for CheckoutId {
+    const WIDTH: usize = 32;
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitOid([u8; 20]);

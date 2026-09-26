@@ -21,7 +21,7 @@
 //! # What this module owns and does not own
 //!
 //! * It owns the canonical standing-grant rows, persisted as strict versioned
-//!   MessagePack under the `CONSENT_GRANT_KEY_PREFIX` `vault_meta` prefix,
+//!   MessagePack under the `CONSENT_STANDING_GRANT` typed `vault_meta` table,
 //!   written atomically with the Gate receipt. **No entity type and no type
 //!   byte are allocated** — existing entity codecs are left intact.
 //! * It owns the [`CATASTROPHE_FLOOR_V1`] closed set and its version pin.
@@ -126,8 +126,8 @@ use self::adapters::{action_grant_from_policy_scoped_grant, outbound_scope_axes}
 use self::bound::DOMAIN_ACTION;
 #[cfg(test)]
 use self::codec::{
-    ENVELOPE_KEYS, KEY_CLASS, KEY_CREATED_AT, KEY_DOMAIN, KEY_ENVELOPE, KEY_OWNER_STAMP,
+    ENVELOPE_KEYS, GRANTS, KEY_CLASS, KEY_CREATED_AT, KEY_DOMAIN, KEY_ENVELOPE, KEY_OWNER_STAMP,
     KEY_SCHEMA_VERSION, KEY_STATUS, KEY_SUBJECT, OWNER_STAMP_KEYS, SUBJECT_KEYS,
 };
 #[cfg(test)]
-use self::support::{CONSENT_GRANT_KEY_PREFIX, SUBJECT_KIND_AUDIENCE};
+use self::support::SUBJECT_KIND_AUDIENCE;

@@ -1,7 +1,8 @@
 //! Named (agent, world) standing blocks compiled from gated persona claims.
 //! Handles are durable; compiled text is a node-local, disposable projection.
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::consent::AuthenticatedOwner;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     EdgeActorClass, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
@@ -11,8 +12,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const PREFIX: &[u8] = b"standing.block.v1:";
 const PERSONA_PREFIX: &str = "companion.standing.";
+
+/// One standing-block handle, keyed by its own `identity(agent, world)` hex reference.
+const STANDING_BLOCKS: SideTable<String, StandingBlockHandle, LegacyJson> =
+    SideTable::new(&side_table::STANDING_BLOCK);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +68,9 @@ pub struct StandingBlockSession {
     pub other_context_tokens: usize,
     pub compiled: Vec<u8>,
     pub eviction: StandingBlockEviction,
+    /// The reader's scoped read of the agent's claims. Claims the reader may
+    /// not read never enter the block and are counted here.
+    pub read_receipt: ScopedReadReceipt,
 }
 #[derive(Default)]
 pub struct StandingBlockCache {
@@ -81,16 +88,12 @@ fn invalid() -> Error {
 }
 fn identity(agent: EntityId, world: EntityId) -> String {
     let mut hash = blake3::Hasher::new();
-    hash.update(PREFIX);
+    hash.update(b"standing.block.v1:");
     hash.update(agent.as_bytes());
     hash.update(world.as_bytes());
     hash.finalize().to_hex().to_string()
 }
-fn key(handle: &str) -> Vec<u8> {
-    [PREFIX, handle.as_bytes()].concat()
-}
-fn decode(bytes: &[u8], expected: &str) -> Result<StandingBlockHandle> {
-    let handle: StandingBlockHandle = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+fn validated(handle: StandingBlockHandle, expected: &str) -> Result<StandingBlockHandle> {
     if handle.handle != expected
         || identity(handle.agent, handle.world) != expected
         || handle.name.trim().is_empty()
@@ -147,17 +150,14 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            if let Some(raw) = self.store.vault_meta.get(&*txn, &key(&handle.handle))? {
-                let stored = decode(&raw, &handle.handle)?;
+            if let Some(stored) = STANDING_BLOCKS.get(&self.store, &*txn, &handle.handle)? {
+                let stored = validated(stored, &handle.handle)?;
                 if stored != handle {
                     return Err(invalid());
                 }
                 return Ok(stored);
             }
-            let bytes = serde_json::to_vec(&handle).map_err(|_| invalid())?;
-            self.store
-                .vault_meta
-                .put(txn, &key(&handle.handle), &bytes)?;
+            STANDING_BLOCKS.put(&self.store, txn, &handle.handle, &handle)?;
             Ok(handle)
         })
     }
@@ -168,21 +168,17 @@ impl Vault {
     ) -> Result<Option<StandingBlockHandle>> {
         let reference = identity(agent, world);
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(&reference))?
-            .map(|bytes| decode(&bytes, &reference))
+        STANDING_BLOCKS
+            .get(&self.store, &txn, &reference)?
+            .map(|handle| validated(handle, &reference))
             .transpose()
     }
     /// Resolve configured worlds for one actor. Corrupt handle rows fail closed.
     pub fn standing_blocks(&self, agent: EntityId) -> Result<Vec<StandingBlockHandle>> {
         let txn = self.store.env.read_txn()?;
         let mut blocks = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&txn, PREFIX)? {
-            let (stored_key, bytes) = row?;
-            let reference =
-                std::str::from_utf8(&stored_key[PREFIX.len()..]).map_err(|_| invalid())?;
-            let handle = decode(&bytes, reference)?;
+        for (reference, handle) in STANDING_BLOCKS.scan(&self.store, &txn)? {
+            let handle = validated(handle, &reference)?;
             if handle.agent == agent {
                 blocks.push(handle);
             }
@@ -286,11 +282,15 @@ impl Vault {
             return Err(invalid());
         }
         let scoped = self.scoped_read(reader);
+        let reads: Vec<_> = self
+            .claims_for_subject(&handle.agent)?
+            .into_iter()
+            .map(PointRead::id)
+            .collect();
+        let readable = scoped.read(&reads, None)?;
+        let read_receipt = readable.receipt;
         let mut claims = Vec::new();
-        for id in self.claims_for_subject(&handle.agent)? {
-            if !scoped.is_entity_readable(&id)? {
-                continue;
-            }
+        for id in readable.value.into_iter().flatten().map(|row| row.id) {
             let Some(body) = self.get_claim(&id)? else {
                 continue;
             };
@@ -343,6 +343,7 @@ impl Vault {
             other_context_tokens: total_tokens - block_tokens,
             compiled,
             eviction,
+            read_receipt,
         })
     }
 }
@@ -391,7 +392,7 @@ mod tests {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         note.source = Some(ClaimSource::UserStated);
         note.world = Some(world);
         note.scope = Some(Value::Map(vec![(
@@ -441,7 +442,7 @@ mod tests {
         crate::test_util::put_policy_manifest_bytes(
             &vault,
             crate::gate::default_policy_manifest_id()?,
-            &crate::gate::default_policy_manifest(),
+            &crate::gate::default_policy_manifest()?,
         )?;
         let issuer = crate::authority::HostSlipIssuer::from_secret(b"standing block fixture")?;
         let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;

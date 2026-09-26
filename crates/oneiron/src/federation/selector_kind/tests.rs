@@ -1,7 +1,7 @@
 use super::*;
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, decode_federation_pact_scope, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, decode_federation_pact_scope,
+    encode_federation_pact_scope,
 };
 use crate::registry::ENTITY_TYPE_REGISTRY;
 
@@ -48,9 +48,9 @@ fn family_scopes_roundtrip_and_obey_classification_ceiling() {
         let band = SelectorRange::Family(family.family);
         assert_eq!(SelectorRange::from_wire_name(band.wire_name()), Some(band));
         let direction = FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::Some(vec![band]),
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::from_iter([band]),
         };
         let scope = FederationPactScope {
             lo_to_hi: direction.clone(),
@@ -61,7 +61,7 @@ fn family_scopes_roundtrip_and_obey_classification_ceiling() {
             scope
         );
         let core = FederationDirectionScope {
-            bands: FederationScopeBands::Some(vec![SelectorRange::Core]),
+            bands: ScopeAxis::from_iter([SelectorRange::Core]),
             ..direction.clone()
         };
         assert_eq!(
@@ -73,7 +73,7 @@ fn family_scopes_roundtrip_and_obey_classification_ceiling() {
             if family.family.classification() == EntityClassification::Core {
                 direction.bands
             } else {
-                FederationScopeBands::Bottom
+                ScopeAxis::Bottom
             }
         );
     }

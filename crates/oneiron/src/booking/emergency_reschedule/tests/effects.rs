@@ -210,7 +210,8 @@ fn calendar_send_still_passes_gate_hygiene() {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: NOW,
                 end: NOW,

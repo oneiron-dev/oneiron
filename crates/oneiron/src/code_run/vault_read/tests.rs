@@ -982,7 +982,8 @@ fn seed_scoped_grant_vault(vault: &Vault) -> (EntityId, String, String) {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = Some(world);
         body.source = Some(ClaimSource::UserStated);
         body
@@ -1119,7 +1120,8 @@ fn seed_retrieval_budget_vault(vault: &Vault) -> usize {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::UserStated);
         vault
             .put_claim(&id, &body, occurred, occurred.start)
@@ -1223,7 +1225,8 @@ fn seed_scoped_pack_vault(vault: &Vault) -> (EntityId, EntityId) {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = world;
         body.source = Some(ClaimSource::UserStated);
         body
@@ -1606,10 +1609,16 @@ fn hydrate_batch_counts_withheld_rows_not_missing_or_malformed_refs() {
     let reader = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
     let denied_ref = short_ref(&vault, &denied);
     let (short_id, hash) = parse_short_ref(VaultReadMethod::Hydrate, &denied_ref).unwrap();
-    let withheld = reader.hydrate_short_id(&short_id, hash).unwrap();
+    let withheld = reader
+        .read(&[crate::claim::PointRead::short(&short_id, hash)], None)
+        .unwrap()
+        .single();
     assert!(withheld.value.is_none());
     assert_eq!(withheld.receipt.suppressed_count, 1);
-    let missing = reader.hydrate_short_id("cl999999", 0).unwrap();
+    let missing = reader
+        .read(&[crate::claim::PointRead::short("cl999999", 0)], None)
+        .unwrap()
+        .single();
     assert!(missing.value.is_none());
     assert_eq!(missing.receipt.suppressed_count, 0);
     let adapter =
@@ -1686,4 +1695,50 @@ fn timeline_receipts_survive_success_absence_and_wire_transport() {
         remote.memory_timeline(request(hidden)),
         Err(VaultReadError::ProtocolMismatch { .. })
     ));
+}
+
+/// The in-process adapter is a script's only read door: every answer it hands
+/// back carries the scoped read's receipt, with the withheld rows counted, so
+/// a script can tell a narrowed answer from an empty one.
+#[test]
+fn in_process_vault_read_hands_the_receipt_to_the_script() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (admitted, denied) = seed_scoped_pack_vault(&vault);
+    let adapter =
+        InProcessVaultReadAdapter::new(&vault, ScopedReadActorKey::new("reader").unwrap());
+    let query = adapter
+        .query(CoreQueryRequest {
+            query: None,
+            query_vector: Some(vec![1.0, 0.0, 0.0, 0.0]),
+            limit: 10,
+            view: Some(View::Standard),
+            count_mode: CountMode::Exact,
+        })
+        .expect("scoped query");
+    assert_eq!(
+        query
+            .items
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>(),
+        vec![admitted.to_hex()]
+    );
+    assert_eq!(query.narrowing.suppressed_count, 1);
+    assert!(
+        query
+            .narrowing
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+    let batch = adapter
+        .hydrate_many(CoreBatchShortIdHydrateRequest {
+            refs: vec![short_ref(&vault, &admitted), short_ref(&vault, &denied)],
+            view: None,
+        })
+        .expect("scoped batch hydrate");
+    assert_eq!(batch.narrowing.suppressed_count, 1);
+    assert_eq!(
+        batch.results[1].outcome,
+        CoreShortIdHydrateOutcome::NotFound
+    );
 }

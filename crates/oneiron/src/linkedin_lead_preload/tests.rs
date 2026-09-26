@@ -59,7 +59,7 @@ fn key(person: bool, i: usize) -> LinkedInExternalKey {
 }
 
 fn id(key: &LinkedInExternalKey) -> EntityId {
-    derived_id(b"oneiron.linkedin.entity.v1", &[&key.source_ref()]).expect("fixture")
+    EntityId::derive(LINKEDIN_ENTITY, &[key.source_ref().as_bytes()]).expect("fixture")
 }
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -122,9 +122,12 @@ fn field<'a>(value: &'a rmpv::Value, name: &str) -> &'a rmpv::Value {
 }
 
 fn display_name_claim_id(person: bool, i: usize) -> EntityId {
-    derived_id(
-        b"oneiron.linkedin.claim.v1",
-        &[&key(person, i).source_ref(), "linkedin.display_name"],
+    EntityId::derive(
+        LINKEDIN_CLAIM,
+        &[
+            key(person, i).source_ref().as_bytes(),
+            b"linkedin.display_name",
+        ],
     )
     .expect("fixture")
 }
@@ -354,9 +357,8 @@ fn linkedin_preload_facts_use_imported_evidence_admission() -> TestResult {
         for i in 1..=count {
             let source = key(person, i).source_ref();
             for predicate in predicates {
-                let preimage = format!("oneiron.linkedin.claim.v1{source}{predicate}");
-                let hash = blake3::hash(preimage.as_bytes());
-                let claim_id = EntityId::from_bytes(hash.as_bytes()[..16].try_into()?)?;
+                let claim_id =
+                    EntityId::derive(LINKEDIN_CLAIM, &[source.as_bytes(), predicate.as_bytes()])?;
                 let body = vault.get_claim(&claim_id)?.expect("fixture");
                 assert_eq!(body.subject, ClaimSubject::Entity(id(&key(person, i))));
                 assert_eq!(body.predicate, predicate);

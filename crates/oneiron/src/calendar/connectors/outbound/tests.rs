@@ -224,7 +224,8 @@ fn applied_series_snapshot_keeps_new_members_and_child_edits_for_the_next_sequen
                         1.0,
                         crate::ClaimApprovalStatus::Approved,
                         crate::ClaimLifecycleStatus::Active,
-                    ),
+                    )
+                    .unwrap(),
                     crate::TimeRange {
                         start: NOW,
                         end: NOW,

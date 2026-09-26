@@ -7,8 +7,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, is_structural_kind};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
+use super::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING;
 use super::decode_identity_topology_event_body;
 use super::event_body_codec::validate_replicated_identity_topology_seq;
 use super::ledger_fold::{IdentityTopologyAction, IdentityTopologyEvent};
@@ -17,8 +19,12 @@ use super::op_vocabulary::IdentityTopologyOp;
 use super::proposal_resolution::{assert_amendment_in_scope, decode_identity_op_amendment};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::IdentityTopologyRejection;
-use super::{IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, IDENTITY_TOPOLOGY_SEQ_KEY};
 use crate::error::SyncError;
+
+/// The engine-stamped monotonic event sequence — the family's causality
+/// clock. Key: `()` (singleton); value: big-endian `u64`.
+pub(crate) const IDENTITY_TOPOLOGY_SEQ: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::IDENTITY_TOPOLOGY_SEQ);
 
 impl Vault {
     /// Transaction-composable [`Vault::identity_topology_event`].
@@ -241,16 +247,9 @@ impl Vault {
     /// rebuild can interleave them with ledger rulings in the order they were
     /// actually written, rather than by caller-supplied wall time.
     pub(crate) fn read_identity_topology_seq_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<u64> {
-        match self.store.vault_meta.get(rtxn, IDENTITY_TOPOLOGY_SEQ_KEY)? {
-            None => Ok(0),
-            Some(raw) => {
-                let arr: [u8; 8] = raw
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("identity topology seq"))?;
-                Ok(u64::from_be_bytes(arr))
-            }
-        }
+        Ok(IDENTITY_TOPOLOGY_SEQ
+            .get(&self.store, rtxn, &())?
+            .unwrap_or(0))
     }
 
     /// Allocates the next engine-stamped causality sequence, inside the
@@ -268,9 +267,7 @@ impl Vault {
                 "identity topology event seq is in the reserved terminal range",
             )));
         }
-        self.store
-            .vault_meta
-            .put(wtxn, IDENTITY_TOPOLOGY_SEQ_KEY, &next.to_be_bytes())?;
+        IDENTITY_TOPOLOGY_SEQ.put(&self.store, wtxn, &(), &next)?;
         Ok(next)
     }
 
@@ -289,11 +286,7 @@ impl Vault {
         incoming_seq: u64,
     ) -> Result<()> {
         if incoming_seq > self.read_identity_topology_seq_in_txn(&*wtxn)? {
-            self.store.vault_meta.put(
-                wtxn,
-                IDENTITY_TOPOLOGY_SEQ_KEY,
-                &incoming_seq.to_be_bytes(),
-            )?;
+            IDENTITY_TOPOLOGY_SEQ.put(&self.store, wtxn, &(), &incoming_seq)?;
         }
         Ok(())
     }

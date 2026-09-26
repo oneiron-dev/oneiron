@@ -766,7 +766,7 @@ fn public_writes_of_both_cost_predicates_are_reserved() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(Value::from("forged"));
         body.source = Some(ClaimSource::Observed);
         let error = vault

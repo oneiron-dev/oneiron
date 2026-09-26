@@ -16,20 +16,11 @@ pub(super) const TASK_REALIZE_ATTEMPT_KIND: &str = "tasks.realize";
 /// Shared task-follow-up idempotency namespace. ONE-1699 owns the
 /// `consult_expired` stage; ONE-1708's human follow-up stages key the same way,
 /// so one task never double-notifies across follow-up families.
-pub(super) const TASK_FOLLOW_UP_KEY_PREFIX: &[u8] = b"tasks.followup.v1\0";
 pub(super) const TASK_FOLLOW_UP_NAMESPACE: &str = "tasks.followup.v1";
 /// The ONE-1699 follow-up stage.
 pub const TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED: &str = "consult_expired";
-/// Display-only peer handles, keyed by actor entity. Storage of the TASK
-/// assignee stays actor-addressed; this table is read at projection time only.
-pub(super) const PEER_HANDLE_KEY_PREFIX: &[u8] = b"tasks.peer.handle.v1\0";
 /// Page size for the bounded TASK walk in [`Memory::settle_due_consults`](crate::memory::Memory::settle_due_consults).
 pub(super) const CONSULT_SETTLE_PAGE: usize = 256;
-/// Node-local by design: a create-rate window is a property of THIS machine's
-/// admission history, not of the task, so it stays in `vault_meta` and does
-/// not replicate. The create-time OWNER, which does, is a replicated authority
-/// fact (`task_authority`) and has no prefix here.
-pub(super) const TASK_CREATE_RATE_KEY_PREFIX: &[u8] = b"tasks.create.rate.v1\0";
 pub(super) const TASK_CREATE_PROPOSAL_PREDICATE: &str = "tasks.create";
 /// The stored predicate of a cancel proposal claim. It is a storage string, not
 /// the verb's name: the verb is `cancel`, and renaming it moved no stored row.

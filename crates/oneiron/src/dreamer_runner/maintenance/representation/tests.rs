@@ -143,7 +143,8 @@ fn seed_source(
 }
 fn install_policy(vault: &Vault, actor: EntityId, allow_send: bool) {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice()).unwrap();
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .unwrap();
     let Value::Map(ref mut entries) = manifest else {
         panic!("default manifest map");
     };
@@ -516,4 +517,36 @@ fn generic_inbox_approval_cannot_arm_representation_delivery() {
         Err(crate::Error::InvalidClaimBody(_))
     ));
     assert!(f.vault.connector_send_tasks().unwrap().is_empty());
+}
+#[test]
+fn representation_context_read_keeps_its_receipt() {
+    let f = Fixture::new(true);
+    let request = f.request(RepresentationKind::Introduction);
+    let context = f
+        .vault
+        .representation_context(&request)
+        .expect("scoped source context");
+    // The context carries the Dreamer actor's own receipt for the sources it
+    // read: the same ceiling a direct scoped read by that actor reports.
+    let dreamer = crate::claim::ScopedReadActorKey::with_actor_class(
+        f.vault.dreamer_authority().unwrap().entity_ref().to_hex(),
+        "agent",
+    )
+    .unwrap();
+    assert_eq!(
+        context.receipt,
+        f.vault.scoped_read(dreamer).read_receipt(None, 0).unwrap()
+    );
+    assert_eq!(context.receipt.suppressed_count, 0);
+    // A source outside that ceiling never yields a context with a quieter receipt.
+    seed_source(
+        &f.vault,
+        id(0x65),
+        id(0x51),
+        "Outside the actor's worlds.",
+        Some(id(0x71)),
+    );
+    let mut hidden = request;
+    hidden.evidence[0].claim = id(0x65);
+    assert!(f.vault.representation_context(&hidden).is_err());
 }

@@ -109,7 +109,8 @@ fn claim(vault: &Vault, byte: u8, subject: EntityId) -> EntityId {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     vault
         .put_claim(&claim_id, &body, range(1_780_000_000), 1_780_000_000)
         .expect("seed CLAIM through the public door");
@@ -1446,7 +1447,7 @@ fn scoped_read_clamps_before_ranking() {
 
 /// Pull uses the CANONICAL clamp rather than reimplementing scope membership:
 /// a CLAIM-payload note is present in the pull exactly when
-/// `Vault::scoped_read(..).get(..)` — the landed CLAIM-specific door — admits
+/// `Vault::scoped_read(..).read(..)` — the landed CLAIM-specific door — admits
 /// the same id for the same actor key. A non-CLAIM NOTE ref passes that door
 /// today, and this test records that rather than fabricating a NOTE-specific
 /// denial.
@@ -1478,8 +1479,9 @@ fn always_on_remains_scoped_through_the_canonical_clamp() {
 
     let clamp_admits_claim = vault
         .scoped_read(reader_key_for(&vault))
-        .get(&claim_id)
+        .read(&[oneiron::claim::PointRead::id(claim_id)], None)
         .expect("canonical clamp")
+        .single()
         .is_some();
 
     let pulled = vault

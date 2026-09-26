@@ -513,10 +513,10 @@ fn collect_evidence(
         .hits
         .iter()
         .filter_map(|hit| {
-            retrieved
-                .revisions
-                .get(&hit.id)
-                .map(|revision| (hit.id, oneiron::memory::ReadMode::Pinned(*revision)))
+            retrieved.revisions.get(&hit.id).map(|revision| {
+                oneiron::claim::PointRead::id(hit.id)
+                    .at(oneiron::memory::ReadMode::Pinned(*revision))
+            })
         })
         .collect();
     let requested = retrieved
@@ -524,14 +524,22 @@ fn collect_evidence(
         .last()
         .map(|receipt| receipt.applied.as_filter());
     let projected = scoped_read
-        .get_entities_parts_with_modes_with_receipt(&refs, requested.as_ref())
+        .read(&refs, requested.as_ref())
         .map_err(|_| ApiError::internal_server_error("memory reason projection failed"))?;
     retrieved.narrowing.push(projected.receipt);
     let mut evidence = Vec::with_capacity(refs.len());
-    for ((id, mode), parts) in refs.into_iter().zip(projected.value) {
-        let Some((kind, learned_at, body)) = parts else {
+    for (read, row) in refs.into_iter().zip(projected.value) {
+        let Some(oneiron::claim::ReadRow {
+            id,
+            entity_type: kind,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = row
+        else {
             continue;
         };
+        let mode = read.mode;
         let Value::Object(fields) =
             crate::projection::project_entity_parts(&id, kind, learned_at, &body, View::Full)
         else {

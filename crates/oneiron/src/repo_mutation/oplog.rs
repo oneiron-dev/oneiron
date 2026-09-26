@@ -7,6 +7,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitWire, lock_repository};
+use crate::side_table::{self, Named, Raw, SideTable};
 
 use super::conflict::finish_repo_conflict_resolution;
 use super::git::{
@@ -14,7 +15,7 @@ use super::git::{
     validate_relative_repo_path,
 };
 use super::queue::{PreparedConflictResolution, PreparedRepoMutation, execute_repo_mutation};
-use super::snapshot::capture_repo_snapshot;
+use super::snapshot::{StoredRepoSnapshot, capture_repo_snapshot};
 use super::support::{hex_bytes, now_millis, sha256_bytes, truncate_failure};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
@@ -25,9 +26,16 @@ use crate::error::CodeError;
 
 pub const REPO_MUTATION_OPLOG_SCHEMA_VERSION: u8 = 1;
 
-const REPO_MUTATION_SEQ_KEY_PREFIX: &[u8] = b"repo_mutation:seq:v1:";
-const REPO_MUTATION_OPLOG_KEY_PREFIX: &[u8] = b"repo_mutation:oplog:v1:";
-const REPO_MUTATION_SNAPSHOT_KEY_PREFIX: &[u8] = b"repo_mutation:snapshot:v1:";
+/// Per-repo mutation sequence counter. Key: string (repo key hash, hex64).
+pub(super) const SEQ: SideTable<String, u64, Raw> = SideTable::new(&side_table::REPO_MUTATION_SEQ);
+/// Durable per-mutation oplog row. Key: string (repo key hash, hex64, ":", seq
+/// as 16 lower-case hex digits).
+pub(super) const OPLOG: SideTable<String, StoredRepoMutationOplogEntry, Named> =
+    SideTable::new(&side_table::REPO_MUTATION_OPLOG);
+/// Content-addressed repo snapshot. Key: string (blake3 or legacy sha256 digest
+/// of the encoded snapshot, hex64).
+pub(super) const SNAPSHOT: SideTable<String, StoredRepoSnapshot, Named> =
+    SideTable::new(&side_table::REPO_MUTATION_SNAPSHOT);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredPreparedConflictResolution {
@@ -135,13 +143,12 @@ impl Vault {
         repo_ref: &RepoRef,
     ) -> Result<Vec<StoredRepoMutationOplogEntry>> {
         let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
-        let prefix = repo_mutation_oplog_prefix(&repo_key_hash);
         let rtxn = self.store.env.read_txn()?;
-        let mut entries = Vec::new();
-        for row in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (_, bytes) = row?;
-            entries.push(decode_stored_oplog_entry(&bytes)?);
-        }
+        let mut entries: Vec<StoredRepoMutationOplogEntry> = OPLOG
+            .scan_from(&self.store, &rtxn, repo_key_hash.as_bytes())?
+            .into_iter()
+            .map(|(_, entry)| entry)
+            .collect();
         entries.sort_by_key(|entry| entry.seq);
         Ok(entries)
     }
@@ -420,19 +427,6 @@ pub(super) fn public_oplog_entry(
     })
 }
 
-pub(super) fn encode_oplog_entry(entry: &StoredRepoMutationOplogEntry) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(entry)
-        .map_err(|_| Error::InvariantViolation("repo mutation oplog encode failed"))
-}
-
-pub(super) fn decode_stored_oplog_entry(bytes: &[u8]) -> Result<StoredRepoMutationOplogEntry> {
-    rmp_serde::from_slice(bytes).map_err(|_| {
-        Error::Code(CodeError::InvalidRepoMutationRecord(
-            "repo mutation oplog is not MessagePack",
-        ))
-    })
-}
-
 fn repo_key_hash(repo_key: &str) -> String {
     hex_bytes(&sha256_bytes(repo_key.as_bytes()))
 }
@@ -448,28 +442,12 @@ pub(super) fn repo_mutation_repo_key(repo_ref: &RepoRef) -> String {
     }
 }
 
-pub(super) fn repo_mutation_seq_key(repo_key_hash: &str) -> Vec<u8> {
-    prefixed_key(REPO_MUTATION_SEQ_KEY_PREFIX, repo_key_hash)
+/// The [`SNAPSHOT`] key for one content-addressed snapshot.
+pub(super) fn repo_mutation_snapshot_key(fork_hash: RepoForkHash) -> String {
+    hex_bytes(&fork_hash)
 }
 
-pub(super) fn repo_mutation_snapshot_key(fork_hash: RepoForkHash) -> Vec<u8> {
-    prefixed_key(REPO_MUTATION_SNAPSHOT_KEY_PREFIX, &hex_bytes(&fork_hash))
-}
-
-fn repo_mutation_oplog_prefix(repo_key_hash: &str) -> Vec<u8> {
-    prefixed_key(REPO_MUTATION_OPLOG_KEY_PREFIX, repo_key_hash)
-}
-
-pub(super) fn repo_mutation_oplog_key(repo_key_hash: &str, seq: u64) -> Vec<u8> {
-    let mut key = repo_mutation_oplog_prefix(repo_key_hash);
-    key.push(b':');
-    key.extend_from_slice(format!("{seq:016x}").as_bytes());
-    key
-}
-
-fn prefixed_key(prefix: &[u8], suffix: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + suffix.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(suffix.as_bytes());
-    key
+/// The [`OPLOG`] key for one repo's mutation at `seq`.
+pub(super) fn repo_mutation_oplog_key(repo_key_hash: &str, seq: u64) -> String {
+    format!("{repo_key_hash}:{seq:016x}")
 }

@@ -120,7 +120,7 @@ fn delegated_grant_body_round_trips_and_carries_no_token_bytes() -> Result<()> {
 
     // Claim family is untouched: a delegated row emits the same eleven
     // predicates, so downstream consumers never branch on the shape.
-    let claims = identity.claim_bodies(entity(0xD2));
+    let claims = identity.claim_bodies(entity(0xD2))?;
     assert_eq!(claims.len(), CHANNEL_IDENTITY_CLAIM_PREDICATES.len());
     for claim in &claims {
         validate_channel_identity_claim_structure(claim)?;
@@ -298,7 +298,7 @@ fn claim_binding_scope_accepts_only_current_spellings() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     for scope in ["actor", "vault"] {
         claim.value = Value::from(scope);
         validate_channel_identity_claim_structure(&claim)?;

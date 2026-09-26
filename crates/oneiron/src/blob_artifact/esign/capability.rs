@@ -1,12 +1,18 @@
 //! Session-less, high-entropy capabilities. Only SHA-256 digests persist here.
 use super::{ledger::state_in, model::*, principals::verify_owner};
 use crate::consent::AuthenticatedOwner;
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-const TOKENS: &[u8] = b"esign.capability.v1/";
-const RECIPIENT: &[u8] = b"esign.recipient_capability.v1/";
+
+/// Signing capability row. Key: bytes32 (digest).
+const TOKENS: SideTable<[u8; 32], CapabilityBinding, LegacyJson> =
+    SideTable::new(&side_table::ESIGN_CAPABILITY_TOKEN);
+/// Recipient live capability index. Key: id16 (document) + string (recipient id).
+const RECIPIENT: SideTable<(EntityId, String), [u8; 32], Raw> =
+    SideTable::new(&side_table::ESIGN_RECIPIENT_CAPABILITY_INDEX);
 
 /// Intentionally not serializable and always redacted in Debug. The delivery
 /// adapter may expose the raw value once, then retain it in its secret custody.
@@ -47,14 +53,9 @@ pub(super) fn binding(
     txn: &heed::RoTxn<'_>,
     token: &EsignCapability,
 ) -> Result<CapabilityBinding> {
-    let key = [TOKENS, token.digest().as_slice()].concat();
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &key)?
+    let cap = TOKENS
+        .get(&vault.store, txn, &token.digest())?
         .ok_or_else(|| invalid("invalid capability"))?;
-    let cap: CapabilityBinding =
-        serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
     // Event history and sealed artifacts survive erasure, but bearer authority does not.
     let document = EntityId::from_hex(&cap.document)?;
     if vault.get_blob_artifact_in_txn(txn, &document)?.is_none() {
@@ -75,19 +76,12 @@ fn recipient_binding(
     document: EntityId,
     recipient: &str,
 ) -> Result<Option<([u8; 32], CapabilityBinding)>> {
-    let key = [RECIPIENT, document.as_bytes(), recipient.as_bytes()].concat();
-    let Some(digest) = vault.store.vault_meta.get(txn, &key)? else {
+    let Some(digest) = RECIPIENT.get(&vault.store, txn, &(document, recipient.to_owned()))? else {
         return Ok(None);
     };
-    let digest =
-        <[u8; 32]>::try_from(digest.as_ref()).map_err(|_| invalid("recipient capability index"))?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(txn, &[TOKENS, digest.as_slice()].concat())?
+    let cap = TOKENS
+        .get(&vault.store, txn, &digest)?
         .ok_or_else(|| invalid("missing recipient capability"))?;
-    let cap: CapabilityBinding =
-        serde_json::from_slice(&raw).map_err(|_| invalid("capability record"))?;
     if cap.document != document.to_hex() || cap.recipient != recipient {
         return Err(invalid("recipient capability binding"));
     }
@@ -130,8 +124,7 @@ impl Vault {
             let now = crate::unix_seconds_now();
             let mut issued = Vec::new();
             for recipient in &state.document.recipients {
-                let recipient_key =
-                    [RECIPIENT, document.as_bytes(), recipient.id.as_bytes()].concat();
+                let recipient_key = (document, recipient.id.clone());
                 if let Some((digest, mut prior)) =
                     recipient_binding(self, txn, document, &recipient.id)?
                 {
@@ -139,11 +132,7 @@ impl Vault {
                         continue;
                     }
                     prior.revoked_at.get_or_insert(now);
-                    self.store.vault_meta.put(
-                        txn,
-                        &[TOKENS, digest.as_slice()].concat(),
-                        &serde_json::to_vec(&prior).map_err(|_| invalid("capability encoding"))?,
-                    )?;
+                    TOKENS.put(&self.store, txn, &digest, &prior)?;
                 }
                 let mut entropy = [0u8; 32];
                 OsRng
@@ -152,8 +141,7 @@ impl Vault {
                 let raw = crate::entity_id::bytes_to_hex_lower(&entropy);
                 let token = EsignCapability(raw);
                 let digest = token.digest();
-                let key = [TOKENS, digest.as_slice()].concat();
-                if self.store.vault_meta.get(txn, &key)?.is_some() {
+                if TOKENS.contains(&self.store, txn, &digest)? {
                     return Err(invalid("capability collision"));
                 }
                 let row = CapabilityBinding {
@@ -162,12 +150,8 @@ impl Vault {
                     hard_expires_at: state.document.expires_at,
                     revoked_at: None,
                 };
-                self.store.vault_meta.put(
-                    txn,
-                    &key,
-                    &serde_json::to_vec(&row).map_err(|_| invalid("capability encoding"))?,
-                )?;
-                self.store.vault_meta.put(txn, &recipient_key, &digest)?;
+                TOKENS.put(&self.store, txn, &digest, &row)?;
+                RECIPIENT.put(&self.store, txn, &recipient_key, &digest)?;
                 issued.push((recipient.id.clone(), token));
             }
             Ok(issued)
@@ -182,11 +166,7 @@ impl Vault {
             verify_owner(self, txn, owner)?;
             let mut row = binding(self, txn, token)?;
             row.revoked_at = Some(crate::unix_seconds_now());
-            self.store.vault_meta.put(
-                txn,
-                &[TOKENS, token.digest().as_slice()].concat(),
-                &serde_json::to_vec(&row).map_err(|_| invalid("capability encoding"))?,
-            )?;
+            TOKENS.put(&self.store, txn, &token.digest(), &row)?;
             Ok(())
         })
     }

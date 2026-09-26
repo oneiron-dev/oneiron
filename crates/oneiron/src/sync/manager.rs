@@ -54,6 +54,9 @@ use super::window::{
     LoadedWindow, apply_pending_window_updates, forward_rematerialize, load_window_from_state,
     replay_pending_mirrors, replay_pending_tombstones, reverse_rematerialize,
 };
+use super::window_rows::REMAT_WINDOW_MARKER;
+#[cfg(test)]
+use super::window_rows::{WINDOW_UPDATE, WindowUpdateKey};
 use crate::Vault;
 use crate::error::{Error, Result, SyncError};
 
@@ -233,8 +236,7 @@ impl WindowManager {
             Err(err) => return Err(err),
         };
 
-        let rm_key = format!("rm:w:{key}");
-        let rm_flagged = self.sync_state_marker_present(&rm_key)?;
+        let rm_flagged = self.sync_state_marker_present(key)?;
         if rm_flagged {
             tracing::info!(
                 window = %key,
@@ -264,7 +266,7 @@ impl WindowManager {
         // Step 5 succeeded — consume the rm: flag. Cleared only here so a
         // failed open leaves it set for the next attempt (fail-closed).
         if rm_flagged {
-            self.clear_sync_state_marker(&rm_key)?;
+            self.clear_sync_state_marker(key)?;
         }
 
         // Step 6 — observers attach LAST, on the recovered doc.
@@ -594,16 +596,16 @@ impl WindowManager {
         retained
     }
 
-    /// Returns whether a 1-byte marker key is present in `sync_state`.
-    fn sync_state_marker_present(&self, key: &str) -> Result<bool> {
+    /// Returns whether the window-scoped `rm:w:{key}` marker is present.
+    fn sync_state_marker_present(&self, key: &WindowKey) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        Ok(self.vault.store.sync_state.get(&rtxn, key)?.is_some())
+        REMAT_WINDOW_MARKER.contains(&self.vault.store, &rtxn, &key.as_str().to_owned())
     }
 
-    /// Deletes a marker key from `sync_state`.
-    fn clear_sync_state_marker(&self, key: &str) -> Result<()> {
+    /// Deletes the window-scoped `rm:w:{key}` marker.
+    fn clear_sync_state_marker(&self, key: &WindowKey) -> Result<()> {
         self.vault.with_write_txn(|wtxn| {
-            self.vault.store.sync_state.delete(wtxn, key)?;
+            REMAT_WINDOW_MARKER.delete(&self.vault.store, wtxn, &key.as_str().to_owned())?;
             Ok(())
         })
     }
@@ -742,13 +744,17 @@ mod slim_drop_tests {
         // Fail the LAST persist after another window has already persisted.
         // Registry iteration is stable while no entries are added/removed.
         let fail_key = manager.lock_registry().keys().last().unwrap().clone();
-        let corrupt_key = format!("u:w:{fail_key}:ffffffff");
+        let corrupt_key = WindowUpdateKey {
+            window: fail_key.as_str().to_owned(),
+            seq: 0xffff_ffff,
+        };
         manager.vault.with_write_txn(|txn| {
-            manager
-                .vault
-                .store
-                .sync_state
-                .put(txn, &corrupt_key, b"not a loro update")?;
+            WINDOW_UPDATE.put(
+                &manager.vault.store,
+                txn,
+                &corrupt_key,
+                &b"not a loro update".to_vec(),
+            )?;
             Ok(())
         })?;
         let revision = manager.vault.store.env.info().last_txn_id;
@@ -770,7 +776,7 @@ mod slim_drop_tests {
             "Observer A and outbound sink survive failure"
         );
         manager.vault.with_write_txn(|txn| {
-            manager.vault.store.sync_state.delete(txn, &corrupt_key)?;
+            WINDOW_UPDATE.delete(&manager.vault.store, txn, &corrupt_key)?;
             Ok(())
         })?;
         assert_eq!(manager.drop_rebuildable_windows()?.sync_windows, 2);

@@ -46,18 +46,17 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
 ) -> Result<AuthorityFold> {
     let mut first_seen_at_secs = BTreeMap::new();
     let mut indeterminate = BTreeSet::new();
-    let persisted_floor = store
-        .sync_state
-        .get(txn, authority_first_seen_clock_sync_key())?
-        .and_then(|raw| decode_authority_first_seen_secs(&raw))
+    let persisted_floor = AUTHORITY_FIRST_SEEN
+        .get_lenient(store, txn, &authority_first_seen_clock_key())?
         .unwrap_or(0);
     // Read ONCE, before the row scan: the synthesized-first-seen rule below
     // must be the same for every entry in one fold, and this also decides
     // whether an absent sidecar is a pre-migration gap or genuine corruption.
-    let backfilled = store
-        .sync_state
-        .get(txn, authority_first_seen_backfill_sync_key())?
-        .is_some();
+    let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
+        store,
+        txn,
+        &authority_first_seen_backfill_key(),
+    )?;
     let now_secs =
         authority_observation_secs(store, persisted_floor, store.clock.now_recorded_at());
     let entries = authority_log_rows_in_txn(store, txn)?
@@ -157,15 +156,15 @@ fn readonly_first_seen_for(
     now_secs: u64,
 ) -> Result<(u64, bool)> {
     let corrupt = || Error::CorruptedIndex(AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT);
-    match store
-        .sync_state
-        .get(txn, authority_first_seen_sync_key(hash).as_str())?
-    {
-        Some(raw) => decode_authority_first_seen_secs(&raw)
-            .ok_or_else(corrupt)
-            .map(|secs| (secs, true)),
-        None if backfilled => Err(corrupt()),
-        None => Ok((now_secs, false)),
+    // A decode failure (present but undecodable) and an absent row both surface as `Err`/`Ok`
+    // here without distinguishing the LMDB-level case from the shape case, unlike the
+    // pre-migration hand decode; in practice the only way to reach a non-8-byte row is exactly
+    // the corruption this maps to.
+    match AUTHORITY_FIRST_SEEN.get(store, txn, &authority_first_seen_sidecar_key(hash)) {
+        Ok(Some(secs)) => Ok((secs, true)),
+        Ok(None) if backfilled => Err(corrupt()),
+        Ok(None) => Ok((now_secs, false)),
+        Err(_) => Err(corrupt()),
     }
 }
 

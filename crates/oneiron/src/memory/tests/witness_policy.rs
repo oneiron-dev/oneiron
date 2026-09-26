@@ -677,10 +677,12 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
     let turn_before = facade
         .get_entity(&turn_id.to_hex())
         .expect("read turn")
+        .value
         .expect("turn");
     let bait_before = facade
         .get_entity(&bait_message_id.to_hex())
         .expect("read bait child")
+        .value
         .expect("bait child");
 
     let err = facade
@@ -701,6 +703,7 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
     let turn_after = facade
         .get_entity(&turn_id.to_hex())
         .expect("read turn after")
+        .value
         .expect("turn survives");
     let body = turn_after.body.as_ref().expect("decoded turn body");
     assert!(body.get("speaker").is_none(), "no speaker was synthesized");
@@ -709,6 +712,7 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
     let bait_after = facade
         .get_entity(&bait_message_id.to_hex())
         .expect("read bait child after")
+        .value
         .expect("bait child survives");
     assert_eq!(bait_after.kind, bait_before.kind);
     assert_eq!(bait_after.body, bait_before.body);

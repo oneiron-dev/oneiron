@@ -212,7 +212,7 @@ fn fanout_pathologies_park_with_count_fan_out_board_rows_and_evidence() {
     let peer = input.assignees[0];
     // The reverse leg is a real peer actor, not the first-party actor preset.
     // Give that peer an explicit Auto ceiling before testing cycle admission.
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest().unwrap();
     let Value::Map(mut manifest) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         panic!("manifest");
     };

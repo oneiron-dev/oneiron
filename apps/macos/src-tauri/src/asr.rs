@@ -186,7 +186,7 @@ pub fn land_transcript(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     // A machine reading of audio is imported evidence, never a first-person
     // statement — the lattice bottom is the honest tier.
     body.source = Some(ClaimSource::Imported);

@@ -496,7 +496,8 @@ fn put_claim(vault: &Vault, seed: u8, predicate: &str, subject: EntityId, value:
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&entity(seed), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("claim write");

@@ -111,7 +111,7 @@ pub(super) fn validate_facet_overwrite(
                 .and_then(|bytes| bytes.try_into().ok())
                 .and_then(|bytes| EntityId::from_bytes(bytes).ok())
                 .ok_or(Error::InvalidClaimBody("substrate PERSON id"))?;
-            if crate::claim::substrate_facet_id(person) != id {
+            if crate::claim::substrate_facet_id(person)? != id {
                 return Err(Error::InvalidClaimBody("substrate id must bind PERSON"));
             }
         }

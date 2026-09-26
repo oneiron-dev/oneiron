@@ -258,7 +258,7 @@ pub(super) fn replace_member_state(
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(evidence_value(&[change.evidence_ref]));
         vault.put_claim_in_txn(wtxn, &new_id, &body, at(change.now), change.now)?;
         vault.supersede_claim_in_txn(wtxn, &new_id, change.membership_claim_ref, change.now)

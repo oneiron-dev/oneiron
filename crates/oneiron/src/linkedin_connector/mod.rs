@@ -90,8 +90,6 @@ pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;
 
 const LINKEDIN_MCP_GET_INBOX_TOOL: &str = "get_inbox";
 const LINKEDIN_MCP_GET_CONVERSATION_TOOL: &str = "get_conversation";
-const LINKEDIN_INBOX_SYNC_SEEN_PREFIX: &str = "linkedin:inbox_sync:seen:v1:";
-const LINKEDIN_INBOX_SYNC_PROVENANCE_PREFIX: &str = "linkedin:inbox_sync:provenance:v1:";
 const LINKEDIN_INBOX_SYNC_DEDUPE_PREFIX: &str = "linkedin:inbox_sync:";
 const LINKEDIN_INBOX_SYNC_SOURCE: &str = "imported";
 const LINKEDIN_INBOX_SYNC_TIER: &str = "external";

@@ -11,11 +11,12 @@ use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::TxnBatchBuilder;
+use crate::batch::BatchBuilder;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use crate::session_overlay::PromotePlan;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionRecord, Store};
 
 mod floor_writes_seal {
@@ -72,8 +73,17 @@ impl<'store> FloorWrites<'store> {
     }
 }
 
-const OFF_RECORD_PROMOTE_KEY_PREFIX: &[u8] = b"offrecord_promote:v0:";
 const OFF_RECORD_PROMOTE_RECEIPT_VERSION: u8 = 0;
+
+/// The durable retry receipt for one promoted turn: keyed by turn id.
+const PROMOTE_RECEIPTS: SideTable<EntityId, OffRecordPromoteReceipt, Named> =
+    SideTable::new(&side_table::OFF_RECORD_PROMOTE_RECEIPT);
+
+/// One `pm:{window}:{turn}` pickup marker: a one-byte presence flag, keyed
+/// by `{window}:{turn_hex}` after the declared `pm:` prefix.
+#[cfg(feature = "sync")]
+const PROMOTE_PICKUP_MARKERS: SideTable<String, [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::OFF_RECORD_PROMOTE_PICKUP_MARKER);
 
 /// `EntityId` carries no serde impls, so the receipt's closure travels as the
 /// raw 16-byte ids the entity tables already key on.
@@ -134,22 +144,6 @@ pub struct OffRecordPromoteReceipt {
     pub turn: [u8; 16],
     pub promoted_at: u64,
     pub outcome: PromoteOutcome,
-}
-
-pub(super) fn off_record_promote_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OFF_RECORD_PROMOTE_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(OFF_RECORD_PROMOTE_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn encode_off_record_promote(receipt: &OffRecordPromoteReceipt) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(receipt)
-        .map_err(|_| Error::InvariantViolation("off-record promote receipt encode failed"))
-}
-
-fn decode_off_record_promote(bytes: &[u8]) -> Result<OffRecordPromoteReceipt> {
-    rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("off-record promote receipt"))
 }
 
 /// The promote transaction's session-membership exemption (ARCH-0052 D2, K4).
@@ -219,9 +213,7 @@ impl FloorWrites<'_> {
             record.mode.write_target().require_recording(session_ref)?;
         }
         let turn = plan.turn();
-        let receipt_key = off_record_promote_key(&turn);
-        if let Some(stored) = self.store.vault_meta.get(wtxn, &receipt_key)? {
-            let receipt = decode_off_record_promote(&stored)?;
+        if let Some(receipt) = PROMOTE_RECEIPTS.get(self.store, wtxn, &turn)? {
             tracing::debug!(
                 turn = %turn.to_hex(),
                 replayed = receipt.outcome.replayed.len(),
@@ -234,7 +226,7 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
-        TxnBatchBuilder::promotion_replay(vault, plan.ops.clone(), &grant)
+        BatchBuilder::promotion_replay(vault, plan.ops.clone(), &grant)
             .apply_recording_gate_decisions(wtxn)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
@@ -258,9 +250,7 @@ impl FloorWrites<'_> {
             promoted_at,
             outcome: outcome.clone(),
         };
-        self.store
-            .vault_meta
-            .put(wtxn, &receipt_key, &encode_off_record_promote(&receipt)?)?;
+        PROMOTE_RECEIPTS.put(self.store, wtxn, &turn, &receipt)?;
 
         // Call-site gated, matching `refresh_promoted_turn_in_live_window`:
         // the markers exist only on a sync build, so the non-sync build has
@@ -292,11 +282,11 @@ impl FloorWrites<'_> {
             .iter()
             .map(|learned_at| {
                 let window = crate::sync::WindowKey::from_timestamp(*learned_at);
-                format!("pm:{window}:{}", turn.to_hex())
+                format!("{window}:{}", turn.to_hex())
             })
             .collect();
         for marker_key in &marker_keys {
-            self.store.sync_state.put(wtxn, marker_key, &[1_u8])?;
+            PROMOTE_PICKUP_MARKERS.put(self.store, wtxn, marker_key, &[1_u8])?;
         }
         tracing::debug!(
             turn = %turn.to_hex(),
@@ -337,13 +327,6 @@ impl Vault {
         turn_id: &EntityId,
     ) -> Result<Option<OffRecordPromoteReceipt>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &off_record_promote_key(turn_id))?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(decode_off_record_promote(&bytes)?))
+        PROMOTE_RECEIPTS.get(&self.store, &rtxn, turn_id)
     }
 }

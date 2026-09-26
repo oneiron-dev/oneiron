@@ -10,20 +10,186 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::git_wire::{GIT_WIRE_KEEP_REF_PREFIX, GitOid, GitRefName};
 use crate::origin::lfs::LfsOid;
+use crate::side_table::{self, Named, Raw, SideKey, SideTable};
 use crate::temporal::TimeRange;
 
 use super::publication_types::{
-    ORIGIN_CAS_INTENT_KEY_PREFIX, ORIGIN_KEEP_OWNER_KEY_PREFIX, ORIGIN_KEY_SEPARATOR,
     ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN, ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,
     ORIGIN_PUBLICATION_ID_DOMAIN, ORIGIN_PUBLICATION_INTENT_PREDICATE,
     ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_PREDICATE,
-    ORIGIN_PUBLICATION_RECORD_KEY_PREFIX, ORIGIN_PUBLICATION_SCHEMA_VERSION,
-    ORIGIN_PUBLICATION_VALUE_KEYS, ORIGIN_VISIBLE_REF_KEY_PREFIX, OriginKeepRefKind,
+    ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS, OriginKeepRefKind,
     OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
-// Keys and rows
+// Keys, tables and rows
 // ---------------------------------------------------------------------------
+
+/// Durable journal row for one origin ref-publication attempt. Key: publication id.
+pub(super) const PUBLICATIONS: SideTable<EntityId, OriginPublicationRow, Named> =
+    SideTable::new(&side_table::ORIGIN_PUBLICATION_RECORD);
+
+/// One in-flight owner of `(repo, ref, expected, new)`, independent of provenance (value =
+/// owning publication id). Key: repo id "\x00" ref_name "\x00" expected_old_oid "\x00" new_oid.
+pub(super) const CAS_INTENT: SideTable<CasIntentKey, EntityId, Raw> =
+    SideTable::new(&side_table::ORIGIN_CAS_INTENT);
+
+/// The publication currently advertised for one repository's ref name (value = publication id).
+/// Key: repo id "\x00" ref_name.
+pub(super) const VISIBLE_REF: SideTable<VisibleRefKey, EntityId, Raw> =
+    SideTable::new(&side_table::ORIGIN_VISIBLE_REF);
+
+/// One logical owner's reservation of a physical git keep-ref (value = u64be learned_at)... the
+/// value is actually u64 LE, unchanged from the pre-side-table row. Key: repo id "\x00" oid
+/// "\x00" kind "\x00" owner_key.
+pub(super) const KEEP_OWNER: SideTable<KeepOwnerKey, [u8; 8], Raw> =
+    SideTable::new(&side_table::ORIGIN_KEEP_OWNER);
+
+/// `origin:cas_intent:v1:` key shape: repo id, then three NUL-framed text fields. Neither a ref
+/// name nor a lower-hex object id can carry a NUL, so every field stays unambiguously framed.
+pub(super) struct CasIntentKey {
+    pub(super) repo_id: EntityId,
+    ref_name: String,
+    expected_old_oid: String,
+    new_oid: String,
+}
+
+impl CasIntentKey {
+    pub(super) fn new(record: &OriginPublicationRecord) -> Self {
+        Self {
+            repo_id: record.repo_id,
+            ref_name: record.ref_name.as_str().to_owned(),
+            expected_old_oid: record
+                .expected_old_oid
+                .as_ref()
+                .map_or_else(String::new, |oid| oid.as_str().to_owned()),
+            new_oid: record.new_oid.as_str().to_owned(),
+        }
+    }
+}
+
+impl PartialEq for CasIntentKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.repo_id == other.repo_id
+            && self.ref_name == other.ref_name
+            && self.expected_old_oid == other.expected_old_oid
+            && self.new_oid == other.new_oid
+    }
+}
+
+impl SideKey for CasIntentKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.repo_id.encode_into(out);
+        for field in [&self.ref_name, &self.expected_old_oid, &self.new_oid] {
+            out.push(0);
+            out.extend_from_slice(field.as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
+        let rest = rest.strip_prefix(&[0][..])?;
+        let text = std::str::from_utf8(rest).ok()?;
+        let mut parts = text.splitn(3, '\0');
+        let ref_name = parts.next()?.to_owned();
+        let expected_old_oid = parts.next()?.to_owned();
+        let new_oid = parts.next()?.to_owned();
+        Some(Self {
+            repo_id: EntityId::decode_key(repo_bytes)?,
+            ref_name,
+            expected_old_oid,
+            new_oid,
+        })
+    }
+}
+
+/// `origin:visible_ref:v1:` key shape: repo id, then a NUL-framed ref name.
+pub(super) struct VisibleRefKey {
+    repo_id: EntityId,
+    ref_name: String,
+}
+
+impl SideKey for VisibleRefKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.repo_id.encode_into(out);
+        out.push(0);
+        out.extend_from_slice(self.ref_name.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
+        let rest = rest.strip_prefix(&[0][..])?;
+        Some(Self {
+            repo_id: EntityId::decode_key(repo_bytes)?,
+            ref_name: String::from_utf8(rest.to_vec()).ok()?,
+        })
+    }
+}
+
+pub(super) fn visible_ref_key(repo_id: &EntityId, ref_name: &GitRefName) -> VisibleRefKey {
+    VisibleRefKey {
+        repo_id: *repo_id,
+        ref_name: ref_name.as_str().to_owned(),
+    }
+}
+
+/// `origin:keep_owner:v1:` key shape: repo id, then three NUL-framed text fields (oid, kind,
+/// owner key).
+pub(super) struct KeepOwnerKey {
+    repo_id: EntityId,
+    pub(super) oid: String,
+    pub(super) kind: String,
+    pub(super) owner_key: String,
+}
+
+impl SideKey for KeepOwnerKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        self.repo_id.encode_into(out);
+        for field in [&self.oid, &self.kind, &self.owner_key] {
+            out.push(0);
+            out.extend_from_slice(field.as_bytes());
+        }
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
+        let rest = rest.strip_prefix(&[0][..])?;
+        let text = std::str::from_utf8(rest).ok()?;
+        let mut parts = text.splitn(3, '\0');
+        let oid = parts.next()?.to_owned();
+        let kind = parts.next()?.to_owned();
+        let owner_key = parts.next()?.to_owned();
+        Some(Self {
+            repo_id: EntityId::decode_key(repo_bytes)?,
+            oid,
+            kind,
+            owner_key,
+        })
+    }
+}
+
+pub(super) fn keep_owner_key(
+    repo_id: &EntityId,
+    oid: &GitOid,
+    kind: OriginKeepRefKind,
+    owner_key: &str,
+) -> KeepOwnerKey {
+    KeepOwnerKey {
+        repo_id: *repo_id,
+        oid: oid.as_str().to_owned(),
+        kind: kind.as_str().to_owned(),
+        owner_key: owner_key.to_owned(),
+    }
+}
+
+/// The bytes after `KEEP_OWNER`'s prefix that name every row for one repo+oid, regardless of
+/// kind or owner key.
+pub(super) fn keep_owner_oid_scan_prefix(repo_id: &EntityId, oid: &GitOid) -> Vec<u8> {
+    let mut out = repo_id.as_bytes().to_vec();
+    out.push(0);
+    out.extend_from_slice(oid.as_str().as_bytes());
+    out.push(0);
+    out
+}
 
 /// The physical keep-ref that pins one object.
 ///
@@ -34,67 +200,10 @@ pub fn origin_keep_ref_name(oid: &GitOid) -> Result<GitRefName> {
     GitRefName::parse_full(format!("{GIT_WIRE_KEEP_REF_PREFIX}object/{}", oid.as_str()))
 }
 
-pub(super) fn publication_key(publication_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ORIGIN_PUBLICATION_RECORD_KEY_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(ORIGIN_PUBLICATION_RECORD_KEY_PREFIX);
-    key.extend_from_slice(publication_id.as_bytes());
-    key
-}
-
-pub(super) fn cas_intent_key(record: &OriginPublicationRecord) -> Vec<u8> {
-    let mut key = ORIGIN_CAS_INTENT_KEY_PREFIX.to_vec();
-    key.extend_from_slice(record.repo_id.as_bytes());
-    for field in [
-        record.ref_name.as_str(),
-        record.expected_old_oid.as_ref().map_or("", GitOid::as_str),
-        record.new_oid.as_str(),
-    ] {
-        key.push(ORIGIN_KEY_SEPARATOR);
-        key.extend_from_slice(field.as_bytes());
-    }
-    key
-}
-
-pub(super) fn visible_ref_prefix(repo_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ORIGIN_VISIBLE_REF_KEY_PREFIX.len() + ENTITY_ID_LEN + 1);
-    key.extend_from_slice(ORIGIN_VISIBLE_REF_KEY_PREFIX);
-    key.extend_from_slice(repo_id.as_bytes());
-    key.push(ORIGIN_KEY_SEPARATOR);
-    key
-}
-
-pub(super) fn visible_ref_key(repo_id: &EntityId, ref_name: &GitRefName) -> Vec<u8> {
-    let mut key = visible_ref_prefix(repo_id);
-    key.extend_from_slice(ref_name.as_str().as_bytes());
-    key
-}
-
-pub(super) fn keep_owner_oid_prefix(repo_id: &EntityId, oid: &GitOid) -> Vec<u8> {
-    let mut key = Vec::with_capacity(ORIGIN_KEEP_OWNER_KEY_PREFIX.len() + ENTITY_ID_LEN + 44);
-    key.extend_from_slice(ORIGIN_KEEP_OWNER_KEY_PREFIX);
-    key.extend_from_slice(repo_id.as_bytes());
-    key.push(ORIGIN_KEY_SEPARATOR);
-    key.extend_from_slice(oid.as_str().as_bytes());
-    key.push(ORIGIN_KEY_SEPARATOR);
-    key
-}
-
-pub(super) fn keep_owner_key(
-    repo_id: &EntityId,
-    oid: &GitOid,
-    kind: OriginKeepRefKind,
-    owner_key: &str,
-) -> Vec<u8> {
-    let mut key = keep_owner_oid_prefix(repo_id, oid);
-    key.extend_from_slice(kind.as_str().as_bytes());
-    key.push(ORIGIN_KEY_SEPARATOR);
-    key.extend_from_slice(owner_key.as_bytes());
-    key
-}
-
-/// The wire shape of a publication journal row.
+/// The wire shape of a publication journal row: the side table stores exactly the bytes
+/// `rmp_serde::to_vec_named` on this struct has always spelled.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct OriginPublicationRow {
+pub(super) struct OriginPublicationRow {
     schema_version: u8,
     publication_id: [u8; ENTITY_ID_LEN],
     repo_id: [u8; ENTITY_ID_LEN],
@@ -114,78 +223,76 @@ struct OriginPublicationRow {
     finished_at: Option<u64>,
 }
 
-pub(super) fn encode_publication_row(record: &OriginPublicationRecord) -> Result<Vec<u8>> {
-    let row = OriginPublicationRow {
-        schema_version: ORIGIN_PUBLICATION_SCHEMA_VERSION,
-        publication_id: *record.publication_id.as_bytes(),
-        repo_id: *record.repo_id.as_bytes(),
-        ref_name: record.ref_name.as_str().to_owned(),
-        expected_old_oid: record
-            .expected_old_oid
-            .as_ref()
-            .map(|oid| oid.as_str().to_owned()),
-        new_oid: record.new_oid.as_str().to_owned(),
-        required_objects: record
-            .required_objects
-            .iter()
-            .map(|oid| oid.as_str().to_owned())
-            .collect(),
-        required_lfs_oids: record
-            .required_lfs_oids
-            .iter()
-            .map(|(oid, size)| (oid.to_hex(), *size))
-            .collect(),
-        provenance_claim_id: *record.provenance_claim_id.as_bytes(),
-        publication_claim_id: record.publication_claim_id.map(|id| *id.as_bytes()),
-        actor_id: *record.actor_id.as_bytes(),
-        status: record.status.as_str().to_owned(),
-        failure: record.failure.clone(),
-        occurred_start: record.occurred.start,
-        occurred_end: record.occurred.end,
-        created_at: record.created_at,
-        finished_at: record.finished_at,
-    };
-    rmp_serde::to_vec_named(&row)
-        .map_err(|_| Error::InvariantViolation("origin publication row does not encode"))
+impl OriginPublicationRow {
+    pub(super) fn from_record(record: &OriginPublicationRecord) -> Self {
+        Self {
+            schema_version: ORIGIN_PUBLICATION_SCHEMA_VERSION,
+            publication_id: *record.publication_id.as_bytes(),
+            repo_id: *record.repo_id.as_bytes(),
+            ref_name: record.ref_name.as_str().to_owned(),
+            expected_old_oid: record
+                .expected_old_oid
+                .as_ref()
+                .map(|oid| oid.as_str().to_owned()),
+            new_oid: record.new_oid.as_str().to_owned(),
+            required_objects: record
+                .required_objects
+                .iter()
+                .map(|oid| oid.as_str().to_owned())
+                .collect(),
+            required_lfs_oids: record
+                .required_lfs_oids
+                .iter()
+                .map(|(oid, size)| (oid.to_hex(), *size))
+                .collect(),
+            provenance_claim_id: *record.provenance_claim_id.as_bytes(),
+            publication_claim_id: record.publication_claim_id.map(|id| *id.as_bytes()),
+            actor_id: *record.actor_id.as_bytes(),
+            status: record.status.as_str().to_owned(),
+            failure: record.failure.clone(),
+            occurred_start: record.occurred.start,
+            occurred_end: record.occurred.end,
+            created_at: record.created_at,
+            finished_at: record.finished_at,
+        }
+    }
+
+    pub(super) fn into_record(self) -> Result<OriginPublicationRecord> {
+        if self.schema_version != ORIGIN_PUBLICATION_SCHEMA_VERSION {
+            return Err(Error::CorruptedIndex("origin publication schema version"));
+        }
+        let mut required_objects = Vec::with_capacity(self.required_objects.len());
+        for oid in self.required_objects {
+            required_objects.push(GitOid::parse_hex(oid)?);
+        }
+        let mut required_lfs_oids = Vec::with_capacity(self.required_lfs_oids.len());
+        for (oid, size) in self.required_lfs_oids {
+            required_lfs_oids.push((LfsOid::parse_hex(&oid)?, size));
+        }
+        Ok(OriginPublicationRecord {
+            publication_id: row_entity_id(self.publication_id)?,
+            repo_id: row_entity_id(self.repo_id)?,
+            ref_name: GitRefName::parse_full(self.ref_name)?,
+            expected_old_oid: self.expected_old_oid.map(GitOid::parse_hex).transpose()?,
+            new_oid: GitOid::parse_hex(self.new_oid)?,
+            required_objects,
+            required_lfs_oids,
+            provenance_claim_id: row_entity_id(self.provenance_claim_id)?,
+            publication_claim_id: self.publication_claim_id.map(row_entity_id).transpose()?,
+            actor_id: row_entity_id(self.actor_id)?,
+            status: OriginPublicationStatus::parse(&self.status)?,
+            failure: self.failure,
+            occurred: TimeRange {
+                start: self.occurred_start,
+                end: self.occurred_end,
+            },
+            created_at: self.created_at,
+            finished_at: self.finished_at,
+        })
+    }
 }
 
-pub(super) fn decode_publication_row(raw: &[u8]) -> Result<OriginPublicationRecord> {
-    let row: OriginPublicationRow =
-        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("origin publication row"))?;
-    if row.schema_version != ORIGIN_PUBLICATION_SCHEMA_VERSION {
-        return Err(Error::CorruptedIndex("origin publication schema version"));
-    }
-    let mut required_objects = Vec::with_capacity(row.required_objects.len());
-    for oid in row.required_objects {
-        required_objects.push(GitOid::parse_hex(oid)?);
-    }
-    let mut required_lfs_oids = Vec::with_capacity(row.required_lfs_oids.len());
-    for (oid, size) in row.required_lfs_oids {
-        required_lfs_oids.push((LfsOid::parse_hex(&oid)?, size));
-    }
-    Ok(OriginPublicationRecord {
-        publication_id: row_entity_id(row.publication_id)?,
-        repo_id: row_entity_id(row.repo_id)?,
-        ref_name: GitRefName::parse_full(row.ref_name)?,
-        expected_old_oid: row.expected_old_oid.map(GitOid::parse_hex).transpose()?,
-        new_oid: GitOid::parse_hex(row.new_oid)?,
-        required_objects,
-        required_lfs_oids,
-        provenance_claim_id: row_entity_id(row.provenance_claim_id)?,
-        publication_claim_id: row.publication_claim_id.map(row_entity_id).transpose()?,
-        actor_id: row_entity_id(row.actor_id)?,
-        status: OriginPublicationStatus::parse(&row.status)?,
-        failure: row.failure,
-        occurred: TimeRange {
-            start: row.occurred_start,
-            end: row.occurred_end,
-        },
-        created_at: row.created_at,
-        finished_at: row.finished_at,
-    })
-}
-
-pub(super) fn row_entity_id(bytes: [u8; ENTITY_ID_LEN]) -> Result<EntityId> {
+fn row_entity_id(bytes: [u8; ENTITY_ID_LEN]) -> Result<EntityId> {
     EntityId::from_bytes(bytes).map_err(|_| Error::CorruptedIndex("origin publication entity id"))
 }
 
@@ -267,7 +374,7 @@ pub(super) fn publication_claim_body(record: &OriginPublicationRecord) -> Result
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
@@ -278,8 +385,7 @@ pub(super) fn publication_claim_body(record: &OriginPublicationRecord) -> Result
 /// Builds the exact source statement required by the generic publication door.
 /// The caller must durably write this claim before requesting publication.
 /// A generic active claim, or a statement about a different target, is not authority.
-#[must_use]
-pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> ClaimBody {
+pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> Result<ClaimBody> {
     let fields = vec![
         ("repo_id", Value::from(request.repo_id.to_hex())),
         ("actor_id", Value::from(request.actor_id.to_hex())),
@@ -331,12 +437,12 @@ pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> Cl
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
     )]));
-    body
+    Ok(body)
 }
 
 fn publication_claim_value(record: &OriginPublicationRecord) -> Value {

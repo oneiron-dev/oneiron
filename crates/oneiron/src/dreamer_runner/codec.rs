@@ -7,15 +7,14 @@ use rmpv::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::error::{Error, Result};
+use crate::side_table::{CodecError, RawValue};
 
 use super::constants::{
     DREAMER_ATTEMPT_PAYLOAD_KEYS, DREAMER_ATTEMPT_PAYLOAD_SCHEMA_VERSION, DREAMER_BUDGET_KEYS,
     DREAMER_BUDGET_RESERVATION_KEYS, DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION,
     DREAMER_BUDGET_SCHEMA_VERSION, DREAMER_HOME_NODE_DESIGNATION_KEYS,
     DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_PARKED_KEYS,
-    DREAMER_PARKED_SCHEMA_VERSION, DREAMER_PRIVATE_BUDGET_PREFIX,
-    DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX, DREAMER_PRIVATE_PARKED_PREFIX,
-    DREAMER_PRIVATE_RUN_TREE_PREFIX, DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION,
+    DREAMER_PARKED_SCHEMA_VERSION, DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION,
     KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CLASS, KEY_CREATED_AT, KEY_ELECTED_AT,
     KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT, KEY_REASON,
     KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS, KEY_UPDATED_AT,
@@ -135,6 +134,16 @@ pub(super) fn decode_home_node_designation(bytes: &[u8]) -> Result<DreamerHomeNo
     };
     validate_home_node_designation(&record)?;
     Ok(record)
+}
+
+impl RawValue for DreamerHomeNodeDesignation {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_home_node_designation(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_home_node_designation(bytes)?)
+    }
 }
 
 pub(super) fn decode_dreamer_attempt_payload_value(value: &Value) -> Result<DreamerAttemptPayload> {
@@ -297,6 +306,16 @@ pub(super) fn decode_budget_record(bytes: &[u8]) -> Result<DreamerBudgetRecord> 
     Ok(record)
 }
 
+impl RawValue for DreamerBudgetRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_budget_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_budget_record(bytes)?)
+    }
+}
+
 pub(super) fn encode_budget_reservation(record: &DreamerBudgetReservation) -> Result<Vec<u8>> {
     validate_budget_reservation(record)?;
     let value = Value::Map(vec![
@@ -403,6 +422,16 @@ pub(super) fn decode_budget_reservation(bytes: &[u8]) -> Result<DreamerBudgetRes
     Ok(record)
 }
 
+impl RawValue for DreamerBudgetReservation {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_budget_reservation(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_budget_reservation(bytes)?)
+    }
+}
+
 pub(super) fn encode_run_tree_record(record: &DreamerRunTreeRecord) -> Result<Vec<u8>> {
     let value = Value::Map(vec![
         (
@@ -477,6 +506,16 @@ pub(super) fn decode_run_tree_record(bytes: &[u8]) -> Result<DreamerRunTreeRecor
             "missing dreamer run-tree created_at",
         ))?,
     })
+}
+
+impl RawValue for DreamerRunTreeRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_run_tree_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_run_tree_record(bytes)?)
+    }
 }
 
 pub(super) fn encode_parked_record(record: &DreamerParkedAttemptRecord) -> Result<Vec<u8>> {
@@ -564,6 +603,16 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
     })
 }
 
+impl RawValue for DreamerParkedAttemptRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_parked_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_parked_record(bytes)?)
+    }
+}
+
 pub(super) fn encode_value(value: &Value, reason: &'static str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(reason))?;
@@ -631,42 +680,6 @@ pub(super) fn expect_u64(value: &Value, reason: &'static str) -> Result<u64> {
 
 pub(super) fn pinned_key_index(key: &str, keys: &[&str]) -> Option<usize> {
     keys.iter().position(|known| *known == key)
-}
-
-pub(super) fn budget_key(budget_id: &str) -> Result<Vec<u8>> {
-    validate_budget_id(budget_id)?;
-    let mut out = Vec::with_capacity(DREAMER_PRIVATE_BUDGET_PREFIX.len() + budget_id.len());
-    out.extend_from_slice(DREAMER_PRIVATE_BUDGET_PREFIX);
-    out.extend_from_slice(budget_id.as_bytes());
-    Ok(out)
-}
-
-pub(super) fn budget_reservation_key(budget_id: &str, attempt_id: AttemptId) -> Result<Vec<u8>> {
-    validate_budget_id(budget_id)?;
-    let budget_id_len = u16::try_from(budget_id.len())
-        .map_err(|_| invalid_dreamer_runner("dreamer budget_id exceeds 128 bytes"))?;
-    let mut out = Vec::with_capacity(
-        DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX.len() + 2 + budget_id.len() + 16,
-    );
-    out.extend_from_slice(DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX);
-    out.extend_from_slice(&budget_id_len.to_be_bytes());
-    out.extend_from_slice(budget_id.as_bytes());
-    out.extend_from_slice(attempt_id.as_bytes());
-    Ok(out)
-}
-
-pub(super) fn run_tree_key(attempt_id: AttemptId) -> Vec<u8> {
-    let mut out = Vec::with_capacity(DREAMER_PRIVATE_RUN_TREE_PREFIX.len() + 16);
-    out.extend_from_slice(DREAMER_PRIVATE_RUN_TREE_PREFIX);
-    out.extend_from_slice(attempt_id.as_bytes());
-    out
-}
-
-pub(super) fn parked_key(attempt_id: AttemptId) -> Vec<u8> {
-    let mut out = Vec::with_capacity(DREAMER_PRIVATE_PARKED_PREFIX.len() + 16);
-    out.extend_from_slice(DREAMER_PRIVATE_PARKED_PREFIX);
-    out.extend_from_slice(attempt_id.as_bytes());
-    out
 }
 
 pub(super) fn validate_attempt_type(attempt_type: &str) -> Result<()> {

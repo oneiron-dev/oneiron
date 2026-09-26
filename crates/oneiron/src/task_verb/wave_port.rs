@@ -6,9 +6,18 @@ use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
 use crate::linear_sync::{LinearSyncError, WaveResult};
 use crate::memory::{MemoryError, facade_provenance};
+use crate::side_table::{self, Raw, SideTable};
 use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
+
+/// Wave-plan cut index: the seal row (local `""`) and each per-task row share
+/// this one blake3-hash-keyed prefix. The seal's value is the plan's
+/// fingerprint bytes; a per-task row's value is the minted TASK id — two
+/// value shapes under one family, so this table stays raw bytes and each
+/// call site interprets what it wrote.
+const WAVE_PLAN_INDEX: SideTable<[u8; 32], Vec<u8>, Raw> =
+    SideTable::new(&side_table::TASK_WAVE_PLAN_INDEX);
 
 pub struct VaultWaveTaskPort<'a> {
     vault: &'a Vault,
@@ -29,12 +38,12 @@ impl<'a> VaultWaveTaskPort<'a> {
 fn engine_error(error: MemoryError) -> LinearSyncError {
     Error::InvalidConfig(format!("{}: {}", error.code, error.message)).into()
 }
-fn index_key(plan: &str, local: &str) -> Vec<u8> {
+fn index_key(plan: &str, local: &str) -> [u8; 32] {
     let mut hash = blake3::Hasher::new();
     hash.update(&(plan.len() as u64).to_be_bytes());
     hash.update(plan.as_bytes());
     hash.update(local.as_bytes());
-    [b"wave.task.v1/".as_slice(), hash.finalize().as_bytes()].concat()
+    *hash.finalize().as_bytes()
 }
 fn fingerprint(plan: &ValidatedWavePlan) -> Vec<u8> {
     let tasks: Vec<_> = plan
@@ -104,12 +113,9 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                 }
                 let seal_key = index_key(&plan.plan_ref, "");
                 let fingerprint = fingerprint(plan);
-                if self
-                    .vault
-                    .store
-                    .vault_meta
-                    .get(txn, &seal_key)?
-                    .is_some_and(|raw| raw.as_ref() != fingerprint.as_slice())
+                if WAVE_PLAN_INDEX
+                    .get(&self.vault.store, txn, &seal_key)?
+                    .is_some_and(|raw| raw != fingerprint)
                 {
                     return Err(MemoryError::bad_request(
                         "wave plan_ref reused for a different cut",
@@ -119,9 +125,9 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                 for local in &plan.topological_order {
                     let task = &plan.tasks[local];
                     let key = index_key(&plan.plan_ref, local);
-                    let id = if let Some(raw) = self.vault.store.vault_meta.get(txn, &key)? {
+                    let id = if let Some(raw) = WAVE_PLAN_INDEX.get(&self.vault.store, txn, &key)? {
                         let id = EntityId::from_bytes(
-                            raw.as_ref()
+                            raw.as_slice()
                                 .try_into()
                                 .map_err(|_| Error::CorruptedIndex("wave task index"))?,
                         )?;
@@ -179,7 +185,12 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                             now,
                         )?;
                         memory.route_created_task_in_txn(txn, id, &validated, now)?;
-                        self.vault.store.vault_meta.put(txn, &key, id.as_bytes())?;
+                        WAVE_PLAN_INDEX.put(
+                            &self.vault.store,
+                            txn,
+                            &key,
+                            &id.as_bytes().to_vec(),
+                        )?;
                         id
                     };
                     ids.insert(local.clone(), id);
@@ -218,10 +229,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                         blocker_refs: blockers,
                     });
                 }
-                self.vault
-                    .store
-                    .vault_meta
-                    .put(txn, &seal_key, &fingerprint)?;
+                WAVE_PLAN_INDEX.put(&self.vault.store, txn, &seal_key, &fingerprint)?;
                 Ok(writes)
             })
             .map_err(engine_error)

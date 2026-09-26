@@ -10,6 +10,7 @@ use crate::receipt::ReceiptKind;
 use crate::settings::model_versioning::{
     DEFAULT_MODEL_STACK_CURRENT_ID, default_model_stack_registry,
 };
+use crate::vault::Vault;
 
 /// The string that must never reach disk. Deliberately long, mixed-case and
 /// punctuated — nothing about it fits any field's admitted shape.
@@ -201,7 +202,7 @@ fn stored_signature_carries_no_sentinel_bytes() {
     let raw = vault
         .store
         .vault_meta
-        .get(&rtxn, &signature_key(id))
+        .get(&rtxn, &SIGNATURE.key_bytes(&id))
         .expect("read row")
         .expect("row present")
         .to_vec();

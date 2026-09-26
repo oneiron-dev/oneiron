@@ -245,7 +245,7 @@ pub(super) fn assert_witness_left_nothing(
                 .edge_exists(
                     person,
                     crate::EdgeKind::HasFacet,
-                    &crate::claim::substrate_facet_id(*person)
+                    &crate::claim::substrate_facet_id(*person).unwrap()
                 )
                 .expect("substrate edge")
         );
@@ -261,7 +261,7 @@ pub(super) fn assert_witness_left_nothing(
 
 /// Installs the default manifest without adding an actor-specific grant.
 pub(super) fn install_default_policy_manifest(vault: &crate::Vault) {
-    let manifest = crate::gate::default_policy_manifest();
+    let manifest = crate::gate::default_policy_manifest().unwrap();
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id().expect("default manifest id"),
@@ -274,7 +274,7 @@ pub(super) fn install_default_policy_manifest(vault: &crate::Vault) {
 /// The owner's lever over the witness ceiling is an ordinary manifest row, not
 /// a second policy surface.
 pub(super) fn append_actor_ceiling_rows(vault: &crate::Vault, rows: Vec<(String, String, String)>) {
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(manifest.as_slice());
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode manifest")
     else {
@@ -522,3 +522,561 @@ pub(super) fn note_body_of(vault: &crate::Vault, note_id: &EntityId) -> crate::n
 // ── ONE-1936: write-verb validity guard at the facade doors ──────────
 
 // ── ONE-1414 · `same_as` wire mapping + generic-write refusal ─────────────
+
+// ── T49 · every Memory read verb reads on the bound actor's lane ─────────
+
+/// The shipped default manifest with one `core:read` grant whose selectors
+/// name `world`: `reader` may read claims in that world and nothing else.
+pub(super) fn grant_world_reads(vault: &crate::Vault, reader: &str, world: EntityId) {
+    let grant = Value::Map(vec![
+        (Value::from("actor_ref"), Value::from(reader)),
+        (Value::from("effector"), Value::from("core:read")),
+        (
+            Value::from("scope"),
+            crate::federation::scope_codec::encode_scope_value(
+                &crate::federation::scope_codec::read_preset(),
+            )
+            .expect("read preset encodes"),
+        ),
+        (
+            Value::from("selectors"),
+            Value::Map(vec![(
+                Value::from("world_ref"),
+                Value::from(world.to_hex()),
+            )]),
+        ),
+        (Value::from("receipt_required"), Value::Boolean(false)),
+    ]);
+    let Value::Map(mut entries) =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
+            .expect("default manifest")
+    else {
+        panic!("default manifest is a map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("scoped_grants"));
+    entries.push((Value::from("scoped_grants"), Value::Array(vec![grant])));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &Value::Map(entries)).expect("manifest encodes");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id().expect("manifest id"),
+        &bytes,
+    )
+    .expect("manifest stores");
+}
+
+/// An approved, user-stated claim stored directly, optionally in `world`.
+fn stored_claim(
+    vault: &crate::Vault,
+    subject: EntityId,
+    world: Option<EntityId>,
+    text: &str,
+) -> EntityId {
+    let id = EntityId::now();
+    let mut body = crate::claim::ClaimBody::new(
+        "profile.note",
+        crate::claim::ClaimSubject::Entity(subject),
+        Value::from(text),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = world;
+    body.source = Some(crate::claim::ClaimSource::UserStated);
+    vault
+        .put_claim(&id, &body, test_time(1), 1)
+        .expect("put claim");
+    id
+}
+
+/// ONE-1943's fail-open pair, closed: the Memory facade and the scoped lane
+/// give one answer about a claim outside the actor's grant.
+#[test]
+fn claim_list_and_scoped_get_agree_on_a_claim_outside_the_actors_grant() {
+    let (_dir, vault) = open_vault();
+    let agent = put_person(&vault, 0x5A);
+    let subject = put_person(&vault, 0x5B);
+    let world = EntityId::from_bytes([0x5C; 16]).expect("world id");
+    let outside = stored_claim(&vault, subject, None, "base reality");
+    let inside = stored_claim(&vault, subject, Some(world), "in the world");
+    grant_world_reads(&vault, &agent.to_hex(), world);
+    let memory = vault.memory(agent, EdgeActorClass::Agent);
+
+    let listed = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .expect("claim list");
+    assert_eq!(
+        listed
+            .value
+            .iter()
+            .map(|claim| claim.claim_ref.clone())
+            .collect::<Vec<_>>(),
+        vec![inside.to_hex()]
+    );
+    assert_eq!(listed.receipt.suppressed_count, 1);
+    assert!(
+        listed
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+
+    let key = crate::claim::ScopedReadActorKey::with_actor_class(agent.to_hex(), "agent")
+        .expect("agent key");
+    let scoped = vault
+        .scoped_read(key)
+        .read(
+            &[
+                crate::claim::PointRead::id(outside),
+                crate::claim::PointRead::id(inside),
+            ],
+            None,
+        )
+        .expect("scoped read");
+    assert!(scoped.value[0].is_none());
+    assert_eq!(scoped.value[1].as_ref().map(|row| row.id), Some(inside));
+    assert_eq!(listed.receipt, scoped.receipt);
+
+    let got = memory.get_entity(&outside.to_hex()).expect("get");
+    assert!(got.value.is_none());
+    assert_eq!(got.receipt, scoped.receipt);
+}
+
+/// Every read verb answers with its lane's receipt: the owner's shows the
+/// full ceiling and nothing withheld, a grantless agent's names `deny_all`.
+#[test]
+fn every_memory_read_verb_returns_a_receipt() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xB1);
+    let agent = put_person(&vault, 0xB2);
+    let subject = put_person(&vault, 0xB3);
+    let claim = facade_for(&vault, owner)
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Ada"),
+        ))
+        .expect("claim");
+    facade_for(&vault, owner)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xB4; 16])
+                .expect("conversation id")
+                .to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(
+                0,
+                WitnessAuthor::User,
+                "receipted solar panels",
+            )],
+            occurred_at: 100,
+        })
+        .expect("witness");
+    let refs = vec![claim.claim_short_id.clone()];
+    let live = crate::vault::ReadMode::Live;
+    let list = ClaimListFilter {
+        subject_ref: Some(subject.to_hex()),
+        predicate: None,
+        lifecycle: None,
+        limit: 10,
+    };
+    let neighbors = NeighborOpts {
+        limit: 10,
+        ..NeighborOpts::default()
+    };
+    let calendar = crate::CalendarReadRequest {
+        event_ref: subject.to_hex(),
+    };
+    let search = crate::CalendarSearchRequest {
+        calendars: Vec::new(),
+        range: None,
+        text: None,
+        limit: 10,
+    };
+    let window = test_time(0);
+
+    let memory = facade_for(&vault, owner);
+    let receipts = [
+        memory.get_entity(&claim.claim_short_id).map(|read| {
+            assert!(read.value.is_some());
+            read.receipt
+        }),
+        memory
+            .get_entity_with_mode(&claim.claim_short_id, live)
+            .map(|read| {
+                assert!(read.value.is_some());
+                read.receipt
+            }),
+        memory.hydrate(&refs).map(|read| {
+            assert_eq!(read.value.len(), 1);
+            read.receipt
+        }),
+        memory.hydrate_with_mode(&refs, live).map(|read| {
+            assert_eq!(read.value.len(), 1);
+            read.receipt
+        }),
+        memory.claim_list(&list).map(|read| {
+            assert_eq!(read.value.len(), 1);
+            read.receipt
+        }),
+        memory.claim_history(&claim.claim_short_id).map(|read| {
+            assert_eq!(read.value.len(), 1);
+            read.receipt
+        }),
+        memory.query_bm25("solar", 10).map(|read| {
+            assert_eq!(read.value.len(), 1);
+            read.receipt
+        }),
+        memory.neighbors(&subject.to_hex(), &neighbors).map(|read| {
+            assert!(!read.value.is_empty());
+            read.receipt
+        }),
+        memory.calendar_read(&calendar).map(|read| read.receipt),
+        memory.calendar_search(&search).map(|read| read.receipt),
+        memory
+            .calendar_freebusy(&[], window)
+            .map(|read| read.receipt),
+    ];
+    for receipt in receipts {
+        let receipt = receipt.expect("owner read");
+        assert!(!receipt.actor_ceiling.deny_all);
+        assert_eq!(receipt.actor_ceiling.max_sensitivity_band, 3);
+        assert_eq!(receipt.suppressed_count, 0);
+        assert!(receipt.narrowed_axes.is_empty(), "{receipt:?}");
+    }
+
+    let memory = vault.memory(agent, EdgeActorClass::Agent);
+    let receipts = [
+        memory.get_entity(&claim.claim_short_id).map(|read| {
+            assert!(read.value.is_none());
+            read.receipt
+        }),
+        memory
+            .get_entity_with_mode(&claim.claim_short_id, live)
+            .map(|read| {
+                assert!(read.value.is_none());
+                read.receipt
+            }),
+        memory.claim_list(&list).map(|read| {
+            assert!(read.value.is_empty());
+            read.receipt
+        }),
+        memory.claim_history(&claim.claim_short_id).map(|read| {
+            assert!(read.value.is_empty());
+            read.receipt
+        }),
+        memory.query_bm25("solar", 10).map(|read| {
+            assert!(read.value.is_empty());
+            read.receipt
+        }),
+        memory.neighbors(&subject.to_hex(), &neighbors).map(|read| {
+            assert!(read.value.is_empty());
+            read.receipt
+        }),
+        memory.calendar_read(&calendar).map(|read| read.receipt),
+        memory.calendar_search(&search).map(|read| read.receipt),
+        memory
+            .calendar_freebusy(&[], window)
+            .map(|read| read.receipt),
+        // A withheld hydrate is NOT_FOUND, and the refusal carries the receipt.
+        Ok(*memory
+            .hydrate(&refs)
+            .expect_err("withheld hydrate")
+            .read_receipt
+            .expect("hydrate refusal receipt")),
+        Ok(*memory
+            .hydrate_with_mode(&refs, live)
+            .expect_err("withheld hydrate")
+            .read_receipt
+            .expect("hydrate refusal receipt")),
+    ];
+    for receipt in receipts {
+        let receipt = receipt.expect("agent read");
+        assert!(receipt.applied.deny_all);
+        assert!(receipt.narrowed_axes.contains(&"deny_all".to_owned()));
+    }
+}
+
+/// A soft-deleted claim leaves a header-only shell that no read verb returns.
+/// The verbs that still reach the shell (by id, by short ref, by subject
+/// index, by timeline, by edge) name it on their receipt as a withheld row.
+/// BM25 de-indexes on soft erase (a deleted MESSAGE shows it: found before,
+/// gone after, nothing withheld) and the calendar never projects a
+/// non-calendar claim, so those verbs never see a shell and withhold nothing.
+#[test]
+fn a_deleted_shell_is_absent_from_every_memory_read() {
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0xC1);
+    let subject = put_person(&vault, 0xC2);
+    let memory = facade_for(&vault, owner);
+    let claim = memory
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!("Shelly"),
+        ))
+        .expect("claim");
+    let id = resolve_entity_ref(&vault, &claim.claim_short_id).expect("claim id");
+    let witnessed = memory
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::from_bytes([0xC3; 16])
+                .expect("conversation id")
+                .to_hex(),
+            turn_ref: None,
+            messages: vec![witness_message(0, WitnessAuthor::User, "Shelly waves")],
+            occurred_at: 100,
+        })
+        .expect("witness");
+    let message = resolve_entity_ref(&vault, &witnessed.message_short_ids[0]).expect("message id");
+    assert_eq!(
+        memory
+            .query_bm25("Shelly", 10)
+            .expect("bm25 before")
+            .value
+            .len(),
+        1
+    );
+    for deleted in [id, message] {
+        memory
+            .safe_delete(&deleted.to_hex(), SafeDeleteReason::UserDelete)
+            .expect("soft delete");
+        assert!(vault.is_deleted_shell(&deleted).expect("shell"));
+    }
+    let live = crate::vault::ReadMode::Live;
+    let withheld = |receipt: &crate::claim::ScopedReadReceipt| {
+        assert_eq!(receipt.suppressed_count, 1, "{receipt:?}");
+        assert!(receipt.narrowed_axes.contains(&"row_authority".to_owned()));
+    };
+
+    for reference in [id.to_hex(), claim.claim_short_id.clone(), message.to_hex()] {
+        let read = memory.get_entity(&reference).expect("get");
+        assert!(read.value.is_none());
+        withheld(&read.receipt);
+        let read = memory
+            .get_entity_with_mode(&reference, live)
+            .expect("get at live");
+        assert!(read.value.is_none());
+        withheld(&read.receipt);
+        let refused = memory
+            .hydrate(std::slice::from_ref(&reference))
+            .expect_err("hydrate");
+        assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND);
+        withheld(&refused.read_receipt.expect("hydrate receipt"));
+        let refused = memory
+            .hydrate_with_mode(std::slice::from_ref(&reference), live)
+            .expect_err("hydrate at live");
+        assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND);
+        withheld(&refused.read_receipt.expect("hydrate receipt"));
+    }
+    let listed = memory
+        .claim_list(&ClaimListFilter {
+            subject_ref: Some(subject.to_hex()),
+            predicate: None,
+            lifecycle: None,
+            limit: 10,
+        })
+        .expect("claim list");
+    assert!(listed.value.is_empty());
+    withheld(&listed.receipt);
+    let history = memory.claim_history(&id.to_hex()).expect("history");
+    assert!(history.value.is_empty());
+    withheld(&history.receipt);
+    let neighbors = memory
+        .neighbors(
+            &subject.to_hex(),
+            &NeighborOpts {
+                limit: 10,
+                ..NeighborOpts::default()
+            },
+        )
+        .expect("neighbors");
+    assert!(
+        neighbors
+            .value
+            .iter()
+            .all(|hit| short_id_part(&hit.short_id) != short_id_part(&claim.claim_short_id))
+    );
+    withheld(&neighbors.receipt);
+
+    let lexical = memory.query_bm25("Shelly", 10).expect("bm25");
+    assert!(lexical.value.is_empty());
+    assert_eq!(lexical.receipt.suppressed_count, 0);
+    let calendar = memory
+        .calendar_read(&crate::CalendarReadRequest {
+            event_ref: id.to_hex(),
+        })
+        .expect("calendar read");
+    assert!(calendar.value.is_none());
+    assert_eq!(calendar.receipt.suppressed_count, 0);
+}
+
+// ── T51 · one witness program, the session its parameter ─────────────────
+
+/// A pinned recorded time with fresh ids: two vaults on it stamp every write
+/// with the same time without sharing an id sequence.
+struct PinnedClock(u64);
+
+impl crate::ports::Clock for PinnedClock {
+    fn now_recorded_at(&self) -> u64 {
+        self.0
+    }
+}
+
+impl crate::ports::IdGen for PinnedClock {
+    fn ulid(&self) -> [u8; 16] {
+        uuid::Uuid::now_v7().into_bytes()
+    }
+}
+
+/// Every stored row naming one id: its entity row and its edges both ways.
+#[derive(Debug, Clone, PartialEq)]
+struct RowsNaming {
+    entity: Option<Vec<u8>>,
+    edges: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// The rows naming `id` in `dbs` (base, or a room's composed view).
+fn rows_naming(
+    dbs: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> RowsNaming {
+    let entity = dbs
+        .entities()
+        .get(rtxn, id.as_bytes())
+        .expect("entity row")
+        .map(|row| row.to_vec());
+    let mut edges = Vec::new();
+    for table in [dbs.edges_out(), dbs.edges_in()] {
+        for row in table.prefix_iter(rtxn, id.as_bytes()).expect("edge scan") {
+            let (key, value) = row.expect("edge row");
+            edges.push((key.to_vec(), value.to_vec()));
+        }
+    }
+    RowsNaming { entity, edges }
+}
+
+/// `witness` and `witness_into_session` are one program with the session as
+/// its parameter. The same turn witnessed through a room and without one
+/// stores the same rows: the conversation, TURN and MESSAGE entities, every
+/// edge naming them or the actor, and the text postings. What differs is the
+/// session link: the room's rows reach base only through a promote whose
+/// receipt names the room, and the promoted closure leaves the actor's
+/// `AuthoredBy` edge in the room (ONE-1730).
+#[test]
+fn witness_and_session_witness_run_one_program() {
+    const ROOM: &str = "sess-one-witness-program";
+    // A live turn: witnessed at the instant both vaults record. The room
+    // stamps an edge at the witness time and a base write at the recorded
+    // time, so a backdated turn would differ in that stamp alone.
+    const AT: u64 = 1_790_000_000;
+    const NEEDLE: &str = "oneprogramneedle";
+    let clock = std::sync::Arc::new(PinnedClock(AT));
+    let open_pinned = || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = VaultConfig {
+            store_clock: crate::ports::StoreClock::new(clock.clone(), clock.clone()),
+            ..VaultConfig::default()
+        };
+        let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+        (dir, vault)
+    };
+    let message_id = EntityId::from_bytes([0x6C; 16]).expect("message id");
+    let turn_in = |conversation_ref: String, turn_ref: Option<String>| {
+        let mut message = witness_message(0, WitnessAuthor::User, NEEDLE);
+        message.id = Some(message_id.to_hex());
+        WitnessTurn {
+            conversation_ref,
+            turn_ref,
+            messages: vec![message],
+            occurred_at: AT,
+        }
+    };
+
+    // Through the room.
+    let (_room_dir, room_vault) = open_pinned();
+    let (session, actor) = session_witness_fixture(&room_vault, ROOM, 0x6A);
+    let receipt = facade_for(&room_vault, actor)
+        .witness_into_session(&session, &turn_in(String::new(), None), None)
+        .expect("session witness");
+    let turn_id = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("receipt ref names the turn"),
+    )
+    .expect("turn id");
+    let conversation_id = session.overlay_conversation_shell().expect("room shell");
+    let ids = [conversation_id, turn_id, message_id, actor];
+    let room_rows = {
+        let view = session.read_view().expect("read view");
+        let rtxn = room_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&view, &rtxn, &id))
+    };
+    let room_postings = session.search_text(NEEDLE, 10).expect("room search");
+
+    // Without a session: the same ids, straight into base.
+    let (_base_dir, base_vault) = open_pinned();
+    assert_eq!(put_person(&base_vault, 0x6A), actor);
+    facade_for(&base_vault, actor)
+        .witness(&turn_in(conversation_id.to_hex(), Some(turn_id.to_hex())))
+        .expect("base witness");
+    let base_rows = {
+        let rtxn = base_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&base_vault.store, &rtxn, &id))
+    };
+    for ((id, base), room) in ids.iter().zip(&base_rows).zip(&room_rows) {
+        assert!(base.entity.is_some(), "{} is stored", id.to_hex());
+        assert_eq!(base, room, "rows naming {}", id.to_hex());
+    }
+    let base_postings = base_vault.search_text(NEEDLE, 10).expect("base search");
+    assert_eq!(base_postings, room_postings);
+    assert_eq!(
+        base_postings.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![message_id]
+    );
+
+    // The session link.
+    assert_eq!(room_vault.get_raw(&turn_id).expect("base get"), None);
+    session.promote_turn(&turn_id).expect("promote the turn");
+    assert_eq!(
+        room_vault
+            .off_record_promote_receipt(&turn_id)
+            .expect("promote receipt")
+            .map(|receipt| receipt.session_ref),
+        Some(ROOM.to_owned())
+    );
+    assert!(
+        base_vault
+            .off_record_promote_receipt(&turn_id)
+            .expect("promote receipt")
+            .is_none()
+    );
+    let promoted_rows = {
+        let rtxn = room_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&room_vault.store, &rtxn, &id))
+    };
+    for ((id, base), promoted) in ids.iter().zip(&base_rows).zip(&promoted_rows) {
+        let mut unattributed = base.clone();
+        unattributed.edges.retain(|(key, _)| {
+            crate::edge::parse_strict_edge_record_key(key)
+                .expect("edge key")
+                .1
+                != EdgeKind::AuthoredBy
+        });
+        assert_eq!(
+            &unattributed,
+            promoted,
+            "promoted rows naming {}",
+            id.to_hex()
+        );
+    }
+    session.close().expect("close session");
+}

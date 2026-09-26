@@ -411,13 +411,28 @@ fn keyed_bodies_never_surface_through_generic_facade_scoped_or_pack_reads() {
         }
         let scoped = vault
             .scoped_read(ScopedReadActorKey::with_actor_class(actor.to_hex(), "human").unwrap());
-        assert!(scoped.get(&id).unwrap().is_none());
+        assert!(
+            scoped
+                .read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
         let crate::claim::ScopedReadResult {
             value,
             receipt: _receipt,
-        } = scoped.get_entity_parts_with_receipt(&id, None).unwrap();
+        } = scoped
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single();
         assert!(value.is_none());
-        assert!(scoped.hydrate_short_id(short, hash).unwrap().is_none());
+        assert!(
+            scoped
+                .read(&[crate::claim::PointRead::short(short, hash)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
         assert!(scoped.memory_timeline(&id).unwrap().records.is_empty());
         assert!(!scoped.is_entity_readable(&id).unwrap());
         assert!(
@@ -854,7 +869,7 @@ fn replacement_keeps_source_trust_and_refuses_generated_over_user_truth_atomical
     // A real actor-bound generated auto permit lets the put reach the
     // supersession guard. It does not grant generated output user provenance.
     let mut manifest: rmpv::Value = rmpv::decode::read_value(&mut std::io::Cursor::new(
-        crate::gate::default_policy_manifest(),
+        crate::gate::default_policy_manifest().unwrap(),
     ))
     .unwrap();
     let rmpv::Value::Map(entries) = &mut manifest else {

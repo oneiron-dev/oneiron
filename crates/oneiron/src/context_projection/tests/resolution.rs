@@ -27,7 +27,8 @@ fn memory_projection_suppresses_unsurfaced_claims() {
             1.0,
             approval,
             lifecycle,
-        );
+        )
+        .unwrap();
         claim.stale = stale;
         vault
             .put_claim(

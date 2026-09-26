@@ -1274,7 +1274,10 @@ fn dreamer_progress_falls_back_to_durable_milestone_when_live_row_unreachable() 
     assert_eq!(durable.claim_id, done_claim);
     assert_eq!(durable.kind, DreamerMilestoneKind::Done);
 
-    let mut malformed_index_key = dreamer_milestone_candidate_prefix(queued.attempt.id);
+    let mut malformed_index_key = crate::side_table::DREAMER_MILESTONE_INDEX_CANDIDATE
+        .prefix
+        .to_vec();
+    malformed_index_key.extend_from_slice(queued.attempt.id.as_bytes());
     malformed_index_key.extend_from_slice(b"truncated");
     vault.with_write_txn(|wtxn| {
         vault
@@ -1441,11 +1444,7 @@ fn dreamer_durable_milestone_backfill_fails_closed_on_malformed_claim_body() -> 
         .expect_err("malformed claim body must fail the one-time backfill");
     let rtxn = vault.store.env.read_txn()?;
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, DREAMER_MILESTONE_INDEX_BACKFILLED_KEY)?
-            .is_none(),
+        !super::milestone::MILESTONE_INDEX_BACKFILLED.contains(&vault.store, &rtxn, &())?,
         "failed backfill must not mark the milestone index complete"
     );
 
@@ -1888,34 +1887,17 @@ fn dreamer_private_rows_stay_out_of_vault_entities_while_milestones_are_claims()
     assert_eq!(runner.parked_attempt(queued.attempt.id)?, Some(parked));
 
     let rtxn = vault.store.env.read_txn()?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &budget_key("wake")?)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &budget_reservation_key("wake", queued.attempt.id)?)?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &run_tree_key(queued.attempt.id))?
-            .is_some()
-    );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &parked_key(queued.attempt.id))?
-            .is_some()
-    );
+    assert!(super::admission::BUDGET.contains(&vault.store, &rtxn, &"wake".to_owned())?);
+    assert!(super::admission::BUDGET_RESERVATION.contains(
+        &vault.store,
+        &rtxn,
+        &super::admission::BudgetReservationKey {
+            budget_id: "wake".to_owned(),
+            attempt_id: queued.attempt.id,
+        },
+    )?);
+    assert!(super::store::RUN_TREE.contains(&vault.store, &rtxn, &queued.attempt.id)?);
+    assert!(super::store::PARKED.contains(&vault.store, &rtxn, &queued.attempt.id)?);
     assert!(
         vault
             .store
@@ -2107,35 +2089,26 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
         "queue leases must remain private to the runner store"
     );
     assert!(
-        vault_b
-            .store
-            .vault_meta
-            .get(&rtxn, &budget_key("wake")?)?
-            .is_none(),
+        !super::admission::BUDGET.contains(&vault_b.store, &rtxn, &"wake".to_owned())?,
         "private budget rows must not sync"
     );
     assert!(
-        vault_b
-            .store
-            .vault_meta
-            .get(&rtxn, &budget_reservation_key("wake", queued.attempt.id)?)?
-            .is_none(),
+        !super::admission::BUDGET_RESERVATION.contains(
+            &vault_b.store,
+            &rtxn,
+            &super::admission::BudgetReservationKey {
+                budget_id: "wake".to_owned(),
+                attempt_id: queued.attempt.id,
+            },
+        )?,
         "private budget reservation rows must not sync"
     );
     assert!(
-        vault_b
-            .store
-            .vault_meta
-            .get(&rtxn, &run_tree_key(queued.attempt.id))?
-            .is_none(),
+        !super::store::RUN_TREE.contains(&vault_b.store, &rtxn, &queued.attempt.id)?,
         "private run-tree rows must not sync"
     );
     assert!(
-        vault_b
-            .store
-            .vault_meta
-            .get(&rtxn, &parked_key(queued.attempt.id))?
-            .is_none(),
+        !super::store::PARKED.contains(&vault_b.store, &rtxn, &queued.attempt.id)?,
         "private parked rows must not sync"
     );
 

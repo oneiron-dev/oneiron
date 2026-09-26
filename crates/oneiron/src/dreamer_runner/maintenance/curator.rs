@@ -3,10 +3,15 @@ use super::super::{DreamerAdmittedAttempt, DreamerRunnerStore, EnqueueDreamerAtt
 use super::{CURATOR_FACET, invalid, load_row, proposals};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimDemotionRung, claim_demotion_rung};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
-const RUBRIC_KEY: &[u8] = b"settings:dreamer:curator:rubric:v1";
+
+/// Owner-set rubric dial for the memory-curator maintenance pass.
+const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_CURATOR_RUBRIC);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratorTrigger {
     Nightly,
@@ -39,10 +44,9 @@ impl Vault {
         rubric: &CuratorRubric,
     ) -> Result<()> {
         rubric.validate()?;
-        let bytes = serde_json::to_vec(rubric).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, RUBRIC_KEY, &bytes)?;
+            RUBRIC.put(&self.store, txn, &(), rubric)?;
             Ok(())
         })
     }
@@ -51,8 +55,7 @@ impl Vault {
         _trigger: CuratorTrigger,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let rubric: CuratorRubric =
-            load_row(self, RUBRIC_KEY, include_str!("curator_defaults.json"))?;
+        let rubric: CuratorRubric = load_row(self, RUBRIC, include_str!("curator_defaults.json"))?;
         rubric.validate()?;
         DreamerRunnerStore::new(self).enqueue_maintenance(
             CURATOR_FACET,
@@ -98,7 +101,7 @@ pub(super) fn run(
     attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<Vec<EntityId>> {
-    let rubric: CuratorRubric = load_row(vault, RUBRIC_KEY, include_str!("curator_defaults.json"))?;
+    let rubric: CuratorRubric = load_row(vault, RUBRIC, include_str!("curator_defaults.json"))?;
     rubric.validate()?;
     let actor = vault.dreamer_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;

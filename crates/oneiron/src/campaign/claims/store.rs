@@ -9,8 +9,9 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 use super::{codec::*, types::*};
@@ -307,17 +308,17 @@ fn resolve_do_not_contact_subject_in_txn(
     if party_key.is_empty() {
         return Ok(None);
     }
-    let Some(raw_id) = store
-        .vault_meta
-        .get(txn, &comm_party_index_key(party_key))?
-    else {
-        return Ok(None);
-    };
-    let Ok(bytes) = <[u8; crate::entity_id::ENTITY_ID_LEN]>::try_from(raw_id.as_ref()) else {
-        return Ok(None);
-    };
-    let Ok(id) = EntityId::from_bytes(bytes) else {
-        return Ok(None);
+    let digest = comm_party_digest(party_key);
+    // A malformed shortcut resolves to NOTHING, not an error: it is a
+    // disposable cache `comm.rs` owns and may overwrite at will.
+    let id = match COMM_PARTY_INDEX.get(store, txn, &digest) {
+        Ok(Some(id)) => id,
+        Ok(None) => return Ok(None),
+        Err(Error::Store(StoreError::SideTableRow {
+            problem: SideTableRowProblem::Undecodable,
+            ..
+        })) => return Ok(None),
+        Err(err) => return Err(err),
     };
     let Some(raw) = store.port_entity_record(txn, &id)? else {
         return Ok(None);
@@ -362,16 +363,15 @@ pub(crate) fn counterparty_do_not_contact_in_txn(
 /// `comm.rs` constant; CA reads it and never writes it.
 const COMM_PARTY_KEY_FIELD: &str = "party_key";
 
-/// Node-local party shortcut prefix owned by `comm.rs`. Read-only mirror.
-const COMM_PARTY_INDEX_PREFIX: &[u8] = b"comm.party.v1:";
+/// Node-local party shortcut owned by `comm.rs`. Read-only mirror; CA never
+/// writes this index — this binding exists only for the read above, `comm`
+/// owns the declaration and its own writes.
+const COMM_PARTY_INDEX: SideTable<[u8; 32], EntityId, Raw> =
+    SideTable::new(&side_table::COMM_PARTY_INDEX);
 
-fn comm_party_index_key(party_key: &str) -> Vec<u8> {
+fn comm_party_digest(party_key: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(party_key.as_bytes());
-    let mut key = Vec::with_capacity(COMM_PARTY_INDEX_PREFIX.len() + digest.len());
-    key.extend_from_slice(COMM_PARTY_INDEX_PREFIX);
-    key.extend_from_slice(&digest);
-    key
+    Sha256::digest(party_key.as_bytes()).into()
 }
 
 /// CLAIM ids attached to `subject` through inbound `claim_of` edges.

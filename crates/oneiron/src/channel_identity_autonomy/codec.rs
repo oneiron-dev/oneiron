@@ -11,12 +11,54 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::types::{
-    ChannelIdentityActionEnvelope, ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRung,
-    MailboxReadEnvelope, PREDICATE_AUTONOMY_MODE,
+    CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION, ChannelIdentityActionEnvelope,
+    ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRung, MailboxReadEnvelope,
+    PREDICATE_AUTONOMY_MODE,
 };
 use crate::error::GateError;
+
+/// Channel-identity autonomy modes, envelopes, graduation evidence and posting heads —
+/// every row this module owns, addressed by predicate `:` subject. Key: the bytes
+/// [`key`]/[`mode_key`]/`head_key` spell (never decoded back into fields: every reader
+/// already holds the exact key it wrote).
+pub(super) const AUTONOMY: SideTable<Vec<u8>, AutonomyRow, Raw> =
+    SideTable::new(&side_table::CHANNEL_IDENTITY_AUTONOMY);
+
+/// [`AUTONOMY`]'s row: writer, learned-at instant, and the predicate-specific payload, behind
+/// a leading schema-version element — the `[version, actor, at, value]` MessagePack array
+/// [`encode`]/[`decode`] have always spelled.
+pub(super) struct AutonomyRow {
+    pub(super) actor: EntityId,
+    pub(super) at: u64,
+    pub(super) value: Value,
+}
+
+impl RawValue for AutonomyRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode(&Value::Array(vec![
+            Value::from(CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION),
+            id_value(self.actor),
+            Value::from(self.at),
+            self.value.clone(),
+        ]))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let value = decode(bytes)?;
+        let v = array(&value, 4)?;
+        if number(&v[0])? != CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION {
+            return Err(invalid_autonomy().into());
+        }
+        Ok(Self {
+            actor: id(&v[1])?,
+            at: number(&v[2])?,
+            value: v[3].clone(),
+        })
+    }
+}
 
 pub(super) fn invalid_autonomy() -> Error {
     Error::Gate(GateError::InvalidConsentBound(
@@ -87,7 +129,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Value> {
     Ok(value)
 }
 pub(super) fn key(kind: &str, suffix: &str) -> Vec<u8> {
-    format!("channel_identity_autonomy:v1:{kind}:{suffix}").into_bytes()
+    format!("{kind}:{suffix}").into_bytes()
 }
 pub(super) fn address(kind: &str, value: &Value) -> Result<EntityId> {
     let bytes = encode(&Value::Array(vec![Value::from(kind), value.clone()]))?;

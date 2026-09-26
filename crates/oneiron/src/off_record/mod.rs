@@ -36,6 +36,9 @@ pub use lifecycle::{
 pub use promote::{OffRecordPromoteReceipt, PromoteOutcome};
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;
+/// The room's one shell-staging claim, held by the witness program's overlay
+/// landing across its write transaction.
+pub(crate) use lifecycle::OverlayShellReservation;
 /// ONE-1570 Arm B: the retrieval-run registration door. `context_pack.rs` and
 /// the recall host reach the room's telemetry handles through this path; the
 /// type stays crate-private, so no public surface gains a session channel.

@@ -50,7 +50,7 @@ fn search_response_rechecks_projected_claim_body() {
     let claim_id = seeded_test_entity_id(0x0012_6901);
     let subject = seeded_test_entity_id(0x0012_6902);
     let world = oneiron::claim::base_world_id();
-    let facet = oneiron::claim::substrate_facet_id(subject);
+    let facet = oneiron::claim::substrate_facet_id(subject).unwrap();
     let project = oneiron::claim::default_project_id();
     let body = rmp_serde::to_vec_named(&ClaimSeed {
         pred: "profile.projected",
@@ -544,6 +544,7 @@ fn search_summary_and_full_project_the_revision_that_produced_the_hit() {
             oneiron::ClaimApprovalStatus::Auto,
             oneiron::ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let at = |second| oneiron::TimeRange {
         start: second,

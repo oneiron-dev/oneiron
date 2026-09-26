@@ -17,7 +17,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::TrapRef;
 use crate::off_record::OffRecordSession;
-use crate::store::Store;
+use crate::vault::VaultId;
 use crate::{ClaimSource, Vault, WriteActor};
 
 pub(crate) use self::envelope::check_write_gate_against_vault;
@@ -167,9 +167,9 @@ impl<'a> HostSelfDispatcher<'a> {
         self.storage.session_ref()
     }
 
-    /// Identity-only projection of the store this dispatcher writes into.
-    pub(crate) fn store_identity(&self) -> *const Store {
-        self.storage.store_identity()
+    /// Identity of the vault this dispatcher writes into.
+    pub(crate) fn vault_id(&self) -> VaultId {
+        self.storage.vault_id()
     }
 
     /// The session-owned conversation container for K-EXEC turns, created by

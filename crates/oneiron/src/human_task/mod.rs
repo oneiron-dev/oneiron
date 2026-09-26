@@ -55,7 +55,7 @@ mod signal_tests;
 #[cfg(test)]
 use self::{
     model::{ESCALATION_AFTER_SECONDS, HUMAN_FOLLOWUP_VERB, REMINDER_AFTER_SECONDS},
-    storage::{followup_key, put_followup_record_in_txn, wait_signal_marker},
+    storage::{FOLLOWUPS, put_followup_record_in_txn, wait_signal_marker},
     wait::stored_human_wait_binding,
 };
 #[cfg(test)]

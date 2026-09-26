@@ -196,7 +196,8 @@ fn legacy_reads_default_but_originless_calendar_overwrite_refuses() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&EntityId::now(), &claim, time(), 1)
         .unwrap();
@@ -253,7 +254,8 @@ fn calendar_fields_without_origin_refuse_and_conflicting_origins_fail_closed() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&EntityId::now(), &conflicting, time(), 1)
         .unwrap();
@@ -458,7 +460,8 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         vault
             .put_claim(&EntityId::now(), &claim, time(), 2)
             .unwrap();

@@ -1,6 +1,13 @@
 //! Transactional tasks.ask adapter to the shared versioned question substrate.
 
-use super::{arrival, records::*, store::*};
+use super::{
+    arrival,
+    records::*,
+    store::{
+        AnswerKey, HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode,
+        secret_scan_before_put,
+    },
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
 use crate::llm::decision::{
@@ -33,7 +40,7 @@ pub(crate) fn bind_task_answer_in_txn(
     actor: WriteActor,
     input: TaskAnswerBinding<'_>,
 ) -> Result<AnswerRecord> {
-    if load::<QuestionHead>(vault, txn, &key(input.task, b"head", &[]))?.is_some() {
+    if QUESTION_HEAD.contains(&vault.store, txn, &HeadKey(input.task))? {
         return Err(Error::ConcurrentWrite("ask question already bound"));
     }
     let (source_kind, source) =
@@ -138,26 +145,31 @@ pub(crate) fn bind_task_answer_in_txn(
         .batch_in()
         .claim_candidate(&answer.claim, candidate, &envelope, at, input.now)
         .apply(txn)?;
-    put(
-        vault,
+    secret_scan_before_put(&record)?;
+    QUESTION_VERSION.put(
+        &vault.store,
         txn,
-        &key(input.task, b"version", &input.revision.to_be_bytes()),
+        &VersionKey {
+            id: input.task,
+            version: input.revision,
+        },
         &record,
     )?;
-    put(
-        vault,
+    let head = QuestionHead {
+        version: input.revision,
+        paused: false,
+        last_refresh: Some(input.now),
+    };
+    secret_scan_before_put(&head)?;
+    QUESTION_HEAD.put(&vault.store, txn, &HeadKey(input.task), &head)?;
+    secret_scan_before_put(&answer)?;
+    QUESTION_ANSWER.put(
+        &vault.store,
         txn,
-        &key(input.task, b"head", &[]),
-        &QuestionHead {
-            version: input.revision,
-            paused: false,
-            last_refresh: Some(input.now),
+        &AnswerKey {
+            question: input.task,
+            claim: answer.claim,
         },
-    )?;
-    put(
-        vault,
-        txn,
-        &key(input.task, b"answer", answer.claim.as_bytes()),
         &answer,
     )?;
     arrival::watch(&vault.store, txn, &record)?;

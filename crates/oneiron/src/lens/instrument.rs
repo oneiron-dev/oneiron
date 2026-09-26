@@ -2,7 +2,7 @@
 
 use super::validate::{LensBudget, validate_lens_collection_len};
 use super::{LensAtom, LensExecutionBoundary, LensHostImport, LensRenderFrame, LensTextSpan};
-use crate::claim::ScopedRead;
+use crate::claim::{ScopedRead, ScopedReadReceipt};
 use crate::{Error, Result};
 
 /// A validated atom stream. There is no raw HTML, JS, URL, eval or write leaf.
@@ -34,6 +34,10 @@ impl InstrumentAtoms {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentView {
     pub html: String,
+    /// The folded receipt of every interpolated scoped read; `None` when the
+    /// atoms interpolate nothing. A fallback rendered for a withheld value is
+    /// counted here.
+    pub receipt: Option<ScopedReadReceipt>,
 }
 
 /// Render vault values only now, through the frame's principal and scope. The
@@ -45,6 +49,7 @@ pub fn render_instrument(
     read: &ScopedRead<'_>,
 ) -> Result<InstrumentView> {
     let mut html = String::from("<article data-instrument=\"1\">");
+    let mut receipt: Option<ScopedReadReceipt> = None;
     for atom in &atoms.0 {
         html.push_str("<section data-atom=\"");
         html.push_str(atom.kind()); // closed Rust enum, not caller text
@@ -64,7 +69,11 @@ pub fn render_instrument(
                             })?;
                             let backing = frame.resolve_backing_ref_token(read, backing.token())?;
                             let value = frame.scoped_body(read, backing.target().entity_id())?;
-                            if let Some(value) = value {
+                            match &mut receipt {
+                                Some(receipt) => receipt.restrict_with(&value.receipt),
+                                None => receipt = Some(value.receipt),
+                            }
+                            if let Some(value) = value.value {
                                 escape(&mut html, &display_body(&value));
                             } else {
                                 escape(&mut html, fallback.as_str());
@@ -78,7 +87,7 @@ pub fn render_instrument(
         html.push_str("</section>");
     }
     html.push_str("</article>");
-    Ok(InstrumentView { html })
+    Ok(InstrumentView { html, receipt })
 }
 
 fn display_body(bytes: &[u8]) -> String {

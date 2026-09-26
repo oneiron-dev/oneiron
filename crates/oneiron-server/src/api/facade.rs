@@ -225,10 +225,14 @@ struct FacadeApiError {
     body: FacadeErrorEnvelope,
 }
 
-/// `{error: {...}}`, the same transport envelope shape `/v1/core` uses.
+/// `{error: {...}}`, the same transport envelope shape `/v1/core` uses,
+/// with the read receipt beside the error when a read verb refused.
 #[derive(Debug, Serialize)]
 struct FacadeErrorEnvelope {
     error: FacadeErrorBody,
+    /// Boxed so the refusal stays small on every `Result` that carries it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
 /// The facade error payload: `{code, message, requestId, suggestions}`.
@@ -261,6 +265,7 @@ impl FacadeApiError {
                     request_id: facade_request_id(),
                     suggestions: suggestions.into_iter().map(Into::into).collect(),
                 },
+                narrowing: None,
             },
         }
     }
@@ -323,6 +328,7 @@ impl From<MemoryError> for FacadeApiError {
                     request_id: facade_request_id(),
                     suggestions: error.suggestions,
                 },
+                narrowing: error.read_receipt,
             },
         }
     }

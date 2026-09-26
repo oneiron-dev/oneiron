@@ -2,12 +2,12 @@
 //! counter key, and the short-id prefix re-key migration.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::str;
 
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
 use crate::overlay_db::OverlayDb;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::*;
 
@@ -24,18 +24,19 @@ pub(crate) const SHORT_ID_COUNTER_KEY_LEN: usize = 13;
 
 const _: () = assert!(SHORT_ID_COUNTER_KEY_PREFIX.len() + 1 == SHORT_ID_COUNTER_KEY_LEN);
 
-/// `vault_meta` key prefix for short-id ALIAS rows (ONE-1930): a retired
-/// presentation id that still resolves to a live target.
+/// Short-id ALIAS rows (ONE-1930): a retired presentation id that still
+/// resolves to a live target. Key: string (the legacy presentation id).
 ///
-/// The full key is this prefix followed by the legacy presentation id's bytes.
-/// The NUL terminates the version tag so `short_id_alias:v1` can never be
-/// confused with a hypothetical `short_id_alias:v10` under a prefix scan.
+/// The NUL in the declared prefix terminates the version tag so
+/// `short_id_alias:v1` can never be confused with a hypothetical
+/// `short_id_alias:v10` under a prefix scan.
 ///
 /// Deliberately a `vault_meta` row family and NOT a 29th named LMDB database:
 /// the manifest set is ABI-pinned and adding to it is a storage-ABI change,
 /// while an older reader simply ignores an unknown `vault_meta` prefix. Aliases
 /// are additive — every pre-existing forward row keeps working without them.
-pub(super) const SHORT_ID_ALIAS_KEY_PREFIX: &[u8] = b"short_id_alias:v1\0";
+const ALIAS: SideTable<String, ShortIdAliasTarget, Raw> =
+    SideTable::new(&side_table::SHORT_ID_ALIAS);
 
 /// Record version leading every alias VALUE.
 const SHORT_ID_ALIAS_RECORD_VERSION: u8 = 1;
@@ -64,6 +65,11 @@ pub(super) const SHORT_ID_GRAMMAR_VERSION: u16 = 1;
 
 /// Encodes the `vault_meta` key for the short-id counter of `entity_type`.
 /// See [`SHORT_ID_COUNTER_KEY_PREFIX`] for the documented key scheme.
+///
+/// Production counter reads/writes go through the typed counter door in
+/// `batch::short_id`; this raw builder stays only for tests that plant or
+/// inspect a counter row directly.
+#[cfg(test)]
 pub(crate) fn short_id_counter_key(entity_type: u8) -> [u8; SHORT_ID_COUNTER_KEY_LEN] {
     let mut key = [0u8; SHORT_ID_COUNTER_KEY_LEN];
     key[..SHORT_ID_COUNTER_KEY_PREFIX.len()].copy_from_slice(SHORT_ID_COUNTER_KEY_PREFIX);
@@ -173,12 +179,14 @@ fn alias_corrupt(context: &'static str) -> Error {
     Error::CorruptedIndex(context)
 }
 
-/// `vault_meta` key for one legacy presentation id's alias row.
-fn short_id_alias_key(legacy_id: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(SHORT_ID_ALIAS_KEY_PREFIX.len() + legacy_id.len());
-    key.extend_from_slice(SHORT_ID_ALIAS_KEY_PREFIX);
-    key.extend_from_slice(legacy_id.as_bytes());
-    key
+impl RawValue for ShortIdAliasTarget {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_short_id_alias_target(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_short_id_alias_target(bytes)?)
+    }
 }
 
 fn encode_short_id_alias_target(target: &ShortIdAliasTarget) -> Vec<u8> {
@@ -229,11 +237,7 @@ fn resolve_short_id_alias_in_txn(
     txn: &RoTxn<'_>,
     legacy_id: &str,
 ) -> Result<Option<ShortIdAliasTarget>> {
-    dbs.vault_meta
-        .get(txn, &short_id_alias_key(legacy_id))?
-        .as_deref()
-        .map(decode_short_id_alias_target)
-        .transpose()
+    ALIAS.get(dbs.vault_meta, txn, &legacy_id.to_owned())
 }
 
 /// The shapes an ENTITY alias target must never take, checked by EVERY door
@@ -301,9 +305,9 @@ fn insert_short_id_alias_in_txn(
 
     vet_short_id_alias_target_in_txn(dbs, txn, legacy_id, target)?;
 
-    let key = short_id_alias_key(legacy_id);
-    if let Some(existing) = dbs.vault_meta.get(txn, &key)? {
-        return if decode_short_id_alias_target(&existing)? == *target {
+    let key = legacy_id.to_owned();
+    if let Some(existing) = ALIAS.get(dbs.vault_meta, txn, &key)? {
+        return if existing == *target {
             Ok(())
         } else {
             Err(Error::InvariantViolation(
@@ -311,9 +315,7 @@ fn insert_short_id_alias_in_txn(
             ))
         };
     }
-    dbs.vault_meta
-        .put(txn, &key, &encode_short_id_alias_target(target))?;
-    Ok(())
+    ALIAS.put(dbs.vault_meta, txn, &key, target)
 }
 
 /// Every alias row in the vault, as `(legacy_id, target)`.
@@ -324,14 +326,7 @@ fn short_id_aliases_in_txn(
     dbs: ShortIdDbs<'_>,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<(String, ShortIdAliasTarget)>> {
-    let mut aliases = Vec::new();
-    for row in dbs.vault_meta.prefix_iter(txn, SHORT_ID_ALIAS_KEY_PREFIX)? {
-        let (key, value) = row?;
-        let legacy_id = str::from_utf8(&key[SHORT_ID_ALIAS_KEY_PREFIX.len()..])
-            .map_err(|_| alias_corrupt("short id alias key"))?;
-        aliases.push((legacy_id.to_owned(), decode_short_id_alias_target(&value)?));
-    }
-    Ok(aliases)
+    ALIAS.scan(dbs.vault_meta, txn)
 }
 
 /// Moves an alias that currently names `from` to name `to`.
@@ -352,16 +347,15 @@ fn retarget_short_id_alias_in_txn(
     from: &ShortIdAliasTarget,
     to: &ShortIdAliasTarget,
 ) -> Result<bool> {
-    let key = short_id_alias_key(legacy_id);
-    let Some(existing) = dbs.vault_meta.get(txn, &key)? else {
+    let key = legacy_id.to_owned();
+    let Some(existing) = ALIAS.get(dbs.vault_meta, txn, &key)? else {
         return Ok(false);
     };
-    if decode_short_id_alias_target(&existing)? != *from {
+    if existing != *from {
         return Ok(false);
     }
     vet_short_id_alias_target_in_txn(dbs, txn, legacy_id, to)?;
-    dbs.vault_meta
-        .put(txn, &key, &encode_short_id_alias_target(to))?;
+    ALIAS.put(dbs.vault_meta, txn, &key, to)?;
     Ok(true)
 }
 

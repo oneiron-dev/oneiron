@@ -5,11 +5,15 @@ mod projection;
 pub(crate) use deletion::deindex_project_room;
 #[cfg(test)]
 mod tests;
-pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
+pub(crate) use projection::{
+    project_room_dependency, reconcile_project_rooms, validate_project_body, validate_room_body,
+};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::entity_id::derived_domains::PROJECT_HOME_ROOM;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -18,9 +22,19 @@ use std::collections::BTreeSet;
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
 const PACK: &str = "oneiron.project";
-const ROOT: &[u8] = b"project.root.v1";
-pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
-const CHANGES: &[u8] = b"project.room_changes.v1/";
+
+/// The root project's entity id, seeded once at first boot. Key: ().
+const ROOT: SideTable<(), EntityId, Raw> = SideTable::new(&side_table::PROJECT_ROOT);
+
+/// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
+/// home-room id).
+pub(super) const ROOM_PROJECT: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::PROJECT_ROOM_OWNER);
+
+/// Change-log event recording a project's home-room membership transition. Key: id16 (project) +
+/// id16 (change event id).
+const CHANGES: SideTable<(EntityId, EntityId), ProjectRoomChange, Named> =
+    SideTable::new(&side_table::PROJECT_ROOM_CHANGES);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,8 +60,8 @@ impl ProjectRecord {
         parent: Option<EntityId>,
         claims_scope_ref: EntityId,
         leader: EntityId,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             schema_version: 1,
             parent: parent.map(|p| p.to_hex()),
             claims_scope_ref: claims_scope_ref.to_hex(),
@@ -61,8 +75,8 @@ impl ProjectRecord {
             goal: None,
             budget: None,
             asks: vec![],
-            home_room: home_room_id(id).to_hex(),
-        }
+            home_room: home_room_id(id)?.to_hex(),
+        })
     }
 }
 
@@ -96,12 +110,8 @@ pub(super) fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 pub(super) fn decode<T: for<'a> Deserialize<'a>>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid())
 }
-fn home_room_id(project: EntityId) -> EntityId {
-    let hash = blake3::hash(&[b"project.home_room.v1/", project.as_bytes().as_slice()].concat());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[0] = 0xB7;
-    EntityId::from_bytes(bytes).expect("non-reserved deterministic room id")
+fn home_room_id(project: EntityId) -> Result<EntityId> {
+    EntityId::derive(PROJECT_HOME_ROOM, &[project.as_bytes()])
 }
 pub(super) fn record<T: for<'a> Deserialize<'a>>(
     store: &crate::store::Store,
@@ -171,18 +181,13 @@ impl Vault {
     }
     pub fn root_project(&self) -> Result<EntityId> {
         let txn = self.store.env.read_txn()?;
-        let raw = self.store.vault_meta.get(&txn, ROOT)?.ok_or_else(invalid)?;
-        EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)
+        ROOT.get(&self.store, &txn, &())?.ok_or_else(invalid)
     }
     pub fn project_room_changes(&self, project: EntityId) -> Result<Vec<ProjectRoomChange>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .prefix_iter(&txn, &[CHANGES, project.as_bytes()].concat())?
-            .map(|row| {
-                let (_, bytes) = row?;
-                decode(&bytes)
-            })
+        CHANGES
+            .iter_from(&self.store, &txn, project.as_bytes())?
+            .map(|row| row.map(|(_, change)| change))
             .collect()
     }
 }
@@ -191,12 +196,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
     let kind = if let Some(kind) = project_type(&vault.store) {
         kind
     } else {
-        if vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, ROOT)?
-            .is_some()
-        {
+        if ROOT.contains(&vault.store, &vault.store.env.read_txn()?, &())? {
             return Err(invalid());
         }
         let kind = (crate::registry::TYPE_BYTE_ZONE_COMPILED_PRODUCT_START
@@ -213,11 +213,11 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
         .get_seeded_agent_definition_by_logical_id("sys.team_lead")?
         .ok_or_else(invalid)?;
     vault.with_write_txn(|txn| {
-        if vault.store.vault_meta.get(txn, ROOT)?.is_some() {
+        if ROOT.contains(&vault.store, txn, &())? {
             return Ok(());
         }
         let id = EntityId::now();
-        let body = ProjectRecord::new(id, None, id, leader);
+        let body = ProjectRecord::new(id, None, id, leader)?;
         vault
             .batch_in()
             .put(
@@ -228,7 +228,7 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
-        vault.store.vault_meta.put(txn, ROOT, id.as_bytes())?;
+        ROOT.put(&vault.store, txn, &(), &id)?;
         Ok(())
     })
 }

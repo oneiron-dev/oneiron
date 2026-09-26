@@ -27,7 +27,7 @@ fn psych_mirror_selection_affect_trigger_contributes_affect_salience() -> Result
         value.confidence(),
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.salience = Some(0.3);
 
     let affect_salience = psych_mirror_claim_affect_salience(&body)?;
@@ -46,7 +46,8 @@ fn psych_mirror_selection_affect_trigger_decode_errors_propagate() {
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
 
     assert!(psych_mirror_claim_affect_salience(&body).is_err());
 }
@@ -155,7 +156,7 @@ fn write_door_validates_lexical_query_hint_claim_structure() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -195,7 +196,7 @@ fn write_door_validates_companion_expression_claim_values() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -239,7 +240,7 @@ fn affect_trigger_write_door_validates_value_shape() -> Result<()> {
                 confidence,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             encode_claim_body(&body)
         };
     let encode = |subject: ClaimSubject, value: Value| -> Result<Vec<u8>> {
@@ -389,7 +390,7 @@ fn affect_trigger_write_door_validates_value_shape() -> Result<()> {
         0.82,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let legacy_salience = psych_mirror_claim_affect_salience(&legacy_body)?;
     assert!(legacy_salience.is_finite());
     validate_claim_body_bytes(
@@ -454,7 +455,7 @@ fn conflict_predicates_validate_as_ordinary_claims() -> Result<()> {
             0.7,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Superseded,
-        );
+        )?;
         encode_claim_body(&body)
     };
 
@@ -550,7 +551,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     skill_body.source = Some(ClaimSource::Observed);
     assert_matches!(
         vault.put_claim(
@@ -597,7 +598,7 @@ fn public_skill_claim_lifecycle_is_reserved_and_edge_stays_provenance_owned() ->
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     edge_body.source = Some(ClaimSource::Observed);
     let old_edge_id = EntityId::now();
     let new_edge_id = EntityId::now();
@@ -668,7 +669,8 @@ fn write_door_validates_edge_provenance_claim_structure() {
             confidence,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.evidence = evidence;
         encode_claim_body(&body).expect("encode")
     };
@@ -808,7 +810,7 @@ fn claim_subject_decode_pins_both_encodings() {
 #[test]
 fn world_value_must_be_16_byte_binary() {
     let subj = EntityId::from_bytes([0x60; 16]).expect("valid subject id");
-    let facet = substrate_facet_id(subj);
+    let facet = substrate_facet_id(subj).unwrap();
     let project = default_project_id();
     let body_with_world = |world: Option<Value>| -> Vec<u8> {
         let mut entries = vec![
@@ -892,7 +894,8 @@ fn psych_profile_keeps_legacy_profile_claim_body_backward_compatible() {
         0.72,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     legacy.source = Some(ClaimSource::Observed);
     legacy.stale = false;
 
@@ -969,7 +972,8 @@ fn claim_surfaceable_pins_the_full_status_truth_table() {
 
     let subject = ClaimSubject::Entity(EntityId::from_bytes([0x60; 16]).expect("valid id"));
     let body = |appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale: bool| {
-        let mut body = ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life);
+        let mut body =
+            ClaimBody::new("test.pred", subject, Value::from("v"), 0.5, appr, life).unwrap();
         body.stale = stale;
         body
     };
@@ -994,14 +998,17 @@ fn claim_surfaceable_pins_the_full_status_truth_table() {
 
     // `ClaimBody::new` leaves `stale` at the decode default (absent =
     // false) — absence alone must not exclude (AC 4).
-    assert!(claim_surfaceable(&ClaimBody::new(
-        "test.pred",
-        subject,
-        Value::from("v"),
-        0.5,
-        A::Auto,
-        L::Active,
-    )));
+    assert!(claim_surfaceable(
+        &ClaimBody::new(
+            "test.pred",
+            subject,
+            Value::from("v"),
+            0.5,
+            A::Auto,
+            L::Active,
+        )
+        .unwrap()
+    ));
 }
 
 #[test]
@@ -1014,7 +1021,8 @@ fn claim_consolidatable_excludes_auto_generated_until_vetted() {
         0.5,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
 
     body.source = Some(ClaimSource::Generated);
     assert!(
@@ -1066,7 +1074,7 @@ fn self_unconfirmed_not_consolidatable() -> Result<()> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     body.session_tag = Some("agent:alpha/session:42".to_owned());
 
@@ -1100,7 +1108,7 @@ fn session_claim_producer_uses_envelope_actor_evidence_fail_closed() -> Result<(
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(crate::write_envelope::write_envelope_evidence(
         &envelope, None,
     ));
@@ -1150,7 +1158,8 @@ fn generated_not_evidence() {
             0.5,
             appr,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = source;
         body
     };
@@ -1202,7 +1211,8 @@ fn approved_generated_consolidatable_but_not_evidence() {
         0.5,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Generated);
 
     assert!(
@@ -1241,7 +1251,8 @@ fn provenance_door_accepts_approved_and_rejects_proposed_wrappers() {
             0.75,
             appr,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.evidence = Some(actor_class_evid.clone());
         body
     };
@@ -1344,7 +1355,8 @@ fn band_probe_body(scope: Option<Value>) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = scope;
     body
 }
@@ -1430,6 +1442,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let status_value = |status: &str| {
         Value::Map(vec![
@@ -1478,7 +1491,7 @@ fn write_door_validates_calendar_claim_structure() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(
         &EntityId::now(),
         &unknown,
@@ -1519,7 +1532,8 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &id,
@@ -1881,6 +1895,7 @@ fn coreference_body(predicate: &str, value: Value, approval: ClaimApprovalStatus
         approval,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 fn consent_value(pact_hex: &str) -> Value {
@@ -2152,6 +2167,7 @@ fn expression_preference_validators_pin_vocabularies() -> Result<()> {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     }
     for tag in ["ja", "en-US", "zh-Hant"] {
         validate_expression_preference_claim_structure(&body(
@@ -2216,6 +2232,7 @@ fn expression_preference_body(predicate: &str, subject: ClaimSubject, value: Val
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 #[test]
@@ -2317,7 +2334,7 @@ fn expression_preference_legacy_bare_predicate_remains_compatible() -> Result<()
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         validate_companion_expression_claim_structure(&body)?;
     }
     Ok(())
@@ -3111,7 +3128,7 @@ fn the_raw_claim_door_refuses_a_source_less_expression_preference() -> Result<()
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert!(body.source.is_none());
     let data = encode_claim_body(&body)?;
 
@@ -3410,7 +3427,7 @@ fn a_proposed_preference_arriving_by_sync_never_wins_the_winners_read() -> Resul
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     proposed.valid_from = Some(2);
     proposed.source = Some(ClaimSource::Inferred);
     let data = encode_claim_body(&proposed)?;
@@ -3743,7 +3760,8 @@ fn lineage_body(predicate: &str, source: ClaimSource, taint: Option<ClaimSource>
         0.7,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     if let Some(taint) = taint {
         body.scope = Some(Value::Map(vec![(
@@ -3918,7 +3936,7 @@ fn claim_demotion_rung_is_fail_closed_and_ordered() -> Result<()> {
         0.8,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert_eq!(claim_demotion_rung(&body)?, None);
     body.scope = Some(Value::Map(vec![(
         Value::from(CLAIM_SCOPE_DEMOTION_RUNG_KEY),
@@ -4051,7 +4069,7 @@ fn scoped_read_in_session_sees_session_staged_out_edges() -> Result<()> {
         use std::collections::BTreeSet;
         let mut scope = crate::federation::scope_codec::read_preset();
         scope.bands = ScopeAxis::Some(BTreeSet::from([crate::registry::ENTITY_TYPE_PERSON]));
-        let bytes = crate::gate::default_policy_manifest();
+        let bytes = crate::gate::default_policy_manifest()?;
         let Value::Map(mut entries) =
             rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
         else {
@@ -4130,7 +4148,8 @@ fn decay_claim(predicate: &str, life: ClaimLifecycleStatus, valid_to: Option<u64
         0.9,
         ClaimApprovalStatus::Auto,
         life,
-    );
+    )
+    .unwrap();
     body.valid_to = valid_to;
     body
 }
@@ -4290,6 +4309,7 @@ fn claim_access_factor_ignores_confidence() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
 
     assert_eq!(
@@ -4461,7 +4481,8 @@ fn corpus_scope_body(scope: Option<Value>) -> ClaimBody {
         0.7,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.scope = scope;
     body
 }

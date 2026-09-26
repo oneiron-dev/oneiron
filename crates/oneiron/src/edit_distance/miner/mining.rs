@@ -6,7 +6,7 @@ use rmpv::Value;
 
 use super::config::{
     MAX_ARTIFACT_SCAN, MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL,
-    MINER_K_SETTINGS_KEY, PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid,
+    PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid,
 };
 use super::emission::emit_cluster;
 use super::model::{
@@ -16,15 +16,38 @@ use super::model::{
 use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
+use crate::edit_distance::FinalizedProposalText;
+use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
-use crate::edit_distance::{
-    FinalizedProposalText, PROPOSAL_ARTIFACT_KEY_PREFIX, decode_finalized_proposal_text,
-};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+/// Dial: distinct-receipt count K needed before the substitution miner acts
+/// on a cluster.
+const MINER_K: SideTable<(), MinerK, Raw> = SideTable::new(&side_table::EDIT_DISTANCE_MINER_K);
+
+/// K, stored as decimal ASCII so the dial is readable in a `vault_meta` dump
+/// — the `InboxReviewDial` token convention, applied to a count.
+struct MinerK(u32);
+
+impl RawValue for MinerK {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_string().into_bytes())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| text.parse::<u32>().ok())
+            .filter(|k| *k > 0)
+            .map(Self)
+            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex(MINER_K_ROW_LABEL)))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // The K dial
@@ -38,14 +61,9 @@ use crate::error::{Error, Result};
 /// positive decimal count.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, MINER_K_SETTINGS_KEY)? else {
-        return Ok(MINER_K_DEFAULT);
-    };
-    std::str::from_utf8(&raw)
-        .ok()
-        .and_then(|text| text.parse::<u32>().ok())
-        .filter(|k| *k > 0)
-        .ok_or(Error::CorruptedIndex(MINER_K_ROW_LABEL))
+    Ok(MINER_K
+        .get(&vault.store, &rtxn, &())?
+        .map_or(MINER_K_DEFAULT, |dial| dial.0))
 }
 
 /// Persists K.
@@ -61,14 +79,7 @@ pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
     if k == 0 {
         return Err(invalid("the substitution miner's K must be at least 1"));
     }
-    let encoded = k.to_string();
-    vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, MINER_K_SETTINGS_KEY, encoded.as_bytes())?;
-        Ok(())
-    })
+    vault.with_write_txn(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
 }
 
 // ---------------------------------------------------------------------------
@@ -379,14 +390,11 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
         records: Vec::new(),
         by_refs: BTreeMap::new(),
     };
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, PROPOSAL_ARTIFACT_KEY_PREFIX)?
+    for entry in PROPOSAL_ARTIFACT
+        .iter_from(&vault.store, &rtxn, &[])?
         .take(MAX_ARTIFACT_SCAN)
     {
-        let (_, raw) = entry?;
-        let record = decode_finalized_proposal_text(&raw)?;
+        let (_, record) = entry?;
         let position = index.records.len();
         index.by_refs.insert(
             (

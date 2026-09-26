@@ -113,8 +113,8 @@ use self::lifecycle::validate_definition;
 use self::membership::watermark_verdict;
 #[cfg(test)]
 use self::storage::{
-    decode_memo_row, decode_watermark, definition_from_json, definition_to_json, encode_memo_row,
-    encode_watermark, keys,
+    MEMBERSHIP_EVENTS, MEMOS, decode_memo_row, decode_watermark, definition_from_json,
+    definition_to_json, encode_memo_row, encode_watermark, event_pair_prefix,
 };
 #[cfg(test)]
 use self::support::{

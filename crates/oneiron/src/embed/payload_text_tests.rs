@@ -21,7 +21,7 @@ fn claim_bytes(value: Value) -> Result<Vec<u8>> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     crate::claim::encode_claim_body(&body)
 }
 

@@ -1,8 +1,47 @@
 use super::*;
+use crate::side_table::{self, LegacyJson, SideCodec, SideTable};
 
 /// Durable plan and checkpoint namespaces. Neither is an authority carrier.
 pub const EMERGENCY_PLAN_META_PREFIX: &[u8] = b"booking:emergency_plan:v1:";
 pub const EMERGENCY_ITEM_META_PREFIX: &[u8] = b"booking:emergency_item:v1:";
+
+/// A plan is read back from its immutable persisted row before execution. Key:
+/// hex64 (the request+event content hash [`item_key`] spells).
+pub(super) const PLAN: SideTable<String, EmergencyPlan, LegacyJson> =
+    SideTable::new(&side_table::EMERGENCY_PLAN);
+
+/// Local state committed with both passports. Key: hex64, same digest as
+/// [`PLAN`].
+pub(super) const ITEM: SideTable<String, EmergencyItem, LegacyJson> =
+    SideTable::new(&side_table::EMERGENCY_ITEM);
+
+/// The [`ITEM`]/[`PLAN`] table key: the hex suffix after a full raw row key
+/// (as [`item_key`] and [`plan_key`] still build it, since that full-byte form
+/// is also what the lookup indexes in `lookup.rs` store as their value).
+/// `None` for a key under a foreign prefix or non-UTF8 suffix — never an
+/// error, matching this door's old "absent" behavior for an unrecognized key.
+pub(super) fn hex_suffix<'k>(key: &'k [u8], prefix: &[u8]) -> Option<&'k str> {
+    std::str::from_utf8(key.strip_prefix(prefix)?).ok()
+}
+
+/// One saved row's stored bytes, undecoded: a plan is verified against its
+/// exact persisted bytes, and a damaged row is refused for its own event
+/// rather than failing the whole batch.
+fn stored_bytes_in<V, C: SideCodec<V>>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    table: SideTable<String, V, C>,
+    hex: &str,
+) -> Result<Option<Vec<u8>>, BookingError> {
+    // The exact key, when present, is the first row under its own spelling.
+    let first = table
+        .iter_raw_from(&vault.store, txn, hex.as_bytes())
+        .map_err(storage_failure)?
+        .next()
+        .transpose()
+        .map_err(storage_failure)?;
+    Ok(first.and_then(|(key, value)| (key == hex.as_bytes()).then_some(value)))
+}
 
 /// A plan is read back from its immutable persisted row before execution.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,9 +144,12 @@ pub(crate) fn read_item_in(
     txn: &heed::RoTxn<'_>,
     key: &[u8],
 ) -> Result<Option<EmergencyItem>, BookingError> {
-    read_meta_bytes(vault, txn, key)?
+    let Some(hex) = hex_suffix(key, EMERGENCY_ITEM_META_PREFIX) else {
+        return Ok(None);
+    };
+    stored_bytes_in(vault, txn, ITEM, hex)?
         .map(|raw| {
-            serde_json::from_slice(&raw)
+            ITEM.decode_value(&raw)
                 .map_err(|_| refused("indexed emergency checkpoint is malformed"))
         })
         .transpose()
@@ -119,12 +161,10 @@ pub(crate) fn write_item_in(
     item: &EmergencyItem,
 ) -> Result<(), BookingError> {
     let key = item_key(&item.plan.request, item.calendar.event_ref)?;
-    put_meta(
-        vault,
-        txn,
-        &key,
-        &serde_json::to_vec(item).map_err(storage_failure)?,
-    )?;
+    let hex = hex_suffix(&key, EMERGENCY_ITEM_META_PREFIX)
+        .ok_or_else(|| refused("emergency checkpoint key is malformed"))?;
+    ITEM.put(&vault.store, txn, &hex.to_owned(), item)
+        .map_err(storage_failure)?;
     lookup::index_item_in(vault, txn, item, &key)
 }
 
@@ -134,14 +174,14 @@ pub(crate) fn verify_plan_in(
     plan: &EmergencyPlan,
 ) -> Result<(), BookingError> {
     verify_instruction_in_txn(vault, txn, &plan.request)?;
-    let raw = read_meta_bytes(
-        vault,
-        txn,
-        &plan_key(&plan.request, plan.booking.calendar.event_ref)?,
-    )?
-    .ok_or_else(|| refused("no persisted genuine emergency proposal"))?;
+    let key = plan_key(&plan.request, plan.booking.calendar.event_ref)?;
+    let hex = hex_suffix(&key, EMERGENCY_PLAN_META_PREFIX)
+        .ok_or_else(|| refused("no persisted genuine emergency proposal"))?;
+    let raw = stored_bytes_in(vault, txn, PLAN, hex)?
+        .ok_or_else(|| refused("no persisted genuine emergency proposal"))?;
     if raw
-        != serde_json::to_vec(plan)
+        != PLAN
+            .encode_value(plan)
             .map_err(|_| refused("emergency plan content cannot be encoded"))?
         || plan
             .hash()
@@ -225,25 +265,20 @@ pub fn plan_emergency_reschedule(
     {
         let txn = vault.store.env.read_txn().map_err(storage_failure)?;
         verify_instruction_in_txn(vault, &txn, request)?;
-        let prefix = lookup::request_plan_prefix(request)?;
-        for row in vault
-            .store
-            .vault_meta
-            .prefix_iter(&txn, &prefix)
-            .map_err(storage_failure)?
-        {
-            let (index_key, key) = row.map_err(storage_failure)?;
-            let event = lookup::request_plan_event(&prefix, &index_key)?;
+        for (event, key) in lookup::request_plan_rows(vault, &txn, request)? {
             // Remember the trusted event before touching the referenced row.
             // A damaged saved plan must be refused, never silently re-planned.
             saved_events.insert(event);
             let candidate = (|| {
-                if key.as_ref() != plan_key(request, event)?.as_slice() {
+                if key.as_slice() != plan_key(request, event)?.as_slice() {
                     return Err(refused("emergency plan lookup names another plan key"));
                 }
-                let raw = read_meta_bytes(vault, &txn, &key)?
+                let hex = hex_suffix(&key, EMERGENCY_PLAN_META_PREFIX)
                     .ok_or_else(|| refused("indexed emergency plan is missing"))?;
-                let plan: EmergencyPlan = serde_json::from_slice(&raw)
+                let raw = stored_bytes_in(vault, &txn, PLAN, hex)?
+                    .ok_or_else(|| refused("indexed emergency plan is missing"))?;
+                let plan = PLAN
+                    .decode_value(&raw)
                     .map_err(|_| refused("indexed emergency plan is malformed"))?;
                 if plan.request != *request {
                     return Err(refused("emergency plan lookup names another instruction"));
@@ -441,9 +476,13 @@ pub(super) fn plan_item(
             return Err(refused("booking or invitation changed during planning"));
         }
         let key = plan_key(request, plan.booking.calendar.event_ref)?;
-        let encoded = serde_json::to_vec(&plan).map_err(storage_failure)?;
-        if let Some(prior) = read_meta_bytes(vault, txn, &key)? {
-            if prior != encoded {
+        let hex = hex_suffix(&key, EMERGENCY_PLAN_META_PREFIX)
+            .ok_or_else(|| refused("emergency plan key is malformed"))?;
+        if let Some(prior) = PLAN
+            .get(&vault.store, txn, &hex.to_owned())
+            .map_err(storage_failure)?
+        {
+            if prior != plan {
                 return Err(refused(
                     "same emergency revision has conflicting plan content",
                 ));
@@ -460,7 +499,8 @@ pub(super) fn plan_item(
                     now_utc,
                 )?;
             }
-            put_meta(vault, txn, &key, &encoded)?;
+            PLAN.put(&vault.store, txn, &hex.to_owned(), &plan)
+                .map_err(storage_failure)?;
         }
         lookup::index_plan_in(vault, txn, &plan, &key)
     })?;

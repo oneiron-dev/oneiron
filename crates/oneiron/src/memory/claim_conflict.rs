@@ -12,14 +12,20 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, Claim
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-const PACKET: &[u8] = b"consent_bundle.claim_conflict.v1:";
-const RESOLUTION: &[u8] = b"consent_bundle.claim_conflict.resolved.v1:";
+/// Content-addressed claim-conflict review packet. Key: bytes32 (bundle id).
+const PACKET: SideTable<[u8; 32], ClaimConflictBundle, LegacyJson> =
+    SideTable::new(&side_table::CLAIM_CONFLICT_PACKET);
+/// Marker for a ruled conflict packet: the ruling's [`GateDecisionId`] bytes.
+/// Key: bytes32 (bundle id).
+const RESOLUTION: SideTable<[u8; 32], [u8; 16], Raw> =
+    SideTable::new(&side_table::CLAIM_CONFLICT_RESOLUTION);
 const KIND: &str = "consent_bundle:claim_conflict";
 
 /// Typed question, not a prompt string or an instruction hidden in a claim.
@@ -71,15 +77,18 @@ pub struct ClaimConflictReceipt {
     pub ruling_claim: EntityId,
 }
 
-fn key(prefix: &[u8], digest: &[u8; 32]) -> Vec<u8> {
-    [prefix, digest.as_slice()].concat()
-}
-fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
+/// The stored form of a packet: every member's `raw` bytes cleared. Storage
+/// and the content-address digest both run over this form, never the
+/// hydrated one a caller sees.
+fn stripped(bundle: &ClaimConflictBundle) -> ClaimConflictBundle {
     let mut stored = bundle.clone();
     for member in &mut stored.members {
         member.raw.clear();
     }
-    serde_json::to_vec(&stored).map_err(|_| Error::CorruptedIndex("claim conflict packet"))
+    stored
+}
+fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
+    PACKET.encode_value(&stripped(bundle))
 }
 fn digest(bundle: &ClaimConflictBundle) -> Result<[u8; 32], Error> {
     let mut input = bundle.clone();
@@ -94,13 +103,9 @@ fn load(
     txn: &heed::RoTxn<'_>,
     id: &[u8; 32],
 ) -> Result<ClaimConflictBundle, Error> {
-    let bytes = vault
-        .store
-        .vault_meta
-        .get(txn, &key(PACKET, id))?
+    let packet = PACKET
+        .get(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)?;
-    let packet: ClaimConflictBundle = serde_json::from_slice(&bytes)
-        .map_err(|_| Error::CorruptedIndex("claim conflict packet"))?;
     if packet.bundle_id != *id || digest(&packet)? != *id {
         return Err(Error::CorruptedIndex("claim conflict digest"));
     }
@@ -230,8 +235,7 @@ impl Memory<'_> {
                 members,
             };
             packet.bundle_id = digest(&packet)?;
-            let packet_key = key(PACKET, &packet.bundle_id);
-            if self.vault.store.vault_meta.get(txn, &packet_key)?.is_some() {
+            if PACKET.contains(&self.vault.store, txn, &packet.bundle_id)? {
                 return Ok(hydrate(
                     self.vault,
                     txn,
@@ -247,10 +251,12 @@ impl Memory<'_> {
                 packet.bundle_id.to_vec(),
                 crate::unix_seconds_now(),
             );
-            self.vault
-                .store
-                .vault_meta
-                .put(txn, &packet_key, &encode(&packet)?)?;
+            PACKET.put(
+                &self.vault.store,
+                txn,
+                &packet.bundle_id,
+                &stripped(&packet),
+            )?;
             self.vault
                 .store
                 .append_gate_decision_in_txn(txn, &receipt)?;
@@ -288,17 +294,8 @@ impl Memory<'_> {
         self.verify_reviewer_identity(&txn, reviewer)?;
         let owner = is_root_owner(self.vault, &txn, self.actor)?;
         let mut packets = Vec::new();
-        for entry in self.vault.store.vault_meta.prefix_iter(&txn, PACKET)? {
-            let (_, bytes) = entry?;
-            let packet: ClaimConflictBundle = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::CorruptedIndex("claim conflict packet"))?;
-            if self
-                .vault
-                .store
-                .vault_meta
-                .get(&txn, &key(RESOLUTION, &packet.bundle_id))?
-                .is_some()
-            {
+        for (_, packet) in PACKET.scan(&self.vault.store, &txn)? {
+            if RESOLUTION.contains(&self.vault.store, &txn, &packet.bundle_id)? {
                 continue;
             }
             if packet.authority_root != root_id(self.vault, &txn)? {
@@ -371,13 +368,8 @@ impl Memory<'_> {
                         .ok_or_else(|| authority_denied("no named admin review Grant"))?,
                 )
             };
-            let resolution_key = key(RESOLUTION, &id);
-            if let Some(raw) = self.vault.store.vault_meta.get(txn, &resolution_key)? {
-                let decision_id = GateDecisionId::from_bytes(
-                    raw.as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("conflict resolution marker"))?,
-                );
+            if let Some(raw) = RESOLUTION.get(&self.vault.store, txn, &id)? {
+                let decision_id = GateDecisionId::from_bytes(raw);
                 let receipt = self
                     .vault
                     .store
@@ -517,11 +509,7 @@ impl Memory<'_> {
             self.vault
                 .store
                 .append_gate_decision_in_txn(txn, &receipt)?;
-            self.vault.store.vault_meta.put(
-                txn,
-                &resolution_key,
-                &receipt.decision_id.as_bytes(),
-            )?;
+            RESOLUTION.put(&self.vault.store, txn, &id, &receipt.decision_id.as_bytes())?;
             Ok(ClaimConflictReceipt {
                 bundle_id: id,
                 receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),

@@ -59,11 +59,13 @@ fn witness_writes_turn_messages_edges_and_text() {
     let turn = facade
         .get_entity(&receipt.turn_short_id)
         .expect("get turn")
+        .value
         .expect("turn exists");
     assert_eq!(turn.kind, "TURN");
     let conversation = facade
         .get_entity(&conversation_hex)
         .expect("get conversation")
+        .value
         .expect("conversation exists");
     assert_eq!(conversation.kind, "CONVERSATION");
 
@@ -88,6 +90,7 @@ fn witness_writes_turn_messages_edges_and_text() {
         let view = facade
             .get_entity(short_id)
             .expect("get message")
+            .value
             .expect("message exists");
         assert_eq!(view.kind, "MESSAGE");
         assert_eq!(view.occurred_start, 500);
@@ -123,6 +126,7 @@ fn witness_writes_turn_messages_edges_and_text() {
     let first_message = facade
         .get_entity(&receipt.message_short_ids[0])
         .unwrap()
+        .value
         .unwrap();
     assert!(
         hits.iter()
@@ -215,6 +219,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
     let system_view = facade
         .get_entity(&second.message_short_ids[0])
         .unwrap()
+        .value
         .expect("system message");
     let system_id = EntityId::from_hex(&system_view.id_hex).unwrap();
     let kinds: Vec<EdgeKind> = vault
@@ -270,6 +275,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
     let turn = facade
         .get_entity(&receipt.turn_short_id)
         .expect("get turn")
+        .value
         .expect("turn exists");
     assert_eq!(
         turn.body.expect("turn body")["speaker"],
@@ -394,6 +400,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
     let turn = facade
         .get_entity(&receipt.turn_short_id)
         .expect("get turn")
+        .value
         .expect("turn exists");
     let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn id");
     let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -542,6 +549,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
     let message = facade
         .get_entity(&receipt.message_short_ids[0])
         .expect("get message")
+        .value
         .expect("message exists");
     let message_id = EntityId::from_hex(&message.id_hex).expect("message id");
     assert!(
@@ -786,6 +794,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
     let body = facade
         .get_entity(&turn_id.to_hex())
         .expect("get turn")
+        .value
         .expect("turn")
         .body
         .expect("turn body");

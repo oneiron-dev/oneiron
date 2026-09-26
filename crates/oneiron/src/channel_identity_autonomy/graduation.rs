@@ -9,7 +9,7 @@ use crate::error::Result;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::write_envelope::WriteActor;
 
-use super::codec::{address, array, id, id_value, key, text, token};
+use super::codec::{AUTONOMY, address, array, id, id_value, key, text, token};
 use super::invalid_autonomy;
 use super::types::{
     ChannelIdentityAutonomyRung, DEFAULT_GRADUATION_UNCHANGED_STREAK, DraftReviewOutcome,
@@ -99,7 +99,7 @@ impl Vault {
             Value::from(owner_authenticated),
             id_value(task_ref),
         ]);
-        if self.store.vault_meta.get(&txn, &key)?.is_some() {
+        if AUTONOMY.contains(&self.store, &txn, &key)? {
             return Err(invalid_autonomy());
         }
         self.write_autonomy_row(&mut txn, &key, writer, evidence.occurred_at, value)?;
@@ -197,9 +197,8 @@ impl Vault {
             return Ok(None);
         }
         let mut rows = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (key, _) = entry?;
-            let (actor, at, value) = self.autonomy_row(&txn, &key)?;
+        for (_, row) in AUTONOMY.scan_from(&self.store, &txn, &prefix)? {
+            let (actor, at, value) = (row.actor, row.at, row.value);
             let v = array(&value, 6)?;
             let task_ref = id(&v[5])?;
             let owner_authenticated = v[4].as_bool().ok_or_else(invalid_autonomy)?;

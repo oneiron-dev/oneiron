@@ -4,14 +4,22 @@
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
+use crate::side_table::{self, SideKey, SideTable};
 use crate::store::Store;
 use crate::task_authority::{TaskAuthorityFactKind, decode_task_authority_fact_body};
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
-const FORWARD: &[u8] = b"tasks.by_owner.v1/";
-const REVERSE: &[u8] = b"tasks.owner_fact.v1/";
-const BACKFILLED: &[u8] = b"tasks.by_owner.backfilled.v1";
+/// Owner's tasks forward index: `(owner, task, fact id) -> ()`.
+const FORWARD: SideTable<(EntityId, EntityId, EntityId), (), side_table::Raw> =
+    SideTable::new(&side_table::TASK_BY_OWNER_FORWARD);
+/// Owner-authority fact to forward-index key: `fact id -> the forward row's
+/// full stored key bytes`, so a fact's retraction can delete its forward row
+/// without recomputing it from a stale body.
+const REVERSE: SideTable<EntityId, Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_OWNER_FACT_REVERSE);
+const BACKFILLED: SideTable<(), [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::TASK_BY_OWNER_BACKFILLED);
 
 pub(crate) fn index_owner_fact(
     store: &Store,
@@ -19,10 +27,14 @@ pub(crate) fn index_owner_fact(
     id: &EntityId,
     body: Option<&[u8]>,
 ) -> Result<()> {
-    let reverse = [REVERSE, id.as_bytes()].concat();
-    if let Some(old) = store.vault_meta.get(txn, &reverse)?.map(|v| v.to_vec()) {
-        store.vault_meta.delete(txn, &old)?;
-        store.vault_meta.delete(txn, &reverse)?;
+    if let Some(old) = REVERSE.get(store, txn, id)? {
+        let suffix = old
+            .get(FORWARD.decl().prefix.len()..)
+            .ok_or(Error::CorruptedIndex("tasks by owner reverse index"))?;
+        let forward_key = <(EntityId, EntityId, EntityId)>::decode_key(suffix)
+            .ok_or(Error::CorruptedIndex("tasks by owner reverse index"))?;
+        FORWARD.delete(store, txn, &forward_key)?;
+        REVERSE.delete(store, txn, id)?;
     }
     let Some(body) = body else {
         return Ok(());
@@ -38,15 +50,9 @@ pub(crate) fn index_owner_fact(
     }
     let fact = decode_task_authority_fact_body(body)?;
     if fact.kind == TaskAuthorityFactKind::Owner {
-        let key = [
-            FORWARD,
-            fact.actor_ref.as_bytes(),
-            fact.task_ref.as_bytes(),
-            id.as_bytes(),
-        ]
-        .concat();
-        store.vault_meta.put(txn, &key, &[])?;
-        store.vault_meta.put(txn, &reverse, &key)?;
+        let forward_key = (fact.actor_ref, fact.task_ref, *id);
+        FORWARD.put(store, txn, &forward_key, &())?;
+        REVERSE.put(store, txn, id, &FORWARD.key_bytes(&forward_key))?;
     }
     Ok(())
 }
@@ -89,12 +95,12 @@ impl Vault {
     /// Normal writes, imports and replay maintain this at the storage door.
     pub fn backfill_tasks_by_owner(&self) -> Result<()> {
         let txn = self.store.env.read_txn()?;
-        if self.store.vault_meta.get(&txn, BACKFILLED)?.is_some() {
+        if BACKFILLED.get(&self.store, &txn, &())?.is_some() {
             return Ok(());
         }
         drop(txn);
         self.with_write_txn(|txn| {
-            if self.store.vault_meta.get(txn, BACKFILLED)?.is_some() {
+            if BACKFILLED.get(&self.store, txn, &())?.is_some() {
                 return Ok(());
             }
             let rows = self
@@ -123,7 +129,7 @@ impl Vault {
                     Some(&raw[ENTITY_METADATA_HEADER_LEN..]),
                 )?;
             }
-            self.store.vault_meta.put(txn, BACKFILLED, &[1])?;
+            BACKFILLED.put(&self.store, txn, &(), &[1])?;
             Ok(())
         })
     }
@@ -138,17 +144,9 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         self.backfill_tasks_by_owner()?;
         let txn = self.store.env.read_txn()?;
-        let prefix = [FORWARD, owner.as_bytes()].concat();
         let mut tasks = BTreeSet::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (key, _) = entry?;
-            let id = key
-                .get(prefix.len()..prefix.len() + 16)
-                .ok_or(Error::CorruptedIndex("tasks by owner"))?;
-            let task = EntityId::from_bytes(
-                id.try_into()
-                    .map_err(|_| Error::CorruptedIndex("tasks by owner"))?,
-            )?;
+        for entry in FORWARD.iter_from(&self.store, &txn, owner.as_bytes())? {
+            let ((_, task, _), ()) = entry?;
             if after.is_some_and(|after| task <= after) || tasks.contains(&task) {
                 continue;
             }
@@ -179,11 +177,10 @@ impl Vault {
         let Some(state) = self.task_authority_state_in(&txn, task)? else {
             return Ok(None);
         };
-        let prefix = [FORWARD, state.owner_ref.as_bytes(), task.as_bytes()].concat();
-        Ok(self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, &prefix)?
+        let mut prefix = state.owner_ref.as_bytes().to_vec();
+        prefix.extend_from_slice(task.as_bytes());
+        Ok(FORWARD
+            .iter_from(&self.store, &txn, &prefix)?
             .next()
             .transpose()?
             .map(|_| state.owner_ref))

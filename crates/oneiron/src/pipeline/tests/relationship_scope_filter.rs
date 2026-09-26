@@ -22,7 +22,8 @@ fn relationship_body(rel: Option<EntityId>) -> ClaimBody {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.rel = rel;
     body
 }
@@ -200,7 +201,7 @@ fn setup_relationship_rows(
 #[test]
 fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
     let subject = entity_id(0xD6);
-    let facet = crate::claim::substrate_facet_id(subject);
+    let facet = crate::claim::substrate_facet_id(subject)?;
     let project = crate::claim::default_project_id();
     let base_world = crate::claim::base_world_id();
     // REQUIRED v2 stamps on every hand-built body: `worldId` is the reserved

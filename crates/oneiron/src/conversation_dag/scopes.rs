@@ -7,10 +7,17 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::side_table::{self, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+
+/// A read-only view of `crate::compaction`'s SESSION to TURN membership
+/// reverse index, from the DAG scope walk that consumes it. Owned there; this
+/// binds the SAME declaration to read it (two typed tables, one declaration).
+const SESSION_TURN_MEMBERS: SideTable<(EntityId, EntityId), [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::SESSION_TURNS);
 
 fn sub_session_records(
     vault: &Vault,
@@ -27,26 +34,18 @@ fn sub_session_records(
         return Err(invalid("SubSession requires exactly one SpawnedBy edge"));
     }
     require_member(&vault.store, txn, &scope.conversation, &spawned[0])?;
-    let prefix = [b"session_turns:v1:".as_slice(), session.as_bytes()].concat();
     let mut records = Vec::new();
-    for (n, entry) in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, &prefix)?
+    for (n, entry) in SESSION_TURN_MEMBERS
+        .iter_from(&vault.store, txn, session.as_bytes())?
         .enumerate()
     {
         if n >= MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let (key, value) = entry?;
-        if key.len() != prefix.len() + 16 || value.as_ref() != [1] {
+        let ((_, id), value) = entry.map_err(|_| Error::CorruptedIndex("session turns index"))?;
+        if value != [1] {
             return Err(Error::CorruptedIndex("session turns index"));
         }
-        let id = EntityId::from_bytes(
-            key.as_ref()[prefix.len()..]
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("session turns index"))?,
-        )?;
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
             LiveEntityRow::DeletedShell | LiveEntityRow::Absent => continue,
             _ => {}

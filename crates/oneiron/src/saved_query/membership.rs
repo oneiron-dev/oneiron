@@ -19,7 +19,8 @@ use crate::temporal::TimeRange;
 
 use super::evidence::EVIDENCE_HASH_LEN;
 use super::storage::{
-    decode_event, encode_event, encode_member_value_bytes, encode_watermark, keys, read_watermark,
+    MEMBERSHIP_EVENTS, WATERMARK, Watermark, encode_event, encode_member_value_bytes,
+    event_pair_prefix, read_watermark,
 };
 use super::support::hash_bytes;
 
@@ -191,8 +192,7 @@ pub fn commit_membership_plan(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
-    let encoded_event = encode_event(event)?;
+    )?;
     vault.with_write_txn(|wtxn| {
         let watermark = current_watermark(vault, wtxn, event.query_ref, event.entity_ref)?;
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
@@ -207,15 +207,20 @@ pub fn commit_membership_plan(
             event.campaign_ref,
             event.entity_ref,
         )?;
-        vault.store.vault_meta.put(
+        WATERMARK.put(
+            &vault.store,
             wtxn,
-            &keys::watermark(&event.query_ref, &event.entity_ref),
-            &encode_watermark(event.epoch, &content),
+            &(event.query_ref, event.entity_ref),
+            &Watermark {
+                epoch: event.epoch,
+                content,
+            },
         )?;
-        vault.store.vault_meta.put(
+        MEMBERSHIP_EVENTS.put(
+            &vault.store,
             wtxn,
-            &keys::event(&event.query_ref, &event.entity_ref, event.epoch),
-            &encoded_event,
+            &(event.query_ref, event.entity_ref, event.epoch),
+            event,
         )?;
         let claim_id = vault.store.clock.entity_id()?;
         vault.put_claim_in_txn(
@@ -395,13 +400,12 @@ pub fn membership_events(
     entity_ref: EntityId,
 ) -> Result<Vec<MembershipEvent>> {
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = keys::event_prefix(&query_ref, &entity_ref);
-    let mut events = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-        let (_, value) = row?;
-        events.push(decode_event(&value)?);
-    }
-    Ok(events)
+    let prefix = event_pair_prefix(&query_ref, &entity_ref);
+    Ok(MEMBERSHIP_EVENTS
+        .scan_from(&vault.store, &rtxn, &prefix)?
+        .into_iter()
+        .map(|(_, event)| event)
+        .collect())
 }
 
 /// The epoch floor this `(query, entity)` pair may not write at or below.

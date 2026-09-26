@@ -4,17 +4,24 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 
 use super::pack_store::{
-    active_compliance_pack_in_txn, decode_pack, encode_pack, invalid_pack,
-    store_active_compliance_pack, validate_compliance_pack,
+    active_compliance_pack_in_txn, encode_pack, invalid_pack, store_active_compliance_pack,
+    validate_compliance_pack,
 };
-use super::rules::{
-    CAMPAIGN_COMPLIANCE_NOTICE_META_PREFIX, CAMPAIGN_COMPLIANCE_PENDING_META_KEY, CompliancePack,
-    PROPOSAL_HASH_DOMAIN,
-};
+use super::rules::{CompliancePack, PROPOSAL_HASH_DOMAIN};
+
+/// The one staged proposal awaiting an owner stamp. Key: `()`.
+const PENDING: SideTable<(), CompliancePack, Named> =
+    SideTable::new(&side_table::CAMPAIGN_COMPLIANCE_PENDING);
+/// The durable activation-notice log, keyed by the activated pack version so
+/// one version can never write two notices. Key: `pack_version` (u32
+/// big-endian).
+const NOTICE: SideTable<[u8; 4], String, Raw> =
+    SideTable::new(&side_table::CAMPAIGN_COMPLIANCE_NOTICE);
 
 // ---------------------------------------------------------------------------
 // Amendment: tighten auto, loosen or ambiguous waits for the owner stamp
@@ -55,7 +62,7 @@ pub enum ComplianceAmendmentOutcome {
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] when the proposal is malformed, renames the pack,
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig) when the proposal is malformed, renames the pack,
 /// or fails to advance the pack version.
 pub fn classify_compliance_amendment(
     current: &CompliancePack,
@@ -198,12 +205,7 @@ fn apply_compliance_amendment(
     let class = classify_compliance_amendment(&current, &proposed)?;
     let outcome = match class {
         ComplianceAmendmentClass::LooseningOrAmbiguous => {
-            let encoded = encode_pack(&proposed)?;
-            vault.store.vault_meta.put(
-                &mut wtxn,
-                CAMPAIGN_COMPLIANCE_PENDING_META_KEY,
-                &encoded,
-            )?;
+            PENDING.put(&vault.store, &mut wtxn, &(), &proposed)?;
             ComplianceAmendmentOutcome::PendingOwnerStamp {
                 proposal_hash: compliance_proposal_hash(&proposed)?,
             }
@@ -221,7 +223,7 @@ fn apply_compliance_amendment(
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] when nothing is staged, when the hash names
+/// [`Error::InvalidConfig`](crate::Error::InvalidConfig) when nothing is staged, when the hash names
 /// different rows or a different version, or when the staged proposal no longer
 /// advances the active version.
 pub fn stamp_compliance_amendment(
@@ -230,14 +232,9 @@ pub fn stamp_compliance_amendment(
     proposal_hash: [u8; 32],
 ) -> Result<CompliancePack> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&wtxn, CAMPAIGN_COMPLIANCE_PENDING_META_KEY)?
-    else {
+    let Some(pending) = PENDING.get(&vault.store, &wtxn, &())? else {
         return Err(invalid_pack("no amendment is awaiting an owner stamp"));
     };
-    let pending = decode_pack(&raw, "campaign compliance pending amendment")?;
     if compliance_proposal_hash(&pending)? != proposal_hash {
         return Err(invalid_pack(
             "owner stamp does not bind the staged rows and version",
@@ -254,10 +251,7 @@ pub fn stamp_compliance_amendment(
         ComplianceAmendmentClass::LooseningOrAmbiguous,
         &owner.to_hex(),
     )?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, CAMPAIGN_COMPLIANCE_PENDING_META_KEY)?;
+    PENDING.delete(&vault.store, &mut wtxn, &())?;
     wtxn.commit()?;
     Ok(pending)
 }
@@ -278,10 +272,7 @@ fn activate_compliance_pack(
         actor,
         pack.rows.len(),
     );
-    let mut key = Vec::with_capacity(CAMPAIGN_COMPLIANCE_NOTICE_META_PREFIX.len() + 4);
-    key.extend_from_slice(CAMPAIGN_COMPLIANCE_NOTICE_META_PREFIX);
-    key.extend_from_slice(&pack.pack_version.to_be_bytes());
-    store.vault_meta.put(wtxn, &key, notice.as_bytes())?;
+    NOTICE.put(store, wtxn, &pack.pack_version.to_be_bytes(), &notice)?;
     Ok(ComplianceAmendmentOutcome::Applied {
         pack_version: pack.pack_version,
         notice,
@@ -300,21 +291,14 @@ const fn amendment_class_token(class: ComplianceAmendmentClass) -> &'static str 
 ///
 /// # Errors
 ///
-/// Storage errors, and [`Error::CorruptedIndex`] when a notice is not UTF-8.
+/// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) when a notice is not UTF-8.
 pub fn compliance_amendment_notices(vault: &Vault) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut notices = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, CAMPAIGN_COMPLIANCE_NOTICE_META_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        let notice = std::str::from_utf8(&raw)
-            .map_err(|_| Error::CorruptedIndex("campaign compliance activation notice"))?;
-        notices.push(notice.to_owned());
-    }
-    Ok(notices)
+    Ok(NOTICE
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, notice)| notice)
+        .collect())
 }
 
 /// Canonical hash of a proposal: the exact rows, in a canonical order, plus the
@@ -322,7 +306,7 @@ pub fn compliance_amendment_notices(vault: &Vault) -> Result<Vec<String>> {
 ///
 /// # Errors
 ///
-/// [`Error::InvariantViolation`] when the canonical form cannot be encoded.
+/// [`Error::InvariantViolation`](crate::Error::InvariantViolation) when the canonical form cannot be encoded.
 pub fn compliance_proposal_hash(pack: &CompliancePack) -> Result<[u8; 32]> {
     let mut canonical = pack.clone();
     canonical.rows.sort_by(|left, right| {

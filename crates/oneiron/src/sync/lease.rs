@@ -50,7 +50,55 @@ use crate::Vault;
 use crate::deletion::{ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::sync::quarantine::{self, QuarantineContainer};
+
+/// The device-lease registry mirror. Key: [`LeaseKey`], value: [`LeaseRecord`]
+/// (the pinned 66 B encoding — [`encode_lease_record`] / [`decode_lease_record`]
+/// stay the codec, called by this value type's `RawValue` impl).
+const LEASE: SideTable<LeaseKey, LeaseRecord, Raw> = SideTable::new(&side_table::SYNC_LEASE);
+
+/// `{vault_id:016x}:{client_id:016x}` — [`LEASE`]'s key, the bytes after the
+/// `ls:` table prefix (33 B, fixed width).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LeaseKey {
+    pub(super) vault_id: u64,
+    pub(super) client_id: u64,
+}
+
+impl SideKey for LeaseKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(format!("{:016x}:{:016x}", self.vault_id, self.client_id).as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != 33 {
+            return None;
+        }
+        let text = std::str::from_utf8(bytes).ok()?;
+        let (vault, client) = text.split_once(':')?;
+        Some(Self {
+            vault_id: u64::from_str_radix(vault, 16).ok()?,
+            client_id: u64::from_str_radix(client, 16).ok()?,
+        })
+    }
+}
+
+/// The bytes after the `ls:` table prefix that scope a scan to one vault:
+/// `{vault_id:016x}:`.
+fn lease_scan_prefix(vault_id: u64) -> Vec<u8> {
+    format!("{vault_id:016x}:").into_bytes()
+}
+
+impl RawValue for LeaseRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_lease_record(self).to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_lease_record(bytes)?)
+    }
+}
 
 /// LMDB `sync_state` key prefix for lease-registry mirror rows.
 pub const LEASE_KEY_PREFIX: &str = "ls:";
@@ -380,10 +428,10 @@ pub(super) fn verify_new_receipt_origin_for_vault_in_txn(
     // `?`), failing this vault's door — never a best-effort skip — without
     // reading other vaults. Tenant read/write scoping remains out of scope
     // for ONE-1192.
-    let floor_prefix = lease_key_prefix(vault_id);
-    for entry in vault.store.sync_state.prefix_iter(txn, &floor_prefix)? {
-        let (_key, sibling_raw) = entry?;
-        let sibling = decode_scoped_lease_record(&sibling_raw, vault_id)?;
+    for (_, sibling) in LEASE.scan_from(&vault.store, txn, &lease_scan_prefix(vault_id))? {
+        if sibling.vault_id != vault_id {
+            return Err(Error::CorruptedIndex("lease record vault_id"));
+        }
         if sibling.pubkey == parts.pubkey && sibling.status == LeaseStatus::Revoked {
             return Err(Error::Sync(SyncError::ReceiptLeaseRevoked {
                 client_id: parts.client_id,
@@ -399,19 +447,21 @@ fn claimed_lease_record_in_txn(
     vault_id: u64,
     client_id: u64,
 ) -> Result<Option<LeaseRecord>> {
-    let key = lease_key(vault_id, client_id);
-    let Some(raw) = vault.store.sync_state.get(txn, &key)? else {
+    let Some(record) = LEASE.get(
+        &vault.store,
+        txn,
+        &LeaseKey {
+            vault_id,
+            client_id,
+        },
+    )?
+    else {
         return Ok(None);
     };
-    Ok(Some(decode_scoped_lease_record(&raw, vault_id)?))
-}
-
-fn decode_scoped_lease_record(raw: &[u8], vault_id: u64) -> Result<LeaseRecord> {
-    let record = decode_lease_record(raw)?;
     if record.vault_id != vault_id {
         return Err(Error::CorruptedIndex("lease record vault_id"));
     }
-    Ok(record)
+    Ok(Some(record))
 }
 
 /// Full-mirrors the root doc's `leases` map into local `ls:` rows inside
@@ -517,9 +567,12 @@ fn mirror_leases_impl(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, root_doc: &Loro
             continue;
         };
         let client_id = registry_key.client_id;
-        let row_key = lease_key(vault_id, client_id);
+        let row_key = LeaseKey {
+            vault_id,
+            client_id,
+        };
         delete_stale_v2_lease_rows_for_client(vault, wtxn, vault_id, client_id, &row_key)?;
-        vault.store.sync_state.put(wtxn, &row_key, raw)?;
+        LEASE.put(&vault.store, wtxn, &row_key, &record)?;
     }
     Ok(())
 }
@@ -529,19 +582,15 @@ fn delete_stale_v2_lease_rows_for_client(
     wtxn: &mut heed::RwTxn<'_>,
     vault_id: u64,
     client_id: u64,
-    keep_key: &str,
+    keep_key: &LeaseKey,
 ) -> Result<()> {
-    let prefix = lease_key_prefix(vault_id);
-    let client_suffix = format!(":{}", client_id_hex(client_id));
-    let mut stale_keys = Vec::new();
-    for entry in vault.store.sync_state.prefix_iter(wtxn, &prefix)? {
-        let (key, _raw) = entry?;
-        if key != keep_key && key.ends_with(&client_suffix) {
-            stale_keys.push(key.into_owned());
-        }
-    }
-    for key in stale_keys {
-        vault.store.sync_state.delete(wtxn, &key)?;
+    let stale: Vec<LeaseKey> = LEASE
+        .scan_keys(&vault.store, wtxn, &lease_scan_prefix(vault_id))?
+        .into_iter()
+        .filter(|key| key.client_id == client_id && key != keep_key)
+        .collect();
+    for key in stale {
+        LEASE.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())
 }
@@ -591,13 +640,10 @@ pub fn require_vault_lease(
     if record.pubkey != *pubkey {
         return Err(Error::Sync(SyncError::ReceiptLeaseUnknown { client_id }));
     }
-    for entry in vault
-        .store
-        .sync_state
-        .prefix_iter(&txn, &lease_key_prefix(vault_id))?
-    {
-        let (_, raw) = entry?;
-        let sibling = decode_scoped_lease_record(&raw, vault_id)?;
+    for (_, sibling) in LEASE.scan_from(&vault.store, &txn, &lease_scan_prefix(vault_id))? {
+        if sibling.vault_id != vault_id {
+            return Err(Error::CorruptedIndex("lease record vault_id"));
+        }
         if sibling.pubkey == *pubkey && sibling.status == LeaseStatus::Revoked {
             return Err(Error::Sync(SyncError::ReceiptLeaseRevoked { client_id }));
         }

@@ -2,7 +2,11 @@
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::memory::support::verify_owner_actor_binding_in_txn;
-const POLICY: &[u8] = b"message_stream_policy:v1";
+use crate::side_table::{self, Named, SideTable};
+
+/// Vault default message-streaming policy. Key: `()`.
+const POLICY: SideTable<(), MessageStreamPolicy, Named> =
+    SideTable::new(&side_table::MESSAGE_STREAM_POLICY);
 impl MessageWriteMode {
     pub(super) fn validate(self) -> MessageStreamResult<()> {
         if matches!(
@@ -52,13 +56,7 @@ pub(super) fn policy_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> MessageStreamResult<MessageStreamPolicy> {
-    let policy = vault
-        .store
-        .vault_meta
-        .get(txn, POLICY)?
-        .map(|b| storage::decode(&b))
-        .transpose()?
-        .unwrap_or_default();
+    let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
     MessageStreamPolicy::validate(&policy)?;
     Ok(policy)
 }
@@ -72,10 +70,10 @@ impl Memory<'_> {
         if self.actor_class != EdgeActorClass::Human {
             return Err(MessageStreamError::WrongActor);
         }
-        let bytes = storage::encode(policy)?;
+        POLICY.encode_value(policy)?;
         self.with_verified_actor_write_txn(|txn| {
             verify_owner_actor_binding_in_txn(self.vault, txn, self.actor)?;
-            self.vault.store.vault_meta.put(txn, POLICY, &bytes)?;
+            POLICY.put(&self.vault.store, txn, &(), policy)?;
             Ok(())
         })?;
         Ok(())

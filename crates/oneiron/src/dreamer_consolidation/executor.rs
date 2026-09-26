@@ -545,7 +545,7 @@ fn merged_candidate(
         conflict.identity.facet,
         conflict.identity.rel,
         conflict.identity.topic.as_deref(),
-    );
+    )?;
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
         ClaimSubject::Entity(conflict.identity.subject),
@@ -697,7 +697,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             attempt.status.attempt.id,
             branch_scope.as_ref(),
         )?;
-        let payload = retry::refreshed_input(
+        let (payload, refresh_receipt) = retry::refreshed_input(
             ctx.vault,
             self.actor,
             &attempt.status,
@@ -712,6 +712,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             attempt.status.attempt.id,
             branch_scope.as_ref(),
         )?;
+        if let Some(refresh_receipt) = &refresh_receipt {
+            resources.fold_read_receipt(refresh_receipt)?;
+        }
         let run_id = attempt.status.attempt.run_id.clone();
         match self
             .run_partition_attempt(&payload, &resources, ctx, attempt.status.attempt.id, run_id)

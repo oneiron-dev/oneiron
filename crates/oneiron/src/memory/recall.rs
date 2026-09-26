@@ -403,11 +403,8 @@ impl Memory<'_> {
             // and its `result_ids` into B's overlay, and derives B's PPR seeds
             // for A's pack: private telemetry cross-associated and results
             // contaminated, in both directions. The executor binding refuses
-            // the same mismatch by the same identity.
-            if !std::ptr::eq(
-                session.store_identity(),
-                std::ptr::from_ref(&self.vault.store),
-            ) {
+            // the same mismatch by the same vault identity.
+            if session.vault_id() != self.vault.vault_id() {
                 return Err(MemoryError::bad_request(
                     "off-record session belongs to a different vault than this memory facade",
                 ));

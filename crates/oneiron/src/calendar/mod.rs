@@ -222,9 +222,8 @@ pub use outcome::{
     read_event_outcome, record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
-    CALENDAR_PASSPORT_INDEX_PREFIX, PassportDecision, all_live_inbound_passports_absent,
-    classify_passport, index_passport_uid, live_passport_for, live_passports_for_event,
-    resolve_event_by_uid, supersede_calendar_passport,
+    PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
+    live_passport_for, live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
 };
 pub use prep::{
     DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS, PREP_WAKE_REASON_TAG, PREP_WAKE_SCHEDULE_KIND,
@@ -395,7 +394,8 @@ pub(crate) mod test_support {
                         1.0,
                         self.approval,
                         ClaimLifecycleStatus::Active,
-                    ),
+                    )
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )

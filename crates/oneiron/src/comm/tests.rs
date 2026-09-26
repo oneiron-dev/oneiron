@@ -220,8 +220,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     ];
     let accepted = well_formed
         .iter()
-        .map(CommClaimValue::claim_body)
-        .map(|body| validate_through_chokepoint(&body))
+        .map(|value| validate_through_chokepoint(&value.claim_body()?))
         .collect::<Result<Vec<_>>>()?;
     assert_eq!(accepted.len(), 4);
 
@@ -229,7 +228,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
     // head — every channel — and validates. It is the same body the contact
     // writer projects, and `well_formed[0]` above proves the channel-scoped
     // shape still validates unchanged beside it.
-    let mut missing_channel = well_formed[0].claim_body();
+    let mut missing_channel = well_formed[0].claim_body()?;
     let Value::Map(entries) = &mut missing_channel.value else {
         unreachable!("fixture value is a map")
     };
@@ -245,7 +244,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         }
     );
     // Every OTHER family member still requires its channel class.
-    let mut missing_required_channel = well_formed[1].claim_body();
+    let mut missing_required_channel = well_formed[1].claim_body()?;
     let Value::Map(entries) = &mut missing_required_channel.value else {
         unreachable!("fixture value is a map")
     };
@@ -254,7 +253,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         .expect_err("missing channel_class rejected");
     assert_eq!(missing_error.kind(), ErrorKind::InvalidClaimBody);
 
-    let mut wrong_shape = well_formed[1].claim_body();
+    let mut wrong_shape = well_formed[1].claim_body()?;
     wrong_shape.value = Value::from("email");
     let shape_error =
         validate_through_chokepoint(&wrong_shape).expect_err("non-map value rejected");
@@ -267,7 +266,7 @@ fn comm_family_validator_accepts_all_shapes_and_rejects_malformed_values() -> Re
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let predicate_error =
         validate_through_chokepoint(&one_segment).expect_err("one-segment predicate rejected");
     assert_eq!(predicate_error.kind(), ErrorKind::InvalidPredicate);
@@ -1309,10 +1308,11 @@ fn stale_non_person_cached_party_is_reminted_before_reuse() -> CommResult<()> {
     )?;
     {
         let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.vault_meta.put(
+        PARTY_INDEX.put(
+            &vault.store,
             &mut wtxn,
-            &party_index_key("party-reuse"),
-            stale_id.as_bytes(),
+            &party_index_digest("party-reuse"),
+            &stale_id,
         )?;
         wtxn.commit()?;
     }
@@ -1576,10 +1576,10 @@ fn projected_claim_ids_are_derived_from_the_source_event_not_minted() -> CommRes
     });
     assert_ne!(split_left, split_right);
 
-    // The derived id carries the same v7 version/variant nibbles as the
-    // connector actor id, so it is a well-formed entity id.
+    // The derived id comes from the one derived-id rule: UUID version 8 and
+    // the RFC 9562 variant, like every other derived id.
     let bytes = base.as_bytes();
-    assert_eq!(bytes[6] & 0xf0, 0x70);
+    assert_eq!(bytes[6] & 0xf0, 0x80);
     assert_eq!(bytes[8] & 0xc0, 0x80);
     Ok(())
 }
@@ -1827,7 +1827,7 @@ fn derived_id_collision_with_a_rejected_twin_fails_closed() -> CommResult<()> {
     // Squat the derived id with a claim that decodes to the SAME
     // CommClaimValue on the SAME subject edge and differs only on the consent
     // axis. Typed equivalence cannot see that; byte identity must.
-    let mut rejected = value.claim_body();
+    let mut rejected = value.claim_body()?;
     rejected.approval = ClaimApprovalStatus::Rejected;
     vault.put_claim(&derived, &rejected, TimeRange { start: 10, end: 10 }, 10)?;
 
@@ -1916,20 +1916,14 @@ fn comm_event_is_projected(vault: &Vault, event_id: EntityId) -> CommResult<bool
 
 fn clear_party_index(vault: &Vault, party: &str) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, &party_index_key(party))?;
+    PARTY_INDEX.delete(&vault.store, &mut wtxn, &party_index_digest(party))?;
     wtxn.commit()?;
     Ok(())
 }
 
 fn point_party_index(vault: &Vault, party: &str, id: EntityId) -> CommResult<()> {
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &party_index_key(party), id.as_bytes())?;
+    PARTY_INDEX.put(&vault.store, &mut wtxn, &party_index_digest(party), &id)?;
     wtxn.commit()?;
     Ok(())
 }
@@ -2317,8 +2311,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
         occurred_at: 10,
     }]
     .iter()
-    .map(CommClaimValue::claim_body)
-    .map(|body| validate_through_chokepoint(&body))
+    .map(|value| validate_through_chokepoint(&value.claim_body()?))
     .collect::<Result<Vec<_>>>()?;
     assert_eq!(accepted.len(), 1);
 
@@ -2328,7 +2321,7 @@ fn finding_6_opt_out_reason_is_pinned_to_machine_tokens() -> Result<()> {
         reason: "please stop".to_owned(),
         occurred_at: 11,
     }
-    .claim_body();
+    .claim_body()?;
     let error = validate_through_chokepoint(&invalid).expect_err("free-form reason rejected");
     assert_eq!(error.kind(), ErrorKind::InvalidClaimBody);
     Ok(())
@@ -3231,7 +3224,7 @@ fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
             occurred_at: 10 + index as u64,
         };
         assert!(matches!(
-            validate_comm_claim_structure(&rejected.claim_body()),
+            validate_comm_claim_structure(&rejected.claim_body()?),
             Err(Error::InvalidClaimBody(_))
         ));
         // And the receipt token validates, channel-scoped or party-wide.
@@ -3242,7 +3235,7 @@ fn opt_out_reason_tokens_use_receipt_vocabulary() -> CommResult<()> {
                 reason: token.to_owned(),
                 occurred_at: 10 + index as u64,
             };
-            validate_comm_claim_structure(&accepted.claim_body())?;
+            validate_comm_claim_structure(&accepted.claim_body()?)?;
         }
     }
     assert_eq!(CounterpartyOptOutReason::from_receipt_reason("stop"), None);

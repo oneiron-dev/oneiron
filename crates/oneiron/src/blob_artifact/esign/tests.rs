@@ -175,7 +175,7 @@ fn claims_enforce_required_fields_sequential_promotion_and_seal_only_terminals()
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     forged.source = Some(crate::claim::ClaimSource::Observed);
     assert!(
         vault
@@ -1452,7 +1452,7 @@ fn unrenderable_fields_are_refused_before_save_and_final_signature_without_locki
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     claim.source = Some(crate::claim::ClaimSource::Observed);
     vault.with_write_txn(|txn| {
         vault.put_reserved_claim_in_txn(

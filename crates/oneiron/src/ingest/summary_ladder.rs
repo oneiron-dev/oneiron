@@ -70,13 +70,12 @@ impl ScopedRead<'_> {
         reference: &str,
     ) -> Result<ScopedReadResult<Option<serde_json::Value>>> {
         let id = EntityId::from_hex(reference)?;
-        let result = self.get_entity_parts_with_receipt(&id, None)?;
-        let value = result
-            .value
-            .map(|(_, _, body)| crate::batch::export::redacted_memory_body(&body));
-        Ok(ScopedReadResult {
-            receipt: result.receipt,
-            value,
-        })
+        Ok(self
+            .read(&[crate::claim::PointRead::id(id)], None)?
+            .single()
+            .map(|row| {
+                row.and_then(|row| row.body)
+                    .map(|body| crate::batch::export::redacted_memory_body(&body))
+            }))
     }
 }

@@ -422,19 +422,22 @@ pub(super) fn record_roster_member(
         companion_facet_ref: Some(companion.work_facet_ref),
         identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
     };
-    let key = roster_member_key(&intent.workspace.workspace_ref, &intent.person_ref);
-    let encoded = encode_value(&roster_member_value(&row))?;
+    let key = RosterMemberKey {
+        workspace_ref: intent.workspace.workspace_ref.clone(),
+        person_ref: intent.person_ref,
+    };
+    MEMBER.encode_value(&row)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        if let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? {
-            if decode_roster_member_row(&raw)? != row {
+        if let Some(existing) = MEMBER.get(&vault.store, wtxn, &key)? {
+            if existing != row {
                 return Err(invalid(
                     "member already has a different workspace roster row",
                 ));
             }
             return Ok(());
         }
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        MEMBER.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
 }
@@ -744,18 +747,18 @@ pub(super) fn ensure_preset_row(
     preset: &WorkspaceRosterPreset,
     writer: &WriteActor,
 ) -> Result<()> {
-    let key = preset_key(&preset.workspace_ref);
-    let encoded = encode_value(&preset_value(preset))?;
+    PRESET.encode_value(preset)?;
+    let key = preset.workspace_ref.clone();
     with_workspace_authority(vault, preset.workspace_vault_id, writer, |wtxn| {
-        if let Some(raw) = vault.store.vault_meta.get(wtxn, &key)? {
-            if raw.as_ref() != encoded.as_slice() {
+        if let Some(existing) = PRESET.get(&vault.store, wtxn, &key)? {
+            if existing != *preset {
                 return Err(invalid(
                     "workspace_ref is already bound to a different workspace preset",
                 ));
             }
             return Ok(());
         }
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        PRESET.put(&vault.store, wtxn, &key, preset)?;
         Ok(())
     })
 }

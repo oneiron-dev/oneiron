@@ -5,6 +5,7 @@ use super::{
     SelfDeniedResult, SelfDispatchOutcome, SelfDispatcher, SelfFailedResult,
 };
 use crate::agent_def::AgentCeiling;
+use crate::claim::{PointRead, ScopedReadReceipt};
 use crate::lens::{
     FiniteF64, GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedActionArg,
     LensPrincipalBinding, LensText, SelfUiActionId, SelfUiOptionValue,
@@ -76,6 +77,13 @@ pub struct AgentActionCall {
     pub args: Vec<ActionArgument>,
     pub idempotency_key: String,
 }
+/// A dispatched action and the principal's scoped read of its entity
+/// arguments. A withheld argument refuses the action before any effect.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionDispatch {
+    pub outcome: SelfDispatchOutcome,
+    pub read_receipt: ScopedReadReceipt,
+}
 #[derive(Debug, Clone, Copy)]
 pub struct ActionBuildContext {
     pub effect_id: EntityId,
@@ -132,7 +140,7 @@ impl ActionRegistry {
         actor: WriteActor,
         action: &GeneratedUiValidatedAction,
         idempotency_key: &str,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<ActionDispatch> {
         let GeneratedUiValidatedAction::DeterministicTool { emitter, action } = action else {
             return Err(invalid("UI action is not a deterministic tool"));
         };
@@ -149,7 +157,7 @@ impl ActionRegistry {
         actor: WriteActor,
         principal: &LensPrincipalBinding,
         call: &AgentActionCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<ActionDispatch> {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
         }
@@ -161,7 +169,7 @@ impl ActionRegistry {
         actor: WriteActor,
         principal: &LensPrincipalBinding,
         request: &AgentActionCall,
-    ) -> Result<SelfDispatchOutcome> {
+    ) -> Result<ActionDispatch> {
         let registered = self.registered(request.verb_id.as_str())?;
         let expected_kind = if actor.actor_class() == EdgeActorClass::Agent {
             LensActingPrincipalKind::AgentTask
@@ -184,14 +192,21 @@ impl ActionRegistry {
         {
             return Err(invalid("action arguments do not match declared schema"));
         }
-        let scoped = vault.scoped_read(principal.selected_read_key().clone());
-        for arg in &request.args {
-            if let ActionArgument::Entity { id } = arg
-                && !scoped.is_entity_readable(id)?
-            {
-                return Err(invalid("action target is outside principal read scope"));
-            }
+        let targets: Vec<_> = request
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                ActionArgument::Entity { id } => Some(PointRead::id(*id)),
+                _ => None,
+            })
+            .collect();
+        let targets = vault
+            .scoped_read(principal.selected_read_key().clone())
+            .read(&targets, None)?;
+        if targets.value.iter().any(Option::is_none) {
+            return Err(invalid("action target is outside principal read scope"));
         }
+        let read_receipt = targets.receipt;
         check_ceiling(vault, actor, registered.definition.required_ceiling)?;
         let mut hash = blake3::Hasher::new();
         hash.update(b"oneiron:shared-action:v1");
@@ -237,7 +252,13 @@ impl ActionRegistry {
                     "shared action is in flight or needs reconciliation",
                 ));
             }
-            return record.replay_cursor().dispatch(call);
+            return record
+                .replay_cursor()
+                .dispatch(call)
+                .map(|outcome| ActionDispatch {
+                    outcome,
+                    read_receipt,
+                });
         }
         // Reserve the EXISTING replay record before effects. A crash or racing
         // caller sees an incomplete record and fails closed, never re-dispatches.
@@ -264,7 +285,10 @@ impl ActionRegistry {
             0, &call, &recorded, frozen, frozen,
         )?);
         vault.put_code_run_replay_record_if_generation(&record, Some(generation))?;
-        result
+        result.map(|outcome| ActionDispatch {
+            outcome,
+            read_receipt,
+        })
     }
 }
 fn invalid(message: &str) -> Error {

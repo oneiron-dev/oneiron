@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use super::admission::{PollAdmission, VerdictFold};
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse, archive_raw_feed};
-use super::{derive_entity_id, ingest};
+use super::ingest;
 use crate::attempt_queue::{
     AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, EnqueueAttempt,
     EnqueueOutcome, InterveneAttempt,
@@ -14,14 +14,17 @@ use crate::calendar::CalendarError;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::safeguard::CalendarBodyScreener;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_EXCEPTION;
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::vault::Vault;
 
 /// Attempt kind for one ICS feed poll.
 pub const ICS_POLL_ATTEMPT_KIND: &str = "calendar.ics.poll";
 
-/// `vault_meta` prefix for per-feed cursor rows (ETag, last-complete stamp,
-/// pause state). Node-local poll state, never synced truth.
-const ICS_FEED_CURSOR_PREFIX: &[u8] = b"calendar.ics-feed.v1:";
+/// Per-feed cursor rows (ETag, last-complete stamp, pause state). Node-local
+/// poll state, never synced truth. Key: `sha256(ics_feed_poll_dedupe_key)`.
+const CURSOR: SideTable<[u8; 32], IcsFeedCursor, LegacyJson> =
+    SideTable::new(&side_table::CALENDAR_ICS_FEED_CURSOR);
 
 /// Actor string stamped on pause interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
@@ -295,9 +298,9 @@ pub fn run_ics_feed_poll_with_screener(
     jitter_seed: u64,
 ) -> Result<IcsPollRunState, CalendarError> {
     config.validate()?;
-    let cursor_key = ics_feed_cursor_key(config);
+    let cursor_digest = ics_feed_cursor_digest(config);
     let prior_cursor =
-        read_cursor(vault, &cursor_key)?.unwrap_or_else(|| IcsFeedCursor::new(config));
+        read_cursor(vault, &cursor_digest)?.unwrap_or_else(|| IcsFeedCursor::new(config));
 
     let response = fetcher.fetch(&config.secret_ref, prior_cursor.etag.as_deref())?;
     match response {
@@ -308,7 +311,7 @@ pub fn run_ics_feed_poll_with_screener(
             if prior_cursor.paused.is_some() {
                 write_cursor(
                     vault,
-                    &cursor_key,
+                    &cursor_digest,
                     &IcsFeedCursor {
                         paused: None,
                         ..prior_cursor
@@ -319,7 +322,7 @@ pub fn run_ics_feed_poll_with_screener(
             Ok(IcsPollRunState::Reenqueued { next_not_before })
         }
         IcsFetchResponse::CredentialReset => {
-            pause_feed(vault, config, &cursor_key, prior_cursor, now)
+            pause_feed(vault, config, &cursor_digest, prior_cursor, now)
         }
         IcsFetchResponse::Complete { etag, body } => {
             let blob_ref = archive_raw_feed(vault, config, &body, now)?;
@@ -338,7 +341,7 @@ pub fn run_ics_feed_poll_with_screener(
             admission.sweep_absent_sources(&feed)?;
             write_cursor(
                 vault,
-                &cursor_key,
+                &cursor_digest,
                 &IcsFeedCursor {
                     etag: etag.or(prior_cursor.etag),
                     last_complete_at: Some(now),
@@ -364,14 +367,7 @@ pub fn ics_feed_pause_exceptions(
 ) -> Result<Vec<IcsFeedPauseException>, CalendarError> {
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let mut rows = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, ICS_FEED_CURSOR_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        let cursor: IcsFeedCursor = serde_json::from_slice(raw.as_ref())
-            .map_err(|_| ingest("feed cursor row did not decode"))?;
+    for (_, cursor) in CURSOR.scan(&vault.store, &rtxn)? {
         let Some(paused) = cursor.paused else {
             continue;
         };
@@ -411,7 +407,7 @@ pub fn ics_feed_cursor_snapshot(
     vault: &Vault,
     config: &IcsFeedPollConfig,
 ) -> Result<Option<IcsFeedCursorSnapshot>, CalendarError> {
-    let Some(cursor) = read_cursor(vault, &ics_feed_cursor_key(config))? else {
+    let Some(cursor) = read_cursor(vault, &ics_feed_cursor_digest(config))? else {
         return Ok(None);
     };
     Ok(Some(IcsFeedCursorSnapshot {
@@ -428,13 +424,13 @@ pub fn ics_feed_cursor_snapshot(
 fn pause_feed(
     vault: &Vault,
     config: &IcsFeedPollConfig,
-    cursor_key: &[u8],
+    cursor_digest: &[u8; 32],
     cursor: IcsFeedCursor,
     now: u64,
 ) -> Result<IcsPollRunState, CalendarError> {
     write_cursor(
         vault,
-        cursor_key,
+        cursor_digest,
         &IcsFeedCursor {
             paused: Some(IcsFeedPause {
                 at: now,
@@ -500,28 +496,22 @@ fn enqueue_poll_attempt(
     })?)
 }
 
-fn ics_feed_cursor_key(config: &IcsFeedPollConfig) -> Vec<u8> {
-    let digest = Sha256::digest(ics_feed_poll_dedupe_key(config).as_bytes());
-    let mut key = Vec::with_capacity(ICS_FEED_CURSOR_PREFIX.len() + digest.len());
-    key.extend_from_slice(ICS_FEED_CURSOR_PREFIX);
-    key.extend_from_slice(&digest);
-    key
+fn ics_feed_cursor_digest(config: &IcsFeedPollConfig) -> [u8; 32] {
+    Sha256::digest(ics_feed_poll_dedupe_key(config).as_bytes()).into()
 }
 
-fn read_cursor(vault: &Vault, key: &[u8]) -> Result<Option<IcsFeedCursor>, CalendarError> {
+fn read_cursor(vault: &Vault, digest: &[u8; 32]) -> Result<Option<IcsFeedCursor>, CalendarError> {
     let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, key)? else {
-        return Ok(None);
-    };
-    let cursor = serde_json::from_slice(raw.as_ref())
-        .map_err(|_| ingest("feed cursor row did not decode"))?;
-    Ok(Some(cursor))
+    Ok(CURSOR.get(&vault.store, &rtxn, digest)?)
 }
 
-fn write_cursor(vault: &Vault, key: &[u8], cursor: &IcsFeedCursor) -> Result<(), CalendarError> {
-    let encoded = serde_json::to_vec(cursor).map_err(|_| ingest("feed cursor did not encode"))?;
+fn write_cursor(
+    vault: &Vault,
+    digest: &[u8; 32],
+    cursor: &IcsFeedCursor,
+) -> Result<(), CalendarError> {
     vault.try_with_write_txn(|wtxn| {
-        vault.store.vault_meta.put(wtxn, key, &encoded)?;
+        CURSOR.put(&vault.store, wtxn, digest, cursor)?;
         Ok::<_, crate::Error>(())
     })?;
     Ok(())
@@ -530,11 +520,8 @@ fn write_cursor(vault: &Vault, key: &[u8], cursor: &IcsFeedCursor) -> Result<(),
 /// The stable exception ref for one feed, shared by the pause run-state and
 /// the inbox projection so hosts can correlate the two.
 fn ics_feed_exception_ref(system: &str, secret_ref: &str) -> Result<EntityId, CalendarError> {
-    Ok(derive_entity_id(
-        ICS_FEED_EXCEPTION_ID_DOMAIN,
-        ics_feed_identity(system, secret_ref).as_bytes(),
+    Ok(EntityId::derive(
+        CALENDAR_ICS_FEED_EXCEPTION,
+        &[ics_feed_identity(system, secret_ref).as_bytes()],
     )?)
 }
-
-/// Id-derivation domain for inbox-exception refs.
-const ICS_FEED_EXCEPTION_ID_DOMAIN: &[u8] = b"oneiron:calendar-ics-feed-exception:v1:";

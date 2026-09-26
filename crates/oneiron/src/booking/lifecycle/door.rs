@@ -1,18 +1,18 @@
 //! The public verb door and the home-node consumer turn: enqueue, checkout
 //! lease, and one claimed attempt run to a receipt.
 
-use super::CheckoutLeaseRow;
-use super::storage::{booking_writer, decode_row, encode_row, engine_failure, meta_key, put_meta};
+use super::storage::{booking_writer, decode_row, encode_row, engine_failure};
 use super::token::{
     OpaqueCheckoutLeaseToken, SessionKey, lease_digest, mint_raw_token, read_hold_row,
     session_digest, token_page_ref,
 };
 use super::transition::execute_booking_lifecycle_attempt;
 use super::types::{
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_TOKEN_META_PREFIX, BookingLifecycleAttempt,
-    BookingVerbReceipt, BookingVerbRequest, MAX_ATTEMPT_FAILURE_REASON_BYTES,
-    MAX_CHECKOUT_HOLD_TTL_SECS, validate_request,
+    BOOKING_LIFECYCLE_ATTEMPT_KIND, BookingLifecycleAttempt, BookingVerbReceipt,
+    BookingVerbRequest, MAX_ATTEMPT_FAILURE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS,
+    validate_request,
 };
+use super::{CHECKOUT_LEASE, CheckoutLeaseRow};
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
     EnqueueAttempt, EnqueueOutcome, FailAttempt,
@@ -117,9 +117,11 @@ pub fn issue_checkout_lease(
         session_hash: session_digest(session_key),
         expires_at,
     };
-    let key = meta_key(BOOKING_TOKEN_META_PREFIX, &lease_digest(&lease));
-    let encoded = encode_row(&row)?;
-    booking_writer(vault, |wtxn| put_meta(vault, wtxn, &key, &encoded))?;
+    booking_writer(vault, |wtxn| {
+        CHECKOUT_LEASE
+            .put(&vault.store, wtxn, &lease_digest(&lease), &row)
+            .map_err(|error| engine_failure("meta write", error))
+    })?;
     Ok((lease, expires_at))
 }
 

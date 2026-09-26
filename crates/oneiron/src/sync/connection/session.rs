@@ -16,8 +16,6 @@ use crate::sync::transport::{self, window_sub_tags};
 /// (ARCH-0023b Fig. 2: "Max 5 rounds before force re-bootstrap").
 pub(super) const MAX_CONVERGENCE_ROUNDS: u32 = 5;
 
-pub(super) const FULL_RESYNC_MARKER_PREFIX: &str = "fr:w:";
-
 pub(super) const EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS: u64 = 1;
 
 pub(super) type WsSink = SplitSink<WsStream, Message>;
@@ -125,6 +123,5 @@ impl ConvergenceSession {
 
 #[derive(Debug, Clone)]
 pub(super) struct FullResyncMarker {
-    pub(super) key: String,
     pub(super) window_key: String,
 }

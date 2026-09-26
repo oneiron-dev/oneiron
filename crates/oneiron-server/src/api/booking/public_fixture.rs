@@ -123,7 +123,8 @@ impl Fixture {
                     1.0,
                     ClaimApprovalStatus::Auto,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 TimeRange { start: 1, end: 1 },
                 1,
             )

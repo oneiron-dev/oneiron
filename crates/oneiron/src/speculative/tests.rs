@@ -442,7 +442,7 @@ fn fire_hot_bumps_pending_embedding_claims() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let body_bytes = crate::claim::encode_claim_body(&body).expect("encode claim body");
     vault
         .batch()

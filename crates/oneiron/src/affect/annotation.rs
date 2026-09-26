@@ -12,9 +12,8 @@ use crate::claim::{
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
-const VAD_ANNOTATION_META_KEY_PREFIX: &[u8] = b"vad_ann:";
-const VAD_ANNOTATION_META_KEY_LEN: usize = VAD_ANNOTATION_META_KEY_PREFIX.len() + 1 + ENTITY_ID_LEN;
 pub(super) const VAD_ANNOTATION_CLAIM_PREDICATE: &str = "affect.vad";
 const VAD_ANNOTATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:vad-annotation-claim:v1";
 const VAD_KEY_VALENCE: &str = "valence";
@@ -22,15 +21,39 @@ const VAD_KEY_AROUSAL: &str = "arousal";
 const VAD_KEY_DOMINANCE: &str = "dominance";
 const VAD_KEY_SOURCE: &str = "source";
 const VAD_KEY_ANNOTATED_AT: &str = "annotated_at";
-pub(crate) fn vad_annotation_meta_key(
-    entity_type: u8,
-    id: &EntityId,
-) -> [u8; VAD_ANNOTATION_META_KEY_LEN] {
-    let mut key = [0_u8; VAD_ANNOTATION_META_KEY_LEN];
-    key[..VAD_ANNOTATION_META_KEY_PREFIX.len()].copy_from_slice(VAD_ANNOTATION_META_KEY_PREFIX);
-    key[VAD_ANNOTATION_META_KEY_PREFIX.len()] = entity_type;
-    key[VAD_ANNOTATION_META_KEY_PREFIX.len() + 1..].copy_from_slice(id.as_bytes());
-    key
+
+/// Legacy pre-CLAIM VAD metadata row, keyed by `entity_type(1) ++ id(16)`.
+/// Read (and deleted) only — every write now lands as a `VAD_ANNOTATION_CLAIM_PREDICATE`
+/// claim instead, but an old row must still decode and clean up.
+pub(crate) const VAD_ANNOTATION_META: SideTable<VadAnnotationMetaKey, VadAnnotation, Named> =
+    SideTable::new(&side_table::AFFECT_VAD_ANNOTATION_META);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VadAnnotationMetaKey {
+    pub(crate) entity_type: u8,
+    pub(crate) id: EntityId,
+}
+
+impl SideKey for VadAnnotationMetaKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.entity_type);
+        out.extend_from_slice(self.id.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (&entity_type, rest) = bytes.split_first()?;
+        Some(Self {
+            entity_type,
+            id: EntityId::decode_key(rest)?,
+        })
+    }
+}
+
+pub(crate) fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> VadAnnotationMetaKey {
+    VadAnnotationMetaKey {
+        entity_type,
+        id: *id,
+    }
 }
 pub(crate) fn vad_annotation_claim_id(entity_type: u8, id: &EntityId) -> Result<EntityId> {
     let mut material = Vec::with_capacity(VAD_ANNOTATION_CLAIM_ID_DOMAIN.len() + 1 + ENTITY_ID_LEN);
@@ -69,7 +92,10 @@ fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
         ),
     ])
 }
-pub(super) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> ClaimBody {
+pub(super) fn vad_annotation_claim_body(
+    id: &EntityId,
+    annotation: &VadAnnotation,
+) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         VAD_ANNOTATION_CLAIM_PREDICATE,
         ClaimSubject::Entity(*id),
@@ -77,14 +103,14 @@ pub(super) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotatio
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(match annotation.source {
         VadAnnotationSource::ModelInference => ClaimSource::Inferred,
         VadAnnotationSource::UserSelfReport => ClaimSource::UserStated,
     });
     body.valid_from = Some(annotation.annotated_at);
     body.valid_to = Some(annotation.annotated_at);
-    body
+    Ok(body)
 }
 pub(super) fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
@@ -214,7 +240,7 @@ pub(crate) fn delete_vad_annotation_metadata_for_type_in_txn(
 ) -> Result<()> {
     if matches!(entity_type, ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE) {
         let key = vad_annotation_meta_key(entity_type, id);
-        store.vault_meta.delete(wtxn, &key)?;
+        VAD_ANNOTATION_META.delete(store, wtxn, &key)?;
 
         let claim_id = vad_annotation_claim_id(entity_type, id)?;
         if vad_annotation_claim_matches_subject(store, &*wtxn, &claim_id, id)? {
@@ -256,7 +282,7 @@ pub(crate) fn vad_annotation_delete_scope_exists_in_txn(
 ) -> Result<bool> {
     for entity_type in [ENTITY_TYPE_TURN, ENTITY_TYPE_MESSAGE] {
         let key = vad_annotation_meta_key(entity_type, id);
-        if store.vault_meta.get(txn, &key)?.is_some() {
+        if VAD_ANNOTATION_META.contains(store, txn, &key)? {
             return Ok(true);
         }
 

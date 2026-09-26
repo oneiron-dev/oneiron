@@ -1,20 +1,16 @@
 //! Stable link keys, operation/event digests, field hashes.
 
 use crate::entity_id::EntityId;
+use crate::side_table::{self, LegacyJson, SideTable};
 
 use super::model::{
-    LINEAR_SYNC_EVENT_DOMAIN, LINEAR_SYNC_FIELD_DOMAIN, LINEAR_SYNC_LINK_KEY_PREFIX,
-    LINEAR_SYNC_OPERATION_DOMAIN, LINEAR_SYNC_SCHEMA_VERSION, LinearSyncDirection,
+    LINEAR_SYNC_EVENT_DOMAIN, LINEAR_SYNC_FIELD_DOMAIN, LINEAR_SYNC_OPERATION_DOMAIN,
+    LINEAR_SYNC_SCHEMA_VERSION, LinearSyncDirection, TaskIssueLink,
 };
 
-/// The durable storage key of one TASK ↔ issue link row.
-#[must_use]
-pub fn linear_sync_link_key(task_ref: EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(LINEAR_SYNC_LINK_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(LINEAR_SYNC_LINK_KEY_PREFIX);
-    key.extend_from_slice(task_ref.as_bytes());
-    key
-}
+/// The durable TASK ↔ issue link row, keyed by the TASK.
+pub(crate) const LINEAR_LINKS: SideTable<EntityId, TaskIssueLink, LegacyJson> =
+    SideTable::new(&side_table::LINEAR_SYNC_LINK);
 
 /// The stable, domain-separated idempotency handle of one mirror operation.
 ///

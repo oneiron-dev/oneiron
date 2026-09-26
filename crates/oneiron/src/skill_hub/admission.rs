@@ -1,5 +1,6 @@
 //! Consent-bound held-out admission, using the existing host scorer and lifecycle write door.
 use super::{HubActivationAsk, admission_view::AdmissionSnapshot, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     claim::ClaimApprovalStatus,
@@ -10,6 +11,13 @@ use crate::{
     skill_optimize::{HeldOutReplayCase, HeldOutReplayScorer},
     temporal::TimeRange,
 };
+
+/// Append-only history of hub-admission receipts, keyed by receipt id.
+const ADMISSION_HISTORY: SideTable<String, HubAdmissionReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_ADMISSION_HISTORY);
+/// Latest hub-admission receipt for one candidate entity.
+const ADMISSION_RECEIPT: SideTable<EntityId, HubAdmissionReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_ADMISSION_RECEIPT);
 
 /// Durable ruling with both actual scores, exact consent, content and source.
 /// IDs are canonical hex strings to keep this envelope transport-neutral.
@@ -111,19 +119,8 @@ impl Vault {
             if !receipt.accepted {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            let encoded_receipt = serde_json::to_vec(&receipt)
-                .map_err(|_| invalid("admission receipt encode failed"))?;
-            let mut history_key = b"skill_hub/admission-history/v1\0".to_vec();
-            history_key.extend_from_slice(receipt.receipt_id.as_bytes());
-            self.store
-                .vault_meta
-                .put(txn, &history_key, &encoded_receipt)?;
-            self.store.vault_meta.put(
-                txn,
-                &receipt_key(&ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("admission receipt encode failed"))?,
-            )?;
+            ADMISSION_HISTORY.put(&self.store, txn, &receipt.receipt_id, &receipt)?;
+            ADMISSION_RECEIPT.put(&self.store, txn, &ask.candidate, &receipt)?;
             Ok(HubAdmissionDisposition::Ruled(Box::new(receipt)))
         })
     }
@@ -150,13 +147,7 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<HubAdmissionReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &receipt_key(candidate))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid admission receipt"))
-            })
-            .transpose()
+        ADMISSION_RECEIPT.get(&self.store, &txn, candidate)
     }
     pub(super) fn check_hub_ask_in_txn(
         &self,
@@ -222,9 +213,4 @@ fn admission_receipt(
         accepted: after > before,
         at,
     })
-}
-fn receipt_key(candidate: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/admission-receipt/v1\0".to_vec();
-    key.extend_from_slice(candidate.as_bytes());
-    key
 }

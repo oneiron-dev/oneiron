@@ -4,6 +4,7 @@
 use super::super::support::facade_provenance;
 use super::*;
 use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::entity_id::derived_domains::KEY_VALUE;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use std::sync::atomic::Ordering;
@@ -32,22 +33,19 @@ impl Memory<'_> {
             return Err(MemoryError::bad_request("value must be a JSON object"));
         }
         let source = super::super::claims::parse_claim_source(&input.source)?;
-        let identity = serde_json::to_vec(&(
-            "oneiron.key_value.v1",
-            self.actor.to_hex(),
-            self.actor_class.gate_actor_class(),
-            &address,
-            &input.request_id,
-        ))
-        .map_err(|_| MemoryError::bad_request("invalid key identity"))?;
-        let digest = blake3::hash(&identity);
-        let mut bytes = [0_u8; 16];
-        bytes.copy_from_slice(&digest.as_bytes()[..16]);
+        let address_bytes = serde_json::to_vec(&address)
+            .map_err(|_| MemoryError::bad_request("invalid key identity"))?;
         // Domain-separated, actor-bound deterministic ID, not an unchecked
         // type byte or caller-selected entity ID. Full identity is rechecked.
-        bytes[6] = (bytes[6] & 0x0f) | 0x80;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let id = EntityId::from_bytes(bytes)?;
+        let id = EntityId::derive(
+            KEY_VALUE,
+            &[
+                self.actor.as_bytes(),
+                self.actor_class.gate_actor_class().as_bytes(),
+                &address_bytes,
+                input.request_id.as_bytes(),
+            ],
+        )?;
         let now = crate::unix_seconds_now();
         let (item, replayed) = self.with_verified_actor_write_txn(|txn| {
             if self.vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {

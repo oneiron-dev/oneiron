@@ -1,106 +1,38 @@
-//! Vault-meta key builders for the code-revision row families.
+//! Typed side tables for the code-revision row families: finalized records, forks, per-revision
+//! integrity folds, per-session frontiers, and the parent/session/fork indices over them.
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId, parse_entity_id};
-use crate::error::Result;
+use crate::entity_id::EntityId;
+use crate::side_table::{self, Raw, SideTable};
 
-const CODE_REVISION_RECORD_KEY_PREFIX: &[u8] = b"code_revision:record:v1:";
+use super::types::{
+    CodeRevision, CodeRevisionFork, CodeRevisionFrontierRecord, CodeRevisionIntegrityRecord,
+};
 
-pub(super) const CODE_REVISION_SESSION_INDEX_KEY_PREFIX: &[u8] = b"code_revision:session:v1:";
+/// Finalized code-revision row (hand-rolled MessagePack map). Key: revision id.
+pub(super) const RECORDS: SideTable<EntityId, CodeRevision, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_RECORD);
 
-pub(super) const CODE_REVISION_PARENT_INDEX_KEY_PREFIX: &[u8] = b"code_revision:parent:v1:";
+/// Recorded code-revision fork/branch row. Key: fork session id.
+pub(super) const FORKS: SideTable<EntityId, CodeRevisionFork, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FORK);
 
-const CODE_REVISION_FORK_KEY_PREFIX: &[u8] = b"code_revision:fork:v1:";
+/// Cached integrity/hash-fold record for one revision. Key: revision id.
+pub(super) const INTEGRITY: SideTable<EntityId, CodeRevisionIntegrityRecord, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_INTEGRITY);
 
-pub(super) const CODE_REVISION_FORK_PARENT_INDEX_KEY_PREFIX: &[u8] =
-    b"code_revision:fork_parent:v1:";
+/// A session's current revision-frontier record. Key: session id.
+pub(super) const FRONTIER: SideTable<EntityId, CodeRevisionFrontierRecord, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FRONTIER);
 
-const CODE_REVISION_INTEGRITY_KEY_PREFIX: &[u8] = b"code_revision:integrity:v1:";
+/// Index of revisions belonging to a session, empty marker value. Key: session id + revision id.
+pub(super) const SESSION_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_SESSION_INDEX);
 
-pub(super) const CODE_REVISION_FRONTIER_KEY_PREFIX: &[u8] = b"code_revision:frontier:v1:";
+/// Index of child revisions by parent revision, empty marker value. Key: parent revision id +
+/// revision id.
+pub(super) const PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_PARENT_INDEX);
 
-pub(super) fn code_revision_record_key(id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_RECORD_KEY_PREFIX, id)
-}
-
-pub(super) fn code_revision_integrity_key(id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_INTEGRITY_KEY_PREFIX, id)
-}
-
-pub(super) fn code_revision_frontier_key(session_id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_FRONTIER_KEY_PREFIX, session_id)
-}
-
-pub(super) fn code_revision_session_index_prefix(session_id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_SESSION_INDEX_KEY_PREFIX, session_id)
-}
-
-pub(super) fn code_revision_session_index_key(
-    session_id: &EntityId,
-    revision_id: &EntityId,
-) -> Vec<u8> {
-    keyed_pair(
-        CODE_REVISION_SESSION_INDEX_KEY_PREFIX,
-        session_id,
-        revision_id,
-    )
-}
-
-pub(super) fn code_revision_parent_index_prefix(parent_revision_id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_PARENT_INDEX_KEY_PREFIX, parent_revision_id)
-}
-
-pub(super) fn code_revision_parent_index_key(
-    parent_revision_id: &EntityId,
-    revision_id: &EntityId,
-) -> Vec<u8> {
-    keyed_pair(
-        CODE_REVISION_PARENT_INDEX_KEY_PREFIX,
-        parent_revision_id,
-        revision_id,
-    )
-}
-
-pub(super) fn code_revision_fork_key(fork_session_id: &EntityId) -> Vec<u8> {
-    keyed_id(CODE_REVISION_FORK_KEY_PREFIX, fork_session_id)
-}
-
-pub(super) fn code_revision_fork_parent_index_prefix(parent_session_id: &EntityId) -> Vec<u8> {
-    keyed_id(
-        CODE_REVISION_FORK_PARENT_INDEX_KEY_PREFIX,
-        parent_session_id,
-    )
-}
-
-pub(super) fn code_revision_fork_parent_index_key(
-    parent_session_id: &EntityId,
-    fork_session_id: &EntityId,
-) -> Vec<u8> {
-    keyed_pair(
-        CODE_REVISION_FORK_PARENT_INDEX_KEY_PREFIX,
-        parent_session_id,
-        fork_session_id,
-    )
-}
-
-fn keyed_id(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn keyed_pair(prefix: &[u8], first: &EntityId, second: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + 2 * ENTITY_ID_LEN);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(first.as_bytes());
-    key.extend_from_slice(second.as_bytes());
-    key
-}
-
-pub(super) fn id_from_index_key(
-    key: &[u8],
-    offset: usize,
-    context: &'static str,
-) -> Result<EntityId> {
-    parse_entity_id(key.get(offset..).unwrap_or_default(), context)
-}
+/// Index of forks by parent session, empty marker value. Key: parent session id + fork session id.
+pub(super) const FORK_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FORK_PARENT_INDEX);

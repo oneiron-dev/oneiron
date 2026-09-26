@@ -684,7 +684,8 @@ fn put_critical_confirm_claim(vault: &crate::Vault, id: EntityId) {
         1.0,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = crate::claim::encode_claim_body(&body).unwrap();
     let payload = crate::test_util::entity_record(
         crate::registry::ENTITY_TYPE_CLAIM,

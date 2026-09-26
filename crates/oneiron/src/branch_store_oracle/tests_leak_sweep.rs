@@ -249,12 +249,14 @@ fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
     // and only checking the base half would also pass if the session handle
     // were blind.
     assert_eq!(
-        seam::base_scoped_read_visible_claim_count(&vault, &turn)?,
+        seam::base_scoped_read_visible_claim_count(&vault, &turn)?.value,
         0,
         "base ScopedRead must surface zero claims for session content"
     );
     assert_eq!(
-        session.session_scoped_read_visible_claim_count(&turn)?,
+        session
+            .session_scoped_read_visible_claim_count(&turn)?
+            .value,
         0,
         "the room staged no claims, so its own ScopedRead surfaces none either"
     );
@@ -338,10 +340,10 @@ fn scoped_read_claim_census_surfaces_an_undecodable_body() -> Result<()> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    ))?;
+    )?)?;
     plant_raw_claim_row(&vault, &EntityId::now(), &legal)?;
     assert_eq!(
-        seam::base_scoped_read_visible_claim_count(&vault, &subject)?,
+        seam::base_scoped_read_visible_claim_count(&vault, &subject)?.value,
         1,
         "the census must count a legal planted claim"
     );
@@ -352,6 +354,50 @@ fn scoped_read_claim_census_surfaces_an_undecodable_body() -> Result<()> {
     let refused = seam::base_scoped_read_visible_claim_count(&vault, &subject)
         .expect_err("an undecodable claim body must surface, never lower the count");
     assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidClaimBody);
+    Ok(())
+}
+
+/// Both halves of the R10 ScopedRead census return the receipt of the read
+/// they counted: a stored claim the reader may not see is left out of the
+/// count and counted on the receipt, identically on base and in a session.
+#[test]
+fn branch_oracle_scoped_reads_keep_their_receipts() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    seam::authorize_scoped_reader(&vault)?;
+    let subject = seed_base_turn(&vault, 10);
+    let claim = |approval| {
+        crate::claim::encode_claim_body(&crate::claim::ClaimBody::new(
+            "dream.symbol",
+            crate::claim::ClaimSubject::Entity(subject),
+            rmpv::Value::from("a blue door"),
+            0.9,
+            approval,
+            crate::claim::ClaimLifecycleStatus::Active,
+        )?)
+    };
+    plant_raw_claim_row(
+        &vault,
+        &EntityId::now(),
+        &claim(crate::claim::ClaimApprovalStatus::Auto)?,
+    )?;
+    let before = seam::base_scoped_read_visible_claim_count(&vault, &subject)?;
+    assert_eq!(before.value, 1);
+    plant_raw_claim_row(
+        &vault,
+        &EntityId::now(),
+        &claim(crate::claim::ClaimApprovalStatus::Proposed)?,
+    )?;
+    let base = seam::base_scoped_read_visible_claim_count(&vault, &subject)?;
+    assert_eq!(base.value, 1);
+    assert_eq!(
+        base.receipt.suppressed_count,
+        before.receipt.suppressed_count + 1
+    );
+    let mut session = seam::SessionVault::enter(&vault, "oracle-receipts").expect("enter session");
+    session.bind_actor()?;
+    let in_session = session.session_scoped_read_visible_claim_count(&subject)?;
+    assert_eq!(in_session.value, 1);
+    assert_eq!(in_session.receipt, base.receipt);
     Ok(())
 }
 

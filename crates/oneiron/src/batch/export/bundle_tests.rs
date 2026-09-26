@@ -99,7 +99,7 @@ fn source_bundles_all_five_formats_and_native_json_reimport() -> Result<()> {
             0.7,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        ),
+        )?,
         time(),
         130,
     )?;

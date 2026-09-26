@@ -63,8 +63,6 @@ pub(super) const KEY_ANCHOR_LOCATOR: &str = SETTLED_ANCHOR_KEYS[1];
 
 pub(super) const KEY_ANCHOR_DRIFTED: &str = SETTLED_ANCHOR_KEYS[2];
 
-pub(super) const BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX: &[u8] = b"blob_artifact:settlement:v1:";
-
 pub(super) const OUTCOME_SELECTED: &str = "selected";
 
 pub(super) const OUTCOME_DISCARDED: &str = "discarded";

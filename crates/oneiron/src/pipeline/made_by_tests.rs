@@ -38,7 +38,7 @@ fn made_by_filters_before_limit_and_keeps_scores() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(source);
         vault.put_claim(&id, &body, at, 100)?;
         vault.batch().text(&id, &[("body", "needle")]).commit()?;

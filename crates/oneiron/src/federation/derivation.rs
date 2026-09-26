@@ -1,6 +1,12 @@
 //! Account-sealed hosted derivations. Only explicitly public artifacts share keys.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+use crate::side_table::{self, Raw, SideTable};
+
+/// The bound owner of this holding vault. Key: `()` (singleton); value: 32 raw bytes.
+const DERIVATION_OWNER: SideTable<(), [u8; 32], Raw> =
+    SideTable::new(&side_table::DERIVATION_OWNER);
 /// Stable account or organization id of the owner of the holding vault.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct DerivationOwner(pub [u8; 32]);
@@ -133,31 +139,24 @@ impl crate::Vault {
     /// Host-only initialization. The first owner binding is immutable.
     pub fn bind_derivation_owner(&self, owner: DerivationOwner) -> crate::Result<DerivationScope> {
         self.with_write_txn(|txn| {
-            let key = b"derivation:owner:v1";
-            if let Some(existing) = self.store.vault_meta.get(txn, key)? {
-                if existing.as_ref() != owner.0 {
+            if let Some(existing) = DERIVATION_OWNER.get(&self.store, txn, &())? {
+                if existing != owner.0 {
                     return Err(crate::Error::InvalidConfig(
                         "derivation owner already bound".into(),
                     ));
                 }
             } else {
                 self.store.seal_pending_embeddings_for_owner(txn, owner)?;
-                self.store.vault_meta.put(txn, key, &owner.0)?;
+                DERIVATION_OWNER.put(&self.store, txn, &(), &owner.0)?;
             }
             Ok(DerivationScope { owner })
         })
     }
     pub fn derivation_scope(&self) -> crate::Result<DerivationScope> {
         let txn = self.store.env.read_txn()?;
-        let raw = self
-            .store
-            .vault_meta
-            .get(&txn, b"derivation:owner:v1")?
+        let owner = DERIVATION_OWNER
+            .get(&self.store, &txn, &())?
             .ok_or_else(|| crate::Error::InvalidConfig("derivation owner is not bound".into()))?;
-        let owner = raw
-            .as_ref()
-            .try_into()
-            .map_err(|_| crate::Error::InvalidConfig("invalid derivation owner".into()))?;
         Ok(DerivationScope {
             owner: DerivationOwner(owner),
         })
@@ -168,16 +167,7 @@ pub(crate) fn owner_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::Result<Option<DerivationOwner>> {
-    store
-        .vault_meta
-        .get(txn, b"derivation:owner:v1")?
-        .map(|raw| {
-            raw.as_ref()
-                .try_into()
-                .map(DerivationOwner)
-                .map_err(|_| crate::Error::CorruptedIndex("derivation owner binding"))
-        })
-        .transpose()
+    Ok(DERIVATION_OWNER.get(store, txn, &())?.map(DerivationOwner))
 }
 pub(crate) fn sealed_digest(
     owner: DerivationOwner,

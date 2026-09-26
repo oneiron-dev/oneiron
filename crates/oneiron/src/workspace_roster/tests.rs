@@ -473,7 +473,7 @@ fn unprivileged_writer_rejected() -> Result<()> {
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
 
     // No journal, no actor, no grant: the refusal left no trace to resume from.
-    assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
+    assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
     assert_eq!(vault.get_entity_type(&entity(MEMBER_ACTOR))?, None);
     assert_eq!(vault.get_entity_type(&entity(MEMBER_GRANT))?, None);
     assert!(vault.workspace_roster("antevon-slack", AT)?.is_empty());
@@ -686,7 +686,7 @@ fn assert_mailbox_waiting(
         Error::Record(RecordError::WorkspaceMailboxAutonomyNotReady { identity_ref, requested_mode })
             if identity_ref == mailbox.identity_ref && requested_mode == mailbox.autonomy.rung.as_str()
     ));
-    let journal = read_journal(vault, &onboarding_key(&intent.onboarding_id))?.expect("journal");
+    let journal = read_journal(vault, &intent.onboarding_id)?.expect("journal");
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     assert_eq!(

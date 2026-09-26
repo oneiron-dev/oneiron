@@ -375,6 +375,88 @@ pub struct NeighborHit {
     pub direction: String,
 }
 
+// ── read receipts ──────────────────────────────────────────────────────
+
+/// One read scope on a receipt: the requested, ceiling, or applied tuple.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct ReadScope {
+    /// Admitted entity type bytes; absent means every registered type.
+    pub entity_types: Option<Vec<u8>>,
+    /// Highest admitted sensitivity band.
+    pub max_sensitivity_band: u8,
+    /// Whether stale claims are admitted.
+    pub include_stale: bool,
+    /// Lowest admitted claim confidence.
+    pub min_confidence: f32,
+    /// Lowest admitted claim salience.
+    pub min_salience: f32,
+    /// Whether the scope admits nothing.
+    pub deny_all: bool,
+}
+
+/// The mandatory receipt every read returns: what was asked, the actor's
+/// ceiling, what applied, and which axes narrowed.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct ReadReceipt {
+    /// The scope the caller asked for.
+    pub requested: ReadScope,
+    /// The actor's ceiling.
+    pub actor_ceiling: ReadScope,
+    /// The intersection that applied.
+    pub applied: ReadScope,
+    /// Axes that narrowed the read.
+    pub narrowed_axes: Vec<String>,
+    /// Stored rows this actor may not read.
+    pub suppressed_count: u64,
+    /// Machine-readable re-plan hint: the narrowed axes.
+    pub replan_hint: Vec<String>,
+}
+
+/// `getEntity` result: the view, or none, with the read's receipt.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct EntityRead {
+    /// The entity view; absent when missing or withheld.
+    pub value: Option<EntityView>,
+    /// The read's receipt.
+    pub narrowing: ReadReceipt,
+}
+
+/// `hydrate` result: every view, with the read's receipt.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct EntityViews {
+    /// Views, in request order.
+    pub value: Vec<EntityView>,
+    /// The read's receipt.
+    pub narrowing: ReadReceipt,
+}
+
+/// `claimList` / `claimHistory` result, with the read's receipt.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct ClaimViews {
+    /// Claim views.
+    pub value: Vec<ClaimView>,
+    /// The read's receipt.
+    pub narrowing: ReadReceipt,
+}
+
+/// `queryBm25` result, with the read's receipt.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct LexicalHits {
+    /// Hits, in engine score order.
+    pub value: Vec<LexicalHit>,
+    /// The read's receipt.
+    pub narrowing: ReadReceipt,
+}
+
+/// `neighbors` result, with the read's receipt.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct NeighborHits {
+    /// Neighbors, outbound first.
+    pub value: Vec<NeighborHit>,
+    /// The read's receipt.
+    pub narrowing: ReadReceipt,
+}
+
 // ── specialized facade inputs ───────────────────────────────────────────
 
 /// One habit check-in append.

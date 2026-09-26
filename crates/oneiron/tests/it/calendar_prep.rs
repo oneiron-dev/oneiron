@@ -196,7 +196,8 @@ fn put_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("claim body");
     vault
         .put_claim(&id, &body, at(learned_at), learned_at)
         .expect("put claim");

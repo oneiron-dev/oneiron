@@ -33,7 +33,7 @@ fn document() -> DocsExport {
 }
 fn grant_core_read(vault: &crate::Vault, actor_ref: &str) -> Result<()> {
     use rmpv::Value;
-    let default = crate::gate::default_policy_manifest();
+    let default = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice()).unwrap() else {
         panic!("default policy manifest is a map");
     };

@@ -1295,3 +1295,190 @@ fn featureless_open_refuses_existing_entity_document_planes() -> Result<()> {
     ));
     Ok(())
 }
+
+/// A code-memory pull is an actor's scoped read: the result carries the
+/// receipt of that read, and a payload the actor may not see is counted.
+#[test]
+fn actor_memory_search_returns_its_receipt() -> Result<()> {
+    use crate::code_memory::{
+        AttachCodeMemory, CodeMemoryAnchor, CodeMemoryLocator, CodeMemoryPayloadRef,
+        CodeMemoryPullRequest, CodeMemoryRevision, CodeMemorySlotName, CodeMemorySlotValue,
+    };
+    use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON};
+    use rmpv::Value;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let at = 1_780_000_000;
+    let range = TimeRange { start: at, end: at };
+    let (symbol, author, subject) = (entity(0x71), entity(0x72), entity(0x73));
+    vault.put_entity(&symbol, ENTITY_TYPE_CODE_SYMBOL, range, at, b"x")?;
+    vault.put_entity(&author, ENTITY_TYPE_PERSON, range, at, b"x")?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, range, at, b"x")?;
+    let receipt = vault
+        .memory(author, crate::EdgeActorClass::Human)
+        .author_take(crate::note::TakeTarget::Subject(subject), "fixture take")
+        .expect("mint a NOTE through the author_take door");
+    let note = crate::EntityId::from_hex(&receipt.id_hex)?;
+    vault.attach_code_memory(AttachCodeMemory {
+        anchor: CodeMemoryAnchor {
+            symbol_id: symbol,
+            locator: CodeMemoryLocator {
+                path_at_revision: "src/a.rs".to_owned(),
+                revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+                validity: range,
+            },
+        },
+        slot: CodeMemorySlotName::new("interface.contract")?,
+        value: CodeMemorySlotValue {
+            payload: CodeMemoryPayloadRef::NoteEntity(note),
+            actor_id: author,
+            valid_time: range,
+            recorded_at: at,
+            content_hash: [0x07; 32],
+            provenance_claim_id: author,
+        },
+    })?;
+    // One reader may see symbols and notes; the other, symbols only.
+    let grant = |actor_ref: &str, bands: &[u8]| -> Result<Value> {
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = crate::federation::ScopeAxis::Some(bands.iter().copied().collect());
+        Ok(Value::Map(vec![
+            ("actor_ref".into(), actor_ref.into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(&scope)?,
+            ),
+            ("receipt_required".into(), Value::Boolean(false)),
+        ]))
+    };
+    let manifest = Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "actor-memory-receipt".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), Value::Map(Vec::new())),
+        ("rules".into(), Value::Array(Vec::new())),
+        ("actor_ceilings".into(), Value::Array(Vec::new())),
+        (
+            "scoped_grants".into(),
+            Value::Array(vec![
+                grant("note-reader", &[ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE])?,
+                grant("symbol-reader", &[ENTITY_TYPE_CODE_SYMBOL])?,
+            ]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encodes");
+    crate::test_util::put_policy_manifest_bytes(&vault, entity(0x74), &bytes)?;
+
+    let request = CodeMemoryPullRequest::new(vec![symbol]);
+    let key = |actor_ref: &str| crate::claim::ScopedReadActorKey::new(actor_ref).unwrap();
+    let permitted = vault.pull_code_memory(key("note-reader"), request.clone())?;
+    assert_eq!(permitted.notes.len(), 1);
+    assert_eq!(permitted.read_receipt.suppressed_count, 0);
+    let narrowed = vault.pull_code_memory(key("symbol-reader"), request)?;
+    assert!(narrowed.notes.is_empty());
+    assert_eq!(narrowed.read_receipt.suppressed_count, 1);
+    assert!(
+        narrowed
+            .read_receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn a_handle_of_another_vault_is_refused_by_identity() -> Result<()> {
+    use crate::code_run::HostSelfDispatcher;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+
+    let (tmp, other_tmp) = (tempfile::tempdir()?, tempfile::tempdir()?);
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let other = Vault::open(other_tmp.path(), test_config())?;
+    assert_ne!(vault.vault_id(), other.vault_id());
+    let actor = WriteActor::new(entity(0xA0), EdgeActorClass::Agent);
+
+    let foreign = HostSelfDispatcher::new(&other, actor, "foreign-run")?;
+    assert_eq!(foreign.vault_id(), other.vault_id());
+    let refused = vault
+        .query_for_execution(&foreign)
+        .err()
+        .expect("a dispatcher bound to another vault must be refused");
+    assert_matches!(
+        refused,
+        Error::InvalidConfig(message) if message.contains("different vault")
+    );
+
+    // The same identity check admits this vault's own dispatcher.
+    let own = HostSelfDispatcher::new(&vault, actor, "own-run")?;
+    assert!(vault.query_for_execution(&own).is_ok());
+    Ok(())
+}
+
+#[test]
+fn two_handles_on_one_vault_share_a_vault_id_and_two_vaults_do_not() -> Result<()> {
+    let (tmp, other_tmp) = (tempfile::tempdir()?, tempfile::tempdir()?);
+    let first = Vault::open(tmp.path(), test_config())?.vault_id();
+    let second = Vault::open(tmp.path(), test_config())?.vault_id();
+    assert_eq!(first, second);
+
+    let other = Vault::open(other_tmp.path(), test_config())?.vault_id();
+    assert_ne!(first, other);
+    Ok(())
+}
+
+#[test]
+fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
+    use crate::authority::{AuthorityOp, HostSlipIssuer, genesis_vault_id};
+    use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let unrooted = vault.vault_id();
+    assert_eq!(vault.authority_fold()?.vault_id, None);
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"vault identity root")?)?;
+    let mut entries = Vec::new();
+    for id in vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)? {
+        entries.push(vault.get_authority_log_entry(&id)?.expect("listed entry"));
+    }
+    let genesis: Vec<_> = entries
+        .iter()
+        .filter(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
+        .collect();
+    let [genesis] = genesis.as_slice() else {
+        panic!("the host root slip roots the log with one genesis");
+    };
+    let canonical = genesis_vault_id(genesis)?;
+
+    drop(vault);
+
+    // Opened again after the rooting: canon's vault_id is the genesis, and the
+    // handle still names the store it named before the rooting.
+    let rooted = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(rooted.authority_fold()?.vault_id, Some(canonical));
+    assert_eq!(rooted.vault_id(), unrooted);
+
+    // A replica that folds the same log to the same genesis is another store.
+    let replica_tmp = tempfile::tempdir()?;
+    let replica = Vault::open(replica_tmp.path(), test_config())?;
+    entries.sort_by_key(|entry| entry.seq);
+    let rows: Vec<_> = entries
+        .into_iter()
+        .zip(1..)
+        .map(|(entry, at)| (entry, crate::TimeRange { start: at, end: at }, at))
+        .collect();
+    replica.put_authority_log_entries(&rows)?;
+    assert_eq!(replica.authority_fold()?.vault_id, Some(canonical));
+    assert_ne!(replica.vault_id(), unrooted);
+    Ok(())
+}
+
+#[test]
+fn a_fresh_vault_holds_a_local_vault_id() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let fresh = Vault::open(tmp.path(), test_config())?.vault_id();
+    assert_eq!(Vault::open(tmp.path(), test_config())?.vault_id(), fresh);
+    Ok(())
+}

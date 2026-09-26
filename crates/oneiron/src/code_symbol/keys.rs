@@ -4,30 +4,38 @@ use heed::RwTxn;
 use sha2::{Digest, Sha256};
 
 use crate::codebase::RepoRef;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CODE_SYMBOL_ENTITY;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
-use super::codec::{hash_len, hash_text_field};
+use super::codec::hash_text_field;
 use super::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk,
-    CodeSymbolRevision,
+    CodeSymbolManifest, CodeSymbolRevision,
 };
 use super::validate::{
     compare_chunks, validate_chunk, validate_manifest_path, validate_symbol_shape, validate_text,
 };
 use crate::error::CodeError;
 
-pub(super) const CODE_SYMBOL_MANIFEST_KEY_PREFIX: &[u8] = b"code_symbol:manifest:v1:";
+/// Per-code-artifact code-symbol manifest row. Key: id16.
+pub(super) const MANIFEST: SideTable<EntityId, CodeSymbolManifest, Raw> =
+    SideTable::new(&side_table::CODE_SYMBOL_MANIFEST);
 
-pub(super) const CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX: &[u8] = b"code_symbol:revision:v1:";
-
-pub(super) const CODE_SYMBOL_ENTITY_ID_DOMAIN: &[u8] = b"oneiron:code-symbol-entity:v1";
+/// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key (after the
+/// table's own prefix): string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00"
+/// hash32(fingerprint) "\x00" id16 — spelled by [`code_symbol_revision_index_key`] /
+/// [`code_symbol_revision_index_prefix`], not decoded field-by-field (a text field is never split
+/// back out of its NUL separator).
+pub(super) const REVISION_INDEX: SideTable<Vec<u8>, (), Raw> =
+    SideTable::new(&side_table::CODE_SYMBOL_REVISION_INDEX);
 
 pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
     validate_symbol_shape(symbol)?;
-    deterministic_entity_id(
-        CODE_SYMBOL_ENTITY_ID_DOMAIN,
+    EntityId::derive(
+        CODE_SYMBOL_ENTITY,
         &[
             repo_identity_key(repo_ref).as_bytes(),
             symbol.path.as_bytes(),
@@ -81,34 +89,8 @@ pub(super) fn repo_identity_key(repo_ref: &RepoRef) -> String {
     }
 }
 
-pub(super) fn deterministic_entity_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0_u64..=u64::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(domain);
-        hasher.update(salt.to_le_bytes());
-        for part in parts {
-            hash_len(&mut hasher, part.len())?;
-            hasher.update(part);
-        }
-        let hash = hasher.finalize();
-        let mut id = [0_u8; ENTITY_ID_LEN];
-        id.copy_from_slice(&hash[..ENTITY_ID_LEN]);
-        if let Ok(id) = EntityId::from_bytes(id) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "code symbol deterministic entity id exhausted salt space",
-    ))
-}
-
-pub(super) fn code_symbol_manifest_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODE_SYMBOL_MANIFEST_KEY_PREFIX.len() + id.as_bytes().len());
-    key.extend_from_slice(CODE_SYMBOL_MANIFEST_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
+/// [`REVISION_INDEX`]'s key for one (repo_ref, path, name, fingerprint) group, without the
+/// trailing id: the scan prefix [`lookup_code_symbol_blame`](super::storage) walks.
 pub(super) fn code_symbol_revision_index_prefix(
     repo_ref: &RepoRef,
     path: &str,
@@ -116,15 +98,8 @@ pub(super) fn code_symbol_revision_index_prefix(
     fingerprint: &[u8; CODE_SYMBOL_FINGERPRINT_LEN],
 ) -> Vec<u8> {
     let repo_ref = repo_ref.canonical();
-    let mut key = Vec::with_capacity(
-        CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX.len()
-            + repo_ref.len()
-            + path.len()
-            + name.len()
-            + fingerprint.len()
-            + 4,
-    );
-    key.extend_from_slice(CODE_SYMBOL_REVISION_INDEX_KEY_PREFIX);
+    let mut key =
+        Vec::with_capacity(repo_ref.len() + path.len() + name.len() + fingerprint.len() + 4);
     push_index_text(&mut key, &repo_ref);
     push_index_text(&mut key, path);
     push_index_text(&mut key, name);
@@ -172,21 +147,21 @@ pub(super) fn id_from_index_key(
 pub(super) fn delete_index_rows_for_id(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    prefix: &[u8],
     id: &EntityId,
 ) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*wtxn, prefix)? {
-        let (key, _) = entry?;
-        if key.len() >= prefix.len() + 1 + id.as_bytes().len()
-            && key.ends_with(id.as_bytes())
-            && key[key.len() - id.as_bytes().len() - 1] == 0
-        {
-            keys.push(key.to_vec());
-        }
-    }
+    let id_bytes = id.as_bytes();
+    let keys: Vec<Vec<u8>> = REVISION_INDEX
+        .scan(store, wtxn)?
+        .into_iter()
+        .filter_map(|(key, ())| {
+            let well_shaped = key.len() > id_bytes.len()
+                && key.ends_with(id_bytes)
+                && key[key.len() - id_bytes.len() - 1] == 0;
+            well_shaped.then_some(key)
+        })
+        .collect();
     for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
+        REVISION_INDEX.delete(store, wtxn, &key)?;
     }
     Ok(())
 }

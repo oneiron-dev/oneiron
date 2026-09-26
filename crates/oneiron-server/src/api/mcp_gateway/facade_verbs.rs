@@ -1,8 +1,8 @@
 //! Facade-backed MCP verb executors.
 
 use super::{
-    McpGatewayError, mcp_actor_result, mcp_api_error, mcp_engine_error, mcp_scoped_read,
-    mcp_text_content,
+    McpGatewayError, mcp_actor_result, mcp_api_error, mcp_engine_error, mcp_memory,
+    mcp_scoped_read, mcp_text_content,
 };
 use crate::api::CORE_MAX_LIST_LIMIT;
 use crate::api::hydrate_short_id_response_with_mode;
@@ -19,6 +19,7 @@ use crate::projection;
 use crate::projection::View;
 use crate::server::SyncServer;
 use oneiron::EdgeKind;
+use oneiron::claim::PointRead;
 use serde_json::Value;
 use serde_json::json;
 
@@ -35,14 +36,18 @@ pub(crate) fn execute_mcp_calendar(
     actor: &McpResolvedActor,
 ) -> Result<Value, McpGatewayError> {
     let op = args.operation.op();
-    let facade = server.vault.memory(actor.actor_ref, actor.actor_class);
+    let facade = mcp_memory(&server.vault, actor);
 
     let mut structured = match args.operation {
         crate::mcp::McpCalendarOperation::Read { event_ref } => {
-            let item = facade
+            let read = facade
                 .calendar_read(&oneiron::CalendarReadRequest { event_ref })
                 .map_err(mcp_facade_error)?;
-            json!({ "found": item.is_some(), "item": item })
+            json!({
+                "found": read.value.is_some(),
+                "item": read.value,
+                "narrowing": read.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Search {
             calendars,
@@ -50,7 +55,7 @@ pub(crate) fn execute_mcp_calendar(
             text,
             limit,
         } => {
-            let items = facade
+            let search = facade
                 .calendar_search(&oneiron::CalendarSearchRequest {
                     calendars: calendar_selectors(calendars),
                     range: range.map(|range| oneiron::CalendarRangeDto {
@@ -61,10 +66,14 @@ pub(crate) fn execute_mcp_calendar(
                     limit: limit.unwrap_or(CORE_MAX_LIST_LIMIT as u32),
                 })
                 .map_err(mcp_facade_error)?;
-            json!({ "count": items.len(), "items": items })
+            json!({
+                "count": search.value.len(),
+                "items": search.value,
+                "narrowing": search.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Freebusy { calendars, range } => {
-            let intervals = facade
+            let busy = facade
                 .calendar_freebusy(
                     &calendar_selectors(calendars),
                     oneiron::TimeRange {
@@ -73,7 +82,11 @@ pub(crate) fn execute_mcp_calendar(
                     },
                 )
                 .map_err(mcp_facade_error)?;
-            json!({ "count": intervals.len(), "intervals": intervals })
+            json!({
+                "count": busy.value.len(),
+                "intervals": busy.value,
+                "narrowing": busy.receipt,
+            })
         }
         crate::mcp::McpCalendarOperation::Invite {
             method,
@@ -196,9 +209,13 @@ pub(crate) fn execute_mcp_read(
     if let Some(entity_ref) = args.target.entity_ref.as_deref() {
         let id = parse_entity_id_param(entity_ref, "target.entity_ref").map_err(mcp_api_error)?;
         let read = scoped_read
-            .get_entity_parts_with_receipt(&id, None)
-            .map_err(|error| mcp_engine_error("mcp read failed", error))?;
-        let item = read.value.map(|(entity_type, learned_at, body)| {
+            .read(&[PointRead::id(id)], None)
+            .map_err(|error| mcp_engine_error("mcp read failed", error))?
+            .single();
+        let item = read
+            .value
+            .and_then(|row| Some((row.entity_type, row.learned_at, row.body?)));
+        let item = item.map(|(entity_type, learned_at, body)| {
             projection::project_entity_parts(&id, entity_type, learned_at, &body, View::Full)
         });
         return Ok(json!({
@@ -719,11 +736,11 @@ fn project_nav_results(
 ) -> Result<(Vec<Value>, oneiron::claim::ScopedReadReceipt), McpGatewayError> {
     let mut narrowing = results.receipt;
     let projected = scoped_read
-        .get_entities_parts_with_modes_with_receipt(
+        .read(
             &results
                 .value
                 .iter()
-                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
+                .map(|row| PointRead::id(row.id).at(oneiron::memory::ReadMode::Indexed))
                 .collect::<Vec<_>>(),
             Some(&narrowing.applied.as_filter()),
         )
@@ -733,13 +750,13 @@ fn project_nav_results(
         .value
         .into_iter()
         .zip(projected.value)
-        .filter_map(|(row, parts)| {
-            let (kind, learned_at, body) = parts?;
+        .filter_map(|(hit, row)| {
+            let row = row?;
             Some(projection::project_entity_parts(
-                &row.id,
-                kind,
-                learned_at,
-                &body,
+                &hit.id,
+                row.entity_type,
+                row.learned_at,
+                &row.body?,
                 View::Summary,
             ))
         })
@@ -802,6 +819,7 @@ mod tests {
                 oneiron::ClaimApprovalStatus::Auto,
                 oneiron::ClaimLifecycleStatus::Active,
             )
+            .unwrap()
         };
         let at = |second| oneiron::TimeRange {
             start: second,
@@ -825,7 +843,8 @@ mod tests {
         let (items, _receipt) = project_nav_results(&reader, hits).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["label"], "navanchor.original");
-        let live = reader.get(&id).unwrap().value.unwrap();
+        let live = reader.read(&[PointRead::id(id)], None).unwrap().single();
+        let live = live.value.and_then(|row| row.body).unwrap();
         let live: rmpv::Value = rmp_serde::from_slice(&live).unwrap();
         assert_eq!(live["pred"].as_str(), Some("unmatched.replacement"));
     }

@@ -11,14 +11,13 @@ use crate::receipt::{ReceiptRecord, SessionLocalReceiptLog};
 use crate::session_overlay::{
     OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute, SnapshotLookup,
 };
-use crate::store::Store;
+use crate::side_table::{SideCodec, SideKey, SideTable};
+use crate::vault::VaultId;
 
 use super::registry::{
     OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
 };
 use super::telemetry::SessionRetrievalTelemetry;
-#[cfg(test)]
-use super::types::VaultMetaCounterComponents;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
@@ -407,19 +406,21 @@ impl OffRecordSession<'_> {
         })
     }
 
-    /// Mode-aware VaultMeta write (ONE-1728 K10): the overlay keyspace while
-    /// `OffRecord`, the base `vault_meta` while `OnRecord`.
+    /// Mode-aware side-table write (ONE-1728 K10): the overlay keyspace while
+    /// `OffRecord`, the base table while `OnRecord`.
     ///
     /// The route revalidates before anything is staged, so a write minted
     /// against a mode epoch that a concurrent flip has replaced is refused
     /// rather than landing in the wrong place. The base half runs inside this
     /// module's private vault access; no vault getter escapes.
-    #[allow(
-        dead_code,
-        reason = "ONE-1730 inherits the route-carrying VaultMeta pair (pinned by the P4a blueprint)"
-    )]
-    pub(crate) fn vault_meta_put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.vault_meta_put_routed(&self.write_route()?, key, value)
+    #[cfg(test)]
+    pub(crate) fn side_table_put<K: SideKey, V, C: SideCodec<V>>(
+        &self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
+    ) -> Result<()> {
+        self.side_table_put_routed(&self.write_route()?, table, key, value)
     }
 
     /// The same write against a route the CALLER captured.
@@ -427,37 +428,17 @@ impl OffRecordSession<'_> {
     /// Long-lived writers (ONE-1729's executor run) capture one route at run
     /// entry and apply everything through it, so a mid-run flip is caught by
     /// that route's own `revalidate` instead of being papered over by a fresh
-    /// mint per call. [`Self::vault_meta_put`] is the one-shot sibling for
+    /// mint per call. [`Self::side_table_put`] is the one-shot sibling for
     /// callers with no run to bind to; both share this body, so the two
     /// cannot drift in keyspace or ordering.
-    pub(crate) fn vault_meta_put_routed(
+    pub(crate) fn side_table_put_routed<K: SideKey, V, C: SideCodec<V>>(
         &self,
         route: &SessionWriteRoute,
-        key: &[u8],
-        value: &[u8],
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
     ) -> Result<()> {
-        route.require_recording(&self.session_ref)?;
-        match route.target() {
-            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
-            RouteTarget::Overlay => {
-                // Same base-writer-then-segment-permit order as the retrieval
-                // arm above: the permit is never held while waiting for the
-                // base writer.
-                let overlay = self.entry.overlay.clone();
-                let segment = self.vault.with_write_txn(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    view.vault_meta_put_in_txn(wtxn, key, value)?;
-                    Ok(segment)
-                })?;
-                segment.commit()
-            }
-            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
-                route.revalidate()?;
-                self.vault.store.vault_meta.put(wtxn, key, value)
-            }),
-        }
+        self.side_table_compare_and_put_routed(route, table, key, value, |_| Ok(()))
     }
 
     /// The routed write, conditional on what the row holds RIGHT NOW.
@@ -469,27 +450,29 @@ impl OffRecordSession<'_> {
     /// each writer told it won. Its refusal is the CALLER's typed error: the
     /// protocol being compared belongs to the caller, the transaction
     /// discipline belongs here.
-    pub(crate) fn vault_meta_compare_and_put_routed(
+    pub(crate) fn side_table_compare_and_put_routed<K: SideKey, V, C: SideCodec<V>>(
         &self,
         route: &SessionWriteRoute,
-        key: &[u8],
-        value: &[u8],
-        accepts_current: impl FnOnce(Option<&[u8]>) -> Result<()>,
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
+        accepts_current: impl FnOnce(Option<&V>) -> Result<()>,
     ) -> Result<()> {
         route.require_recording(&self.session_ref)?;
         match route.target() {
             RouteTarget::Discard => unreachable!("anonymous recording refused above"),
             RouteTarget::Overlay => {
-                // Same base-writer-then-segment-permit order as the sibling
-                // above; the composed read is taken after the segment installs
-                // so it cannot miss a room-mate's just-applied row.
+                // Same base-writer-then-segment-permit order as the retrieval
+                // arm above: the permit is never held while waiting for the
+                // base writer. The composed read is taken after the segment
+                // installs so it cannot miss a room-mate's just-applied row.
                 let overlay = self.entry.overlay.clone();
                 let segment = self.vault.with_write_txn(|wtxn| {
                     let segment = overlay.install_txn_segment()?;
                     route.revalidate()?;
                     let view = self.vault.store.session_view(overlay.clone())?;
-                    accepts_current(view.vault_meta_get_in_txn(&*wtxn, key)?.as_deref())?;
-                    view.vault_meta_put_in_txn(wtxn, key, value)?;
+                    accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                    table.put(&view, wtxn, key, value)?;
                     Ok(segment)
                 })?;
                 segment.commit()
@@ -501,13 +484,13 @@ impl OffRecordSession<'_> {
                 // same room wrote, which is exactly what the unconditional
                 // read sees.
                 let view = self.vault.store.session_view(self.entry.overlay.clone())?;
-                accepts_current(view.vault_meta_get_in_txn(&*wtxn, key)?.as_deref())?;
-                self.vault.store.vault_meta.put(wtxn, key, value)
+                accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+                table.put(&self.vault.store, wtxn, key, value)
             }),
         }
     }
 
-    /// Atomically compare-and-put one routed VaultMeta row and update one
+    /// Atomically compare-and-put one routed side-table row and update one
     /// additive counter contribution beside it (ONE-1929).
     ///
     /// The counter has two components: the durable base value and this room's
@@ -521,127 +504,112 @@ impl OffRecordSession<'_> {
     /// Both arms do the compare, the row put and the counter put inside ONE
     /// transaction, so a refused comparison writes neither and a committed
     /// append can never be followed by a lost or double-counted tally.
-    pub(crate) fn vault_meta_compare_and_put_with_counter_routed(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one routed transaction over two typed tables: each table travels with its key, \
+                  and the compare and the counter update are the caller's protocol"
+    )]
+    pub(crate) fn side_table_compare_and_put_with_counter_routed<K, V, C, CK, CV, CC>(
         &self,
         route: &SessionWriteRoute,
-        compare_key: &[u8],
-        compare_value: &[u8],
-        accepts_current: impl FnOnce(Option<&[u8]>) -> Result<()>,
-        counter_key: &[u8],
-        update_counter: impl FnOnce(Option<&[u8]>, Option<&[u8]>, RouteTarget) -> Result<(Vec<u8>, u64)>,
-    ) -> Result<u64> {
+        table: &SideTable<K, V, C>,
+        key: &K,
+        value: &V,
+        accepts_current: impl FnOnce(Option<&V>) -> Result<()>,
+        counter: &SideTable<CK, CV, CC>,
+        counter_key: &CK,
+        update_counter: impl FnOnce(Option<CV>, Option<CV>, RouteTarget) -> Result<(CV, u64)>,
+    ) -> Result<u64>
+    where
+        K: SideKey,
+        C: SideCodec<V>,
+        CK: SideKey,
+        CC: SideCodec<CV>,
+    {
         route.require_recording(&self.session_ref)?;
-        match route.target() {
-            RouteTarget::Discard => unreachable!("anonymous recording refused above"),
-            RouteTarget::Overlay => {
-                let overlay = self.entry.overlay.clone();
-                let (segment, total) = self.vault.with_write_txn(|wtxn| {
-                    let segment = overlay.install_txn_segment()?;
-                    route.revalidate()?;
-                    let view = self.vault.store.session_view(overlay.clone())?;
-                    accepts_current(view.vault_meta_get_in_txn(&*wtxn, compare_key)?.as_deref())?;
-                    let base = self
-                        .vault
-                        .store
-                        .vault_meta
-                        .get(&*wtxn, counter_key)?
-                        .map(|raw| raw.to_vec());
-                    let overlay_value = match overlay
-                        .snapshot()?
-                        .lookup_single(OverlayKeyspace::VaultMeta, counter_key)
-                    {
-                        SnapshotLookup::Present(value) => Some(value),
-                        SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
-                    };
-                    let (next_counter, total) = update_counter(
-                        base.as_deref(),
-                        overlay_value.as_deref(),
-                        RouteTarget::Overlay,
-                    )?;
-                    view.vault_meta_put_in_txn(wtxn, compare_key, compare_value)?;
-                    view.vault_meta_put_in_txn(wtxn, counter_key, &next_counter)?;
-                    Ok((segment, total))
-                })?;
-                segment.commit()?;
-                Ok(total)
-            }
-            RouteTarget::Base => self.vault.with_write_txn(|wtxn| {
-                route.revalidate()?;
-                let overlay = self.entry.overlay.clone();
-                let view = self.vault.store.session_view(overlay.clone())?;
-                accepts_current(view.vault_meta_get_in_txn(&*wtxn, compare_key)?.as_deref())?;
-                let base = self
-                    .vault
-                    .store
-                    .vault_meta
-                    .get(&*wtxn, counter_key)?
-                    .map(|raw| raw.to_vec());
-                let overlay_value = match overlay
-                    .snapshot()?
-                    .lookup_single(OverlayKeyspace::VaultMeta, counter_key)
-                {
-                    SnapshotLookup::Present(value) => Some(value),
-                    SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
-                };
-                let (next_counter, total) =
-                    update_counter(base.as_deref(), overlay_value.as_deref(), RouteTarget::Base)?;
-                self.vault
-                    .store
-                    .vault_meta
-                    .put(wtxn, compare_key, compare_value)?;
-                self.vault
-                    .store
-                    .vault_meta
-                    .put(wtxn, counter_key, &next_counter)?;
-                Ok(total)
-            }),
+        let target = route.target();
+        if target == RouteTarget::Discard {
+            unreachable!("anonymous recording refused above");
         }
+        let overlay = self.entry.overlay.clone();
+        let (segment, total) = self.vault.with_write_txn(|wtxn| {
+            let segment = match target {
+                RouteTarget::Overlay => Some(overlay.install_txn_segment()?),
+                RouteTarget::Base | RouteTarget::Discard => None,
+            };
+            route.revalidate()?;
+            let view = self.vault.store.session_view(overlay.clone())?;
+            accepts_current(table.get(&view, wtxn, key)?.as_ref())?;
+            let base = counter.get(&self.vault.store, wtxn, counter_key)?;
+            let delta = self.overlay_counter_delta(counter, counter_key)?;
+            let (next_counter, total) = update_counter(base, delta, target)?;
+            if target == RouteTarget::Overlay {
+                table.put(&view, wtxn, key, value)?;
+                counter.put(&view, wtxn, counter_key, &next_counter)?;
+            } else {
+                table.put(&self.vault.store, wtxn, key, value)?;
+                counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
+            }
+            Ok((segment, total))
+        })?;
+        if let Some(segment) = segment {
+            segment.commit()?;
+        }
+        Ok(total)
     }
 
-    /// The raw base and room-overlay components for an additive VaultMeta
-    /// counter. Ordinary composed reads intentionally keep shadow semantics;
-    /// only additive counters opt into this explicit merge.
-    #[cfg(test)]
-    pub(crate) fn vault_meta_counter_components(
+    /// This room's overlay-local contribution to an additive counter row;
+    /// `None` when the overlay holds no row for it.
+    fn overlay_counter_delta<K: SideKey, V, C: SideCodec<V>>(
         &self,
-        key: &[u8],
-    ) -> Result<VaultMetaCounterComponents> {
-        let overlay = match self
+        counter: &SideTable<K, V, C>,
+        key: &K,
+    ) -> Result<Option<V>> {
+        match self
             .entry
             .overlay
             .snapshot()?
-            .lookup_single(OverlayKeyspace::VaultMeta, key)
+            .lookup_single(OverlayKeyspace::VaultMeta, &counter.key_bytes(key))
         {
-            SnapshotLookup::Present(value) => Some(value),
-            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => None,
-        };
-        let rtxn = self.vault.store.env.read_txn()?;
-        let base = self
-            .vault
-            .store
-            .vault_meta
-            .get(&rtxn, key)?
-            .map(|raw| raw.to_vec());
-        Ok((base, overlay))
+            SnapshotLookup::Present(value) => counter.decode_value(&value).map(Some),
+            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => Ok(None),
+        }
     }
 
-    /// Composed VaultMeta read over overlay ∪ base.
-    pub(crate) fn vault_meta_get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    /// The base and room-overlay components of an additive side-table
+    /// counter. Ordinary composed reads intentionally keep shadow semantics;
+    /// only additive counters opt into this explicit merge.
+    #[cfg(test)]
+    pub(crate) fn side_table_counter_components<K: SideKey, V, C: SideCodec<V>>(
+        &self,
+        counter: &SideTable<K, V, C>,
+        key: &K,
+    ) -> Result<(Option<V>, Option<V>)> {
+        let overlay = self.overlay_counter_delta(counter, key)?;
+        let rtxn = self.vault.store.env.read_txn()?;
+        Ok((counter.get(&self.vault.store, &rtxn, key)?, overlay))
+    }
+
+    /// Composed side-table read over overlay ∪ base.
+    pub(crate) fn side_table_get<K: SideKey, V, C: SideCodec<V>>(
+        &self,
+        table: &SideTable<K, V, C>,
+        key: &K,
+    ) -> Result<Option<V>> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
-        view.vault_meta_get_in_txn(&rtxn, key)
+        table.get(&view, &rtxn, key)
     }
 
-    /// Identity of the store this session belongs to, as a bare pointer.
+    /// Identity of the vault this session belongs to.
     ///
-    /// The executor binding compares its storage's owning store against its
+    /// The executor binding compares its storage's owning vault against its
     /// dispatcher's before it reads or writes anything, and equal
     /// `session_ref`s across two different vaults must not read as the same
-    /// binding. A POINTER is the whole answer that question needs, so this
-    /// projects one rather than lending out the [`Store`] — nothing
-    /// dereferenceable escapes.
-    pub(crate) fn store_identity(&self) -> *const Store {
-        std::ptr::from_ref(&self.vault.store)
+    /// binding. The vault's identity is the whole answer that question needs,
+    /// so this projects it rather than lending out the vault.
+    pub(crate) fn vault_id(&self) -> VaultId {
+        self.vault.vault_id()
     }
 
     pub fn flip_on_record(&self) -> Result<()> {

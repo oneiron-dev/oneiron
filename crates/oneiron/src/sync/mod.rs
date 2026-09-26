@@ -16,6 +16,8 @@
 //! - `types` — Sync configuration, window keys
 //! - `schema` — CRDT Doc schema creation (root + window)
 //! - `bridge` — Observer-based CRDT ↔ LMDB materialization
+//! - `ingest` — the one entity-ingest ladder and tombstone classification both
+//!   Observer B and forward rematerialization run
 //! - `window` — Window lifecycle (load/unload/persist)
 //! - `manager` — Production window registry + ARCH-0023b startup recovery
 //!   orchestration (pm replay → reverse remat → forward remat → observers)
@@ -35,6 +37,7 @@ pub mod connection;
 mod convergence_props_internal;
 pub mod documents;
 pub mod federation_burst;
+mod ingest;
 pub mod lease;
 mod local_claims;
 pub(crate) mod loro_support;
@@ -48,9 +51,12 @@ pub mod replay;
 pub mod schema;
 pub mod selector;
 pub mod server_state;
+#[cfg(test)]
+mod tests;
 pub mod transport;
 pub mod types;
 pub mod window;
+pub(crate) mod window_rows;
 
 pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};

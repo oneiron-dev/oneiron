@@ -141,7 +141,8 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
             1.0,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(crate::ClaimSource::Observed);
         body.rel = Some(rel);
         vault
@@ -176,9 +177,19 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[actor.entity_ref()]);
     for id in hidden {
-        assert!(read.get(&id).unwrap().is_none());
+        assert!(
+            read.read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
     }
-    assert!(read.get(&good.id).unwrap().is_some());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(good.id)], None)
+            .unwrap()
+            .single()
+            .is_some()
+    );
     assert_eq!(
         read.search_text("needle", 20, None)
             .unwrap()
@@ -310,4 +321,71 @@ fn replicated_rooms_before_members_do_not_wedge_live_or_recovery_replay() {
             .unwrap();
         assert!(audience_admits(&vault, room, member).unwrap());
     }
+}
+
+#[test]
+fn scoped_read_for_room_narrows_to_the_members_with_a_receipt() {
+    let (_dir, vault, actor, room, bob) = fixture();
+    vault
+        .join_member(room, actor.entity_ref(), actor, 2, HistoryChoice::None)
+        .unwrap();
+    vault
+        .join_member(room, bob, actor, 3, HistoryChoice::None)
+        .unwrap();
+    // A relationship memory only the actor is party to.
+    let relationship = EntityId::now();
+    vault
+        .put_entity(
+            &relationship,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &encode(&serde_json::json!({"participant_ids":[actor.entity_ref()]})).unwrap(),
+        )
+        .unwrap();
+    let private = EntityId::now();
+    let mut body = crate::ClaimBody::new(
+        "preference.food",
+        crate::ClaimSubject::Entity(actor.entity_ref()),
+        rmpv::Value::from("private relationship memory"),
+        1.0,
+        crate::ClaimApprovalStatus::Auto,
+        crate::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.source = Some(crate::ClaimSource::Observed);
+    body.rel = Some(relationship);
+    vault
+        .batch()
+        .put_replicated(
+            &private,
+            ENTITY_TYPE_CLAIM,
+            TimeRange { start: 4, end: 4 },
+            4,
+            &crate::claim::encode_claim_body(&body).unwrap(),
+        )
+        .commit()
+        .unwrap();
+    permit_reads(&vault, &[actor.entity_ref()]);
+    let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
+    let reads = [crate::claim::PointRead::id(private)];
+
+    let alone = vault.scoped_read(key.clone()).read(&reads, None).unwrap();
+    assert!(alone.value[0].is_some());
+    assert_eq!(alone.receipt.suppressed_count, 0);
+    // The room's audience is its membership: Bob is not party to the
+    // relationship, so the room read withholds it and counts it.
+    let in_room = vault
+        .scoped_read_for_room(key, room)
+        .unwrap()
+        .read(&reads, None)
+        .unwrap();
+    assert!(in_room.value[0].is_none());
+    assert_eq!(in_room.receipt.suppressed_count, 1);
+    assert!(
+        in_room
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
 }

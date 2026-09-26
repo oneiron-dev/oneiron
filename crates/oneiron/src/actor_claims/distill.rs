@@ -6,10 +6,11 @@ use rmpv::Value;
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::edge::EdgeKind;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::llm::CallPurpose;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::side_table::{self, Raw, SideTable};
 
 use super::evidence::ActorClaimEvidence;
 use super::invalid;
@@ -18,12 +19,13 @@ use super::rows::{
 };
 use super::write::{ground_actor_claim, require_session_entity, write_actor_claim_in_txn};
 
-/// `actor_claims:distill_pending:v1:` + session id (16 B) → ended_at (8 BE).
+/// The durable SessionEnd → distill JOB, keyed by session id, value `ended_at`.
 ///
-/// The durable SessionEnd → distill JOB. Written in the SAME transaction that
-/// closes the sitting, so a crash between "session ended" and "distill queued"
-/// is not representable; consumed by [`run_session_end_actor_distill`].
-const DISTILL_PENDING_PREFIX: &[u8] = b"actor_claims:distill_pending:v1:";
+/// Written in the SAME transaction that closes the sitting, so a crash
+/// between "session ended" and "distill queued" is not representable;
+/// consumed by [`run_session_end_actor_distill`].
+const DISTILL_PENDING: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::ACTOR_CLAIMS_DISTILL_PENDING_JOB);
 /// `temporal_learned` key layout: `learned_at` (8 BE) + entity id.
 // ---------------------------------------------------------------------------
 // CHAT lane — SessionEnd distillation
@@ -87,34 +89,17 @@ pub(crate) fn register_session_end_distill_in_txn(
     session: &EntityId,
     ended_at: u64,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &distill_job_key(session), &ended_at.to_be_bytes())?;
+    DISTILL_PENDING.put(&vault.store, wtxn, session, &ended_at)?;
     Ok(())
 }
 /// Sittings that have ended and not yet been distilled, in id order.
 pub fn pending_session_actor_distills(vault: &Vault) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut out = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, DISTILL_PENDING_PREFIX)?
-    {
-        let (key, _) = row?;
-        let Some(raw) = key.get(DISTILL_PENDING_PREFIX.len()..) else {
-            continue;
-        };
-        let bytes: [u8; ENTITY_ID_LEN] = raw
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("actor distill job key"))?;
-        out.push(
-            EntityId::from_bytes(bytes)
-                .map_err(|_| Error::CorruptedIndex("actor distill job key"))?,
-        );
-    }
-    Ok(out)
+    Ok(DISTILL_PENDING
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(session, _)| session)
+        .collect())
 }
 /// Runs the CHAT-lane inlet for one ended sitting: brief → distiller → the same
 /// [`write_actor_claim`](crate::actor_claims::write_actor_claim) door the TASK lane uses. Returns the claim ids landed.
@@ -182,14 +167,9 @@ pub fn run_session_end_actor_distill(
 /// Reads the pending job for `session`, returning its `ended_at`.
 fn distill_job(vault: &Vault, session: &EntityId) -> Result<u64> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, &distill_job_key(session))?
-    else {
-        return Err(invalid("no session-end distill job for this session"));
-    };
-    decode_distill_job(&raw)
+    DISTILL_PENDING
+        .get(&vault.store, &rtxn, session)?
+        .ok_or_else(|| invalid("no session-end distill job for this session"))
 }
 /// Spends the job inside the transaction that lands the pass.
 ///
@@ -202,21 +182,14 @@ fn consume_distill_job_in_txn(
     session: &EntityId,
     expected_ended_at: u64,
 ) -> Result<()> {
-    let key = distill_job_key(session);
-    let Some(raw) = vault.store.vault_meta.get(&*wtxn, &key)? else {
+    let Some(ended_at) = DISTILL_PENDING.get(&vault.store, &*wtxn, session)? else {
         return Err(invalid("the session-end distill job is no longer pending"));
     };
-    if decode_distill_job(&raw)? != expected_ended_at {
+    if ended_at != expected_ended_at {
         return Err(invalid("the session-end distill job was re-registered"));
     }
-    vault.store.vault_meta.delete(wtxn, &key)?;
+    DISTILL_PENDING.delete(&vault.store, wtxn, session)?;
     Ok(())
-}
-fn decode_distill_job(raw: &[u8]) -> Result<u64> {
-    let bytes: [u8; 8] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("actor distill job row"))?;
-    Ok(u64::from_be_bytes(bytes))
 }
 /// The window a sitting covers: `[started_at, ended_at]` in unix seconds.
 #[derive(Debug, Clone, Copy)]
@@ -371,10 +344,4 @@ fn message_order(raw: &[u8]) -> u64 {
         .find(|(key, _)| key.as_str() == Some("order"))
         .and_then(|(_, value)| value.as_u64())
         .unwrap_or(0)
-}
-fn distill_job_key(session: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(DISTILL_PENDING_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(DISTILL_PENDING_PREFIX);
-    key.extend_from_slice(session.as_bytes());
-    key
 }

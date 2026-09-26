@@ -4,6 +4,7 @@
 //! a wildcard selector. Replication does not invent a stamp for opaque peer bytes.
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -33,11 +34,9 @@ struct Stamp {
     digest: [u8; 32],
     scope: Scope,
 }
-fn key(id: EntityId) -> Vec<u8> {
-    let mut key = b"scope:record:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
+/// One entity's digest-bound record-position stamp, keyed by entity id.
+const SCOPE_RECORD: SideTable<EntityId, Stamp, LegacyJson> =
+    SideTable::new(&side_table::SCOPE_RECORD);
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -96,19 +95,19 @@ pub(crate) fn stamp_put(
         // Same bytes may retain their locally authored stamp. A changed opaque
         // replay must not inherit one from an earlier row at the same id.
         if stored_scope(store, txn, id, kind, data)?.is_none() {
-            store.vault_meta.delete(txn, &key(id))?;
+            SCOPE_RECORD.delete(store, txn, &id)?;
         }
         return Ok(());
     } else if kind == crate::registry::ENTITY_TYPE_FACET {
         default_stamp(kind, id)
     } else if carries_birth_stamp(kind) {
         let Some(facet) = birth_facet(store, txn, id)? else {
-            store.vault_meta.delete(txn, &key(id))?;
+            SCOPE_RECORD.delete(store, txn, &id)?;
             return Ok(());
         };
         default_stamp(kind, facet)
     } else {
-        default_stamp(kind, crate::claim::substrate_facet_id(id))
+        default_stamp(kind, crate::claim::substrate_facet_id(id)?)
     };
     if kind == crate::registry::ENTITY_TYPE_FACET
         && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])
@@ -130,13 +129,12 @@ pub(crate) fn stamp_put(
         }
     }
     scope.verbs = ScopeAxis::Bottom;
-    let bytes = serde_json::to_vec(&Stamp {
+    let stamp = Stamp {
         version: 1,
         digest: digest(kind, data),
         scope,
-    })
-    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
-    store.vault_meta.put(txn, &key(id), &bytes)?;
+    };
+    SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
 }
 fn stored_scope(
@@ -146,11 +144,9 @@ fn stored_scope(
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &key(id))? else {
+    let Some(stamp) = SCOPE_RECORD.get(store, txn, &id)? else {
         return Ok(None);
     };
-    let stamp: Stamp =
-        serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("record scope stamp"))?;
     if stamp.version != 1 || stamp.digest != digest(kind, data) {
         return Ok(None);
     }
@@ -328,7 +324,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                self.store.vault_meta.delete(txn, &key(*id))?;
+                SCOPE_RECORD.delete(&self.store, txn, id)?;
             }
             Ok(ids)
         })

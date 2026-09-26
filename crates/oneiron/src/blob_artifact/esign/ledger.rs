@@ -3,11 +3,15 @@ use super::model::*;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-const AUDIT: &[u8] = b"esign.audit.v1/";
+
+/// Esign document audit event. Key: id16 (document) + u64be (sequence).
+const AUDIT: SideTable<(EntityId, u64), EsignEventRow, LegacyJson> =
+    SideTable::new(&side_table::ESIGN_AUDIT);
 
 pub(super) fn encoded(row: &EsignEventRow) -> Result<Vec<u8>> {
     serde_json::to_vec(row).map_err(|_| invalid("event encoding"))
@@ -133,11 +137,11 @@ pub(super) fn append(
     let mut body = ClaimBody::new(
         row.event.predicate(),
         ClaimSubject::Entity(document),
-        Value::Binary(bytes.clone()),
+        Value::Binary(bytes),
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         txn,
@@ -149,16 +153,7 @@ pub(super) fn append(
         },
         now,
     )?;
-    vault.store.vault_meta.put(
-        txn,
-        &[
-            AUDIT,
-            document.as_bytes(),
-            row.sequence.to_be_bytes().as_slice(),
-        ]
-        .concat(),
-        &bytes,
-    )?;
+    AUDIT.put(&vault.store, txn, &(document, row.sequence), &row)?;
     Ok(state)
 }
 
@@ -211,13 +206,10 @@ impl Vault {
     /// Append-only trail remains queryable after the document's erase.
     pub fn esign_audit(&self, document: EntityId) -> Result<Vec<EsignEventRow>> {
         let txn = self.store.env.read_txn()?;
-        let prefix = [AUDIT, document.as_bytes()].concat();
         let mut rows = Vec::new();
         let mut previous = [0; 32];
-        for row in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (_, bytes) = row?;
-            let event: EsignEventRow =
-                serde_json::from_slice(&bytes).map_err(|_| invalid("audit schema"))?;
+        for row in AUDIT.iter_from(&self.store, &txn, document.as_bytes())? {
+            let (_, event) = row?;
             if event.sequence != rows.len() as u64 || event.previous_sha256 != previous {
                 return Err(invalid("audit hash chain"));
             }

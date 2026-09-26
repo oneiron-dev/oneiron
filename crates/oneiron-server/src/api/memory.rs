@@ -447,14 +447,20 @@ pub(crate) fn core_memory_timeline_response(
         .filter(|record| record.state != oneiron::MemoryTimelineRecordState::Deleted)
         .map(|record| record.id)
         .collect();
+    let reads: Vec<_> = ids
+        .iter()
+        .copied()
+        .map(oneiron::claim::PointRead::id)
+        .collect();
     let projected = read
-        .get_entities_parts_with_receipt(&ids, Some(&narrowing.applied.as_filter()))
+        .read(&reads, Some(&narrowing.applied.as_filter()))
         .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
     narrowing.restrict_with(&projected.receipt);
-    let mut parts: std::collections::BTreeMap<_, _> = ids
+    let mut parts: std::collections::BTreeMap<_, _> = projected
+        .value
         .into_iter()
-        .zip(projected.value)
-        .filter_map(|(id, body)| body.map(|body| (id, body)))
+        .flatten()
+        .filter_map(|row| Some((row.id, (row.entity_type, row.learned_at, row.body?))))
         .collect();
     let mut records = Vec::with_capacity(timeline.records.len());
     let deleted_anchor_visible = timeline.records.iter().any(|record| {

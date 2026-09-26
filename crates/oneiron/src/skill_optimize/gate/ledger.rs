@@ -6,13 +6,6 @@ use super::*;
 // The verdict ledger
 // ---------------------------------------------------------------------------
 
-fn verdict_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(VERDICT_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(VERDICT_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
 pub(super) fn record_verdict_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -92,18 +85,11 @@ pub(super) fn record_verdict_in_txn(
     let mut encoded = Vec::new();
     rmpv::encode::write_value(&mut encoded, &row)
         .map_err(|_| invalid("skill edit verdict MessagePack encode failed"))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &verdict_key(&verdict.id), &encoded)?;
+    VERDICTS.put(&vault.store, wtxn, &verdict.id, &encoded)?;
     Ok(())
 }
 
-fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
-    let id = key
-        .get(VERDICT_PREFIX.len()..)
-        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
-        .and_then(|tail| parse_entity_id(tail, VERDICT_ROW_LABEL))?;
+fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
         .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
     let Value::Map(entries) = &value else {
@@ -221,12 +207,11 @@ pub(super) fn verdict_rows_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
 ) -> Result<Vec<HeldOutVerdict>> {
-    let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, VERDICT_PREFIX)? {
-        let (key, raw) = row?;
-        out.push(decode_verdict(&key, &raw)?);
-    }
-    Ok(out)
+    VERDICTS
+        .scan(&vault.store, rtxn)?
+        .into_iter()
+        .map(|(id, raw)| decode_verdict(id, &raw))
+        .collect()
 }
 
 /// Every gate verdict this vault has ruled, in ruling order.
@@ -282,16 +267,6 @@ pub fn is_skill_edit_verdict_receipt(record: &ReceiptRecord) -> bool {
 
 /// The exclusive upper bound of the verdict keyspace.
 ///
-/// The prefix ends in `\0`, so incrementing its last byte names the first key
-/// past the family without touching any row inside it.
-fn verdict_key_range_end() -> Vec<u8> {
-    let mut end = VERDICT_PREFIX.to_vec();
-    if let Some(last) = end.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    end
-}
-
 /// Projects the verdict ledger as `Gate` receipts.
 ///
 /// A gate verdict IS a gate decision, so it mints no kind of its own — the
@@ -319,18 +294,11 @@ pub(crate) fn skill_edit_verdict_receipts(
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let end = verdict_key_range_end();
-    let bounds = (
-        std::ops::Bound::Included(VERDICT_PREFIX),
-        std::ops::Bound::Excluded(&end[..]),
-    );
     let mut out = Vec::new();
     // One row PAST the cap is reached and never decoded: it is what separates a
     // ledger holding exactly the cap from one the cap truncated.
-    for (scanned, row) in vault
-        .store
-        .vault_meta
-        .rev_range(&rtxn, &bounds)?
+    for (scanned, row) in VERDICTS
+        .iter_rev_from(&vault.store, &rtxn, &[])?
         .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
         .enumerate()
     {
@@ -338,8 +306,8 @@ pub(crate) fn skill_edit_verdict_receipts(
             note_verdict_scan_capped();
             break;
         }
-        let (key, raw) = row?;
-        let record = skill_edit_verdict_receipt(&decode_verdict(&key, &raw)?);
+        let (id, raw) = row?;
+        let record = skill_edit_verdict_receipt(&decode_verdict(id, &raw)?);
         if !query.matches(&record) {
             continue;
         }

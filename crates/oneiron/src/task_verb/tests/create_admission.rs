@@ -571,12 +571,10 @@ fn create_rate_slot_overwrites_one_key_across_windows() {
     // Elapsed windows overwrite the SAME key: exactly one rate key persists
     // for this (actor, window_seconds), not one row per elapsed window.
     let rtxn = vault.store.env.read_txn().expect("read txn");
-    let keys = vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, TASK_CREATE_RATE_KEY_PREFIX)
-        .expect("rate prefix iter")
-        .count();
+    let keys = TASK_CREATE_RATE_WINDOWS
+        .scan(&vault.store, &rtxn)
+        .expect("rate scan")
+        .len();
     assert_eq!(keys, 1);
 }
 
@@ -658,7 +656,7 @@ fn task_rate_limit_corruption_fails_all_readers_closed() -> Result<()> {
         vault.with_write_txn(|txn| {
             vault.store.vault_meta.put(
                 txn,
-                &task_create_rate_key(actor, rate.window_seconds),
+                &TASK_CREATE_RATE_WINDOWS.key_bytes(&(actor, rate.window_seconds)),
                 &vec![0; len],
             )?;
             Ok(())

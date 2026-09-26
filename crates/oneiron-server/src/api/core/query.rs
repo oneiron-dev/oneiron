@@ -122,11 +122,13 @@ pub(crate) async fn core_query(
     })?;
     let mut narrowing = results.receipt;
     let projected = scoped_read
-        .get_entities_parts_with_modes_with_receipt(
+        .read(
             &results
                 .value
                 .iter()
-                .map(|row| (row.id, oneiron::memory::ReadMode::Indexed))
+                .map(|row| {
+                    oneiron::claim::PointRead::id(row.id).at(oneiron::memory::ReadMode::Indexed)
+                })
                 .collect::<Vec<_>>(),
             Some(&narrowing.applied.as_filter()),
         )
@@ -135,15 +137,21 @@ pub(crate) async fn core_query(
     let total = projected.value.iter().filter(|row| row.is_some()).count();
     let mut staged = observations.as_deref().cloned();
     let mut response = Vec::with_capacity(total.min(req.limit));
-    for (result, parts) in results.value.into_iter().zip(projected.value) {
-        let Some((entity_type, learned_at, body)) = parts else {
+    for (result, row) in results.value.into_iter().zip(projected.value) {
+        let Some(oneiron::claim::ReadRow {
+            entity_type,
+            learned_at,
+            body: Some(body),
+            ..
+        }) = row
+        else {
             continue;
         };
         if response.len() >= req.limit {
             continue;
         }
-        if let Some(observations) = staged.as_mut() {
-            observations
+        if let Some(observations) = staged.as_mut()
+            && let Some(successor) = observations
                 .observe_snapshot(
                     &scoped_read,
                     result.id,
@@ -151,7 +159,9 @@ pub(crate) async fn core_query(
                     &body,
                     matches!(view, View::Full),
                 )
-                .map_err(|error| core_engine_error("session body observation failed", error))?;
+                .map_err(|error| core_engine_error("session body observation failed", error))?
+        {
+            narrowing.restrict_with(&successor);
         }
         let mut value = if matches!(view, View::Standard) {
             serde_json::json!({"id": result.id.to_hex(), "score": result.score})

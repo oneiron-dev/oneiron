@@ -363,7 +363,7 @@ fn put_repo_conflict_open_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
     put_engine_repo_conflict_claim(vault, claim_id, branch_subject, &body, learned_at)
 }
@@ -382,7 +382,7 @@ fn put_repo_conflict_resolution_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     validate_repo_conflict_claim_value(&body.predicate, &body.value)?;
     put_engine_repo_conflict_claim(vault, claim_id, branch_subject, &body, learned_at)
 }

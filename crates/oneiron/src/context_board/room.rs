@@ -66,6 +66,9 @@ pub struct RoomSection {
     pub scope: WorldAuthoritySet,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
+    /// The caller's read of the room's rules. Rules the caller could read but
+    /// a present peer could not are counted as withheld rows.
+    pub receipt: crate::claim::ScopedReadReceipt,
 }
 
 impl RoomSection {

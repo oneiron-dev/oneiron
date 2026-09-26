@@ -223,7 +223,7 @@ fn five_forks_route_two_to_land_and_three_to_one_bundle_merge_keeps_concurrent_e
                 .unwrap(),
         );
     }
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let rmpv::Value::Map(ref mut entries) =
         rmpv::decode::read_value(&mut manifest.as_slice()).unwrap()
     else {
@@ -436,6 +436,7 @@ fn agent_facade_and_pack_project_live_document_text() {
             memory
                 .get_entity(&receipt.id_hex)
                 .unwrap()
+                .value
                 .unwrap()
                 .body
                 .unwrap()["markdown"],

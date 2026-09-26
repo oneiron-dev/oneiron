@@ -3,13 +3,17 @@ use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::federation::Scope;
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use ed25519_dalek::{Signer, SigningKey};
 use std::collections::BTreeSet;
 use zeroize::Zeroizing;
 
-const ROOT_CACHE: &str = "authority:host-root-slip:v2";
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
+
+/// Cached minted host-root capability-slip token for one host signing key. Key: `:` + hex64.
+const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
+    SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
 
 /// A dedicated host signing/MAC key. Never loaded from device-key residue.
 /// The configured retained root secret is the recovery material for bootstrap.
@@ -127,10 +131,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let mut txn = self.store.env.write_txn()?;
-        let cache_key = format!(
-            "{ROOT_CACHE}:{}",
-            blake3::hash(&issuer.binding_key()).to_hex()
-        );
+        let cache_key = format!(":{}", blake3::hash(&issuer.binding_key()).to_hex());
         let now = self.instant_in_txn(&txn)?.secs();
         let mut fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut pending = Vec::new();
@@ -163,9 +164,8 @@ impl Vault {
             fold = fold_authority_log(&pending);
         }
         require_host(&fold, issuer)?;
-        if let Some(raw) = self.store.sync_state.get(&txn, &cache_key)? {
-            let token = std::str::from_utf8(&raw).map_err(|_| invalid_authority())?;
-            let slip = CapabilitySlip::from_token(token)?;
+        if let Some(token) = HOST_ROOT_SLIP_CACHE.get(&self.store, &txn, &cache_key)? {
+            let slip = CapabilitySlip::from_token(&token)?;
             slip.verify_authority(issuer.secret(), &fold, now)?;
             return Ok(slip);
         }
@@ -209,9 +209,7 @@ impl Vault {
         self.put_authority_log_entries_in_txn(&mut txn, &rows)?;
         let fresh = self.authority_fold_readonly_in_txn(&txn)?;
         slip.verify_authority(issuer.secret(), &fresh, now)?;
-        self.store
-            .sync_state
-            .put(&mut txn, &cache_key, slip.to_token()?.as_bytes())?;
+        HOST_ROOT_SLIP_CACHE.put(&self.store, &mut txn, &cache_key, &slip.to_token()?)?;
         txn.commit()?;
         Ok(slip)
     }

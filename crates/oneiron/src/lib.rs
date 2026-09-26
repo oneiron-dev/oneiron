@@ -26,6 +26,7 @@ pub(crate) mod ports;
 pub mod recovery;
 pub mod registry;
 pub(crate) mod session_overlay;
+pub(crate) mod side_table;
 pub mod slim;
 pub mod store;
 pub(crate) mod sweep;
@@ -602,6 +603,7 @@ pub(crate) mod test_util {
     //! model, HNSW params); a copy that is value-identical to the shared
     //! helper is a drift hazard and must route through it.
 
+    pub(crate) mod row_dump;
     /// Test-only-file classification for the source-scanning fences. The
     /// integration binaries mount the same file through `tests/common`.
     pub(crate) mod source_scan;
@@ -773,7 +775,7 @@ pub(crate) mod test_util {
                 ])
             })
             .collect();
-        let bytes = crate::gate::default_policy_manifest();
+        let bytes = crate::gate::default_policy_manifest().unwrap();
         let rmpv::Value::Map(mut entries) =
             rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
         else {

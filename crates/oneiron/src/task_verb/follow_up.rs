@@ -3,8 +3,9 @@ use rmpv::Value;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, SideKey, SideTable};
 
-use super::consts::{PEER_HANDLE_KEY_PREFIX, TASK_FOLLOW_UP_KEY_PREFIX, TASK_FOLLOW_UP_NAMESPACE};
+use super::consts::TASK_FOLLOW_UP_NAMESPACE;
 use super::consult_payload::ConsultRecovery;
 use super::wire_decode::{decode_entity_ref, task_body_field};
 use super::wire_encode::entity_ref_value;
@@ -18,16 +19,36 @@ pub fn task_follow_up_dedupe_key(task_ref: EntityId, stage: &str) -> String {
     format!("{TASK_FOLLOW_UP_NAMESPACE}:{}:{stage}", task_ref.to_hex())
 }
 
-pub(super) fn task_follow_up_key(task_ref: EntityId, stage: &str) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        TASK_FOLLOW_UP_KEY_PREFIX.len() + task_ref.as_bytes().len() + 1 + stage.len(),
-    );
-    key.extend_from_slice(TASK_FOLLOW_UP_KEY_PREFIX);
-    key.extend_from_slice(task_ref.as_bytes());
-    key.push(0);
-    key.extend_from_slice(stage.as_bytes());
-    key
+/// The bytes after [`side_table::TASK_FOLLOW_UP_MARKER`]'s prefix: the task id,
+/// a NUL separator, then the stage name — exactly the shape this row has
+/// always spelled.
+pub(super) struct TaskFollowUpKey {
+    pub(super) task_ref: EntityId,
+    pub(super) stage: String,
 }
+
+impl SideKey for TaskFollowUpKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.task_ref.as_bytes());
+        out.push(0);
+        out.extend_from_slice(self.stage.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (id, rest) = bytes.split_at_checked(16)?;
+        let (separator, stage) = rest.split_first()?;
+        if *separator != 0 {
+            return None;
+        }
+        Some(Self {
+            task_ref: EntityId::from_bytes(id.try_into().ok()?).ok()?,
+            stage: String::from_utf8(stage.to_vec()).ok()?,
+        })
+    }
+}
+
+pub(super) const TASK_FOLLOW_UP_MARKERS: SideTable<TaskFollowUpKey, [u8; 1], side_table::Raw> =
+    SideTable::new(&side_table::TASK_FOLLOW_UP_MARKER);
 
 pub(super) fn task_follow_up_marker(
     vault: &Vault,
@@ -35,10 +56,15 @@ pub(super) fn task_follow_up_marker(
     stage: &str,
 ) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&rtxn, task_follow_up_key(task_ref, stage).as_slice())?
+    Ok(TASK_FOLLOW_UP_MARKERS
+        .get(
+            &vault.store,
+            &rtxn,
+            &TaskFollowUpKey {
+                task_ref,
+                stage: stage.to_owned(),
+            },
+        )?
         .is_some())
 }
 
@@ -48,35 +74,37 @@ pub(super) fn set_task_follow_up_marker_in_txn(
     task_ref: EntityId,
     stage: &str,
 ) -> Result<()> {
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, task_follow_up_key(task_ref, stage).as_slice(), &[1])?;
+    TASK_FOLLOW_UP_MARKERS.put(
+        &vault.store,
+        wtxn,
+        &TaskFollowUpKey {
+            task_ref,
+            stage: stage.to_owned(),
+        },
+        &[1],
+    )?;
     Ok(())
 }
 
-pub(super) fn peer_handle_key(actor_ref: EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(PEER_HANDLE_KEY_PREFIX.len() + actor_ref.as_bytes().len());
-    key.extend_from_slice(PEER_HANDLE_KEY_PREFIX);
-    key.extend_from_slice(actor_ref.as_bytes());
-    key
-}
+pub(super) const PEER_HANDLES: SideTable<EntityId, Vec<u8>, side_table::Raw> =
+    SideTable::new(&side_table::TASK_PEER_HANDLE);
 
 /// Transaction-scoped handle read: the only caller is page hydration, which
 /// already holds its page's shared read transaction.
+///
+/// A non-UTF-8 row is treated as absent rather than an error: display
+/// handles are a projection convenience, and every write path only ever
+/// stores a validated `&str`, so this defends a corrupted row without adding
+/// a new failure mode to a read-only accessor.
 pub(super) fn peer_handle_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     actor_ref: EntityId,
 ) -> Result<Option<String>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, peer_handle_key(actor_ref).as_slice())?
-    else {
+    let Some(raw) = PEER_HANDLES.get(&vault.store, rtxn, &actor_ref)? else {
         return Ok(None);
     };
-    Ok(std::str::from_utf8(raw.as_ref()).ok().map(str::to_owned))
+    Ok(String::from_utf8(raw).ok())
 }
 
 /// The durable expiry artifact. It carries TYPED recovery choices — the

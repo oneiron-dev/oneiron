@@ -579,7 +579,8 @@ fn note_edit_and_replay_receipts_cannot_bypass_citation_selector() {
         0.9,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
@@ -802,12 +803,9 @@ mod program {
                 .is_none()
         );
         assert!(
-            vault
-                .store
-                .vault_meta
-                .get(&txn, &documents::head_key(note))
+            !documents::NOTE_HEAD
+                .contains(&vault.store, &txn, &note)
                 .expect("read erased-note head")
-                .is_none()
         );
         drop(txn);
         assert!(vault.note_text(note).is_err());

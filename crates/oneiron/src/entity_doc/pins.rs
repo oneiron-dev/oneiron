@@ -1,8 +1,11 @@
 //! Causal citation floors, retained quotes and the owner's shallow-purge door.
 
 use super::document::decode_frontier;
+use super::side_keys::HexPair;
 use super::{DocAuthorization, EntityDoc, ForkStatus, TextAnchor, invalid, storage};
 use crate::error::{ArtifactError, Error, Result};
+use crate::ports::{DocumentRowStore, DocumentSlot};
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use heed::RoTxn;
@@ -47,23 +50,25 @@ pub struct PurgeReceipt {
     pub live_text_hash: [u8; 32],
 }
 
-fn pin_prefix(entity: &EntityId) -> String {
-    format!("entity_doc:v1:pin:{}:", entity.to_hex())
-}
-fn purge_prefix(entity: &EntityId) -> String {
-    format!("entity_doc:v1:purge:{}:", entity.to_hex())
-}
+/// Immutable citation pin binding a quoted span to its exact causal frontier,
+/// keyed by entity then citation id.
+pub(super) const ENTITY_DOC_PIN: SideTable<HexPair, CitationPin, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_PIN);
+/// Durable proof of one owner-authorized shallow history purge, keyed by
+/// entity then receipt id.
+const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
 
 fn pins(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Vec<CitationPin>> {
-    vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &pin_prefix(entity))?
-        .map(|row| {
-            let (_, bytes) = row?;
-            storage::decode(&bytes)
-        })
-        .collect()
+    Ok(ENTITY_DOC_PIN
+        .scan_from(
+            &vault.store,
+            txn,
+            format!("{}:", entity.to_hex()).as_bytes(),
+        )?
+        .into_iter()
+        .map(|(_, pin)| pin)
+        .collect())
 }
 
 impl Vault {
@@ -99,17 +104,14 @@ impl Vault {
                 anchor: anchor.clone(),
                 actor: actor.entity_ref().to_hex(),
             };
-            let key = format!("{}{}", pin_prefix(entity), citation.to_hex());
-            if let Some(raw) = self.store.sync_state.get(txn, &key)? {
-                let prior: CitationPin = storage::decode(&raw)?;
+            let key = HexPair(HexId(*entity), HexId(*citation));
+            if let Some(prior) = ENTITY_DOC_PIN.get(&self.store, txn, &key)? {
                 if prior != pin {
                     return Err(invalid("citation pin is immutable"));
                 }
                 return Ok(prior);
             }
-            self.store
-                .sync_state
-                .put(txn, &key, &storage::encode(&pin)?)?;
+            ENTITY_DOC_PIN.put(&self.store, txn, &key, &pin)?;
             Ok(pin)
         })
     }
@@ -239,13 +241,14 @@ impl Vault {
                 }
             }
             storage::persist(self, txn, entity, &mut h, &shallow, None)?;
-            self.store.sync_state.put(
+            self.store.port_document_shallow_since_put(
                 txn,
-                &format!("ssv:e:{}", h.document),
+                DocumentSlot::from_hex(&h.document)?,
                 &shallow.doc.shallow_since_vv().encode(),
             )?;
+            let receipt_id = EntityId::now();
             let receipt = PurgeReceipt {
-                receipt: EntityId::now().to_hex(),
+                receipt: receipt_id.to_hex(),
                 entity: entity.to_hex(),
                 document: h.document,
                 actor: owner.actor().to_hex(),
@@ -254,10 +257,11 @@ impl Vault {
                 at,
                 live_text_hash: *blake3::hash(old_state.as_bytes()).as_bytes(),
             };
-            self.store.sync_state.put(
+            ENTITY_DOC_PURGE_RECEIPT.put(
+                &self.store,
                 txn,
-                &format!("{}{}", purge_prefix(entity), receipt.receipt),
-                &storage::encode(&receipt)?,
+                &HexPair(HexId(*entity), HexId(receipt_id)),
+                &receipt,
             )?;
             Ok(receipt)
         })?;
@@ -273,14 +277,15 @@ impl Vault {
     /// Lists durable owner-purge receipts for an entity.
     pub fn entity_text_purge_receipts(&self, entity: &EntityId) -> Result<Vec<PurgeReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .sync_state
-            .prefix_iter(&txn, &purge_prefix(entity))?
-            .map(|row| {
-                let (_, bytes) = row?;
-                storage::decode(&bytes)
-            })
-            .collect()
+        Ok(ENTITY_DOC_PURGE_RECEIPT
+            .scan_from(
+                &self.store,
+                &txn,
+                format!("{}:", entity.to_hex()).as_bytes(),
+            )?
+            .into_iter()
+            .map(|(_, receipt)| receipt)
+            .collect())
     }
 }
 
@@ -309,13 +314,11 @@ fn floor(
             protected.push(fork.base);
         }
     }
-    for row in vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &purge_prefix(entity))?
-    {
-        let (_, bytes) = row?;
-        let receipt: PurgeReceipt = storage::decode(&bytes)?;
+    for (_, receipt) in ENTITY_DOC_PURGE_RECEIPT.scan_from(
+        &vault.store,
+        txn,
+        format!("{}:", entity.to_hex()).as_bytes(),
+    )? {
         protected.push(receipt.applied);
     }
     for pin in protected {

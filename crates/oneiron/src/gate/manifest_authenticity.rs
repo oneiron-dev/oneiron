@@ -3,15 +3,25 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
-fn key(id: &EntityId, prefix: &str) -> String {
-    format!("manifest:{prefix}:{}", id.to_hex())
-}
+/// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
+/// Key: hex32.
+const TRUSTED_ORIGIN: SideTable<HexId, [u8; 32], Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+/// Marks a policy-manifest contribution as quarantined by an explicit owner action. Key: hex32.
+const QUARANTINED: SideTable<HexId, [u8; 32], Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_QUARANTINED);
+/// Maps a legacy policy-manifest id forward to its re-authored replacement id. Key: hex32.
+const REKEY: SideTable<HexId, EntityId, Raw> = SideTable::new(&side_table::GATE_MANIFEST_REKEY);
 
+/// `store::handle`'s vault-bootstrap seed writes this row directly, before any vault (and so any
+/// typed door) exists to read it back through — kept as a plain string builder so that raw write
+/// keeps landing under [`TRUSTED_ORIGIN`]'s declared prefix byte-for-byte.
 pub(crate) fn trusted_manifest_key(id: &EntityId) -> String {
-    key(id, "trusted")
+    format!("manifest:trusted:{}", id.to_hex())
 }
 pub(crate) fn stamp_manifest_origin(
     store: &Store,
@@ -21,9 +31,9 @@ pub(crate) fn stamp_manifest_origin(
     replicated: bool,
 ) -> Result<()> {
     let hash = blake3::hash(body);
-    let origin_key = trusted_manifest_key(id);
+    let origin_key = HexId(*id);
     if !replicated {
-        store.sync_state.put(txn, &origin_key, hash.as_bytes())?;
+        TRUSTED_ORIGIN.put(store, txn, &origin_key, hash.as_bytes())?;
     } else {
         let existing_matches = store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
             EntityMetadataHeader::parse(&raw)
@@ -31,12 +41,11 @@ pub(crate) fn stamp_manifest_origin(
                 && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(body)
         });
         if !existing_matches
-            || store
-                .sync_state
-                .get(txn, &origin_key)?
-                .is_none_or(|old| old.as_ref() != hash.as_bytes())
+            || TRUSTED_ORIGIN
+                .get(store, txn, &origin_key)?
+                .is_none_or(|old| old != *hash.as_bytes())
         {
-            store.sync_state.delete(txn, &origin_key)?;
+            TRUSTED_ORIGIN.delete(store, txn, &origin_key)?;
         }
     }
     Ok(())
@@ -48,10 +57,9 @@ pub(crate) fn manifest_is_trusted(
     id: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
-    Ok(store
-        .sync_state
-        .get(txn, &key(id, "trusted"))?
-        .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
+    Ok(TRUSTED_ORIGIN
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
 pub(in crate::gate) fn manifest_is_quarantined(
@@ -60,10 +68,9 @@ pub(in crate::gate) fn manifest_is_quarantined(
     id: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
-    Ok(store
-        .sync_state
-        .get(txn, &key(id, "quarantined"))?
-        .is_some_and(|hash| hash.as_ref() == blake3::hash(body).as_bytes()))
+    Ok(QUARANTINED
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -123,9 +130,7 @@ impl Vault {
             return Err(Error::InvalidConfig("not a policy manifest".into()));
         }
         let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
-        self.store
-            .sync_state
-            .put(&mut txn, &key(&id, "quarantined"), hash.as_bytes())?;
+        QUARANTINED.put(&self.store, &mut txn, &HexId(id), hash.as_bytes())?;
         txn.commit()?;
         Ok(())
     }
@@ -206,9 +211,7 @@ impl Vault {
         }
         let data = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, target, data, now)?;
-        self.store
-            .sync_state
-            .put(&mut txn, &key(&legacy, "rekey"), target.as_bytes())?;
+        REKEY.put(&self.store, &mut txn, &HexId(legacy), &target)?;
         txn.commit()?;
         Ok(())
     }
@@ -225,7 +228,7 @@ pub(crate) fn update_manifest_origin(
     if kind == ENTITY_TYPE_POLICY_MANIFEST {
         stamp_manifest_origin(store, txn, id, body, replicated)?;
     } else {
-        store.sync_state.delete(txn, &trusted_manifest_key(id))?;
+        TRUSTED_ORIGIN.delete(store, txn, &HexId(*id))?;
     }
     Ok(())
 }

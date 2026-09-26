@@ -49,10 +49,14 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
             Value::from("fact"),
             1.0,
         );
-        crate::claim::encode_claim_body(&candidate.into_claim_body(
-            &envelope,
-            crate::claim::substrate_facet_id(actor.entity_ref()),
-        ))
+        crate::claim::encode_claim_body(
+            &candidate
+                .into_claim_body(
+                    &envelope,
+                    crate::claim::substrate_facet_id(actor.entity_ref()).unwrap(),
+                )
+                .unwrap(),
+        )
         .unwrap()
     };
     let early = EntityId::now();
@@ -133,6 +137,18 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
     );
     let proof = vault.verified_host_root_slip(&issuer).unwrap();
     let reader = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
-    assert!(reader.get(&early).unwrap().is_none());
-    assert!(reader.get(&descendant).unwrap().is_some());
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(early)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(descendant)], None)
+            .unwrap()
+            .single()
+            .is_some()
+    );
 }

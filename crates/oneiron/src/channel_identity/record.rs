@@ -368,8 +368,7 @@ impl ChannelIdentity {
     }
 
     /// Builds typed `channel_identity.*` claim bodies for this record.
-    #[must_use]
-    pub fn claim_bodies(&self, identity_id: EntityId) -> Vec<ClaimBody> {
+    pub fn claim_bodies(&self, identity_id: EntityId) -> crate::Result<Vec<ClaimBody>> {
         CHANNEL_IDENTITY_CLAIM_PREDICATES
             .iter()
             .map(|predicate| {

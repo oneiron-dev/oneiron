@@ -456,7 +456,7 @@ fn dnc_and_132_fold_unchanged() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     dnc.valid_from = Some(1);
     vault.put_claim(&test_id(0xB5), &dnc, TimeRange { start: 1, end: 1 }, 1)?;
     let (_decision_id, dnc_folded, _charge) = vault.with_write_txn(|wtxn| {

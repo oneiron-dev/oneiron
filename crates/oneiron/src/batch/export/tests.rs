@@ -272,7 +272,7 @@ fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
     assert_eq!(value["secrets_nulled"]["structural_placeholders"], true);
 
     let shape = &value["data_shape"];
-    assert_eq!(shape["storage_abi_version"], 20);
+    assert_eq!(shape["storage_abi_version"], 21);
     assert_eq!(shape["storage_schema_version"], 1);
     assert_eq!(shape["db_manifest_version"], 2);
     assert_eq!(shape["max_dbs"], 32);
@@ -1081,7 +1081,8 @@ mod staged_content_gc {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(source);
         body.scope = Some(Value::Map(vec![(
             Value::from("sensitivity"),

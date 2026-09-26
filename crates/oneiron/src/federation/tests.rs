@@ -742,9 +742,9 @@ fn scope_entity(byte: u8) -> EntityId {
 }
 
 fn direction(
-    worlds: FederationScopeWorlds,
-    facets: FederationScopeFacets,
-    bands: FederationScopeBands,
+    worlds: ScopeAxis<ScopeId>,
+    facets: ScopeAxis<ScopeId>,
+    bands: ScopeAxis<SelectorRange>,
 ) -> FederationDirectionScope {
     FederationDirectionScope {
         worlds,
@@ -756,16 +756,40 @@ fn direction(
 fn sample_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: direction(
-            FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]),
-            FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-            FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            ScopeAxis::from_iter([scope_entity(0x10), scope_entity(0x12)].map(ScopeId)),
+            ScopeAxis::from_iter([scope_entity(0x21), scope_entity(0x22)].map(ScopeId)),
+            ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         ),
-        hi_to_lo: direction(
-            FederationScopeWorlds::Base,
-            FederationScopeFacets::All,
-            FederationScopeBands::Bottom,
-        ),
+        hi_to_lo: direction(base_world_axis(), ScopeAxis::All, ScopeAxis::Bottom),
     }
+}
+
+/// A hand-spelled pact scope axis: `{kind}`, or `{kind, ids}`.
+fn axis(kind: &str, ids: Option<Vec<Value>>) -> Value {
+    let mut entries = vec![(Value::from("kind"), Value::from(kind))];
+    if let Some(ids) = ids {
+        entries.push((Value::from("ids"), Value::Array(ids)));
+    }
+    Value::Map(entries)
+}
+
+fn direction_value(worlds: Value, facets: Value, bands: Value) -> Value {
+    Value::Map(vec![
+        (Value::from("worlds"), worlds),
+        (Value::from("facets"), facets),
+        (Value::from("bands"), bands),
+    ])
+}
+
+fn pact_value(lo: Value, hi: Value) -> Vec<u8> {
+    encode_value(&Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(FEDERATION_PACT_SCOPE_SCHEMA_VERSION),
+        ),
+        (Value::from("lo_to_hi"), lo),
+        (Value::from("hi_to_lo"), hi),
+    ]))
 }
 
 #[test]
@@ -786,31 +810,7 @@ fn federation_pact_scope_decode_fails_closed() {
     assert!(decode_federation_pact_scope(&trailing).is_err());
     assert!(decode_federation_pact_scope(b"not-msgpack").is_err());
 
-    let axis = |kind: &str, ids: Option<Vec<Value>>| {
-        let mut entries = vec![(Value::from("kind"), Value::from(kind))];
-        if let Some(ids) = ids {
-            entries.push((Value::from("ids"), Value::Array(ids)));
-        }
-        Value::Map(entries)
-    };
-    let direction_value = |worlds: Value, facets: Value, bands: Value| {
-        Value::Map(vec![
-            (Value::from("worlds"), worlds),
-            (Value::from("facets"), facets),
-            (Value::from("bands"), bands),
-        ])
-    };
     let all = || axis("all", None);
-    let pact_value = |lo: Value, hi: Value| {
-        encode_value(&Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(FEDERATION_PACT_SCOPE_SCHEMA_VERSION),
-            ),
-            (Value::from("lo_to_hi"), lo),
-            (Value::from("hi_to_lo"), hi),
-        ]))
-    };
     let hex = |byte: u8| Value::from(scope_entity(byte).to_hex());
 
     // An empty id set must NEVER decode as "all facets"/"all bands"/"all
@@ -913,7 +913,7 @@ fn federation_pact_scope_decode_fails_closed() {
             .unwrap()
             .lo_to_hi
             .worlds,
-        FederationScopeWorlds::Bottom
+        ScopeAxis::Bottom
     );
     for (case, bytes) in [
         ("empty some", empty_some),
@@ -944,21 +944,13 @@ fn federation_pact_scope_decode_fails_closed() {
 
 #[test]
 fn federation_direction_scope_partial_order_is_axis_wise() {
-    let all = direction(
-        FederationScopeWorlds::All,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+    let all = direction(ScopeAxis::All, ScopeAxis::All, ScopeAxis::All);
     let narrow = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x21)]),
-        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x21)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Semantic]),
     );
-    let bottom = direction(
-        FederationScopeWorlds::Bottom,
-        FederationScopeFacets::Bottom,
-        FederationScopeBands::Bottom,
-    );
+    let bottom = direction(ScopeAxis::Bottom, ScopeAxis::Bottom, ScopeAxis::Bottom);
 
     assert!(narrow.is_narrowing_of(&all));
     assert!(!all.is_narrowing_of(&narrow));
@@ -968,22 +960,14 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     assert!(bottom.is_narrowing_of(&bottom));
 
     // Bottom ⊑ Worlds(S) ⊑ Worlds(T ⊇ S) ⊑ All; Base is not implicit.
-    let one_world = FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]);
-    let two_worlds = FederationScopeWorlds::Worlds(vec![scope_entity(0x10), scope_entity(0x12)]);
-    assert!(!FederationScopeWorlds::Base.is_narrowing_of(&one_world));
+    let one_world = ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId));
+    let two_worlds = ScopeAxis::from_iter([scope_entity(0x10), scope_entity(0x12)].map(ScopeId));
+    assert!(!base_world_axis().is_narrowing_of(&one_world));
     let explicit_base =
-        FederationScopeWorlds::Worlds(vec![crate::claim::base_world_id(), scope_entity(0x10)]);
-    assert!(FederationScopeWorlds::Base.is_narrowing_of(&explicit_base));
-    let base_direction = direction(
-        FederationScopeWorlds::Base,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
-    let explicit_direction = direction(
-        explicit_base,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+        ScopeAxis::from_iter([crate::claim::base_world_id(), scope_entity(0x10)].map(ScopeId));
+    assert!(base_world_axis().is_narrowing_of(&explicit_base));
+    let base_direction = direction(base_world_axis(), ScopeAxis::All, ScopeAxis::All);
+    let explicit_direction = direction(explicit_base, ScopeAxis::All, ScopeAxis::All);
     assert_eq!(
         base_direction.intersect(&explicit_direction),
         base_direction
@@ -994,51 +978,122 @@ fn federation_direction_scope_partial_order_is_axis_wise() {
     );
     assert!(one_world.is_narrowing_of(&two_worlds));
     assert!(!two_worlds.is_narrowing_of(&one_world));
-    assert!(!FederationScopeWorlds::All.is_narrowing_of(&two_worlds));
-    assert!(!one_world.is_narrowing_of(&FederationScopeWorlds::Base));
+    assert!(!ScopeAxis::All.is_narrowing_of(&two_worlds));
+    assert!(!one_world.is_narrowing_of(&base_world_axis()));
 }
 
 #[test]
 fn federation_direction_scope_disjoint_meet_is_bottom_not_all() {
     let left = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x10)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x21), scope_entity(0x22)]),
-        FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        ScopeAxis::from_iter([scope_entity(0x10)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x21), scope_entity(0x22)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Semantic]),
     );
     let right = direction(
-        FederationScopeWorlds::Worlds(vec![scope_entity(0x12)]),
-        FederationScopeFacets::Some(vec![scope_entity(0x22), scope_entity(0x23)]),
-        FederationScopeBands::Some(vec![SelectorRange::Core]),
+        ScopeAxis::from_iter([scope_entity(0x12)].map(ScopeId)),
+        ScopeAxis::from_iter([scope_entity(0x22), scope_entity(0x23)].map(ScopeId)),
+        ScopeAxis::from_iter([SelectorRange::Core]),
     );
 
     let met = left.intersect(&right);
     // Every disjoint axis meets at Bottom, with no implicit base world.
-    assert_eq!(met.worlds, FederationScopeWorlds::Bottom);
+    assert_eq!(met.worlds, ScopeAxis::Bottom);
     assert_eq!(
         met.facets,
-        FederationScopeFacets::Some(vec![scope_entity(0x22)])
+        ScopeAxis::from_iter([scope_entity(0x22)].map(ScopeId))
     );
-    assert_eq!(met.bands, FederationScopeBands::Bottom);
+    assert_eq!(met.bands, ScopeAxis::Bottom);
     assert_eq!(met, right.intersect(&left));
 
-    let all = direction(
-        FederationScopeWorlds::All,
-        FederationScopeFacets::All,
-        FederationScopeBands::All,
-    );
+    let all = direction(ScopeAxis::All, ScopeAxis::All, ScopeAxis::All);
     assert_eq!(all.intersect(&left), left);
     assert_eq!(left.intersect(&left), left);
 
-    let bottom = direction(
-        FederationScopeWorlds::Base,
-        FederationScopeFacets::Bottom,
-        FederationScopeBands::Bottom,
+    let bottom = direction(base_world_axis(), ScopeAxis::Bottom, ScopeAxis::Bottom);
+    assert_eq!(bottom.intersect(&left).facets, ScopeAxis::Bottom);
+    assert_eq!(bottom.intersect(&left).bands, ScopeAxis::Bottom);
+}
+
+/// The three pact axes are `ScopeAxis` lattices and keep the wire bytes the
+/// hand-typed axis enums wrote. Each direction below is paired with its
+/// MessagePack spelled out by hand, so every kind of every axis is pinned.
+#[test]
+fn pact_scope_axes_are_scope_axes() -> Result<()> {
+    let hex = |byte: u8| Value::from(scope_entity(byte).to_hex());
+    let ids = |bytes: &[u8]| ScopeAxis::from_iter(bytes.iter().map(|b| ScopeId(scope_entity(*b))));
+    let named = |names: &[&str]| Some(names.iter().map(|name| Value::from(*name)).collect());
+    let cases = [
+        (
+            direction(ScopeAxis::Bottom, ScopeAxis::All, ScopeAxis::Bottom),
+            direction_value(
+                axis("bottom", None),
+                axis("all", None),
+                axis("bottom", None),
+            ),
+        ),
+        (
+            direction(ScopeAxis::All, ScopeAxis::Bottom, ScopeAxis::All),
+            direction_value(axis("all", None), axis("bottom", None), axis("all", None)),
+        ),
+        (
+            direction(
+                base_world_axis(),
+                ids(&[0x21, 0x22]),
+                ScopeAxis::from_iter([
+                    SelectorRange::Semantic,
+                    SelectorRange::Family(crate::registry::TypeByteFamily::People),
+                ]),
+            ),
+            direction_value(
+                axis("base", None),
+                axis("some", Some(vec![hex(0x21), hex(0x22)])),
+                axis("some", named(&["semantic", "core/people"])),
+            ),
+        ),
+        (
+            direction(
+                ids(&[0x10, 0x12]),
+                ids(&[0x23]),
+                ScopeAxis::from_iter([SelectorRange::Core, SelectorRange::Maintenance]),
+            ),
+            direction_value(
+                axis("worlds", Some(vec![hex(0x10), hex(0x12)])),
+                axis("some", Some(vec![hex(0x23)])),
+                axis("some", named(&["core", "maintenance"])),
+            ),
+        ),
+    ];
+    for (lo, lo_value) in &cases {
+        for (hi, hi_value) in &cases {
+            let scope = FederationPactScope {
+                lo_to_hi: lo.clone(),
+                hi_to_lo: hi.clone(),
+            };
+            let bytes = pact_value(lo_value.clone(), hi_value.clone());
+            assert_eq!(encode_federation_pact_scope(&scope)?, bytes);
+            assert_eq!(decode_federation_pact_scope(&bytes)?, scope);
+        }
+    }
+
+    // The one byte exception: a world set holding only the base world was a
+    // second spelling of `base`. It still decodes, to `base`, and re-encodes
+    // as `base`.
+    let base_hex = Value::from(crate::claim::base_world_id().to_hex());
+    let all = || axis("all", None);
+    let old_spelling = pact_value(
+        direction_value(axis("worlds", Some(vec![base_hex])), all(), all()),
+        direction_value(all(), all(), all()),
     );
+    let decoded = decode_federation_pact_scope(&old_spelling)?;
+    assert_eq!(decoded.lo_to_hi.worlds, base_world_axis());
     assert_eq!(
-        bottom.intersect(&left).facets,
-        FederationScopeFacets::Bottom
+        encode_federation_pact_scope(&decoded)?,
+        pact_value(
+            direction_value(axis("base", None), all(), all()),
+            direction_value(all(), all(), all()),
+        )
     );
-    assert_eq!(bottom.intersect(&left).bands, FederationScopeBands::Bottom);
+    Ok(())
 }
 
 #[test]
@@ -1161,7 +1216,8 @@ impl RelationshipClaimFixture {
                     1.0,
                     self.approval,
                     self.lifecycle,
-                ),
+                )
+                .unwrap(),
                 relationship_time(),
                 self.learned_at,
             )
@@ -1861,9 +1917,9 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
 
 fn peer_scope() -> FederationPactScope {
     let half = FederationDirectionScope {
-        worlds: FederationScopeWorlds::Base,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: base_world_axis(),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
     FederationPactScope {
         lo_to_hi: half.clone(),
@@ -2733,7 +2789,8 @@ fn confirmed_coreference_never_pools_claims_through_ppr() {
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 coreference_time(),
                 1,
             )
@@ -2958,7 +3015,8 @@ fn replicated_consent_never_shares_a_coreference_link() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     planted.source = Some(ClaimSource::Imported);
     let planted_id = entity(0x5C);
     vault
@@ -3369,7 +3427,7 @@ fn stamping_adds_rows_only_and_never_purges_world_or_claim_entities() -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world.entity_id());
     let claim_id = entity(0x37);
     vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;

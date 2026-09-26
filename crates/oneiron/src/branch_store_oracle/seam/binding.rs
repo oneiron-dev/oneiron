@@ -3,10 +3,25 @@
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
 use crate::error::{OffRecordError, StoreError};
+
+/// Bound independently of `code_run`'s own private table, exactly as
+/// `CODE_RUN_REPLAY_KEYS` in `session.rs`: this race fixture deletes the
+/// row a bound run believes it is updating, keyed exactly as `code_run.rs`
+/// keys it.
+const CODE_RUN_REPLAY_ROW: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::CODE_RUN_REPLAY);
+
+/// Bound independently of `off_record::promote`'s own private table: a
+/// post-crash pickup-marker census only needs the row count, keyed under
+/// the declared `pm:` prefix.
+#[cfg(feature = "sync")]
+const PROMOTE_PICKUP_MARKER_KEYS: SideTable<String, (), Raw> =
+    SideTable::new(&side_table::OFF_RECORD_PROMOTE_PICKUP_MARKER);
 
 pub(super) fn map_overlay_error(error: Error) -> SeamError {
     match error {
@@ -173,7 +188,7 @@ pub(super) fn scoped_read_actor_key() -> crate::claim::ScopedReadActorKey {
 
 pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> Result<()> {
     use rmpv::Value;
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         unreachable!()
     };
@@ -203,34 +218,44 @@ pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> 
     )
 }
 
-/// Counts the claims `read` surfaces whose subject is `subject`.
+/// Counts the claims `read` surfaces whose subject is `subject`, read in one
+/// snapshot; the receipt counts the stored claims `read` withheld.
 pub(super) fn scoped_read_visible_claim_count(
     read: &crate::claim::ScopedRead<'_>,
     subject: &EntityId,
-) -> Result<usize> {
-    let mut count = 0_usize;
-    for id in read
+) -> Result<crate::claim::ScopedReadResult<usize>> {
+    let reads: Vec<_> = read
         .vault()
         .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .map(crate::claim::PointRead::id)
+        .collect();
+    let rows = read.read(&reads, None)?;
+    let mut count = 0_usize;
+    for body in rows
+        .value
+        .iter()
+        .flatten()
+        .filter_map(|row| row.body.as_ref())
     {
-        let Some(body) = read.get(&id)?.value else {
-            continue;
-        };
-        // `ScopedRead::get` has ALREADY decoded this body under the same
+        // `ScopedRead::read` has ALREADY decoded this body under the same
         // permissive flag to answer the policy question (`claim.rs`'
         // `is_claim_raw_readable_with_policy_in`), and propagates the
-        // failure — so on this codebase the decode below cannot fail and
-        // the `continue` that stood here was unreachable. It is still the
-        // wrong shape: the count is EVIDENCE, compared for EQUALITY
-        // across the base and session halves of the R10 reader family, so
-        // a census that silently drops a row it cannot read reports an
-        // agreement it never observed. All-or-error, never partial.
-        let body = crate::claim::decode_claim_body(&body, true)?;
+        // failure — so on this codebase the decode below cannot fail. It
+        // still propagates rather than skips: the count is EVIDENCE,
+        // compared for EQUALITY across the base and session halves of the
+        // R10 reader family, so a census that silently drops a row it
+        // cannot read reports an agreement it never observed. All-or-error,
+        // never partial.
+        let body = crate::claim::decode_claim_body(body, true)?;
         if body.subject == crate::claim::ClaimSubject::Entity(*subject) {
             count += 1;
         }
     }
-    Ok(count)
+    Ok(crate::claim::ScopedReadResult {
+        value: count,
+        receipt: rows.receipt,
+    })
 }
 
 /// ONE-1728: number of claims a BASE-side ScopedRead surfaces for
@@ -238,7 +263,7 @@ pub(super) fn scoped_read_visible_claim_count(
 pub(in crate::branch_store_oracle) fn base_scoped_read_visible_claim_count(
     vault: &Vault,
     subject: &EntityId,
-) -> Result<usize> {
+) -> Result<crate::claim::ScopedReadResult<usize>> {
     scoped_read_visible_claim_count(&vault.scoped_read(scoped_read_actor_key()), subject)
 }
 
@@ -268,11 +293,9 @@ pub(in crate::branch_store_oracle) fn promote_then_crash_post_commit(
 
     let reopened = Vault::open(dir, VaultConfig::default()).expect("reopen crash-matrix vault");
     let rtxn = reopened.store.env.read_txn()?;
-    let mut pm_markers = 0_usize;
-    for row in reopened.store.sync_state.prefix_iter(&rtxn, "pm:")? {
-        row?;
-        pm_markers += 1;
-    }
+    let pm_markers = PROMOTE_PICKUP_MARKER_KEYS
+        .scan_keys(&reopened.store, &rtxn, &[])?
+        .len();
     drop(rtxn);
     Ok((reopened, closure, pm_markers))
 }
@@ -564,10 +587,6 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
         CodeRunDeterminism::new(1_719_000_007_000, [0xA1; 32]),
     );
     let generation = storage.put_code_run_replay_record_if_generation(&record, None)?;
-    // Keyed exactly as `code_run.rs` keys it; the competitor removes the
-    // row the run believes it is updating.
-    let mut key = b"code_run:replay:v1:".to_vec();
-    key.extend_from_slice(run_id.as_bytes());
 
     let writer_held = std::sync::Barrier::new(2);
     std::thread::scope(|scope| -> Result<Option<crate::error::ErrorKind>> {
@@ -582,7 +601,7 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
             // closure holds, and only a compare INSIDE that transaction can
             // still see the deletion below.
             std::thread::sleep(std::time::Duration::from_millis(150));
-            vault.store.vault_meta.delete(wtxn, &key)?;
+            CODE_RUN_REPLAY_ROW.delete(&vault.store, wtxn, &run_id)?;
             Ok(())
         })?;
         Ok(run

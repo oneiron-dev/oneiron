@@ -2,10 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ANSWER_KEY_PREFIX, ANSWER_ROW_LABEL, ROW_VERSION, decode_row, encode_row, meta_key};
+use super::{ANSWER, ANSWER_ROW_LABEL, ROW_VERSION};
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::consent_graduation::RampScope;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
@@ -117,26 +116,6 @@ pub(super) struct StoredAnswer {
     pub(super) at: u64,
 }
 
-/// The answer-log key range of one scope.
-fn answer_scope_prefix(scope: &RampScope) -> Vec<u8> {
-    meta_key(ANSWER_KEY_PREFIX, &scope.key())
-}
-
-pub(super) fn answer_key(scope: &RampScope, id: &EntityId) -> Vec<u8> {
-    let mut key = answer_scope_prefix(scope);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-/// The row id embedded in an answer key.
-pub(super) fn answer_key_id(key: &[u8]) -> Result<EntityId> {
-    let tail = key
-        .get(ANSWER_KEY_PREFIX.len() + ENTITY_ID_LEN..)
-        .and_then(|tail| <[u8; ENTITY_ID_LEN]>::try_from(tail).ok())
-        .ok_or(Error::CorruptedIndex(ANSWER_ROW_LABEL))?;
-    EntityId::from_bytes(tail).map_err(|_| Error::CorruptedIndex(ANSWER_ROW_LABEL))
-}
-
 // ---------------------------------------------------------------------------
 // The offer-answer state machine
 // ---------------------------------------------------------------------------
@@ -158,15 +137,7 @@ pub(super) fn snooze_state_in_txn(
     scope: &RampScope,
 ) -> Result<SnoozeState> {
     let mut state = SnoozeState::None;
-    for entry in store
-        .vault_meta
-        .prefix_iter(txn, &answer_scope_prefix(scope))?
-    {
-        let (_, raw) = entry?;
-        let row: StoredAnswer = decode_row(&raw, ANSWER_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(ANSWER_ROW_LABEL));
-        }
+    for (_, row) in ANSWER.scan_from(store, txn, &scope.key())? {
         state = replay_snooze(state, &row)?;
     }
     Ok(state)
@@ -326,11 +297,7 @@ fn append_answer_in_txn(
         answer: answer.to_owned(),
         at,
     };
-    let data = encode_row(&row, ANSWER_ROW_LABEL)?;
-    vault.store.vault_meta.put(
-        wtxn,
-        &answer_key(scope, &vault.store.clock.entity_id()?),
-        &data,
-    )?;
+    let key = (scope.key(), vault.store.clock.entity_id()?);
+    ANSWER.put(&vault.store, wtxn, &key, &row)?;
     Ok(())
 }

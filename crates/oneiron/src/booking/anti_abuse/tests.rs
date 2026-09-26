@@ -66,7 +66,8 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     // Every page's configuration rewrites one claim id, whose facet is set at
     // its birth.
     body.scope_facet = vault.default_facet().expect("default facet");
@@ -172,9 +173,13 @@ fn assert_rejected_without_activation(vault: &Vault, row: BookingAntiAbuseRuleRo
     );
     let rtxn = vault.store.env.read_txn().expect("read transaction");
     assert!(
-        read_meta_bytes(vault, &rtxn, &notice_key(&row_id, 1))
-            .expect("read owner notice")
-            .is_none(),
+        !storage::NOTICE
+            .contains(
+                &vault.store,
+                &rtxn,
+                &(*storage::NOTICE_KEY_TAG, storage::notice_digest(&row_id, 1)),
+            )
+            .expect("read owner notice"),
         "a rejected activation must not write an owner notice"
     );
 }

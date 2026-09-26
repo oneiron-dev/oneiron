@@ -9,11 +9,6 @@ pub(super) const OFF_RECORD_SESSION_RECORD_VERSION: u8 = 0;
 /// Longest accepted caller-supplied opaque session ref, in bytes.
 pub(super) const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 
-/// The base and room-overlay halves of one additive VaultMeta counter
-/// (ONE-1929).
-#[cfg(test)]
-pub(super) type VaultMetaCounterComponents = (Option<Vec<u8>>, Option<Vec<u8>>);
-
 /// Current write-routing mode of an off-record session.
 ///
 /// The mode says where NEW writes land. It never moves rows: flipping to

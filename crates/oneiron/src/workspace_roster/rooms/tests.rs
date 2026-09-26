@@ -48,7 +48,7 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
         Some(vault.root_project()?),
         vault.root_project()?,
         owner,
-    );
+    )?;
     spec.roster.extend([a.to_hex(), b.to_hex()]);
     vault.put_project(project, &spec, 1)?;
     let room = EntityId::from_hex(&spec.home_room)?;
@@ -122,11 +122,11 @@ fn room_history_is_bounded_paged_and_removed_with_its_project() -> Result<()> {
     )?;
     let root = vault.root_project()?;
     let project = EntityId::now();
-    let record = ProjectRecord::new(project, Some(root), root, owner);
+    let record = ProjectRecord::new(project, Some(root), root, owner)?;
     vault.put_project(project, &record, 1)?;
     let room = EntityId::from_hex(&record.home_room)?;
     let other_project = EntityId::now();
-    let other_record = ProjectRecord::new(other_project, Some(root), root, owner);
+    let other_record = ProjectRecord::new(other_project, Some(root), root, owner)?;
     vault.put_project(other_project, &other_record, 1)?;
     let other_room = EntityId::from_hex(&other_record.home_room)?;
     let memory = vault.memory(owner, EdgeActorClass::Human);

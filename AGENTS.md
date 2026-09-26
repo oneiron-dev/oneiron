@@ -177,12 +177,12 @@ build to work around an occupied target directory.
   When a featureless build reports an unresolved or unused name, gate the *import* to match its
   consumers (`#[cfg(feature = "sync")]` / `#[cfg(all(feature = "sync", test))]`), or seed a local
   fixture constant — never cfg-disable the test itself, which would silently delete base-mode
-  coverage. `BatchBuilder::put_replicated` is the fixture door — no production caller, gated to
-  exactly its consumers (`test`, plus `sync`+`test-hooks` for the cross-crate seam
-  `sync::selector::put_selector_test_federation_grant`); `TxnBatchBuilder::put_replicated`
-  remains the sync production replay door, and OF-060 F1 pins `put_replicated` out of non-sync
-  production sources. Widening that gate reintroduces a `-D dead-code` failure under plain
-  `--features sync`, which is its own gate lane.
+  coverage. `BatchBuilder::put_replicated` is one door gated to exactly its consumers,
+  `cfg(any(feature = "sync", test))`: the sync production replay doors (applied in the caller's
+  transaction), the cross-crate seam `sync::selector::put_selector_test_federation_grant`, and
+  the in-crate fixtures, featureless ones included. OF-060 F1 pins it out of non-sync production
+  sources. Narrowing the gate to `sync` drops the featureless fixtures; widening it past its
+  consumers reintroduces a `-D dead-code` failure in the featureless library lane.
 
 ## CI truth
 

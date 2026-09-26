@@ -28,8 +28,8 @@ pub use self::policy::{
 };
 pub use self::store::{
     LFS_BASIC_TRANSFER, LFS_JSON_MEDIA_TYPE, LfsPutOutcome, VAULT_LFS_ASSET_ID_DOMAIN,
-    VAULT_LFS_OBJECT_KEY_PREFIX, VAULT_LFS_REF_KEY_PREFIX, VAULT_LFS_REPO_ID_DOMAIN,
-    VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation, lfs_repo_id,
+    VAULT_LFS_REPO_ID_DOMAIN, VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation,
+    lfs_repo_id,
 };
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, reject_direct_lfs_chunk_delete,

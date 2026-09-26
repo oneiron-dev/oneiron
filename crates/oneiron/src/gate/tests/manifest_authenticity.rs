@@ -133,7 +133,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
         let _dir = tempfile::tempdir()?;
         let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
         let actor = test_id(0xB4);
-        let projector = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+        let projector = crate::commitment_schedule::commitment_projection_actor()?.entity_ref();
         let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
             unreachable!("source trust fixture is a map")
         };
@@ -197,7 +197,7 @@ fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()
     let _dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(_dir.path(), crate::VaultConfig::default())?;
     let actor = test_id(0x86);
-    let default_actor = crate::commitment_schedule::commitment_projection_actor().entity_ref();
+    let default_actor = crate::commitment_schedule::commitment_projection_actor()?.entity_ref();
     let (key, Value::Map(mut sources)) = source_trust_entry(ClaimSource::Generated, 2) else {
         unreachable!("source trust fixture is a map")
     };
@@ -418,7 +418,8 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
     let reads = |principal: &str| -> Result<bool> {
         Ok(vault
             .scoped_read(ScopedReadActorKey::new(principal).expect("principal key"))
-            .get(&subject)?
+            .read(&[crate::claim::PointRead::id(subject)], None)?
+            .single()
             .value
             .is_some())
     };
@@ -464,7 +465,7 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
-            &crate::gate::default_policy_manifest(),
+            &crate::gate::default_policy_manifest()?,
         )
         .commit()?;
     assert!(

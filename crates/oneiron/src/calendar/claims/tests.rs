@@ -39,6 +39,7 @@ fn body(predicate: &str, value: Value) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 /// Round-trips through the same codec storage uses, then through the
@@ -209,7 +210,7 @@ fn calendar_claims_require_event_subjects() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert_matches!(
         through_chokepoint(&edge_subject),
         Err(Error::InvalidClaimBody(_))

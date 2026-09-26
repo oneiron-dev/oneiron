@@ -1,17 +1,21 @@
 //! Pending-embedding marker rows gating vector writes: encode/decode,
 //! mark/clear, and token checks.
 
-use std::str;
-
 use heed::{RoTxn, RwTxn};
 use sha2::{Digest, Sha256};
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY};
+use crate::side_table::{self, HexId, Raw, SideTable};
 
 use super::*;
 
+/// Kept only for `Store::pending_embedding_marker_key` below: production
+/// reads/writes go through the typed [`MARKERS`] table, but
+/// `origin::smart_http::landing_tests` and `batch::tests::support` still spell
+/// the raw `sync_state` key directly to seed fixtures.
+#[cfg(test)]
 const PENDING_EMBEDDING_MARKER_PREFIX: &str = "pe:";
 
 const PENDING_EMBEDDING_MARKER_VERSION: u8 = 2;
@@ -20,7 +24,16 @@ const PENDING_EMBEDDING_MARKER_TOKEN_LEN: usize = 1 + 32;
 
 pub(super) const ENTITY_BODY_OFFSET: usize = 25;
 
+/// Typed door for the `pe:` marker family. The value stays `Vec<u8>`: every
+/// reader compares the stored bytes against a freshly computed token rather
+/// than decoding fields, and a marker of the "wrong" length (a stale test
+/// fixture, or truly ancient data) must read back as present-but-not-current,
+/// never as a corrupt row.
+const MARKERS: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::PENDING_EMBEDDING_MARKER);
+
 impl Store {
+    #[cfg(test)]
     pub(crate) fn pending_embedding_marker_key(id: &EntityId) -> String {
         format!("{PENDING_EMBEDDING_MARKER_PREFIX}{}", id.to_hex())
     }
@@ -87,11 +100,10 @@ impl Store {
         id: &EntityId,
         claim_body: &[u8],
     ) -> Result<Vec<u8>> {
-        let key = Self::pending_embedding_marker_key(id);
         let epoch = crate::hnsw::read_embedding_model_epoch(self, &*wtxn)?;
         let owner = crate::federation::derivation::owner_in_txn(self, wtxn)?;
         let token = Self::scoped_embedding_token(epoch, claim_body, owner);
-        self.sync_state.put(wtxn, key.as_str(), token.as_slice())?;
+        MARKERS.put(self, wtxn, &HexId(*id), &token.to_vec())?;
         Ok(token.to_vec())
     }
 
@@ -103,16 +115,8 @@ impl Store {
         owner: crate::federation::derivation::DerivationOwner,
     ) -> Result<()> {
         let epoch = crate::hnsw::read_embedding_model_epoch(self, wtxn)?;
-        let pending = self
-            .sync_state
-            .prefix_iter(&*wtxn, PENDING_EMBEDDING_MARKER_PREFIX)?
-            .map(|row| row.map(|(key, marker)| (key.into_owned(), marker.to_vec())))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        for (key, marker) in pending {
-            let id = EntityId::from_hex(
-                key.strip_prefix(PENDING_EMBEDDING_MARKER_PREFIX)
-                    .ok_or(crate::Error::CorruptedIndex("pending embedding key"))?,
-            )?;
+        let pending = MARKERS.scan(self, &*wtxn)?;
+        for (HexId(id), marker) in pending {
             let Some(record) = self.entities.get(&*wtxn, id.as_bytes())? else {
                 continue;
             };
@@ -121,7 +125,7 @@ impl Store {
             };
             if Self::pending_marker_is_current(&marker, epoch, body, None) {
                 let token = Self::scoped_embedding_token(epoch, body, Some(owner));
-                self.sync_state.put(wtxn, &key, &token)?;
+                MARKERS.put(self, wtxn, &HexId(id), &token.to_vec())?;
             }
         }
         Ok(())
@@ -132,8 +136,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        let key = Self::pending_embedding_marker_key(id);
-        self.sync_state.delete(wtxn, key.as_str())
+        MARKERS.delete(self, wtxn, &HexId(*id))
     }
 
     pub(crate) fn clear_pending_embedding_if_token_matches(
@@ -153,8 +156,7 @@ impl Store {
         rtxn: &RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
-        let key = Self::pending_embedding_marker_key(id);
-        let Some(marker) = self.sync_state.get(rtxn, key.as_str())? else {
+        let Some(marker) = MARKERS.get(self, rtxn, &HexId(*id))? else {
             return Ok(None);
         };
         let Some(record) = self.entities.get(rtxn, id.as_bytes())? else {
@@ -174,8 +176,7 @@ impl Store {
         wtxn: &RwTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<Vec<u8>>> {
-        let key = Self::pending_embedding_marker_key(id);
-        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+        let Some(marker) = MARKERS.get(self, wtxn, &HexId(*id))? else {
             return Ok(None);
         };
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
@@ -194,8 +195,7 @@ impl Store {
         wtxn: &RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        let key = Self::pending_embedding_marker_key(id);
-        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+        let Some(marker) = MARKERS.get(self, wtxn, &HexId(*id))? else {
             return Ok(false);
         };
         let Some(record) = self.entities.get(wtxn, id.as_bytes())? else {
@@ -214,8 +214,7 @@ impl Store {
         id: &EntityId,
         token: &[u8],
     ) -> Result<bool> {
-        let key = Self::pending_embedding_marker_key(id);
-        let Some(marker) = self.sync_state.get(wtxn, key.as_str())? else {
+        let Some(marker) = MARKERS.get(self, wtxn, &HexId(*id))? else {
             return Ok(false);
         };
         if *marker != *token {

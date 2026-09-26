@@ -11,6 +11,7 @@ pub use entity_revision::{
     IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode,
     ResolvedCitation, RevisionRef,
 };
+mod identity;
 mod open;
 mod places;
 
@@ -45,6 +46,7 @@ pub(crate) use self::entities::MAX_TYPE_QUERY_RESULTS;
 pub(crate) use self::entities::{
     LiveEntityRow, entity_id_from_type_index_key, live_entity_row_in_txn, require_key_len,
 };
+pub(crate) use self::identity::VaultId;
 pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor_body};
 
 /// Main vault API wrapping LMDB storage and configuration.
@@ -55,6 +57,8 @@ pub struct Vault {
     pub(crate) store: Store,
     pub(crate) config: VaultConfig,
     pub(crate) analyzer: MultilingualAnalyzer,
+    /// Which vault this handle belongs to, resolved once at open.
+    vault_id: VaultId,
     // Declared after Store: LMDB closes before process ownership is released.
     writer_lease: Option<VaultWriterLease>,
     /// Posture/custody pairing this handle was opened under, retained from the

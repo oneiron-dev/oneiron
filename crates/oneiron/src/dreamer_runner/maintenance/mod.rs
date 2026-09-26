@@ -10,6 +10,7 @@ use super::{
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
+use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
 pub use curator::{CuratorRubric, CuratorTrigger};
 pub use evaluation::{DreamerTuningConfig, HarnessEvaluation, RetuneThresholds};
@@ -69,14 +70,14 @@ pub(crate) fn execute(
     }
     Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
 }
-fn load_row<T: serde::de::DeserializeOwned>(
+fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
     vault: &Vault,
-    key: &[u8],
+    table: SideTable<(), T, LegacyJson>,
     defaults: &str,
 ) -> Result<T> {
     let txn = vault.store.env.read_txn()?;
-    match vault.store.vault_meta.get(&txn, key)? {
-        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid()),
+    match table.get(&vault.store, &txn, &())? {
+        Some(row) => Ok(row),
         None => serde_json::from_str(defaults).map_err(|_| invalid()),
     }
 }

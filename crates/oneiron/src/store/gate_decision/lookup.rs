@@ -4,10 +4,8 @@ use heed::RoTxn;
 
 use crate::error::{Error, Result};
 
-use super::{
-    GATE_DECISION_KEY_PREFIX, GateDecisionId, GateDecisionRecord, Store, decode_gate_decision,
-    gate_decision_id_from_key, gate_decision_upper_bound,
-};
+use super::ledger::LEDGER;
+use super::{GateDecisionId, GateDecisionRecord, Store};
 
 impl Store {
     /// Returns the first matching id in ascending decision_id order, including
@@ -20,17 +18,8 @@ impl Store {
         txn: &RoTxn<'_>,
         mut matches: impl FnMut(&GateDecisionRecord) -> bool,
     ) -> Result<Option<GateDecisionId>> {
-        let upper = gate_decision_upper_bound();
-        for row in self.vault_meta.range(
-            txn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+        for row in LEDGER.iter_from(self, txn, &[])? {
+            let (decision_id, record) = row?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }

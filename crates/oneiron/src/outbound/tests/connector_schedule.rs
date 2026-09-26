@@ -1171,7 +1171,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     put_claim_body(&vault, 0x3E, &malformed)?;
     let draft = connector_task_draft("gate-error-retry:test", "session:gate-error", 60);
 
@@ -1203,7 +1203,7 @@ fn schedule_gate_error_leaves_nothing_claimable_and_retry_creates_one() -> crate
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     put_claim_body(&vault, 0x3E, &replacement)?;
     vault
         .memory(actor, EdgeActorClass::Agent)

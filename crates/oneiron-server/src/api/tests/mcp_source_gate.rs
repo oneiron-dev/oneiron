@@ -154,6 +154,7 @@ async fn public_batch_lineage_source_gate_is_consistent() {
             rmpv::Value::from("scopeFacetId"),
             rmpv::Value::Binary(
                 oneiron::claim::substrate_facet_id(actor_ref)
+                    .unwrap()
                     .as_bytes()
                     .to_vec(),
             ),

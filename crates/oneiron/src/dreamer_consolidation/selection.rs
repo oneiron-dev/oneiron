@@ -1,9 +1,12 @@
 //! Mechanical candidate selection. Numeric policy is a reloadable row, not a judge instruction.
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-const SELECTION_KEY: &[u8] = b"dreamer:consolidation:selection:v1";
+/// Operator-set candidate-selection policy row. Key: ().
+const SELECTION: SideTable<(), SelectionConfig, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_CONSOLIDATION_SELECTION);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -155,20 +158,14 @@ impl Vault {
     /// Operator configuration seam, like the prefilter row. It is not an agent verb.
     pub fn set_consolidation_selection(&self, config: &SelectionConfig) -> Result<()> {
         config.validate()?;
-        let bytes = serde_json::to_vec(config)
-            .map_err(|_| Error::InvalidConfig("selection codec".into()))?;
         self.with_write_txn(|txn| {
-            self.store.vault_meta.put(txn, SELECTION_KEY, &bytes)?;
+            SELECTION.put(&self.store, txn, &(), config)?;
             Ok(())
         })
     }
     pub fn consolidation_selection(&self) -> Result<SelectionConfig> {
         let txn = self.store.env.read_txn()?;
-        let config = match self.store.vault_meta.get(&txn, SELECTION_KEY)? {
-            Some(raw) => serde_json::from_slice(&raw)
-                .map_err(|_| Error::CorruptedIndex("selection config"))?,
-            None => SelectionConfig::default(),
-        };
+        let config = SELECTION.get(&self.store, &txn, &())?.unwrap_or_default();
         config.validate()?;
         Ok(config)
     }

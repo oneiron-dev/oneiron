@@ -235,6 +235,24 @@ fn mcp_cap_verb_rows(output: &mut Value, page: &McpPageBudget) {
     }
 }
 
+/// The facade bound to the resolved connector actor, reading under the
+/// connector's own proof when one authenticated it (ONE-1187-D6), as every
+/// other MCP scoped read does.
+pub(super) fn mcp_memory<'a>(
+    vault: &'a oneiron::Vault,
+    actor: &McpResolvedActor,
+) -> oneiron::Memory<'a> {
+    let memory = vault.memory(actor.actor_ref, actor.actor_class);
+    match actor
+        .auth
+        .as_ref()
+        .and_then(crate::auth::CoreAuth::verified_slip)
+    {
+        Some(proof) => memory.with_read_proof(proof),
+        None => memory,
+    }
+}
+
 pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,

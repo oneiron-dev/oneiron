@@ -521,7 +521,7 @@ fn short_id_aliases_survive_prefix_rekey() -> Result<()> {
                 0.9,
                 crate::claim::ClaimApprovalStatus::Approved,
                 crate::claim::ClaimLifecycleStatus::Active,
-            ))?,
+            )?)?,
             ENTITY_TYPE_SKILL => {
                 crate::skill::encode_skill_record(&crate::skill::SkillRecord::new(
                     "oneiron.skill.rekey",

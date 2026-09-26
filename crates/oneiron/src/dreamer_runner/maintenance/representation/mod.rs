@@ -16,8 +16,6 @@ use serde::{Deserialize, Serialize};
 
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
-const RECORD_PREFIX: &[u8] = b"dreamer:representation:v1:proposal:";
-const APPROVAL_PREFIX: &[u8] = b"dreamer:representation:v1:approval:";
 const CONTENT_PREFIX: &str = "representation:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -103,9 +101,6 @@ impl Packet {
 }
 fn invalid() -> Error {
     Error::InvalidClaimBody("invalid or stale representation proposal")
-}
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
 }
 
 pub(crate) use approval::validate_dispatch;

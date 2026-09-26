@@ -381,7 +381,8 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
                         channel_class: "email".to_owned(),
                         reachable: false,
                     }
-                    .claim_body(),
+                    .claim_body()
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )
@@ -652,11 +653,7 @@ fn a_lost_cursor_rebuilds_from_the_synced_task_fact() {
     fixture
         .vault
         .with_write_txn(|wtxn| {
-            fixture
-                .vault
-                .store
-                .vault_meta
-                .delete(wtxn, followup_key(task_ref).as_slice())?;
+            FOLLOWUPS.delete(&fixture.vault.store, wtxn, &task_ref)?;
             Ok(())
         })
         .expect("drop the cursor");

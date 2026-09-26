@@ -4,6 +4,7 @@ use super::Materializer;
 use crate::batch::EdgeValueFields;
 use crate::error::{ArtifactError, Result};
 use crate::recovery::CanonicalSnapshot;
+use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::{EntityId, Vault};
 use loro::LoroDoc;
 
@@ -31,20 +32,21 @@ pub(crate) fn preflight_canonical_recovery(
     let mut txn = vault.store.env.write_txn()?;
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, &txn)?;
+    let tombstones_map = doc.get_map("tombstones");
+    let ingest = IngestCtx::new(
+        vault,
+        &snapshot.window,
+        materializer.lease_vault_id(),
+        &tombstones_map,
+    );
     for entity in &snapshot.entity_blobs {
         let id = EntityId::from_bytes(entity.id)?;
         if let Some((blob, tombstone)) = crate::recovery::retained_soft_shell(doc, &id) {
             crate::batch::restore_recovery_shell_in_txn(vault, &mut txn, &id, &blob, &tombstone)?;
-        } else {
-            super::entities::materialize_entity_blob_in_txn(
-                vault,
-                &mut txn,
-                &doc.get_map("tombstones"),
-                &snapshot.window,
-                &id.to_hex(),
-                &entity.blob,
-                materializer.lease_vault_id(),
-            )?;
+        } else if let EntityStep::Quarantine(refusal) =
+            ingest_entity_in_txn(&ingest, &mut txn, &id.to_hex(), Some(&entity.blob))?
+        {
+            return Err(refusal.err);
         }
         if vault.store.entities.get(&txn, &entity.id)?.as_deref() != Some(entity.blob.as_slice()) {
             return Err(ArtifactError::InvalidRecoveryArtifact(

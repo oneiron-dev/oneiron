@@ -3,6 +3,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{CodecError, FixedSideKey, RawValue, SideKey};
 
 /// Raw byte length of a Git-LFS object id (SHA-256).
 pub const VAULT_LFS_OID_LEN: usize = 32;
@@ -74,6 +75,37 @@ impl LfsOid {
             hex.push(hex_digit(byte & 0x0f));
         }
         hex
+    }
+}
+
+/// The raw 32 bytes, unchanged — the side-table key spelling every LFS OID row has always had.
+impl SideKey for LfsOid {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self(bytes.try_into().ok()?))
+    }
+}
+
+impl FixedSideKey for LfsOid {
+    const WIDTH: usize = VAULT_LFS_OID_LEN;
+}
+
+/// The raw 32 bytes, unchanged — the side-table value spelling `origin:lfs:manifest:v1:` rows
+/// have always had.
+impl RawValue for LfsOid {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self(
+            bytes
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("lfs reverse oid"))?,
+        ))
     }
 }
 

@@ -24,7 +24,7 @@ fn encode(value: &Value) -> Vec<u8> {
 
 fn manifest(version: &str, grants: Vec<Value>) -> Vec<u8> {
     let Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut default_policy_manifest().unwrap().as_slice())
             .expect("default policy")
     else {
         panic!("map");
@@ -128,7 +128,8 @@ fn effect_outcome(vault: &Vault, channel: &str) -> Result<GateOutcome> {
 fn reader(vault: &Vault, actor: &str, id: &crate::EntityId) -> Result<bool> {
     Ok(vault
         .scoped_read(ScopedReadActorKey::new(actor).expect("actor"))
-        .get(id)?
+        .read(&[crate::claim::PointRead::id(*id)], None)?
+        .single()
         .is_some())
 }
 
@@ -265,7 +266,7 @@ fn legacy_policy_grants_migrate_on_write_and_once_on_open_with_selectors_and_bud
     assert!(!reader(
         &vault,
         "reader",
-        &crate::claim::substrate_facet_id(person)
+        &crate::claim::substrate_facet_id(person)?
     )?);
     assert!(!reader(&vault, "budget-reader", &person)?);
     assert_eq!(effect_outcome(&vault, "line")?, GateOutcome::Allow);
@@ -343,7 +344,7 @@ fn current_selectors_and_budget_only_narrow_stored_scope() -> Result<()> {
     assert!(reader(
         &vault,
         "reader",
-        &crate::claim::substrate_facet_id(person)
+        &crate::claim::substrate_facet_id(person)?
     )?);
     assert_eq!(effect_outcome(&vault, "line")?, GateOutcome::Pending);
 

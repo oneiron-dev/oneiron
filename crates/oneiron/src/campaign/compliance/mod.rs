@@ -48,12 +48,11 @@ pub use self::pack_store::{
     embedded_seed_pack, load_active_compliance_pack, validate_compliance_pack,
 };
 pub use self::rules::{
-    B2bExemption, CAMPAIGN_COMPLIANCE_META_KEY, CAMPAIGN_COMPLIANCE_PACK_ID,
-    CAMPAIGN_COMPLIANCE_SEED_JSON, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind,
-    ComplianceRuleRow, ComplianceSource, ConditionalExemptionEvidence,
-    PREDICATE_CRM_COMPLIANCE_EVIDENCE, PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION,
-    PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
-    UnknownJurisdictionDefault,
+    B2bExemption, CAMPAIGN_COMPLIANCE_PACK_ID, CAMPAIGN_COMPLIANCE_SEED_JSON,
+    ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow,
+    ComplianceSource, ConditionalExemptionEvidence, PREDICATE_CRM_COMPLIANCE_EVIDENCE,
+    PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION, PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE,
+    PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS, UnknownJurisdictionDefault,
 };
 
 pub(crate) use self::hydrate::campaign_compliance_gate;

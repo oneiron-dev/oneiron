@@ -127,7 +127,8 @@ fn provenance_claim_json_omits_payload_by_default() {
         1.0,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
 
     let redacted = claim_body_json(&body, false);
     assert!(redacted.get("value").is_none());

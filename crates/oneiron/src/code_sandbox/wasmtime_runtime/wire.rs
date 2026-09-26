@@ -179,7 +179,8 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
         }
         "self.memory.put_edge" => {
             let args: Edge = parse(input)?;
-            let kind = edge_kind(&args.kind)?;
+            let kind =
+                EdgeKind::from_name(&args.kind).ok_or_else(|| failure("invalid edge kind"))?;
             let weight = args
                 .weight
                 .or_else(|| kind.default_weight())
@@ -308,39 +309,6 @@ pub(super) fn decode_output(output: &str, limit: usize) -> Result<JsCodeModeStep
         done: output.done,
         observation: output.observation,
         outputs,
-    })
-}
-
-pub(super) fn edge_kind(name: &str) -> Result<EdgeKind> {
-    Ok(match name {
-        "authored_by" => EdgeKind::AuthoredBy,
-        "scoped_to" => EdgeKind::ScopedTo,
-        "part_of" => EdgeKind::PartOf,
-        "supersedes" => EdgeKind::Supersedes,
-        "belongs_to" => EdgeKind::BelongsTo,
-        "claim_of" => EdgeKind::ClaimOf,
-        "child_of" => EdgeKind::ChildOf,
-        "assigned_to" => EdgeKind::AssignedTo,
-        "derived_from" => EdgeKind::DerivedFrom,
-        "mentions" => EdgeKind::Mentions,
-        "about" => EdgeKind::About,
-        "supports" => EdgeKind::Supports,
-        "opposes" => EdgeKind::Opposes,
-        "participates_in" => EdgeKind::ParticipatesIn,
-        "attached" => EdgeKind::Attached,
-        "employed_by" => EdgeKind::EmployedBy,
-        "has_facet" => EdgeKind::HasFacet,
-        "facet_of" => EdgeKind::FacetOf,
-        "in_world" => EdgeKind::InWorld,
-        "set_in" => EdgeKind::SetIn,
-        "same_as" => EdgeKind::SameAs,
-        "merged_into" => EdgeKind::MergedInto,
-        "split_into" => EdgeKind::SplitInto,
-        "blocked_by" => EdgeKind::BlockedBy,
-        "blocks" => EdgeKind::Blocks,
-        "fulfills" => EdgeKind::Fulfills,
-        "discharged_by" => EdgeKind::DischargedBy,
-        _ => return Err(failure("invalid edge kind")),
     })
 }
 

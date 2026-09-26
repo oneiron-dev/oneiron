@@ -1,45 +1,8 @@
-//! Edge-kind string codec and registry kind lookups for structural puts.
+//! Edge weight and registry kind lookups for structural puts.
 
 use crate::edge::EdgeKind;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_REGISTRY;
-pub(in crate::memory) fn edge_kind_from_str(value: &str) -> Option<EdgeKind> {
-    let kind = match value {
-        "authored_by" => EdgeKind::AuthoredBy,
-        "scoped_to" => EdgeKind::ScopedTo,
-        "part_of" => EdgeKind::PartOf,
-        "supersedes" => EdgeKind::Supersedes,
-        "belongs_to" => EdgeKind::BelongsTo,
-        "claim_of" => EdgeKind::ClaimOf,
-        "child_of" => EdgeKind::ChildOf,
-        "assigned_to" => EdgeKind::AssignedTo,
-        "derived_from" => EdgeKind::DerivedFrom,
-        "mentions" => EdgeKind::Mentions,
-        "about" => EdgeKind::About,
-        "supports" => EdgeKind::Supports,
-        "opposes" => EdgeKind::Opposes,
-        "participates_in" => EdgeKind::ParticipatesIn,
-        "attached" => EdgeKind::Attached,
-        "employed_by" => EdgeKind::EmployedBy,
-        "has_facet" => EdgeKind::HasFacet,
-        "facet_of" => EdgeKind::FacetOf,
-        "in_world" => EdgeKind::InWorld,
-        "set_in" => EdgeKind::SetIn,
-        "merged_into" => EdgeKind::MergedInto,
-        "split_into" => EdgeKind::SplitInto,
-        "blocked_by" => EdgeKind::BlockedBy,
-        "blocks" => EdgeKind::Blocks,
-        "fulfills" => EdgeKind::Fulfills,
-        "discharged_by" => EdgeKind::DischargedBy,
-        "same_as" => EdgeKind::SameAs,
-        "parent" => EdgeKind::Parent,
-        "spawned_by" => EdgeKind::SpawnedBy,
-        "addressed_to" => EdgeKind::AddressedTo,
-        "replies_to" => EdgeKind::RepliesTo,
-        _ => return None,
-    };
-    Some(kind)
-}
 /// The contract's registered stored prior for `kind`, falling back to the same
 /// `1.0` [`Memory::put_structural`] uses for the three kinds whose
 /// `pprWeight` column is null (`child_of` / `assigned_to` / `blocked_by`).

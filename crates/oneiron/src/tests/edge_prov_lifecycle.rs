@@ -903,7 +903,7 @@ fn provenance_lifecycle_negative_paths_fail_closed() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&ordinary, &ordinary_body, test_time_range(5, 5), 5)?;
     let err = vault
         .retract_edge_provenance(&ordinary, 3_000)

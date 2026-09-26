@@ -60,7 +60,7 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
         entity_ref: id(0x25),
         evidence_hash: [0x5A; EVIDENCE_HASH_LEN],
     };
-    let encoded = keys::memo(&key);
+    let encoded = MEMOS.key_bytes(&key);
     let prefix = b"saved_query.memo.v1:";
     assert!(encoded.starts_with(prefix));
     assert_eq!(encoded.len(), prefix.len() + 16 + 16 + EVIDENCE_HASH_LEN);
@@ -79,12 +79,12 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
 /// concatenation with fixed widths is only unambiguous if the order is honored.
 #[test]
 fn memo_key_distinguishes_swapped_refs() {
-    let forward = keys::memo(&VerdictMemoKey {
+    let forward = MEMOS.key_bytes(&VerdictMemoKey {
         query_ref: id(0x26),
         entity_ref: id(0x27),
         evidence_hash: [1u8; EVIDENCE_HASH_LEN],
     });
-    let swapped = keys::memo(&VerdictMemoKey {
+    let swapped = MEMOS.key_bytes(&VerdictMemoKey {
         query_ref: id(0x27),
         entity_ref: id(0x26),
         evidence_hash: [1u8; EVIDENCE_HASH_LEN],
@@ -97,17 +97,18 @@ fn memo_key_distinguishes_swapped_refs() {
 #[test]
 fn event_keys_sort_by_epoch_within_the_pair_prefix() {
     let (query, entity) = (id(0x28), id(0x29));
-    let prefix = keys::event_prefix(&query, &entity);
+    let mut prefix = MEMBERSHIP_EVENTS.decl().prefix.to_vec();
+    prefix.extend_from_slice(&event_pair_prefix(&query, &entity));
     let mut keys = [
-        keys::event(&query, &entity, 10),
-        keys::event(&query, &entity, 2),
-        keys::event(&query, &entity, 300),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)),
     ];
     assert!(keys.iter().all(|key| key.starts_with(&prefix)));
     keys.sort();
-    assert_eq!(keys[0], keys::event(&query, &entity, 2));
-    assert_eq!(keys[1], keys::event(&query, &entity, 10));
-    assert_eq!(keys[2], keys::event(&query, &entity, 300));
+    assert_eq!(keys[0], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)));
+    assert_eq!(keys[1], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)));
+    assert_eq!(keys[2], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)));
 }
 
 #[test]
@@ -349,7 +350,8 @@ fn claim_world_scope_admission_mirrors_the_gate_rule() {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = world;
         body
     };
@@ -385,6 +387,7 @@ fn only_effective_claims_count_as_evidence() {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     assert!(claim_effective_at(&base(), 1_000));
 
@@ -598,4 +601,24 @@ fn watermark_verdict_rejects_stale_epochs_without_calling_them_applied() {
         Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 2 })
     );
     assert_eq!(watermark_verdict(Some((2, None)), 3, &content), None);
+}
+
+/// A saved query names every edge kind by its list name except `same_as`,
+/// which stays refused: coreference links are never traversed (ONE-1414).
+#[test]
+fn a_saved_query_names_every_edge_kind_but_same_as() {
+    for &kind in crate::edge::EdgeKind::ALL {
+        let parsed = parse_filter_ast(&json!({"op": "edge_exists", "edge_kind": kind.name()}));
+        if kind == crate::edge::EdgeKind::SameAs {
+            assert!(matches!(parsed, Err(Error::InvalidConfig(_))), "{kind:?}");
+        } else {
+            assert_eq!(
+                parsed.expect("a listed edge kind parses"),
+                FilterAst::EdgeExists {
+                    edge_kind: kind.name().to_owned(),
+                    target: None,
+                },
+            );
+        }
+    }
 }

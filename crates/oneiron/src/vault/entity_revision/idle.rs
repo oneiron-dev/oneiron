@@ -4,18 +4,18 @@ use super::storage::{STATE, put_state, read_entity_revision_in_txn, state, text_
 use super::{IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, ReadMode};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
-const DEBOUNCE: &[u8] = b"manifest:entity_text:indexed_idle_delay_ms";
+const DEBOUNCE: SideTable<(), u64, Raw> =
+    SideTable::new(&side_table::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS);
 
 impl Vault {
     /// Seeds the host's loop policy once; never overwrites a live manifest edit.
     pub fn seed_indexed_idle_delay_ms(&self, delay_ms: u64) -> Result<()> {
         self.with_write_txn(|txn| {
-            if self.store.vault_meta.get(txn, DEBOUNCE)?.is_none() {
-                self.store
-                    .vault_meta
-                    .put(txn, DEBOUNCE, &delay_ms.to_be_bytes())?;
+            if DEBOUNCE.get(&self.store, txn, &())?.is_none() {
+                DEBOUNCE.put(&self.store, txn, &(), &delay_ms)?;
             }
             Ok(())
         })
@@ -24,9 +24,7 @@ impl Vault {
     /// Loop-owned, hot-editable debounce. No compiled-in delay is assumed.
     pub fn set_indexed_idle_delay_ms(&self, delay_ms: u64) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut txn, DEBOUNCE, &delay_ms.to_be_bytes())?;
+        DEBOUNCE.put(&self.store, &mut txn, &(), &delay_ms)?;
         txn.commit()?;
         Ok(())
     }
@@ -57,24 +55,11 @@ impl Vault {
     ) -> Result<IndexedRefreshReport> {
         let candidates = {
             let txn = self.store.env.read_txn()?;
-            let raw = self.store.vault_meta.get(&txn, DEBOUNCE)?.ok_or_else(|| {
+            let delay = DEBOUNCE.get(&self.store, &txn, &())?.ok_or_else(|| {
                 Error::InvalidConfig("indexed idle delay manifest row is missing".into())
             })?;
-            let delay = u64::from_be_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("indexed idle delay"))?,
-            );
             let mut candidates = Vec::new();
-            for row in self.store.vault_meta.prefix_iter(&txn, STATE)? {
-                let (key_bytes, _) = row?;
-                let bytes: [u8; 16] = key_bytes[STATE.len()..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("entity revision key"))?;
-                let id = EntityId::from_bytes(bytes)
-                    .map_err(|_| Error::CorruptedIndex("entity revision id"))?;
-                let current = state(&self.store, &txn, &id)?
-                    .ok_or(Error::CorruptedIndex("entity revision state"))?;
+            for (id, current) in STATE.scan(&self.store, &txn)? {
                 if current.live == current.indexed
                     || now_ms < current.changed_at_ms.saturating_add(delay)
                 {

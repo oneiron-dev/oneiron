@@ -255,7 +255,9 @@ fn legacy_evidence_and_other_principals_do_not_cross_the_miner_threshold() -> Re
     let crate::claim::ScopedReadResult {
         value,
         receipt: _receipt,
-    } = other.get_entity_parts_with_receipt(id, None)?;
+    } = other
+        .read(&[crate::claim::PointRead::id(*id)], None)?
+        .single();
     assert!(value.is_none());
     Ok(())
 }
@@ -361,7 +363,7 @@ fn owner_identity_and_scope_validation_fail_closed() -> Result<()> {
         0.5,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     for scope in [
         Value::Map(vec![(Value::from("principal"), Value::from("unknown"))]),
         Value::Map(vec![(Value::from("principal"), Value::Binary(vec![1; 15]))]),

@@ -207,15 +207,12 @@ impl<'a> EngineNativeExecutor<'a> {
     ///
     /// Correctness must not rest on a caller having picked the matching
     /// constructor pair, so both dimensions are checked: the session ref, and
-    /// the OWNING STORE. The store check is what catches two vaults whose
-    /// refs compare equal — `None == None` for a pair of canonical runs, or
-    /// the same session ref entered in two different vaults.
+    /// the OWNING VAULT's identity. The vault check is what catches two vaults
+    /// whose refs compare equal — `None == None` for a pair of canonical runs,
+    /// or the same session ref entered in two different vaults.
     pub(super) fn verify_storage_dispatcher_binding(&self) -> EngineExecutorResult<()> {
         if self.storage.session_ref() != self.gated_write.session_ref()
-            || !std::ptr::eq(
-                self.storage.store_identity(),
-                self.gated_write.store_identity(),
-            )
+            || self.storage.vault_id() != self.gated_write.vault_id()
         {
             return Err(Error::InvalidConfig(
                 "executor storage/dispatcher binding mismatch".to_owned(),

@@ -26,6 +26,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
         VecDeque<Option<crate::store::GateDecisionId>>,
     >,
     checker: Option<&BoundedAutoChecker>,
+    origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -45,13 +46,15 @@ pub(super) fn preflight_gate_decisions_in_txn(
     for op in ops {
         match op {
             BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
-                // Gate preflight is an ordinary-write path; a promotion replay
-                // carries no claim put and never reaches it.
-                reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
+                // The batch's own origin, the one its apply judges the same
+                // ids under. Only the committing terminal runs this preflight,
+                // and a promotion replay carries no claim put and never
+                // commits, so in practice it is `Ordinary`.
+                reject_overlay_member_base_write(store, id, origin)?;
             }
             BatchOp::CommitmentGapDecay { ids, .. } => {
                 for id in ids {
-                    reject_overlay_member_base_write(store, id, BaseWriteOrigin::Ordinary)?;
+                    reject_overlay_member_base_write(store, id, origin)?;
                 }
                 gap_decay_lapses.push_back(crate::commitment::pending_commitment_lapses_in_txn(
                     store, &*wtxn, ids,
@@ -75,7 +78,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             for lapse in lapses {
                 let mut recorded_decision = None;
                 let lapse_id = lapse.id;
-                let body = lapse.candidate.into_claim_body(envelope, default_facet);
+                let body = lapse.candidate.into_claim_body(envelope, default_facet)?;
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
@@ -158,7 +161,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate)
                     .clone()
-                    .into_claim_body(envelope, default_facet);
+                    .into_claim_body(envelope, default_facet)?;
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,

@@ -79,6 +79,7 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_FACET,
     ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON,
 };
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::subject_model::actor_subject_anchor;
 #[cfg(test)]
 use crate::subject_model::{PersonSubstrate, person_substrate};
@@ -100,12 +101,12 @@ pub use self::intent::{
     WorkspaceRosterPreset,
 };
 use self::records::{
-    MAX_NAME_BYTES, ONBOARDING_STEPS, OnboardingJournal, ROSTER_KEY_SEPARATOR, RosterMemberRow,
+    MAX_NAME_BYTES, MEMBER, ONBOARDING, ONBOARDING_STEPS, OnboardingJournal, OnboardingJournalRow,
+    PRESET, ROSTER_KEY_SEPARATOR, RosterMemberKey, RosterMemberRow,
 };
 pub use self::records::{
-    MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ONBOARDING_KEY_PREFIX,
-    WORKSPACE_ROSTER_MEMBER_KEY_PREFIX, WORKSPACE_ROSTER_PRESET_KEY_PREFIX,
-    WORKSPACE_ROSTER_SCHEMA_VERSION, WorkspaceRosterEntry, WorkspaceRosterRole,
+    MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
+    WorkspaceRosterEntry, WorkspaceRosterRole,
 };
 
 #[cfg(test)]
@@ -114,8 +115,8 @@ mod tests;
 mod project;
 pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom, ProjectRoomChange};
 pub(crate) use project::{
-    deindex_project_room, is_project_type, reconcile_project_rooms, seed_root_project,
-    validate_project_body, validate_room_body,
+    deindex_project_room, is_project_type, project_room_dependency, reconcile_project_rooms,
+    seed_root_project, validate_project_body, validate_room_body,
 };
 
 mod rooms;

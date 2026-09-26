@@ -33,7 +33,7 @@ fn claim(vault: &Vault, id: EntityId, subject: EntityId, value: &str) -> Result<
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let raw = crate::claim::encode_claim_body(&body)?;
     vault
         .batch()

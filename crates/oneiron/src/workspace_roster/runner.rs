@@ -53,8 +53,7 @@ impl Vault {
         )?;
 
         let digest = intent_digest(&intent)?;
-        let key = onboarding_key(&intent.onboarding_id);
-        let mut done = match read_journal(self, &key)? {
+        let mut done = match read_journal(self, &intent.onboarding_id)? {
             Some(record) => {
                 if record.intent_digest != digest {
                     return Err(invalid(
@@ -84,7 +83,6 @@ impl Vault {
                 }
                 write_journal(
                     self,
-                    &key,
                     &intent,
                     &OnboardingJournal {
                         intent_digest: digest,
@@ -112,7 +110,6 @@ impl Vault {
                 (step == MemberOnboardingStep::Complete).then_some(intent.occurred_at);
             write_journal(
                 self,
-                &key,
                 &intent,
                 &OnboardingJournal {
                     intent_digest: digest,
@@ -187,21 +184,20 @@ impl Vault {
                 "house_display_name must be 1..=256 bytes and contain no NUL",
             )?;
         }
-        let mut preset = read_preset(self, workspace_ref)?.ok_or(Error::EntityNotFound)?;
-        let prior = encode_value(&preset_value(&preset))?;
-        let vault_id = preset.workspace_vault_id;
-        preset.house_display_name = display_name;
-        let next = encode_value(&preset_value(&preset))?;
-        let key = preset_key(workspace_ref);
+        let prior = read_preset(self, workspace_ref)?.ok_or(Error::EntityNotFound)?;
+        let vault_id = prior.workspace_vault_id;
+        let mut next = prior.clone();
+        next.house_display_name = display_name;
+        let key = workspace_ref.to_owned();
         self.with_write_txn(|txn| {
             require_workspace_authority_in_txn(self, txn, vault_id, authenticated_writer)?;
-            if self.store.vault_meta.get(txn, &key)?.as_deref() != Some(prior.as_slice()) {
+            if PRESET.get(&self.store, txn, &key)?.as_ref() != Some(&prior) {
                 return Err(invalid(
                     "workspace preset changed during rename; retry from current state",
                 ));
             }
             if prior != next {
-                self.store.vault_meta.put(txn, &key, &next)?;
+                PRESET.put(&self.store, txn, &key, &next)?;
             }
             Ok(())
         })
@@ -222,17 +218,15 @@ impl Vault {
         };
 
         let mut entries = vec![house_mind_entry(self, &preset, at)?];
-        let mut prefix = roster_member_prefix(workspace_ref);
+        let mut prefix = workspace_ref.as_bytes().to_vec();
         prefix.push(ROSTER_KEY_SEPARATOR);
 
         let rows = {
             let rtxn = self.store.env.read_txn()?;
-            let mut rows = Vec::new();
-            for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-                let (_, raw) = entry?;
-                rows.push(decode_roster_member_row(&raw)?);
-            }
-            rows
+            MEMBER
+                .iter_from(&self.store, &rtxn, &prefix)?
+                .map(|row| row.map(|(_, row)| row))
+                .collect::<Result<Vec<_>>>()?
         };
 
         for row in rows {

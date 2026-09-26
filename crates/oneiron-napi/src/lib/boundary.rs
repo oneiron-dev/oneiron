@@ -56,8 +56,7 @@ pub(super) fn parse_u8(value: u32, label: &str) -> napi::Result<u8> {
 
 /// Validate a u32 as an EdgeKind discriminant.
 pub(super) fn parse_edge_kind(kind: u32) -> napi::Result<EdgeKind> {
-    let byte = parse_u8(kind, "edge kind")?;
-    EdgeKind::try_from_u8(byte)
+    EdgeKind::from_wire(kind)
         .ok_or_else(|| napi::Error::from_reason(format!("invalid edge kind: {kind}")))
 }
 

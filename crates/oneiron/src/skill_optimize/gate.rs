@@ -114,7 +114,7 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimApprovalStatus;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId, bytes_to_hex_lower, parse_entity_id};
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, ErrorKind, Result};
 use crate::llm::CallPurpose;
 use crate::receipt::{
@@ -126,6 +126,7 @@ use crate::receipt::{
     FIELD_SKILL_EDIT_TARGET_DIGEST, ReceiptKind, ReceiptQuery, ReceiptRecord,
     retain_newest_receipt,
 };
+use crate::side_table::{self, Raw, SideTable};
 use crate::skill::{
     SkillGovernanceTier, SkillLifecycle, SkillRecord, encode_skill_record, validate_skill_update,
 };
@@ -189,6 +190,10 @@ use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 /// dial over `vault_meta`, not a `settings.rs` UI preference.
 pub const SKILL_EDIT_CYCLE_CAP_KEY: &[u8] = b"settings:skill_optimize:v1:cycle_cap";
 
+/// K: a singleton row.
+pub(super) const SKILL_EDIT_CYCLE_CAP: SideTable<(), [u8; 4], Raw> =
+    SideTable::new(&side_table::SKILL_EDIT_CYCLE_CAP);
+
 /// K when the dial has never been set.
 ///
 /// Two. The cap is a blast-radius bound on an automated editor, not a
@@ -216,8 +221,18 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 
 /// `vault_meta` key prefix of the verdict ledger. Full key is this prefix ‖ a
 /// UUIDv7 row id, so key order is WRITE order and a caller-supplied `at` stays
-/// data rather than ordering (the `edit_distance::escalation` posture).
+/// data rather than ordering (the `edit_distance::escalation` posture). Kept
+/// for the test-only raw-row corruption fixture; production code reads and
+/// writes through [`VERDICTS`].
+#[cfg(test)]
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
+
+/// The verdict ledger, keyed by verdict id (a UUIDv7 row id, so key order is
+/// write order). The row's `HeldOutVerdict.id` field is never itself part of
+/// the encoded value — it IS the key — so this binds `Vec<u8>` rather than
+/// `HeldOutVerdict` and `decode_verdict` still takes the decoded id apart.
+pub(super) const VERDICTS: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SKILL_EDIT_VERDICT);
 
 /// Bumped by the MATERIAL-10 repair (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance

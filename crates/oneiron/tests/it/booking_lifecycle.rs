@@ -1645,6 +1645,7 @@ fn booking_lifecycle_validator_is_exact() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .expect("fixture")
     };
     let good = Value::Map(vec![
         (Value::from("status"), Value::from("confirmed")),

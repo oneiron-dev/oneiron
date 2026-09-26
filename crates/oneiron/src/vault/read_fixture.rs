@@ -31,7 +31,7 @@ impl Vault {
     #[doc(hidden)]
     pub fn install_read_permit_for_test(&self, actor: WriteActor) -> Result<()> {
         let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest();
+        let default = crate::gate::default_policy_manifest()?;
         let Value::Map(mut entries) = rmpv::decode::read_value(&mut default.as_slice())
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?
         else {

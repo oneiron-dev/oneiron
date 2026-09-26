@@ -171,7 +171,7 @@ fn storage_abi_gate_is_strictly_symmetric_for_every_stored_version() {
 
 #[test]
 fn receipt_family_versions_require_a_storage_abi_bump() {
-    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(20, [0, 2, 0, 1, 1])];
+    const RECEIPT_FAMILY_VERSION_ABI_PINS: &[(u16, [u8; 5])] = &[(21, [0, 2, 0, 1, 1])];
 
     let receipt_versions = [
         GATE_DECISION_LEDGER_VERSION,
@@ -3376,7 +3376,7 @@ fn short_id_aliases_add_no_named_database_and_no_abi_bump() -> Result<()> {
         vault
             .store
             .vault_meta
-            .prefix_iter(&rtxn, SHORT_ID_ALIAS_KEY_PREFIX)?
+            .prefix_iter(&rtxn, crate::side_table::SHORT_ID_ALIAS.prefix)?
             .count()
             == 1,
         "the alias must be a vault_meta row under its versioned prefix"

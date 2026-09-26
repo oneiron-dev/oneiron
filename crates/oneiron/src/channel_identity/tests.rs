@@ -81,7 +81,7 @@ fn channel_identity_codec_and_claim_family_round_trip() -> Result<()> {
     validate_channel_identity_body_bytes(&encoded)?;
     assert_eq!(decode_channel_identity_body(&encoded)?, identity);
 
-    let claims = identity.claim_bodies(entity(0xD1));
+    let claims = identity.claim_bodies(entity(0xD1))?;
     assert_eq!(claims.len(), CHANNEL_IDENTITY_CLAIM_PREDICATES.len());
     for claim in &claims {
         validate_channel_identity_claim_structure(claim)?;
@@ -166,6 +166,7 @@ fn channel_identity_claim_binding_target_rejects_invalid_values() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
 
     validate_channel_identity_claim_structure(&claim(Value::from(entity(0x51).to_hex())))
@@ -603,7 +604,7 @@ fn channel_auth_modes_register_without_credential_material() -> Result<()> {
         let decoded = decode_channel_identity_body(&bytes)?;
         assert_eq!(decoded.auth_mode, mode);
         assert_eq!(mode.as_str().parse::<ChannelAuthMode>()?, mode);
-        let claims = identity.claim_bodies(entity(0xD1));
+        let claims = identity.claim_bodies(entity(0xD1))?;
         assert!(
             claims
                 .iter()

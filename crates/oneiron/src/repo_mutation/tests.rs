@@ -240,7 +240,8 @@ fn put_repo_provenance_claim_with_value(vault: &Vault, value: Value) -> EntityId
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = encode_claim_body(&body).expect("encode repo provenance claim");
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(ENTITY_TYPE_CLAIM);
@@ -889,20 +890,14 @@ fn repo_mutation_legacy_prepared_row_fails_once_without_reverting_repo() {
     let repo_key_hash = repo_mutation_repo_key_hash(&canonical);
     let key = repo_mutation_oplog_key(&repo_key_hash, 1);
     let mut wtxn = vault.store.env.write_txn().expect("legacy rewrite txn");
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&wtxn, &key)
+    let mut stored = OPLOG
+        .get(&vault.store, &wtxn, &key)
         .expect("read prepared row")
         .expect("prepared row exists");
-    let mut stored = decode_stored_oplog_entry(&raw).expect("decode prepared row");
     stored.expected_post_action_fork_hash = None;
     stored.prepared_conflict_resolution = None;
-    let encoded = encode_oplog_entry(&stored).expect("encode legacy row");
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &key, &encoded)
+    OPLOG
+        .put(&vault.store, &mut wtxn, &key, &stored)
         .expect("write legacy row");
     wtxn.commit().expect("commit legacy rewrite");
     fs::write(&tracked, "foreign state\n").expect("foreign repo touch");
@@ -2190,7 +2185,7 @@ fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
     vault
         .put_claim(
             &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request),
+            &origin_publication_intent_claim(&request).unwrap(),
             request.occurred,
             1,
         )
@@ -2317,8 +2312,8 @@ fn promotion_requires_reviewed_document_frontiers_for_every_changed_file() {
 #[test]
 fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
     use super::oplog::{
-        decode_stored_oplog_entry, encode_oplog_entry, repo_mutation_oplog_key,
-        repo_mutation_repo_key_hash, repo_mutation_snapshot_key,
+        OPLOG, SNAPSHOT, repo_mutation_oplog_key, repo_mutation_repo_key_hash,
+        repo_mutation_snapshot_key,
     };
     let (_dir, vault) = open_test_vault();
     let repo = init_repo();
@@ -2346,22 +2341,20 @@ fn blake3_snapshot_capture_keeps_sha256_history_recoverable() {
         landed.entry.seq,
     );
     let mut txn = vault.store.env.write_txn().unwrap();
-    let mut row =
-        decode_stored_oplog_entry(&vault.store.vault_meta.get(&txn, &key).unwrap().unwrap())
-            .unwrap();
+    let mut row = OPLOG.get(&vault.store, &txn, &key).unwrap().unwrap();
     row.pre_action_fork_hash = legacy;
     let (_, post) = super::snapshot::capture_repo_snapshot(repo.path()).unwrap();
     row.expected_post_action_fork_hash = Some(super::support::sha256_bytes(&post));
     row.status = RepoMutationStatus::Prepared.as_str().to_owned();
+    OPLOG.put(&vault.store, &mut txn, &key, &row).unwrap();
     vault
         .store
         .vault_meta
-        .put(&mut txn, &key, &encode_oplog_entry(&row).unwrap())
-        .unwrap();
-    vault
-        .store
-        .vault_meta
-        .put(&mut txn, &repo_mutation_snapshot_key(legacy), &raw)
+        .put(
+            &mut txn,
+            &SNAPSHOT.key_bytes(&repo_mutation_snapshot_key(legacy)),
+            &raw,
+        )
         .unwrap();
     txn.commit().unwrap();
     let recovered = vault.recover_prepared_repo_mutations(&reference).unwrap();

@@ -481,7 +481,8 @@ pub fn mint_send_override(
         // Validate BEFORE the write so a malformed ruling is refused as a
         // typed comm failure rather than as an opaque body rejection deep in
         // the claim door.
-        validate_comm_claim_structure(&value.claim_body()).map_err(|_| CommError::InvalidRecord)?;
+        validate_comm_claim_structure(&value.claim_body()?)
+            .map_err(|_| CommError::InvalidRecord)?;
         put_comm_claim_with_id_in_txn(
             vault,
             wtxn,

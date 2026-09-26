@@ -8,9 +8,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
-use crate::temporal::TimeRange;
-use crate::write_envelope::ClaimCandidate;
-use crate::write_envelope::WriteEnvelope;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -19,28 +16,22 @@ pub(super) struct AppliedClaimCandidate {
     pub(super) pending_embedding_token: Option<Vec<u8>>,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "candidate writes thread existing apply_put context"
-)]
 pub(super) fn apply_claim_candidate(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    id: EntityId,
-    candidate: ClaimCandidate,
-    envelope: &WriteEnvelope,
-    occurred: TimeRange,
-    learned_at: u64,
-    has_later_covering_text_op: bool,
-    write_policy: Option<&crate::gate::PolicyManifestResolution>,
-    internal_lexical_query_hint: bool,
-    record_gate_decisions: bool,
-    persist_gate_pending_consent: bool,
-    can_resolve_pending_consent: bool,
-    include_source_in_gate_input: bool,
-    claim_gate_prechecked: bool,
-    preflight_gate_decision_id: Option<crate::store::GateDecisionId>,
+    request: ClaimCandidateRequest<'_>,
 ) -> Result<AppliedClaimCandidate> {
+    let ClaimCandidateRequest {
+        id,
+        candidate,
+        envelope,
+        occurred,
+        learned_at,
+        decision,
+        consent,
+        indexing,
+        write_policy,
+    } = request;
     crate::gate::validate_write_envelope(envelope)?;
 
     let actor = envelope.actor();
@@ -96,34 +87,37 @@ pub(super) fn apply_claim_candidate(
         Some(facet) => facet,
         None => crate::claim::default_facet_in(store, wtxn)?,
     };
-    let body = candidate.into_claim_body(envelope, default_facet);
+    let body = candidate.into_claim_body(envelope, default_facet)?;
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(
         store,
         wtxn,
-        id,
-        crate::registry::ENTITY_TYPE_CLAIM,
-        occurred,
-        learned_at,
-        &data,
-        false,
-        false,
-        false,
-        None,
-        has_later_covering_text_op,
-        write_policy,
-        Some(envelope),
-        internal_lexical_query_hint,
-        record_gate_decisions,
-        persist_gate_pending_consent,
-        can_resolve_pending_consent,
-        include_source_in_gate_input,
-        claim_gate_prechecked,
-        preflight_gate_decision_id,
-        None,
-        // A claim candidate is never part of a promotion closure: promote
-        // replays the session's typed journal, which stages no candidate op.
-        BaseWriteOrigin::Ordinary,
+        PutRequest {
+            row: PutRow {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at,
+                data: &data,
+            },
+            // A candidate opens no admit band and no hub inlet.
+            options: PutOptions {
+                decision,
+                consent,
+                indexing,
+                ..PutOptions::default()
+            },
+            context: PutContext {
+                // A claim candidate is never part of a promotion closure:
+                // promote replays the session's typed journal, which stages
+                // no candidate op.
+                origin: BaseWriteOrigin::Ordinary,
+                write_policy,
+                write_envelope: Some(envelope),
+                hub_admission: None,
+                companion_retired_histories: None,
+            },
+        },
     )?;
 
     let subject_id = match subject {

@@ -1,22 +1,88 @@
 //! Gate-decision ledger Store methods plus the row append and record codec.
 
+use std::ops::Bound;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result};
-use crate::store::{ManifestDbs, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, Store, index_suffix_id};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::store::{ManifestDbs, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, Store};
 
 use super::keys::{
-    GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
-    GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
-    attempt_run_index_key, attempt_run_index_prefix, gate_decision_claim_index_key,
-    gate_decision_claim_index_prefix, gate_decision_grant_ref_index_key,
-    gate_decision_grant_ref_index_prefix, gate_decision_id_from_key, gate_decision_key,
-    gate_decision_upper_bound, logical_uuid_v7_successor,
+    ATTEMPT_RUN_INDEX_PREFIX, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE,
+    GATE_DECISION_CLAIM_INDEX_PREFIX, GATE_DECISION_GRANT_REF_INDEX_PREFIX, attempt_run_index_key,
+    attempt_run_index_prefix, gate_decision_claim_index_key, gate_decision_claim_index_prefix,
+    gate_decision_grant_ref_index_key, gate_decision_grant_ref_index_prefix,
+    logical_uuid_v7_successor,
 };
 use super::types::{
     GATE_DECISION_LEDGER_VERSION, GateClaimIndexBackfill, GateDecisionId, GateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
+
+/// Gate-decision ledger row, keyed by decision id. Codec fixed `Raw` (see the
+/// decls.rs note): [`RawValue`] delegates to
+/// [`encode_gate_decision`]/[`decode_gate_decision`].
+pub(super) const LEDGER: SideTable<GateDecisionId, GateDecisionRecord, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_LEDGER);
+
+impl RawValue for GateDecisionRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_gate_decision(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_gate_decision(bytes)?)
+    }
+}
+
+/// Presence marker literal byte `b"1"`, matching the marker already on disk
+/// for the grant-ref and attempt-run secondary indexes.
+struct OneMarker;
+
+impl RawValue for OneMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(b"1".to_vec())
+    }
+
+    fn from_raw(_bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self)
+    }
+}
+
+const GRANT_REF_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_GRANT_REF_INDEX);
+
+/// Claim-keyed secondary index; the value is an empty marker on disk.
+const CLAIM_INDEX: SideTable<Vec<u8>, (), Raw> =
+    SideTable::new(&side_table::GATE_DECISION_CLAIM_INDEX);
+
+const CLAIM_INDEX_BACKFILL_COMPLETE: SideTable<(), [u8; 1], Raw> =
+    SideTable::new(&side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE);
+
+const ATTEMPT_RUN_INDEX: SideTable<Vec<u8>, OneMarker, Raw> =
+    SideTable::new(&side_table::ATTEMPT_RUN_INDEX);
+
+/// The bytes of a composite index key after its table's own declared prefix:
+/// strips `base_prefix` (the module's existing hand-spelled prefix constant,
+/// byte-identical to the table's declaration) from a key the module's
+/// existing builder already produced in full.
+fn suffix_of(full: Vec<u8>, base_prefix: &[u8]) -> Vec<u8> {
+    full[base_prefix.len()..].to_vec()
+}
+
+/// The trailing 16-byte id of a composite index key, given the raw suffix
+/// [`SideTable::scan_from`]/[`SideTable::iter_from`] returns for a scan
+/// scoped to one string component (so the suffix still carries that
+/// component's own encoding ahead of the id).
+fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
+    bytes
+        .len()
+        .checked_sub(16)
+        .and_then(|start| bytes.get(start..))
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or(Error::CorruptedIndex(context))
+}
 
 impl Store {
     /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
@@ -45,15 +111,20 @@ impl Store {
             Ok(())
         })?;
         for (claim_id, decision_id) in &claim_rows {
-            self.vault_meta.put(
+            CLAIM_INDEX.put(
+                self,
                 &mut wtxn,
-                &gate_decision_claim_index_key(claim_id, *decision_id),
-                b"",
+                &suffix_of(
+                    gate_decision_claim_index_key(claim_id, *decision_id),
+                    GATE_DECISION_CLAIM_INDEX_PREFIX,
+                ),
+                &(),
             )?;
         }
-        self.vault_meta.put(
+        CLAIM_INDEX_BACKFILL_COMPLETE.put(
+            self,
             &mut wtxn,
-            GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
+            &(),
             &GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE,
         )?;
         wtxn.commit()?;
@@ -72,8 +143,15 @@ impl Store {
         let Some(run_id) = run_id else {
             return Ok(());
         };
-        self.vault_meta
-            .put(wtxn, &attempt_run_index_key(run_id, attempt_id), b"1")?;
+        ATTEMPT_RUN_INDEX.put(
+            self,
+            wtxn,
+            &suffix_of(
+                attempt_run_index_key(run_id, attempt_id),
+                ATTEMPT_RUN_INDEX_PREFIX,
+            ),
+            &OneMarker,
+        )?;
         self.refresh_pending_gate_consent_group_aliases_for_run_in_txn(wtxn, run_id)?;
         Ok(())
     }
@@ -91,8 +169,14 @@ impl Store {
         let Some(run_id) = run_id else {
             return Ok(());
         };
-        self.vault_meta
-            .delete(wtxn, &attempt_run_index_key(run_id, attempt_id))?;
+        ATTEMPT_RUN_INDEX.delete(
+            self,
+            wtxn,
+            &suffix_of(
+                attempt_run_index_key(run_id, attempt_id),
+                ATTEMPT_RUN_INDEX_PREFIX,
+            ),
+        )?;
         Ok(())
     }
 
@@ -101,11 +185,10 @@ impl Store {
         txn: &RoTxn<'_>,
         run_id: &str,
     ) -> Result<Vec<[u8; 16]>> {
-        let prefix = attempt_run_index_prefix(run_id);
+        let scan_prefix = suffix_of(attempt_run_index_prefix(run_id), ATTEMPT_RUN_INDEX_PREFIX);
         let mut ids = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, &prefix)? {
-            let (key, _) = row?;
-            ids.push(index_suffix_id(&key, &prefix, "attempt run index")?);
+        for key in ATTEMPT_RUN_INDEX.scan_keys(self, txn, &scan_prefix)? {
+            ids.push(tail_id(&key, "attempt run index")?);
         }
         Ok(ids)
     }
@@ -128,16 +211,10 @@ impl Store {
         record: &mut GateDecisionRecord,
     ) -> Result<()> {
         let seed = record.decision_id;
-        let mut prefix = Vec::with_capacity(GATE_DECISION_KEY_PREFIX.len() + 6);
-        prefix.extend_from_slice(GATE_DECISION_KEY_PREFIX);
-        prefix.extend_from_slice(&seed.as_bytes()[..6]);
-        let tail = self
-            .vault_meta
-            .prefix_iter(&*wtxn, &prefix)?
+        let tail = LEDGER
+            .scan_keys(self, &*wtxn, &seed.as_bytes()[..6])?
             .last()
-            .transpose()?
-            .map(|(key, _)| gate_decision_id_from_key(&key))
-            .transpose()?;
+            .copied();
         let mut decision_id = match tail {
             Some(tail) if tail.as_bytes() >= seed.as_bytes() => logical_uuid_v7_successor(tail)?,
             _ => seed,
@@ -163,8 +240,7 @@ impl Store {
     ) -> Result<()> {
         self.delete_gate_decision_grant_ref_index_in_txn(wtxn, record)?;
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
-        self.vault_meta
-            .delete(wtxn, &gate_decision_key(record.decision_id))?;
+        LEDGER.delete(self, wtxn, &record.decision_id)?;
         Ok(())
     }
 
@@ -188,15 +264,14 @@ impl Store {
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
         let rtxn = self.env.read_txn()?;
-        let prefix = gate_decision_grant_ref_index_prefix(grant_ref);
+        let scan_prefix = suffix_of(
+            gate_decision_grant_ref_index_prefix(grant_ref),
+            GATE_DECISION_GRANT_REF_INDEX_PREFIX,
+        );
         let mut records = Vec::new();
-        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = row?;
-            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
-                &key,
-                &prefix,
-                "gate decision grant ref index",
-            )?);
+        for key in GRANT_REF_INDEX.scan_keys(self, &rtxn, &scan_prefix)? {
+            let decision_id =
+                GateDecisionId::from_bytes(tail_id(&key, "gate decision grant ref index")?);
             let Some(record) = self.gate_decision_in_txn(&rtxn, decision_id)? else {
                 return Err(Error::CorruptedIndex("gate decision grant ref index"));
             };
@@ -232,15 +307,14 @@ impl Store {
         if !self.gate_decision_claim_index_backfill_complete_in_txn(txn)? {
             return self.scan_gate_decisions_for_claim_in_txn(txn, claim_id);
         }
-        let prefix = gate_decision_claim_index_prefix(claim_id);
+        let scan_prefix = suffix_of(
+            gate_decision_claim_index_prefix(claim_id),
+            GATE_DECISION_CLAIM_INDEX_PREFIX,
+        );
         let mut records = Vec::new();
-        for row in self.vault_meta.prefix_iter(txn, &prefix)? {
-            let (key, _) = row?;
-            let decision_id = GateDecisionId::from_bytes(index_suffix_id(
-                &key,
-                &prefix,
-                "gate decision claim index",
-            )?);
+        for key in CLAIM_INDEX.scan_keys(self, txn, &scan_prefix)? {
+            let decision_id =
+                GateDecisionId::from_bytes(tail_id(&key, "gate decision claim index")?);
             let Some(record) = self.gate_decision_in_txn(txn, decision_id)? else {
                 return Err(Error::CorruptedIndex("gate decision claim index"));
             };
@@ -306,17 +380,8 @@ impl Store {
         txn: &RoTxn<'_>,
         mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,
     ) -> Result<()> {
-        let upper = gate_decision_upper_bound();
-        for row in self.vault_meta.range(
-            txn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+        for row in LEDGER.iter_from(self, txn, &[])? {
+            let (decision_id, record) = row?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -331,11 +396,8 @@ impl Store {
         &self,
         txn: &RoTxn<'_>,
     ) -> Result<bool> {
-        match self
-            .vault_meta
-            .get(txn, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY)?
-        {
-            Some(value) if *value == GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE => Ok(true),
+        match CLAIM_INDEX_BACKFILL_COMPLETE.get(self, txn, &())? {
+            Some(value) if value == GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE => Ok(true),
             Some(_) => Err(Error::CorruptedIndex(
                 "gate decision claim index backfill flag",
             )),
@@ -348,10 +410,9 @@ impl Store {
         txn: &RoTxn<'_>,
         decision_id: GateDecisionId,
     ) -> Result<Option<GateDecisionRecord>> {
-        let Some(value) = self.vault_meta.get(txn, &gate_decision_key(decision_id))? else {
+        let Some(record) = LEDGER.get(self, txn, &decision_id)? else {
             return Ok(None);
         };
-        let record = decode_gate_decision(&value)?;
         if record.decision_id != decision_id {
             return Err(Error::CorruptedIndex("gate decision ledger"));
         }
@@ -368,10 +429,14 @@ impl Store {
         grant_ref: &str,
         decision_id: GateDecisionId,
     ) -> Result<()> {
-        self.vault_meta.put(
+        GRANT_REF_INDEX.put(
+            self,
             wtxn,
-            &gate_decision_grant_ref_index_key(grant_ref, decision_id),
-            b"1",
+            &suffix_of(
+                gate_decision_grant_ref_index_key(grant_ref, decision_id),
+                GATE_DECISION_GRANT_REF_INDEX_PREFIX,
+            ),
+            &OneMarker,
         )?;
         Ok(())
     }
@@ -384,9 +449,13 @@ impl Store {
         let Some(grant_ref) = record.grant_ref.as_deref() else {
             return Ok(());
         };
-        self.vault_meta.delete(
+        GRANT_REF_INDEX.delete(
+            self,
             wtxn,
-            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+            &suffix_of(
+                gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+                GATE_DECISION_GRANT_REF_INDEX_PREFIX,
+            ),
         )?;
         Ok(())
     }
@@ -399,9 +468,13 @@ impl Store {
         let Some(claim_id) = record.claim_id.as_ref() else {
             return Ok(());
         };
-        self.vault_meta.delete(
+        CLAIM_INDEX.delete(
+            self,
             wtxn,
-            &gate_decision_claim_index_key(claim_id, record.decision_id),
+            &suffix_of(
+                gate_decision_claim_index_key(claim_id, record.decision_id),
+                GATE_DECISION_CLAIM_INDEX_PREFIX,
+            ),
         )?;
         Ok(())
     }
@@ -428,21 +501,10 @@ impl Store {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let upper = before.map_or_else(gate_decision_upper_bound, gate_decision_key);
+        let upper = before.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-        for row in self.vault_meta.rev_range(
-            rtxn,
-            &(
-                std::ops::Bound::Included(GATE_DECISION_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(GATE_DECISION_KEY_PREFIX) {
-                break;
-            }
-            let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+        for row in LEDGER.iter_rev_range(self, rtxn, Bound::Unbounded, upper)? {
+            let (decision_id, record) = row?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -479,24 +541,30 @@ fn append_gate_decision_row_in_txn(
         return Err(Error::InvariantViolation("gate decision born redacted"));
     }
     vet_gate_decision_record(record)?;
-    let key = gate_decision_key(record.decision_id);
-    if store.vault_meta().get(wtxn, &key)?.is_some() {
+    if LEDGER.contains(store, wtxn, &record.decision_id)? {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    let value = encode_gate_decision(record)?;
-    store.vault_meta().put(wtxn, &key, &value)?;
+    LEDGER.put(store, wtxn, &record.decision_id, record)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
-        store.vault_meta().put(
+        GRANT_REF_INDEX.put(
+            store,
             wtxn,
-            &gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
-            b"1",
+            &suffix_of(
+                gate_decision_grant_ref_index_key(grant_ref, record.decision_id),
+                GATE_DECISION_GRANT_REF_INDEX_PREFIX,
+            ),
+            &OneMarker,
         )?;
     }
     if let Some(claim_id) = record.claim_id.as_ref() {
-        store.vault_meta().put(
+        CLAIM_INDEX.put(
+            store,
             wtxn,
-            &gate_decision_claim_index_key(claim_id, record.decision_id),
-            b"",
+            &suffix_of(
+                gate_decision_claim_index_key(claim_id, record.decision_id),
+                GATE_DECISION_CLAIM_INDEX_PREFIX,
+            ),
+            &(),
         )?;
     }
     Ok(())

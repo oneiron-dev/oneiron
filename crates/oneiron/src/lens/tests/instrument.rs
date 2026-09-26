@@ -185,7 +185,7 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
             0.75,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.world = world;
         vault.put_claim(&id, &body, crate::TimeRange { start: at, end: at }, at + 1)?;
     }

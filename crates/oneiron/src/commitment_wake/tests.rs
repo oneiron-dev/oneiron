@@ -96,7 +96,7 @@ fn seed_world(vault: &Vault) -> WriteEnvelope {
     }
     vault
         .put_entity(
-            &commitment_projection_actor().entity_ref(),
+            &commitment_projection_actor().unwrap().entity_ref(),
             ENTITY_TYPE_MACHINE,
             at(1),
             1,
@@ -867,7 +867,8 @@ fn quiet_hours_claim(subject: EntityId) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.source = Some(ClaimSource::UserStated);
     claim
 }

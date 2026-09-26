@@ -187,7 +187,8 @@ fn put_member(vault: &Vault, claim_seed: u8, value: &CampaignMemberValue, subjec
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .expect("fixture"),
             TimeRange { start: 1, end: 1 },
             1,
         )
@@ -428,8 +429,8 @@ fn soft_bounce_updates_health_without_permanent_suppression() -> Result<()> {
         DEGRADED_REPUTATION_DAILY_CAP
     );
     assert_ne!(
-        projection.reputation.claim_bodies(test_id(SENDER_SEED)),
-        baseline.claim_bodies(test_id(SENDER_SEED))
+        projection.reputation.claim_bodies(test_id(SENDER_SEED))?,
+        baseline.claim_bodies(test_id(SENDER_SEED))?
     );
 
     // Nothing permanent: no suppression claim, and the cohort row is untouched.
@@ -557,7 +558,7 @@ fn write_raw_do_not_contact(
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_to = valid_to;
     vault.put_claim(&test_id(seed), &body, TimeRange { start: 1, end: 1 }, 1)
 }

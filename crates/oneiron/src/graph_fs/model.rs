@@ -253,9 +253,23 @@ pub struct GraphFsPage {
     pub(super) entries: Vec<GraphFsEntry>,
     pub(super) next_cursor: Option<String>,
     pub(super) byte_count: usize,
+    pub(super) read_receipt: Option<crate::claim::ScopedReadReceipt>,
 }
 
 impl GraphFsPage {
+    /// Receipt for the scoped point reads behind this listing: an entity
+    /// directory's body, or each claim a claims listing names. `None` for a
+    /// fixed or policy-scanned listing, which makes no point read.
+    #[must_use]
+    pub fn read_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
+        self.read_receipt.as_ref()
+    }
+
+    pub(super) fn with_read_receipt(mut self, receipt: crate::claim::ScopedReadReceipt) -> Self {
+        self.read_receipt = Some(receipt);
+        self
+    }
+
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
@@ -368,15 +382,17 @@ pub struct GraphFsCommandOutput {
     pub(super) decision: GraphFsCoreutilsDecision,
     pub(super) decision_reason: String,
     pub(super) telemetry_run_id: RetrievalRunId,
-    pub(super) search_receipt: Option<crate::claim::ScopedReadReceipt>,
+    pub(super) read_receipt: Option<crate::claim::ScopedReadReceipt>,
 }
 
 impl GraphFsCommandOutput {
-    /// Receipt for the indexed search and final hydration used by claim grep.
-    /// Walk-only commands do not run that search and return `None`.
+    /// Receipt for every scoped read the command made, folded: the indexed
+    /// search and final hydration of claim grep, the file a cat, head, wc or
+    /// grep read, and the listings an ls or walk read. `None` when the
+    /// command made no scoped read (the temporal pushdowns scan by policy).
     #[must_use]
-    pub fn search_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
-        self.search_receipt.as_ref()
+    pub fn read_receipt(&self) -> Option<&crate::claim::ScopedReadReceipt> {
+        self.read_receipt.as_ref()
     }
 
     #[must_use]

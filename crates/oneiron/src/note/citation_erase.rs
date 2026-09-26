@@ -1,17 +1,33 @@
 //! Hard-erase dependency fences. No source text or substring matching is stored here.
 
 use crate::error::RecordError;
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result, Vault};
 
-pub(crate) const PENDING_CITATION_ERASE: &str = "note.erase/pending/";
+use super::side_keys::HexPair;
 
-pub(super) fn erased_key(id: EntityId) -> String {
-    format!("note.erase/source/{}", id.to_hex())
-}
+/// Fence marking a citing document's dependency on an erased source until
+/// scrubbed. Key: hex32(citing) ":" hex32(erased source).
+pub(super) const NOTE_ERASE_PENDING: SideTable<HexPair, (), Raw> =
+    SideTable::new(&side_table::NOTE_ERASE_PENDING);
+/// Marker that a NOTE/CLAIM source has been citation-erased. Key: hex32(id).
+pub(super) const NOTE_ERASE_SOURCE: SideTable<HexId, (), Raw> =
+    SideTable::new(&side_table::NOTE_ERASE_SOURCE);
+/// Saved oplog version-vector floor an authority rebase cannot cross past a
+/// scrub. Key: hex32(id).
+pub(super) const NOTE_ERASE_AUTHORITY_FLOOR: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_ERASE_AUTHORITY_FLOOR);
 
-pub(super) fn pending_prefix(id: EntityId) -> String {
-    format!("{PENDING_CITATION_ERASE}{}:", id.to_hex())
+/// Whether any citation-erase fence is still pending, anywhere in the vault.
+/// Rows are not decoded: any row at all, well-formed or not, is a pending
+/// fence (the hard-erase sweep fails closed on it).
+pub(crate) fn any_citation_erase_pending(store: &Store, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(NOTE_ERASE_PENDING
+        .iter_raw_from(store, txn, &[])?
+        .next()
+        .transpose()?
+        .is_some())
 }
 
 pub(crate) fn ensure_citations_ready(
@@ -19,9 +35,9 @@ pub(crate) fn ensure_citations_ready(
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .prefix_iter(txn, pending_prefix(id).as_bytes())?
+    let prefix = format!("{}:", id.to_hex());
+    if NOTE_ERASE_PENDING
+        .iter_from(store, txn, prefix.as_bytes())?
         .next()
         .transpose()?
         .is_some()
@@ -42,13 +58,9 @@ pub(super) fn fence_dependents(
     id: EntityId,
 ) -> Result<Vec<EntityId>> {
     let dependents = super::pin_index::dependents(store, txn, id)?;
-    store.vault_meta.put(txn, erased_key(id).as_bytes(), &[])?;
+    NOTE_ERASE_SOURCE.put(store, txn, &HexId(id), &())?;
     for citing in &dependents {
-        store.vault_meta.put(
-            txn,
-            format!("{}{}", pending_prefix(*citing), id.to_hex()).as_bytes(),
-            &[],
-        )?;
+        NOTE_ERASE_PENDING.put(store, txn, &HexPair(HexId(*citing), HexId(id)), &())?;
     }
     Ok(dependents.into_iter().collect())
 }
@@ -77,11 +89,7 @@ pub(super) fn pin_is_erased(
 ) -> Result<bool> {
     for id in [pin.document, pin.claim] {
         if vault.local_hard_delete_marker_exists_in_txn(txn, &id)?
-            || vault
-                .store
-                .vault_meta
-                .get(txn, erased_key(id).as_bytes())?
-                .is_some()
+            || NOTE_ERASE_SOURCE.contains(&vault.store, txn, &HexId(id))?
         {
             return Ok(true);
         }

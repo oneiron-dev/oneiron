@@ -126,7 +126,8 @@ pub(super) fn valid_claim_body_bytes(pred: &str, val: &str) -> Vec<u8> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     crate::claim::encode_claim_body(&body).expect("encode valid claim body")
 }
 
@@ -886,7 +887,8 @@ pub(super) fn claim_vad_fixture_body(subject: EntityId, turns: &[EntityId]) -> C
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(rmpv::Value::Array(
         turns
             .iter()
@@ -938,7 +940,7 @@ pub(super) fn coping_outcome_fixture_body(
         confidence,
         ClaimApprovalStatus::Auto,
         lifecycle,
-    );
+    )?;
     body.source = Some(ClaimSource::Inferred);
     body.valid_from = Some(valid_from);
     if lifecycle != ClaimLifecycleStatus::Active {
@@ -1161,7 +1163,8 @@ pub(super) fn valid_provenance_claim_body(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(crate::provenance::encode_actor_class_evidence(
         EdgeActorClass::Human,
     ));
@@ -1305,7 +1308,7 @@ pub(super) fn put_active_claim_with_source_and_approval(
         0.9,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = source;
     vault.put_claim(
         &id,
@@ -1348,7 +1351,7 @@ pub(super) fn put_active_interval_claim(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&id, &body, occurred, learned_at)?;
     Ok(id)
 }

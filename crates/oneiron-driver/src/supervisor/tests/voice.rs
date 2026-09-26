@@ -128,8 +128,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("agent"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let wrong = WriteActor::new(actor.entity_ref(), oneiron::EdgeActorClass::System);
@@ -138,15 +139,17 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(reader("agent"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_some()
     );
     assert!(
         vault
             .scoped_read(reader("human"))
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     let other =
@@ -154,8 +157,9 @@ fn branch_read_fixture_grants_only_the_named_actor_and_class() {
     assert!(
         vault
             .scoped_read(other)
-            .get(&conversation)
+            .read(&[oneiron::claim::PointRead::id(conversation)], None)
             .unwrap()
+            .single()
             .is_none()
     );
     assert!(

@@ -1,13 +1,12 @@
 //! Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies, key formats, and codecs.
 
 use std::collections::HashSet;
-use std::str;
 
 use heed::{RoTxn, RwTxn};
 
 use crate::batch::secret_scan;
-use crate::error::{Error, Result};
-use crate::overlay_db::OverlayDb;
+use crate::error::{Error, Result, SideTableRowProblem, StoreError};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 #[cfg(test)]
 use crate::store::test_hooks;
 use crate::store::{ManifestDbs, SessionStoreView, Store, active_write_txn_depth};
@@ -23,15 +22,106 @@ use super::types::{
 /// census only tests the prefix.
 pub(crate) const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 
-const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
-
-const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
-
-const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
-
 const RETRIEVAL_OUTCOME_KEY_MAX_LEN: usize = 128;
 
 pub(in crate::store) const RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT: usize = 1024;
+
+impl SideKey for RetrievalRunId {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        Some(Self::from_bytes(bytes.try_into().ok()?))
+    }
+}
+
+/// Retrieval-run telemetry record, keyed by run id. Codec fixed `Raw` (see
+/// the decls.rs note): decode also enforces the version byte and
+/// `RetrievalState::validate`, so [`RawValue`] delegates to
+/// [`encode_retrieval_run`]/[`decode_retrieval_run`] — kept as free functions
+/// because `retrieval_telemetry::state_tests` calls them directly.
+pub(super) const RETRIEVAL_RUN: SideTable<RetrievalRunId, RetrievalRunRecord, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_RUN);
+
+impl RawValue for RetrievalRunRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_retrieval_run(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_retrieval_run(bytes)?)
+    }
+}
+
+/// Unpublished context-pack run marker: presence-only, but the byte already
+/// on disk is the literal `b"1"` this module always wrote, so the value type
+/// spells that exact byte rather than reusing the empty-marker `()` codec.
+pub(super) struct PresentMarker;
+
+impl RawValue for PresentMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(b"1".to_vec())
+    }
+
+    fn from_raw(_bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(Self)
+    }
+}
+
+pub(super) const RETRIEVAL_RUN_PROVISIONAL: SideTable<RetrievalRunId, PresentMarker, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_RUN_PROVISIONAL);
+
+/// Trace fork hash to runs. Key: bytes32 + id16 (the run id trails, so the
+/// door's built-in fixed-width tuple key applies directly).
+const RETRIEVAL_TRACE_FORK_INDEX: SideTable<([u8; 32], RetrievalRunId), PresentMarker, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_TRACE_FORK_INDEX);
+
+/// Reported retrieval run outcome. Key: id16 ":" string — a literal `:`
+/// separator, not the door's plain fixed-then-rest tuple, so it gets a
+/// hand-spelled key type.
+struct OutcomeKey(RetrievalRunId, String);
+
+impl SideKey for OutcomeKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.0.as_bytes());
+        out.push(b':');
+        out.extend_from_slice(self.1.as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 17 || bytes[16] != b':' {
+            return None;
+        }
+        let run_id = RetrievalRunId::from_bytes(bytes[..16].try_into().ok()?);
+        let outcome_key = std::str::from_utf8(&bytes[17..]).ok()?.to_owned();
+        if outcome_key.is_empty()
+            || outcome_key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
+            || !outcome_key.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':')
+            })
+        {
+            return None;
+        }
+        Some(Self(run_id, outcome_key))
+    }
+}
+
+/// Codec fixed `Raw` (see the decls.rs note): decode also enforces the
+/// version byte, so [`RawValue`] delegates to the module's own
+/// `encode_retrieval_outcome`/`decode_retrieval_outcome`.
+const RETRIEVAL_OUTCOME: SideTable<OutcomeKey, RetrievalOutcomeRecord, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_OUTCOME);
+
+impl RawValue for RetrievalOutcomeRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_retrieval_outcome(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_retrieval_outcome(bytes)?)
+    }
+}
 
 /// The session-side retrieval-telemetry surface (ONE-1728 §7 / K10).
 ///
@@ -218,22 +308,19 @@ impl Store {
             metadata: outcome.metadata,
             updated_at: self.clock.now_recorded_at(),
         };
-        let key = retrieval_outcome_key(record.run_id, &record.key);
-        let value = encode_retrieval_outcome(&record)?;
         let mut wtxn = self.env.write_txn()?;
-        let run_key = retrieval_run_key(record.run_id);
-        if self.vault_meta.get(&wtxn, &run_key)?.is_none() {
+        if !RETRIEVAL_RUN.contains(self, &wtxn, &record.run_id)? {
             return Err(Error::InvalidConfig(
                 "retrieval outcome references unknown run id".to_owned(),
             ));
         }
-        let provisional_key = retrieval_run_provisional_key(record.run_id);
-        if self.vault_meta.get(&wtxn, &provisional_key)?.is_some() {
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &wtxn, &record.run_id)? {
             return Err(Error::InvalidConfig(
                 "retrieval outcome references unpublished context-pack run id".to_owned(),
             ));
         }
-        self.vault_meta.put(&mut wtxn, &key, &value)?;
+        let key = OutcomeKey(record.run_id, record.key.clone());
+        RETRIEVAL_OUTCOME.put(self, &mut wtxn, &key, &record)?;
         wtxn.commit()?;
         Ok(())
     }
@@ -248,17 +335,12 @@ impl Store {
         run_id: RetrievalRunId,
     ) -> Result<Option<RetrievalRunRecord>> {
         let rtxn = self.env.read_txn()?;
-        if self
-            .vault_meta
-            .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-            .is_some()
-        {
+        if RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)? {
             return Ok(None);
         }
-        let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
+        let Some(record) = RETRIEVAL_RUN.get(self, &rtxn, &run_id)? else {
             return Ok(None);
         };
-        let record = decode_retrieval_run(&value)?;
         if record.run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval run telemetry"));
         }
@@ -273,22 +355,15 @@ impl Store {
             return Ok(None);
         }
         let rtxn = self.env.read_txn()?;
-        let prefix = retrieval_trace_fork_prefix(&fork_hash);
         let mut latest = None::<RetrievalRunRecord>;
-        for row in self.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = row?;
-            let run_id = retrieval_run_id_from_fork_key(&key)?;
-            if self
-                .vault_meta
-                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                .is_some()
-            {
+        for row in RETRIEVAL_TRACE_FORK_INDEX.scan_from(self, &rtxn, &fork_hash)? {
+            let ((_fork_hash, run_id), _marker) = row;
+            if RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)? {
                 continue;
             }
-            let Some(value) = self.vault_meta.get(&rtxn, &retrieval_run_key(run_id))? else {
+            let Some(record) = RETRIEVAL_RUN.get(self, &rtxn, &run_id)? else {
                 return Err(Error::CorruptedIndex("retrieval trace fork index"));
             };
-            let record = decode_retrieval_run(&value)?;
             let Some(trace) = &record.trace else {
                 return Err(Error::CorruptedIndex("retrieval trace fork index"));
             };
@@ -311,18 +386,12 @@ impl Store {
         run_id: RetrievalRunId,
     ) -> Result<Vec<RetrievalOutcomeRecord>> {
         let rtxn = self.env.read_txn()?;
-        if self
-            .vault_meta
-            .get(&rtxn, &retrieval_run_key(run_id))?
-            .is_none()
-            || self
-                .vault_meta
-                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                .is_some()
+        if !RETRIEVAL_RUN.contains(self, &rtxn, &run_id)?
+            || RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)?
         {
             return Ok(Vec::new());
         }
-        retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)
+        retrieval_outcomes_for_run_in_txn(self, &rtxn, run_id)
     }
 }
 
@@ -339,27 +408,17 @@ fn read_retrieval_runs_in_txn(
         return Ok(Vec::new());
     }
     let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
-    let upper = retrieval_run_upper_bound();
-    for row in target.vault_meta().rev_range(
-        rtxn,
-        &(
-            std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
-            std::ops::Bound::Excluded(upper.as_slice()),
-        ),
-    )? {
-        let (key, value) = row?;
-        if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
-            break;
-        }
-        let run_id = retrieval_run_id_from_key(&key)?;
-        if target
-            .vault_meta()
-            .get(rtxn, &retrieval_run_provisional_key(run_id))?
-            .is_some()
-        {
+    for row in RETRIEVAL_RUN.iter_rev_from(target, rtxn, &[])? {
+        let (run_id, record) = row.map_err(|error| match error {
+            Error::Store(StoreError::SideTableRow {
+                problem: SideTableRowProblem::KeyShape,
+                ..
+            }) => Error::CorruptedIndex("retrieval run telemetry"),
+            other => other,
+        })?;
+        if RETRIEVAL_RUN_PROVISIONAL.contains(target, rtxn, &run_id)? {
             continue;
         }
-        let record = decode_retrieval_run(&value)?;
         if record.run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval run telemetry"));
         }
@@ -385,27 +444,19 @@ fn stage_retrieval_run_with_visibility(
     record: &RetrievalRunRecord,
     published: bool,
 ) -> Result<()> {
-    let key = retrieval_run_key(record.run_id);
     record.state.validate()?;
-    if let Some(raw) = target.vault_meta().get(wtxn, &key)? {
-        super::turn_index::delete(target, wtxn, &decode_retrieval_run(&raw)?)?;
+    if let Some(existing) = RETRIEVAL_RUN.get(target, &*wtxn, &record.run_id)? {
+        super::turn_index::delete(target, wtxn, &existing)?;
     }
-    let value = encode_retrieval_run(record)?;
-    let provisional_key = retrieval_run_provisional_key(record.run_id);
-    target.vault_meta().put(wtxn, &key, &value)?;
+    RETRIEVAL_RUN.put(target, wtxn, &record.run_id, record)?;
     if published {
         super::turn_index::put(target, wtxn, record)?;
-        target.vault_meta().delete(wtxn, &provisional_key)?;
+        RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &record.run_id)?;
         if let Some(trace) = &record.trace {
-            put_retrieval_trace_fork_index(
-                target.vault_meta(),
-                wtxn,
-                &trace.fork_hash,
-                record.run_id,
-            )?;
+            put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
         }
     } else {
-        target.vault_meta().put(wtxn, &provisional_key, b"1")?;
+        RETRIEVAL_RUN_PROVISIONAL.put(target, wtxn, &record.run_id, &PresentMarker)?;
     }
     Ok(())
 }
@@ -417,21 +468,11 @@ fn stage_retrieval_run_delete(
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<()> {
-    let key = retrieval_run_key(run_id);
-    let provisional_key = retrieval_run_provisional_key(run_id);
-    let outcome_prefix = retrieval_outcome_run_prefix(run_id);
     super::turn_index::delete_for_run(target, wtxn, run_id)?;
-    delete_retrieval_trace_fork_indexes_for_run(target.vault_meta(), wtxn, &key, run_id)?;
-    let mut outcome_keys = Vec::new();
-    for row in target.vault_meta().prefix_iter(wtxn, &outcome_prefix)? {
-        let (key, _) = row?;
-        outcome_keys.push(key.to_vec());
-    }
-    for key in outcome_keys {
-        target.vault_meta().delete(wtxn, &key)?;
-    }
-    target.vault_meta().delete(wtxn, &provisional_key)?;
-    target.vault_meta().delete(wtxn, &key)?;
+    delete_retrieval_trace_fork_indexes_for_run(target, wtxn, run_id)?;
+    RETRIEVAL_OUTCOME.delete_from(target, wtxn, &retrieval_outcome_run_prefix(run_id))?;
+    RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+    RETRIEVAL_RUN.delete(target, wtxn, &run_id)?;
     Ok(())
 }
 
@@ -454,13 +495,10 @@ fn stage_context_pack_retrieval_run_finalize(
         surfaced_result_ids,
         empty_reason,
     } = finalize;
-    let key = retrieval_run_key(run_id);
-    let provisional_key = retrieval_run_provisional_key(run_id);
-    let Some(raw) = target.vault_meta().get(wtxn, &key)? else {
-        target.vault_meta().delete(wtxn, &provisional_key)?;
+    let Some(mut record) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)? else {
+        RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
         return Ok(());
     };
-    let mut record = decode_retrieval_run(&raw)?;
     record.elapsed_us = elapsed_us;
     record.total_in_scope = total_in_scope;
     record.claims_suppressed = claims_suppressed;
@@ -497,51 +535,29 @@ fn stage_context_pack_retrieval_run_finalize(
     }
     record.empty_reason = empty_reason;
     super::turn_index::put(target, wtxn, &record)?;
-    let value = encode_retrieval_run(&record)?;
-    target.vault_meta().put(wtxn, &key, &value)?;
+    RETRIEVAL_RUN.put(target, wtxn, &run_id, &record)?;
     if let Some(trace) = &record.trace {
-        put_retrieval_trace_fork_index(target.vault_meta(), wtxn, &trace.fork_hash, record.run_id)?;
+        put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
     }
-    target.vault_meta().delete(wtxn, &provisional_key)?;
+    RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
     Ok(())
 }
 
+/// Only `store::tests`/`state_tests` name this directly now, to compute a raw
+/// full key for corrupt/legacy-row fixtures; production readers go through
+/// [`RETRIEVAL_RUN`]'s typed door.
+#[cfg(test)]
 pub(in crate::store) fn retrieval_run_key(run_id: RetrievalRunId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
-    key.extend_from_slice(&run_id.as_bytes());
-    key
+    RETRIEVAL_RUN.key_bytes(&run_id)
 }
 
-pub(super) fn retrieval_run_id_from_key(key: &[u8]) -> Result<RetrievalRunId> {
-    let bytes = key
-        .strip_prefix(RETRIEVAL_RUN_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("retrieval run telemetry"))?;
-    retrieval_run_id_from_value(bytes)
-}
-
-fn retrieval_run_id_from_value(bytes: &[u8]) -> Result<RetrievalRunId> {
-    let bytes: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;
-    Ok(RetrievalRunId { bytes })
-}
-
-fn retrieval_trace_fork_prefix(fork_hash: &RetrievalTraceForkHash) -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32);
-    key.extend_from_slice(RETRIEVAL_TRACE_FORK_KEY_PREFIX);
-    key.extend_from_slice(fork_hash);
-    key
-}
-
+/// Test-only, see [`retrieval_run_key`].
+#[cfg(test)]
 pub(in crate::store) fn retrieval_trace_fork_key(
     fork_hash: &RetrievalTraceForkHash,
     run_id: RetrievalRunId,
 ) -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32 + 16);
-    key.extend_from_slice(&retrieval_trace_fork_prefix(fork_hash));
-    key.extend_from_slice(&run_id.as_bytes());
-    key
+    RETRIEVAL_TRACE_FORK_INDEX.key_bytes(&(*fork_hash, run_id))
 }
 
 fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> bool {
@@ -549,115 +565,63 @@ fn is_unknown_retrieval_trace_fork_hash(fork_hash: &RetrievalTraceForkHash) -> b
 }
 
 fn put_retrieval_trace_fork_index(
-    vault_meta: &OverlayDb,
+    target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     fork_hash: &RetrievalTraceForkHash,
     run_id: RetrievalRunId,
 ) -> Result<()> {
     if !is_unknown_retrieval_trace_fork_hash(fork_hash) {
-        vault_meta.put(wtxn, &retrieval_trace_fork_key(fork_hash, run_id), b"1")?;
+        RETRIEVAL_TRACE_FORK_INDEX.put(target, wtxn, &(*fork_hash, run_id), &PresentMarker)?;
     }
     Ok(())
 }
 
+/// Cleanup must work even if the primary row was corrupted before
+/// publication: a decode failure (or a missing row) on the direct lookup
+/// falls back to the full-family scan below rather than propagating.
 fn delete_retrieval_trace_fork_indexes_for_run(
-    vault_meta: &OverlayDb,
+    target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
-    run_key: &[u8],
     run_id: RetrievalRunId,
 ) -> Result<()> {
-    if let Some(raw) = vault_meta.get(wtxn, run_key)?
-        && let Ok(record) = decode_retrieval_run(&raw)
+    if let Ok(Some(record)) = RETRIEVAL_RUN.get(target, &*wtxn, &run_id)
         && record.run_id == run_id
         && let Some(trace) = record.trace
         && !is_unknown_retrieval_trace_fork_hash(&trace.fork_hash)
     {
-        vault_meta.delete(wtxn, &retrieval_trace_fork_key(&trace.fork_hash, run_id))?;
+        RETRIEVAL_TRACE_FORK_INDEX.delete(target, wtxn, &(trace.fork_hash, run_id))?;
         return Ok(());
     }
 
-    let run_id_bytes = run_id.as_bytes();
-    let expected_len = RETRIEVAL_TRACE_FORK_KEY_PREFIX.len() + 32 + 16;
     let mut keys = Vec::new();
-    for row in vault_meta.prefix_iter(wtxn, RETRIEVAL_TRACE_FORK_KEY_PREFIX)? {
-        let (key, _) = row?;
-        if key.len() == expected_len && key.ends_with(&run_id_bytes) {
-            keys.push(key.to_vec());
+    for row in RETRIEVAL_TRACE_FORK_INDEX
+        .iter_from(target, &*wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?
+    {
+        let ((fork_hash, key_run_id), _marker) = row;
+        if key_run_id == run_id {
+            keys.push((fork_hash, key_run_id));
         }
     }
     for key in keys {
-        vault_meta.delete(wtxn, &key)?;
+        RETRIEVAL_TRACE_FORK_INDEX.delete(target, wtxn, &key)?;
     }
     Ok(())
 }
 
-fn retrieval_run_id_from_fork_key(key: &[u8]) -> Result<RetrievalRunId> {
-    let suffix = key
-        .strip_prefix(RETRIEVAL_TRACE_FORK_KEY_PREFIX)
-        .and_then(|bytes| bytes.get(32..))
-        .ok_or(Error::CorruptedIndex("retrieval trace fork index"))?;
-    retrieval_run_id_from_value(suffix)
-}
-
-pub(super) fn retrieval_run_provisional_key(run_id: RetrievalRunId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX);
-    key.extend_from_slice(&run_id.as_bytes());
-    key
-}
-
-pub(super) fn retrieval_run_upper_bound() -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_RUN_KEY_PREFIX.len());
-    key.extend_from_slice(RETRIEVAL_RUN_KEY_PREFIX);
-    *key.last_mut()
-        .expect("retrieval run key prefix must be non-empty") += 1;
-    key
-}
-
 fn retrieval_outcome_run_prefix(run_id: RetrievalRunId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(RETRIEVAL_OUTCOME_KEY_PREFIX.len() + 17);
-    key.extend_from_slice(RETRIEVAL_OUTCOME_KEY_PREFIX);
-    key.extend_from_slice(&run_id.as_bytes());
+    let mut key = run_id.as_bytes().to_vec();
     key.push(b':');
     key
 }
 
+/// Test-only, see [`retrieval_run_key`].
+#[cfg(test)]
 pub(in crate::store) fn retrieval_outcome_key(
     run_id: RetrievalRunId,
     outcome_key: &str,
 ) -> Vec<u8> {
-    let mut key = retrieval_outcome_run_prefix(run_id);
-    key.extend_from_slice(outcome_key.as_bytes());
-    key
-}
-
-fn retrieval_outcome_parts_from_key(key: &[u8]) -> Result<(RetrievalRunId, String)> {
-    let suffix = key
-        .strip_prefix(RETRIEVAL_OUTCOME_KEY_PREFIX)
-        .ok_or(Error::CorruptedIndex("retrieval outcome telemetry"))?;
-    if suffix.len() < 17 || suffix[16] != b':' {
-        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
-    }
-    let run_id_bytes: [u8; 16] = suffix[..16]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
-    let outcome_key_bytes = &suffix[17..];
-    let outcome_key = std::str::from_utf8(outcome_key_bytes)
-        .map_err(|_| Error::CorruptedIndex("retrieval outcome telemetry"))?;
-    if outcome_key.is_empty()
-        || outcome_key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
-        || !outcome_key
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':'))
-    {
-        return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
-    }
-    Ok((
-        RetrievalRunId {
-            bytes: run_id_bytes,
-        },
-        outcome_key.to_owned(),
-    ))
+    RETRIEVAL_OUTCOME.key_bytes(&OutcomeKey(run_id, outcome_key.to_owned()))
 }
 
 pub(in crate::store) fn encode_retrieval_run(record: &RetrievalRunRecord) -> Result<Vec<u8>> {
@@ -693,19 +657,17 @@ fn decode_retrieval_outcome(raw: &[u8]) -> Result<RetrievalOutcomeRecord> {
 }
 
 pub(super) fn retrieval_outcomes_for_run_in_txn(
-    vault_meta: &OverlayDb,
+    target: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     run_id: RetrievalRunId,
 ) -> Result<Vec<RetrievalOutcomeRecord>> {
-    let prefix = retrieval_outcome_run_prefix(run_id);
     let mut records = Vec::new();
-    for row in vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, value) = row?;
-        let (key_run_id, key_outcome_key) = retrieval_outcome_parts_from_key(&key)?;
+    for (OutcomeKey(key_run_id, key_outcome_key), record) in
+        RETRIEVAL_OUTCOME.scan_from(target, rtxn, &retrieval_outcome_run_prefix(run_id))?
+    {
         if key_run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
         }
-        let record = decode_retrieval_outcome(&value)?;
         if record.run_id != key_run_id || record.key != key_outcome_key {
             return Err(Error::CorruptedIndex("retrieval outcome telemetry"));
         }

@@ -1,6 +1,6 @@
 //! Owner-set per-space presentation. A dial never grants transport or memory access.
 
-use super::codec::{address, array, id, id_value, key, text};
+use super::codec::{AUTONOMY, address, array, id, id_value, key, text};
 use super::invalid_autonomy;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::context_projection::ResolvedContextProjection;
@@ -137,7 +137,7 @@ impl Vault {
                 Value::from(preset.token()),
             ]);
             let setting = self.put_autonomy_envelope(txn, POSTING_ENVELOPE, value, owner, at)?;
-            if self.store.vault_meta.get(txn, &head)?.is_some() {
+            if AUTONOMY.contains(&self.store, txn, &head)? {
                 let (_, previous_at, prior) = self.autonomy_row(txn, &head)?;
                 if at < previous_at {
                     return Err(invalid_autonomy());
@@ -226,7 +226,7 @@ impl Vault {
         let record = crate::channel_identity::decode_channel_identity_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )?;
-        let (setting_ref, preset) = if self.store.vault_meta.get(txn, &head)?.is_some() {
+        let (setting_ref, preset) = if AUTONOMY.contains(&self.store, txn, &head)? {
             let (_, _, pointer) = self.autonomy_row(txn, &head)?;
             let fields = array(&pointer, 2)?;
             let reference = id(&fields[0])?;

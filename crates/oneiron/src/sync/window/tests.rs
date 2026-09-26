@@ -3666,7 +3666,7 @@ fn device_only_world_fixture(vault: &Vault, window: &WindowKey) -> Result<(Entit
         1.0,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     vault

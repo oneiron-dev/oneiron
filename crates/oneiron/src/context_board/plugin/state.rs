@@ -10,10 +10,48 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, LegacyJson, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
-const BLOCK_PREFIX: &[u8] = b"context_board.block.v1:";
 const BLOCK_SCAN_LIMIT: usize = 1024;
+
+/// Durable actor-scoped plugin block rows. Key: actor id ‖ `section_id.len()`
+/// (u64 big-endian) ‖ `section_id` bytes ‖ block id — length-prefixed so two
+/// admitted section names sharing a prefix can never collide.
+const PLUGIN_BLOCK: SideTable<BlockKey, BoardBlockRecord, LegacyJson> =
+    SideTable::new(&side_table::CONTEXT_BOARD_PLUGIN_BLOCK);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BlockKey {
+    actor: EntityId,
+    section_id: SectionId,
+    block_ref: [u8; 16],
+}
+
+impl SideKey for BlockKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.actor.as_bytes());
+        out.extend_from_slice(&(self.section_id.0.len() as u64).to_be_bytes());
+        out.extend_from_slice(self.section_id.0.as_bytes());
+        out.extend_from_slice(&self.block_ref);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (actor, rest) = bytes.split_at_checked(16)?;
+        let actor = EntityId::from_bytes(actor.try_into().ok()?).ok()?;
+        let (len, rest) = rest.split_at_checked(8)?;
+        let len = u64::from_be_bytes(len.try_into().ok()?);
+        let len = usize::try_from(len).ok()?;
+        let (section, rest) = rest.split_at_checked(len)?;
+        let section_id = SectionId(std::str::from_utf8(section).ok()?.to_owned());
+        let block_ref = rest.try_into().ok()?;
+        Some(Self {
+            actor,
+            section_id,
+            block_ref,
+        })
+    }
+}
 
 /// The implemented durable block kinds. Scratchpad is board state, not a NOTE.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +100,7 @@ fn refused_block() -> MemoryError {
         suggestions: vec!["Use the bound actor and a live registered board section.".to_owned()],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     }
 }
 
@@ -79,11 +118,16 @@ fn validate_block(row: &BoardBlockRecord) -> MemoryResult<()> {
     Ok(())
 }
 
+/// Test-only: exercises the exact JSON shape [`PLUGIN_BLOCK`]'s codec
+/// enforces (`deny_unknown_fields` included) plus [`validate_block`], the way
+/// [`Memory::put_board_block`] and [`Memory::board_blocks`] together do.
+#[cfg(test)]
 fn encode_block(row: &BoardBlockRecord) -> MemoryResult<Vec<u8>> {
     validate_block(row)?;
     serde_json::to_vec(row).map_err(|_| invalid_block())
 }
 
+#[cfg(test)]
 fn decode_block(bytes: &[u8]) -> MemoryResult<BoardBlockRecord> {
     // Derived struct decoding rejects unknown and duplicate fields; fixed-size
     // revision/identity arrays reject truncated and overlong revisions.
@@ -92,20 +136,23 @@ fn decode_block(bytes: &[u8]) -> MemoryResult<BoardBlockRecord> {
     Ok(row)
 }
 
+/// The scan prefix (everything but the trailing block id) for one actor's
+/// rows under one admitted section.
 fn block_prefix(actor: EntityId, section: &SectionId) -> Vec<u8> {
-    let mut prefix = BLOCK_PREFIX.to_vec();
-    prefix.extend_from_slice(actor.as_bytes());
+    let mut prefix = actor.as_bytes().to_vec();
     // Prefix-safe even when two admitted section names share a prefix.
     prefix.extend_from_slice(&(section.0.len() as u64).to_be_bytes());
     prefix.extend_from_slice(section.0.as_bytes());
     prefix
 }
 
-fn block_key(row: &BoardBlockRecord) -> MemoryResult<Vec<u8>> {
+fn block_key(row: &BoardBlockRecord) -> MemoryResult<BlockKey> {
     let actor = EntityId::from_bytes(row.author_ref)?;
-    let mut key = block_prefix(actor, &row.section_id);
-    key.extend_from_slice(&row.block_ref);
-    Ok(key)
+    Ok(BlockKey {
+        actor,
+        section_id: row.section_id.clone(),
+        block_ref: row.block_ref,
+    })
 }
 
 /// Recheck the actual approved install and exact Active skill in the same
@@ -181,11 +228,11 @@ impl Memory<'_> {
             source_revision_ref: envelope.source_revision_ref,
             markdown: envelope.markdown.clone(),
         };
-        let bytes = encode_block(&row)?;
+        validate_block(&row)?;
         let key = block_key(&row)?;
         self.with_verified_actor_write_txn(|txn| {
             require_live_section(self.vault(), txn, registry, &row.section_id)?;
-            self.vault().store.vault_meta.put(txn, &key, &bytes)?;
+            PLUGIN_BLOCK.put(&self.vault().store, txn, &key, &row)?;
             Ok(())
         })?;
         Ok(row)
@@ -224,12 +271,12 @@ impl Memory<'_> {
         require_live_section(self.vault(), &txn, registry, section_id)?;
         let prefix = block_prefix(self.actor(), section_id);
         let mut rows = Vec::new();
-        for entry in self.vault().store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (key, bytes) = entry?;
-            let row = decode_block(&bytes)?;
+        for entry in PLUGIN_BLOCK.iter_from(&self.vault().store, &txn, &prefix)? {
+            let (key, row) = entry.map_err(|_| invalid_block())?;
+            validate_block(&row)?;
             if row.author_ref != *self.actor().as_bytes()
                 || row.section_id != *section_id
-                || block_key(&row)?.as_slice() != key.as_ref()
+                || block_key(&row)? != key
             {
                 return Err(invalid_block());
             }

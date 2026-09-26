@@ -6,8 +6,9 @@
 //! same door a real consumer would use.
 
 use oneiron_uniffi::{
-    BlobVersionView, EXPORTED_UNIFFI_RUST_NAMES, EXPORTED_UNIFFI_VERBS,
-    HEAD_MEMORY_PACK_SCHEMA_VERSION, Oneiron, OneironError,
+    BlobVersionView, ClaimListFilter, ClaimViews, EXPORTED_UNIFFI_RUST_NAMES,
+    EXPORTED_UNIFFI_VERBS, EntityRead, EntityViews, HEAD_MEMORY_PACK_SCHEMA_VERSION, LexicalHits,
+    NeighborHits, NeighborOpts, Oneiron, OneironError, ReadReceipt,
 };
 
 /// The exact camel-case rule the generated Swift names follow.
@@ -81,6 +82,21 @@ fn blob_signatures_match_the_head_contract_rows() {
     ) -> Appended = Oneiron::append_blob_version;
 
     let _: fn(&Oneiron, String, u64) -> ReadBack = Oneiron::read_blob_version;
+}
+
+/// Every read verb answers with its rows and the read's receipt; no read
+/// verb returns bare rows.
+#[test]
+fn read_verbs_return_their_receipt() {
+    type Read<T> = Result<T, OneironError>;
+
+    let _: fn(&Oneiron, String) -> Read<EntityRead> = Oneiron::get_entity;
+    let _: fn(&Oneiron, Vec<String>) -> Read<EntityViews> = Oneiron::hydrate;
+    let _: fn(&Oneiron, ClaimListFilter) -> Read<ClaimViews> = Oneiron::claim_list;
+    let _: fn(&Oneiron, String) -> Read<ClaimViews> = Oneiron::claim_history;
+    let _: fn(&Oneiron, String, u32) -> Read<LexicalHits> = Oneiron::query_bm25;
+    let _: fn(&Oneiron, String, NeighborOpts) -> Read<NeighborHits> = Oneiron::neighbors;
+    let _: fn(&EntityRead) -> &ReadReceipt = |read| &read.narrowing;
 }
 
 #[test]

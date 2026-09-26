@@ -15,7 +15,7 @@ pub(super) fn park_open_conflict(
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
-    let id = conflict_open_marker_id(conflict, attempt);
+    let id = conflict_open_marker_id(conflict, attempt)?;
     let refs: std::collections::BTreeSet<_> = members
         .iter()
         .flat_map(|c| c.evidence_turn_refs.iter().copied())

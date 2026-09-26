@@ -3,6 +3,7 @@ use super::super::partition::{
     ConsolidationPartitionPlan, decode_partition_payload, encode_partition_payload,
 };
 use super::super::watermark::{WorkingSetTurn, decode_turn_body};
+use crate::claim::{PointRead, ReadRow, ScopedReadReceipt};
 use crate::dreamer_runner::{
     DreamerAttemptStatus, dreamer_extraction_role_admissible, dreamer_turn_role,
 };
@@ -10,16 +11,19 @@ use crate::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
 use std::collections::BTreeSet;
 
+/// The attempt input, refreshed for a selection retry. A refresh reads the
+/// partition again as the Dreamer actor and returns that read's receipt; an
+/// input that is not refreshed reads nothing and returns `None`.
 pub(super) fn refreshed_input(
     vault: &Vault,
     actor: WriteActor,
     status: &DreamerAttemptStatus,
     scope: Option<&Scope>,
-) -> Result<rmpv::Value> {
+) -> Result<(rmpv::Value, Option<ScopedReadReceipt>)> {
     // Exact queued/caller grants are never widened by retry scheduling. They
     // can release by age or policy, but cannot read newly unlisted documents.
     if status.attempt.retry_of.is_none() || scope.is_some() {
-        return Ok(status.payload.input.clone());
+        return Ok((status.payload.input.clone(), None));
     }
     let (partition, original, watermark) = decode_partition_payload(&status.payload.input)?;
     let read = vault.scoped_read(
@@ -30,22 +34,35 @@ pub(super) fn refreshed_input(
         .ok_or_else(|| super::invalid_consolidation("invalid retry actor"))?,
     );
     let parent = read
-        .get(&partition.conversation_ref)?
+        .read(&[PointRead::id(partition.conversation_ref)], None)?
+        .single();
+    let mut receipt = parent.receipt;
+    let parent = parent
         .value
+        .and_then(|row| row.body)
         .ok_or(crate::Error::EntityNotFound)?;
     let parent = decode_turn_body(&parent);
     let original: BTreeSet<EntityId> = original.into_iter().collect();
     let mut turns = Vec::new();
-    for id in vault.sources(
-        &partition.conversation_ref,
-        crate::EdgeKind::ChildOf,
-        Some(crate::registry::ENTITY_TYPE_TURN),
-    )? {
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = read.get_entity_parts_with_receipt(&id, None)?;
-        let Some((_, learned_at, bytes)) = value else {
+    let children: Vec<_> = vault
+        .sources(
+            &partition.conversation_ref,
+            crate::EdgeKind::ChildOf,
+            Some(crate::registry::ENTITY_TYPE_TURN),
+        )?
+        .into_iter()
+        .map(PointRead::id)
+        .collect();
+    let children = read.read(&children, None)?;
+    receipt.restrict_with(&children.receipt);
+    for row in children.value.into_iter().flatten() {
+        let ReadRow {
+            id,
+            learned_at,
+            body: Some(bytes),
+            ..
+        } = row
+        else {
             continue;
         };
         let facts = decode_turn_body(&bytes);
@@ -82,9 +99,12 @@ pub(super) fn refreshed_input(
             "selection retry source no longer admitted",
         ));
     }
-    Ok(encode_partition_payload(&ConsolidationPartitionPlan {
-        key: partition,
-        turns,
-        watermark_last_learned_at: watermark,
-    }))
+    Ok((
+        encode_partition_payload(&ConsolidationPartitionPlan {
+            key: partition,
+            turns,
+            watermark_last_learned_at: watermark,
+        }),
+        Some(receipt),
+    ))
 }

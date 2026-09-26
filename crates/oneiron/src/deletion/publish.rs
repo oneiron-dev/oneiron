@@ -23,7 +23,7 @@ use super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::tombstone::TombstoneValueV2;
 // The `pt:` withdrawal helper is part of the sync persistence transaction.
 #[cfg(feature = "sync")]
-use super::tombstone::pending_tombstone_key;
+use super::tombstone::{PENDING_TOMBSTONE, PendingTombstoneKey};
 #[cfg(feature = "sync")]
 use crate::error::SyncError;
 
@@ -350,14 +350,15 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = pending_tombstone_key(window_label, id);
-        let staged_by_this_delete = self
-            .store
-            .sync_state
-            .get(&*wtxn, &key)?
-            .is_some_and(|existing| *existing == value.encode());
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        let staged_by_this_delete = PENDING_TOMBSTONE
+            .get(&self.store, &*wtxn, &key)?
+            .is_some_and(|existing| existing == value.encode());
         if staged_by_this_delete {
-            self.store.sync_state.delete(wtxn, &key)?;
+            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
         }
         Ok(())
     }
@@ -489,14 +490,21 @@ impl Vault {
             // scrub). The `u:w:` rows the snapshot just subsumed are
             // active payload carriers too.
             crate::sync::queue::scrub_window_updates_in_txn(self, wtxn, window_key.as_str())?;
-            for update_key in persistence.scrubbed_update_keys {
-                self.store.sync_state.delete(wtxn, update_key)?;
-            }
+            crate::sync::window::prune_subsumed_window_updates_in_txn(
+                self,
+                wtxn,
+                window_key,
+                persistence.scrubbed_update_keys,
+            )?;
             // Carriers 13–14: this window's sync state is no longer a
             // faithful delta source — mark it for a full per-window
             // resync on the next connect.
-            let fr_key = format!("fr:w:{window_key}");
-            self.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+            crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER.put(
+                &self.store,
+                wtxn,
+                &window_key.as_str().to_owned(),
+                &[1_u8],
+            )?;
         }
         if let Some(update) = persistence.delete_update {
             // The live-doc path suppresses Observer A for the tombstone

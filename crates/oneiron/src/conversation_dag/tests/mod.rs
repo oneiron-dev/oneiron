@@ -21,7 +21,7 @@ fn dag_test_policy_keeps_the_default_manifest() {
         .unwrap();
     assert_eq!(
         &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-        crate::gate::default_policy_manifest()
+        crate::gate::default_policy_manifest().unwrap()
     );
 }
 
@@ -337,11 +337,7 @@ fn corrupted_cycle_cardinality_and_canonical_marks_fail_closed() {
         .id;
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::CANONICAL, &child),
-                root.as_bytes(),
-            )?;
+            super::graph::CANONICAL.put(&vault.store, txn, &child, &root)?;
             Ok(())
         })
         .unwrap();
@@ -442,11 +438,7 @@ fn migration_backfills_forward_only_session_membership_and_rejects_bad_marker() 
     assert_eq!(vault.head(&conv).unwrap(), Some(asking));
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.put(
-                txn,
-                &super::graph::key(super::graph::MIGRATED, &conv),
-                &[2],
-            )?;
+            super::graph::MIGRATED.put(&vault.store, txn, &conv, &[2])?;
             Ok(())
         })
         .unwrap();

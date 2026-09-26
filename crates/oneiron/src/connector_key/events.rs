@@ -12,6 +12,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -23,7 +24,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
 const PREDICATE: &str = "agent.connector_subscription";
+/// Hash domain separator for a wake decision's identity, matching the
+/// [`WAKE_DECISION`] table's declared prefix bytes (kept as its own constant
+/// because it also seeds the hash preimage below, not only the storage key).
 const DECISION_PREFIX: &[u8] = b"connector.wake.v1:";
+/// vault_meta idempotent wake-decision row: hash32 (of subscription id +
+/// event id, domain-separated by [`DECISION_PREFIX`]) -> the decision.
+const WAKE_DECISION: SideTable<[u8; 32], ConnectorWakeDecision, LegacyJson> =
+    SideTable::new(&side_table::CONNECTOR_WAKE_DECISION);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorEventFilter {
@@ -275,10 +283,8 @@ impl Vault {
                 hash.update(&(event.event_id.len() as u64).to_be_bytes());
                 hash.update(event.event_id.as_bytes());
                 let identity = hash.finalize();
-                let key = [DECISION_PREFIX, identity.as_bytes()].concat();
-                if let Some(raw) = self.store.vault_meta.get(&*txn, &key)? {
-                    let old: ConnectorWakeDecision =
-                        serde_json::from_slice(&raw).map_err(|_| invalid())?;
+                let identity_key = *identity.as_bytes();
+                if let Some(old) = WAKE_DECISION.get(&self.store, &*txn, &identity_key)? {
                     if old.event_hash != event_hash
                         || old.subscription != id
                         || old.agent != row.agent
@@ -359,11 +365,7 @@ impl Vault {
                     redacted_at: None,
                 };
                 self.store.append_gate_decision_in_txn(txn, &receipt)?;
-                self.store.vault_meta.put(
-                    txn,
-                    &key,
-                    &serde_json::to_vec(&decision).map_err(|_| invalid())?,
-                )?;
+                WAKE_DECISION.put(&self.store, txn, &identity_key, &decision)?;
                 decisions.push(decision);
             }
             Ok(decisions)

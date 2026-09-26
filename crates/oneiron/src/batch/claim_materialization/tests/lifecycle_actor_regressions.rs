@@ -39,11 +39,9 @@ fn authored_local_claim(vault: &Vault, actor: WriteActor, id: EntityId) -> Resul
 
 fn binding_digest(vault: &Vault, id: EntityId) -> Result<Option<Vec<u8>>> {
     let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .vault_meta
-        .get(&txn, &authored_key(&id))?
-        .map(|bytes| bytes.to_vec()))
+    Ok(AUTHORED
+        .get(&vault.store, &txn, &id)?
+        .map(|digest| digest.to_vec()))
 }
 
 fn assert_current_actor(vault: &Vault, id: EntityId, actor: WriteActor) -> Result<()> {
@@ -57,7 +55,7 @@ fn assert_current_actor(vault: &Vault, id: EntityId, actor: WriteActor) -> Resul
 
 fn actor_only_policy(vault: &Vault, actor: WriteActor) -> Result<()> {
     let mut manifest =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
             .expect("manifest");
     let Value::Map(entries) = &mut manifest else {
         panic!("manifest map");
@@ -381,7 +379,7 @@ fn unbound_source_less_claims_keep_default_local_lifecycle_contract() -> Result<
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         vault.put_claim(&id, &body, TimeRange { start: 10, end: 99 }, 10)?;
         assert!(binding_digest(&vault, id)?.is_none());
     }

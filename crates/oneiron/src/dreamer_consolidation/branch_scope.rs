@@ -5,7 +5,13 @@ use super::partition::{ConsolidationPartitionPlan, encode_partition_payload};
 use super::support::invalid_consolidation;
 use crate::Result;
 use crate::llm::Scope;
+use crate::side_table::{self, LegacyJson, SideTable};
 use rmpv::Value;
+
+/// Pinned effective scope attenuation bound to one Dreamer attempt, inherited by retry
+/// successors. Key: id16 (the attempt id).
+const SELECTION_SCOPE: SideTable<[u8; 16], Option<Scope>, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_SELECTION_SCOPE);
 
 pub(super) const KEY_BRANCH_SCOPE: &str = "branch_scope";
 
@@ -142,14 +148,6 @@ fn stored_parent_scope(
     Ok(bound)
 }
 
-fn execution_scope_key(attempt: crate::attempt_queue::AttemptId) -> Vec<u8> {
-    [
-        b"dreamer:selection_scope:v1:".as_slice(),
-        attempt.as_bytes(),
-    ]
-    .concat()
-}
-
 /// Persist a caller's attenuation before work can produce a scheduled retry.
 /// Queue payloads stay immutable; this private bound follows the retry chain.
 pub(super) fn pin_execution_scope(
@@ -158,21 +156,11 @@ pub(super) fn pin_execution_scope(
     requested: Option<&Scope>,
 ) -> Result<Option<Scope>> {
     vault.with_write_txn(|txn| {
-        let key = execution_scope_key(attempt);
-        let stored: Option<Scope> = vault
-            .store
-            .vault_meta
-            .get(txn, &key)?
-            .map(|raw| {
-                serde_json::from_slice(&raw)
-                    .map_err(|_| invalid_consolidation("invalid execution scope"))
-            })
-            .transpose()?
+        let stored = SELECTION_SCOPE
+            .get(&vault.store, txn, attempt.as_bytes())?
             .flatten();
         let effective = effective_scope(stored, requested)?;
-        let bytes = serde_json::to_vec(&effective)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        vault.store.vault_meta.put(txn, &key, &bytes)?;
+        SELECTION_SCOPE.put(&vault.store, txn, attempt.as_bytes(), &effective)?;
         Ok(effective)
     })
 }
@@ -183,19 +171,8 @@ pub(crate) fn inherit_retry_scope_in_txn(
     source: crate::attempt_queue::AttemptId,
     successor: crate::attempt_queue::AttemptId,
 ) -> Result<()> {
-    if let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(txn, &execution_scope_key(source))?
-    {
-        let scope: Option<Scope> = serde_json::from_slice(&raw)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        let bytes = serde_json::to_vec(&scope)
-            .map_err(|_| invalid_consolidation("invalid execution scope"))?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &execution_scope_key(successor), &bytes)?;
+    if let Some(scope) = SELECTION_SCOPE.get(&vault.store, txn, source.as_bytes())? {
+        SELECTION_SCOPE.put(&vault.store, txn, successor.as_bytes(), &scope)?;
     }
     Ok(())
 }

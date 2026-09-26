@@ -8,34 +8,61 @@ use heed::{RoTxn, RwTxn};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_COUNTERPARTY_CONTACT, ENTITY_TYPE_RELATIONSHIP};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 
-use super::codec_core::{decode_consent_event, decode_sample};
 use super::codec_records::decode_print_record;
 use super::math_keys::{
-    corrupt_voice_row, cosine_similarity, invalid_voice, l2_normalize, require_non_empty,
-    voice_active_pointer_key, voice_consent_key, voice_consent_prefix, voice_cosine_in_space,
-    voice_print_key, voice_sample_key, voice_subject_prefix,
+    corrupt_voice_row, cosine_similarity, digest16, invalid_voice, l2_normalize, require_non_empty,
+    voice_cosine_in_space,
 };
 use super::types::{
-    VOICE_CALIBRATION_MIN_LANGUAGES, VOICE_MAX_MATCH_SEGMENTS, VOICE_PRINT_KEY_PREFIX,
-    VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
-    VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintCalibration, VoicePrintRecordV1,
-    VoiceSegmentEmbeddingInput,
+    VOICE_CALIBRATION_MIN_LANGUAGES, VOICE_MAX_MATCH_SEGMENTS, VoiceConsentEventV1,
+    VoiceConsentState, VoiceEnrollmentOrigin, VoiceEnrollmentRequest, VoiceEnrollmentSampleV1,
+    VoiceMatchRequest, VoicePrintCalibration, VoicePrintRecordV1, VoiceSegmentEmbeddingInput,
+    VoiceSessionRosterV1,
 };
 use crate::error::RegistryError;
 
-pub(super) fn collect_prefix_rows(
+/// Voice consent decision event. Key: subject id16 + digest16(event id).
+pub(super) const CONSENT: SideTable<(EntityId, [u8; 16]), VoiceConsentEventV1, Raw> =
+    SideTable::new(&side_table::VOICE_IDENTITY_CONSENT);
+
+/// Active-space pointer row: subject -> active space id text.
+///
+/// Shares its declared prefix with [`PRINT_RECORD`]: the pointer row's key is
+/// exactly the subject id (no digest suffix), the print row's key is the
+/// subject id plus a 16-byte space digest, and the two shapes cannot collide.
+/// They also cannot be scanned through one typed lens at once, so
+/// [`delete_voice_biometrics_in_txn`] and [`active_print_subjects`] read both
+/// shapes undecoded through [`print_family_rows`].
+pub(super) const PRINT_POINTER: SideTable<EntityId, String, Raw> =
+    SideTable::new(&side_table::VOICE_IDENTITY_PRINT);
+
+/// Print row: one centroid for one (subject, embedding space). Key: subject
+/// id16 + digest16(space id).
+pub(super) const PRINT_RECORD: SideTable<(EntityId, [u8; 16]), VoicePrintRecordV1, Raw> =
+    SideTable::new(&side_table::VOICE_IDENTITY_PRINT);
+
+/// Enrollment sample row. Key: digest16(subject id16 + sample id).
+pub(super) const SAMPLE: SideTable<[u8; 16], VoiceEnrollmentSampleV1, Raw> =
+    SideTable::new(&side_table::VOICE_IDENTITY_SAMPLE);
+
+/// Resolved session speaker roster. Key: digest16(voice session ref).
+pub(super) const ROSTER: SideTable<[u8; 16], VoiceSessionRosterV1, Raw> =
+    SideTable::new(&side_table::VOICE_IDENTITY_ROSTER);
+
+/// The print-family rows under `key_prefix`, undecoded (pointer and print rows
+/// share the declared prefix; see [`PRINT_POINTER`]). Keys are the bytes after
+/// the table prefix.
+pub(super) fn print_family_rows(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    prefix: &[u8],
+    key_prefix: &[u8],
 ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
-    let mut rows = Vec::new();
-    for row in store.vault_meta.prefix_iter(rtxn, prefix)? {
-        let (key, value) = row?;
-        rows.push((key.into_owned(), value.into_owned()));
-    }
-    Ok(rows)
+    PRINT_RECORD
+        .iter_raw_from(store, rtxn, key_prefix)?
+        .collect()
 }
 
 pub(super) fn read_consent_event(
@@ -44,13 +71,8 @@ pub(super) fn read_consent_event(
     subject: &EntityId,
     event_id: &str,
 ) -> Result<Option<VoiceConsentEventV1>> {
-    let Some(bytes) = store
-        .vault_meta
-        .get(rtxn, &voice_consent_key(subject, event_id))?
-    else {
-        return Ok(None);
-    };
-    decode_consent_event(&bytes).map(Some)
+    let digest = digest16(b"voice_identity.consent", event_id.as_bytes());
+    CONSENT.get(store, rtxn, &(*subject, digest))
 }
 
 fn read_consent_events(
@@ -58,10 +80,11 @@ fn read_consent_events(
     rtxn: &RoTxn<'_>,
     subject: &EntityId,
 ) -> Result<Vec<VoiceConsentEventV1>> {
-    collect_prefix_rows(store, rtxn, &voice_consent_prefix(subject))?
-        .iter()
-        .map(|(_, bytes)| decode_consent_event(bytes))
-        .collect()
+    Ok(CONSENT
+        .scan_from(store, rtxn, subject.as_bytes())?
+        .into_iter()
+        .map(|(_, event)| event)
+        .collect())
 }
 
 /// Reads the subject's ACTIVE print row through the active-space pointer.
@@ -70,20 +93,14 @@ pub(super) fn read_active_print(
     rtxn: &RoTxn<'_>,
     subject: &EntityId,
 ) -> Result<Option<VoicePrintRecordV1>> {
-    let Some(space_id) = store
-        .vault_meta
-        .get(rtxn, &voice_active_pointer_key(subject))?
-    else {
+    let Some(space_id) = PRINT_POINTER.get(store, rtxn, subject)? else {
         return Ok(None);
     };
-    let space_id = std::str::from_utf8(&space_id).map_err(|_| corrupt_voice_row())?;
-    let Some(bytes) = store
-        .vault_meta
-        .get(rtxn, &voice_print_key(subject, space_id))?
-    else {
+    let digest = digest16(b"voice_identity.space", space_id.as_bytes());
+    let Some(record) = PRINT_RECORD.get(store, rtxn, &(*subject, digest))? else {
         return Err(corrupt_voice_row());
     };
-    decode_print_record(&bytes).map(Some)
+    Ok(Some(record))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -93,25 +110,34 @@ pub(super) fn read_sample(
     subject: &EntityId,
     sample_id: &str,
 ) -> Result<Option<VoiceEnrollmentSampleV1>> {
-    let Some(bytes) = store
-        .vault_meta
-        .get(rtxn, &voice_sample_key(subject, sample_id))?
-    else {
-        return Ok(None);
-    };
-    decode_sample(&bytes).map(Some)
+    let digest = sample_digest(subject, sample_id);
+    SAMPLE.get(store, rtxn, &digest)
+}
+
+/// The digest half of a sample row's key: subject id and sample id, hashed
+/// together so the key never carries the sample id's raw text.
+pub(super) fn sample_digest(subject: &EntityId, sample_id: &str) -> [u8; 16] {
+    let mut scoped = Vec::with_capacity(ENTITY_ID_LEN + sample_id.len());
+    scoped.extend_from_slice(subject.as_bytes());
+    scoped.extend_from_slice(sample_id.as_bytes());
+    digest16(b"voice_identity.sample", &scoped)
 }
 
 /// Every subject that currently has an active-space pointer, in key order.
+///
+/// Scans the WHOLE print-family prefix, which mixes pointer rows (subject id
+/// only) and print rows (subject id + space digest); a length check keeps
+/// only the pointer shape, so this reads undecoded rows rather than a
+/// [`PRINT_POINTER`] scan (which would fail to decode the longer print rows
+/// instead of skipping them).
 pub(super) fn active_print_subjects(store: &Store, rtxn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
     let mut subjects = Vec::new();
-    for (key, _) in collect_prefix_rows(store, rtxn, VOICE_PRINT_KEY_PREFIX)? {
-        if key.len() != VOICE_PRINT_KEY_PREFIX.len() + ENTITY_ID_LEN {
+    for (key, _) in print_family_rows(store, rtxn, &[])? {
+        if key.len() != ENTITY_ID_LEN {
             continue;
         }
-        let raw: [u8; ENTITY_ID_LEN] = key[VOICE_PRINT_KEY_PREFIX.len()..]
-            .try_into()
-            .map_err(|_| corrupt_voice_row())?;
+        let raw: [u8; ENTITY_ID_LEN] =
+            key.as_slice().try_into().map_err(|_| corrupt_voice_row())?;
         subjects.push(EntityId::from_bytes(raw).map_err(|_| corrupt_voice_row())?);
     }
     Ok(subjects)
@@ -142,48 +168,54 @@ impl VoiceDeletionTally {
 /// exactly the same rows: every print row of the subject (each holding one
 /// centroid), every sample/vector row those prints reference, and the
 /// active-space pointer.
+///
+/// The read is an undecoded scan over the shared pointer/print-record prefix
+/// for the same reason [`active_print_subjects`] reads one (see
+/// [`PRINT_POINTER`]'s doc comment); the print-row deletes remove the EXACT
+/// keys this scan just observed rather than re-deriving them from the
+/// record, so a stored key that ever drifted from its record's own space id
+/// would still be removed.
 pub(super) fn delete_voice_biometrics_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     subject: &EntityId,
 ) -> Result<VoiceDeletionTally> {
-    let rows = collect_prefix_rows(store, wtxn, &voice_subject_prefix(subject))?;
-    let pointer_key = voice_active_pointer_key(subject);
+    let rows = print_family_rows(store, wtxn, subject.as_bytes())?;
 
-    let mut sample_keys: BTreeSet<Vec<u8>> = BTreeSet::new();
-    let mut print_keys: Vec<Vec<u8>> = Vec::new();
+    let mut sample_digests: BTreeSet<[u8; 16]> = BTreeSet::new();
+    let mut print_keys: Vec<(EntityId, [u8; 16])> = Vec::new();
     let mut tally = VoiceDeletionTally {
         owner_ref_rows: super::ref_bank::delete_owner_refs(store, wtxn, subject)?,
         ..VoiceDeletionTally::default()
     };
 
     for (key, value) in rows {
-        if key == pointer_key {
+        if key.as_slice() == subject.as_bytes().as_slice() {
             tally.active_pointer = true;
             continue;
         }
         let record = decode_print_record(&value)?;
         for sample_id in &record.sample_ids {
-            sample_keys.insert(voice_sample_key(subject, sample_id));
+            sample_digests.insert(sample_digest(subject, sample_id));
         }
         // One print row holds exactly one centroid vector.
         tally.vector_rows = tally.vector_rows.saturating_add(1);
-        print_keys.push(key);
+        print_keys.push(SideKey::decode_key(&key).ok_or_else(corrupt_voice_row)?);
     }
 
     for key in print_keys {
-        if store.vault_meta.delete(wtxn, &key)? {
+        if PRINT_RECORD.delete(store, wtxn, &key)? {
             tally.print_rows = tally.print_rows.saturating_add(1);
         }
     }
-    for key in sample_keys {
-        if store.vault_meta.delete(wtxn, &key)? {
+    for digest in sample_digests {
+        if SAMPLE.delete(store, wtxn, &digest)? {
             tally.sample_rows = tally.sample_rows.saturating_add(1);
             tally.vector_rows = tally.vector_rows.saturating_add(1);
         }
     }
     if tally.active_pointer {
-        store.vault_meta.delete(wtxn, &pointer_key)?;
+        PRINT_POINTER.delete(store, wtxn, subject)?;
     }
     Ok(tally)
 }

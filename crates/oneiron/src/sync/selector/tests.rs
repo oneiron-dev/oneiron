@@ -97,7 +97,8 @@ fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = world;
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
 }
@@ -117,7 +118,8 @@ fn public_claim_blob() -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
@@ -140,7 +142,8 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
     claim.source = Some(ClaimSource::ToolOutput);
     // Explicit `sensitivity: public` (band 0). The ONE-1645 provenance floor
@@ -3612,19 +3615,19 @@ use crate::authority::{
 };
 use crate::error::{RegistryError, SyncError};
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, encode_federation_pact_scope,
+    FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
+    encode_federation_pact_scope,
 };
 
 fn all_direction_scope() -> FederationDirectionScope {
     FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     }
 }
 
-fn selector_pact_scope(facets: FederationScopeFacets) -> FederationPactScope {
+fn selector_pact_scope(facets: ScopeAxis<ScopeId>) -> FederationPactScope {
     let mut half = all_direction_scope();
     half.facets = facets;
     FederationPactScope {
@@ -3680,7 +3683,7 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
     let peer_vault_id = genesis_vault_id(&authority_genesis_entry(0x62)).unwrap();
     let pact_id = [0x63; 32];
     let nonce = [0x64; 16];
-    let scope = selector_pact_scope(FederationScopeFacets::All);
+    let scope = selector_pact_scope(ScopeAxis::All);
     let digest = federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
     let connect_gesture = sign_federation_pact_gesture(
         FederationLifecycleKind::Connect,
@@ -3744,7 +3747,7 @@ fn seed_pact_for_grant(vault: &Vault, grant_id: EntityId, status: PactSeedStatus
         )
     };
     let repact = |seq: u64, facet_byte: u8, nonce_byte: u8| {
-        let scope = selector_pact_scope(FederationScopeFacets::Some(vec![entity_id(facet_byte)]));
+        let scope = selector_pact_scope(ScopeAxis::from_iter([entity_id(facet_byte)].map(ScopeId)));
         let nonce = [nonce_byte; 16];
         let digest =
             federation_scope_digest(&nonce, &encode_federation_pact_scope(&scope).unwrap());
@@ -4108,14 +4111,14 @@ fn selector_request_decodes_wire_semantics() {
     // Test each empty axis independently: the other axis remains populated.
     for scope in [
         FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::All,
         },
         FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::Bottom,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::Bottom,
         },
     ] {
         let (_scope_dir, scope_vault, _) = test_vault_with_grant(member);
@@ -4131,7 +4134,7 @@ fn selector_request_decodes_wire_semantics() {
             1,
         )
         .unwrap();
-        let empty_facets = matches!(&scope.facets, FederationScopeFacets::Bottom);
+        let empty_facets = matches!(&scope.facets, ScopeAxis::Bottom);
         seed_scoped_pacts_for_grant(&scope_vault, grant, &[scope]);
         authorize_sync_selector(&scope_vault, test_selector_scope(), &silent).unwrap();
         let selector = SyncSelector::new(
@@ -4190,9 +4193,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id()]),
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::from_iter([world_a.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     let selector = SyncSelector::new(
@@ -4211,9 +4214,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -4253,9 +4256,9 @@ fn selector_within_pact_ceiling_authorizes() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
-            facets: FederationScopeFacets::All,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::from_iter([world_a.entity_id(), world_b.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         }],
     );
     let selector = SyncSelector::new(
@@ -4285,9 +4288,9 @@ fn selector_wider_than_pact_ceiling_on_any_axis_denies() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Worlds(vec![world_a.entity_id(), world_b.entity_id()]),
-            facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-            bands: FederationScopeBands::Some(vec![SelectorRange::Semantic, SelectorRange::Core]),
+            worlds: ScopeAxis::from_iter([world_a.entity_id(), world_b.entity_id()].map(ScopeId)),
+            facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+            bands: ScopeAxis::from_iter([SelectorRange::Semantic, SelectorRange::Core]),
         }],
     );
     for (name, world, facets, bands) in [
@@ -4336,14 +4339,14 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         grant_id,
         &[
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_a]),
-                bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_a].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
             },
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_b]),
-                bands: FederationScopeBands::Some(vec![SelectorRange::Core]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_b].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Core]),
             },
         ],
     );
@@ -4353,12 +4356,12 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
         ceiling.facets,
-        FederationScopeFacets::Bottom,
+        ScopeAxis::Bottom,
         "disjoint facet narrows must meet at ⊥, not widen"
     );
     assert_eq!(
         ceiling.bands,
-        FederationScopeBands::Bottom,
+        ScopeAxis::Bottom,
         "disjoint band narrows must meet at ⊥, not widen"
     );
 
@@ -4380,7 +4383,7 @@ fn disjoint_concurrent_narrows_meet_at_bottom_and_deny_content() {
     let silent = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     assert_eq!(
         resolve_selector_position(&silent, &ceiling).unwrap().facets,
-        FederationScopeFacets::Bottom
+        ScopeAxis::Bottom
     );
     authorize_sync_selector(&vault, test_selector_scope(), &silent)
         .expect("an unnarrowed request sits within every ceiling");
@@ -4421,9 +4424,9 @@ fn pact_ceiling_binds_the_export_not_only_the_door() {
     let claim_named = entity_id(0x66);
     let window_key = WindowKey::new("2026-12");
     let ceiling = FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::Some(vec![facet_named]),
-        bands: FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::from_iter([facet_named].map(ScopeId)),
+        bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
     };
     for (name, facets, bands) in [
         ("both axes unnarrowed", Vec::new(), Vec::new()),
@@ -4473,9 +4476,9 @@ fn bottom_ceiling_exports_nothing_to_an_unnarrowed_request() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::All,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::All,
         }],
     );
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
@@ -4503,14 +4506,14 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         grant_id,
         &[
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_a, facet_b]),
-                bands: FederationScopeBands::All,
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_a, facet_b].map(ScopeId)),
+                bands: ScopeAxis::All,
             },
             FederationDirectionScope {
-                worlds: FederationScopeWorlds::All,
-                facets: FederationScopeFacets::Some(vec![facet_b, facet_c]),
-                bands: FederationScopeBands::All,
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet_b, facet_c].map(ScopeId)),
+                bands: ScopeAxis::All,
             },
         ],
     );
@@ -4520,7 +4523,7 @@ fn multiple_active_pacts_intersect_into_one_ceiling() {
         effective_scope_for_grant(&fold, &grant_id).expect("a pact-bound grant has a ceiling");
     assert_eq!(
         ceiling.facets,
-        FederationScopeFacets::Some(vec![facet_b]),
+        ScopeAxis::from_iter([facet_b].map(ScopeId)),
         "the ceiling is the meet of every bound pact, not one arbitrary pact"
     );
 
@@ -4820,9 +4823,9 @@ fn delegate_expiry_is_the_last_arm_of_the_door() {
         &vault,
         grant_id,
         &[FederationDirectionScope {
-            worlds: FederationScopeWorlds::Base,
-            facets: FederationScopeFacets::Bottom,
-            bands: FederationScopeBands::Bottom,
+            worlds: base_world_axis(),
+            facets: ScopeAxis::Bottom,
+            bands: ScopeAxis::Bottom,
         }],
     );
     let wide = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
@@ -4934,7 +4937,8 @@ fn coreference_export(pacted: bool) -> CoreferenceExport {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )
@@ -5369,7 +5373,7 @@ fn document_peer_import_rechecks_pact_activation_ceiling_and_expiry_in_txn() {
         vault.put_edge(&id, EdgeKind::FacetOf, &facet, 1.0).unwrap();
         if active {
             let mut ceiling = all_direction_scope();
-            ceiling.facets = FederationScopeFacets::Some(vec![facet]);
+            ceiling.facets = ScopeAxis::from_iter([facet].map(ScopeId));
             seed_scoped_pacts_for_grant(&vault, grant_id, &[ceiling]);
         } else {
             seed_pact_for_grant(&vault, grant_id, PactSeedStatus::Disconnected);

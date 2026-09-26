@@ -12,9 +12,10 @@ use super::super::rendezvous::{
 };
 use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
-    DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
+    DeleteReason, HARD_DELETE_MARKER, TombstoneValueV2, window_label_from_timestamp,
 };
 use super::DeleteEntityOutcome;
+use crate::side_table::HexId;
 
 impl Vault {
     pub(super) fn delete_entity_without_header(
@@ -78,7 +79,7 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
-        let marker_key = local_hard_delete_key(id);
+        let marker_key = HexId(*id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
         // probe above gated the tombstone publish; THIS probe gates the
@@ -90,11 +91,14 @@ impl Vault {
         // `apply_replayed_tombstone` nothing-local branch.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
             if reason.active_store_hard_purge_v1()
-                && self.store.sync_state.get(&wtxn, &marker_key)?.is_none()
+                && !HARD_DELETE_MARKER.contains(&self.store, &wtxn, &marker_key)?
             {
-                self.store
-                    .sync_state
-                    .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+                HARD_DELETE_MARKER.put(
+                    &self.store,
+                    &mut wtxn,
+                    &marker_key,
+                    &tombstone.encode().to_vec(),
+                )?;
             }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
@@ -129,9 +133,12 @@ impl Vault {
             // state; without the local marker a hostile tombstone removal
             // + re-put would resurrect this id through the
             // materialization gates.
-            self.store
-                .sync_state
-                .put(&mut wtxn, &marker_key, &tombstone.encode())?;
+            HARD_DELETE_MARKER.put(
+                &self.store,
+                &mut wtxn,
+                &marker_key,
+                &tombstone.encode().to_vec(),
+            )?;
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;

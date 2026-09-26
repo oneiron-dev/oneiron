@@ -16,17 +16,12 @@ use crate::affect::Vad;
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::claim::encode_claim_body;
 use crate::edge::EdgeKind;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::COMM_PROJECTED_CLAIM;
 use crate::error::Error;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use crate::temporal::TimeRange;
 use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
-
-/// Domain separator for projector-derived `comm.*` CLAIM ids. A deterministic
-/// projector derives its row ids from its inputs, so replaying one source event
-/// — or projecting it independently on two devices — converges on ONE physical
-/// row instead of racing two random ids into the same conflict key.
-const PROJECTED_COMM_CLAIM_ID_DOMAIN: &[u8] = b"oneiron.comm.projected_claim.v1\0";
 
 /// Canonical conflict key for one projected `comm.*` value: the tuple that
 /// makes two claims the SAME standing-state slot. Length-prefixed so
@@ -92,27 +87,25 @@ pub(super) fn projected_comm_conflict_key(value: &CommClaimValue) -> Vec<u8> {
 }
 
 /// Derives the deterministic CLAIM id for one projector-created `comm.*` claim
-/// from `(source event, predicate, conflict key)`. Version/variant nibbles are
-/// stamped exactly as [`crate::outbound::connector_actor_id`] so the result is
-/// a well-formed v7-shaped id.
+/// from `(source event, predicate, conflict key)`. A deterministic projector
+/// derives its row ids from its inputs, so replaying one source event — or
+/// projecting it independently on two devices — converges on ONE physical row
+/// instead of racing two random ids into the same conflict key.
 pub(super) fn projected_comm_claim_id(
     source_event_id: EntityId,
     value: &CommClaimValue,
 ) -> CommResult<EntityId> {
-    let predicate = value.claim_body().predicate;
+    let predicate = value.claim_body()?.predicate;
     let conflict_key = projected_comm_conflict_key(value);
-    let mut hash = blake3::Hasher::new();
-    hash.update(PROJECTED_COMM_CLAIM_ID_DOMAIN);
-    hash.update(source_event_id.as_bytes());
-    hash.update(&(predicate.len() as u64).to_le_bytes());
-    hash.update(predicate.as_bytes());
-    hash.update(&(conflict_key.len() as u64).to_le_bytes());
-    hash.update(&conflict_key);
-    let mut bytes = [0_u8; ENTITY_ID_LEN];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..ENTITY_ID_LEN]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes).map_err(CommError::from)
+    EntityId::derive(
+        COMM_PROJECTED_CLAIM,
+        &[
+            source_event_id.as_bytes(),
+            predicate.as_bytes(),
+            &conflict_key,
+        ],
+    )
+    .map_err(CommError::from)
 }
 
 // `CommClaimValue::party_ref` sits beside its only callers, the projected
@@ -161,7 +154,7 @@ pub(super) fn put_projected_comm_claim_in_txn(
 ) -> CommResult<(EntityId, bool)> {
     let id = projected_comm_claim_id(source_event_id, value)?;
     if let Some(raw) = vault.store.port_entity_record(&*wtxn, &id)? {
-        let projected_body = encode_claim_body(&value.claim_body())?;
+        let projected_body = encode_claim_body(&value.claim_body()?)?;
         if raw.entity_type != ENTITY_TYPE_CLAIM
             || raw.body != projected_body[..]
             || !vault
@@ -213,7 +206,7 @@ fn put_comm_claim_with_id_in_txn_inner(
     engine_owned: bool,
 ) -> CommResult<EntityId> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let body = value.claim_body();
+    let body = value.claim_body()?;
     let data = encode_claim_body(&body)?;
     let subject = value.party_ref();
     // A comm.* claim's subject must be a PERSON party. A replicated event can

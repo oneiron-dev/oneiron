@@ -20,7 +20,7 @@ fn imported_owner_materialization_retracts_and_supersedes_without_actor_loss() -
     }
     let permit = |actor: EntityId, sources: &[ClaimSource]| -> Result<()> {
         let mut manifest =
-            rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            rmpv::decode::read_value(&mut crate::gate::default_policy_manifest()?.as_slice())
                 .expect("manifest");
         let Value::Map(entries) = &mut manifest else {
             panic!("manifest map");

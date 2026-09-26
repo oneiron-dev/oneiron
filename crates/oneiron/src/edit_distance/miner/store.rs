@@ -2,10 +2,7 @@
 
 use serde::Serialize;
 
-use super::config::{
-    MINER_WATERMARK_KEY, ROW_VERSION, SKILL_EDIT_KEY_PREFIX, SKILL_EDIT_ROW_LABEL,
-    WATERMARK_ROW_LABEL,
-};
+use super::config::{ROW_VERSION, SKILL_EDIT_ROW_LABEL, WATERMARK_ROW_LABEL};
 use super::model::{
     MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerWatermark,
     StoredSkillEdit, StoredSkillEditDecision,
@@ -13,6 +10,51 @@ use super::model::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+/// Mined skill-edit proposal awaiting owner decision, keyed by proposal id.
+pub(super) const SKILL_EDIT: SideTable<EntityId, StoredSkillEdit, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_MINER_SKILL_EDIT);
+
+/// Global work-gate watermark for the substitution-miner pass.
+const WATERMARK: SideTable<(), MinerWatermark, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_MINER_WATERMARK);
+
+impl RawValue for StoredSkillEdit {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, SKILL_EDIT_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let row: StoredSkillEdit = decode_row(bytes, SKILL_EDIT_ROW_LABEL)?;
+        if row.v != ROW_VERSION {
+            return Err(CodecError::Value(Error::CorruptedIndex(
+                SKILL_EDIT_ROW_LABEL,
+            )));
+        }
+        Ok(row)
+    }
+}
+
+impl RawValue for MinerWatermark {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut row = [0_u8; 16];
+        row[..8].copy_from_slice(&self.at.to_be_bytes());
+        row[8..].copy_from_slice(&self.boundary.to_be_bytes());
+        Ok(row.to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let bytes: [u8; 16] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex(WATERMARK_ROW_LABEL))?;
+        let (at, boundary) = bytes.split_at(8);
+        Ok(Self {
+            at: u64::from_be_bytes(at.try_into().expect("an 8-byte half of 16 bytes")),
+            boundary: u64::from_be_bytes(boundary.try_into().expect("an 8-byte half of 16 bytes")),
+        })
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Mint-marks, proposals, watermark
@@ -30,16 +72,8 @@ use crate::error::{Error, Result};
 pub fn pending_substitution_skill_edits(vault: &Vault) -> Result<Vec<MinedSkillEditProposal>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, SKILL_EDIT_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        let handle = key
-            .get(SKILL_EDIT_KEY_PREFIX.len()..)
-            .ok_or(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?;
-        let proposal = decode_skill_edit(handle, &raw)?;
+    for (id, row) in SKILL_EDIT.scan(&vault.store, &rtxn)? {
+        let proposal = decode_skill_edit(id, row)?;
         if proposal.decision.is_none() {
             out.push(proposal);
         }
@@ -65,11 +99,10 @@ pub(super) fn mined_skill_edit_in_txn(
     txn: &heed::RoTxn<'_>,
     proposal_id: &EntityId,
 ) -> Result<Option<MinedSkillEditProposal>> {
-    let key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
-    let Some(raw) = vault.store.vault_meta.get(txn, &key)? else {
+    let Some(row) = SKILL_EDIT.get(&vault.store, txn, proposal_id)? else {
         return Ok(None);
     };
-    decode_skill_edit(proposal_id.as_bytes(), &raw).map(Some)
+    decode_skill_edit(*proposal_id, row).map(Some)
 }
 
 /// Records the decider's answer to a mined skill-edit proposal — the seam
@@ -90,33 +123,23 @@ pub fn resolve_mined_skill_edit(
     verdict: MinedSkillEditVerdict,
     at: u64,
 ) -> Result<()> {
-    let key = meta_key(SKILL_EDIT_KEY_PREFIX, proposal_id.as_bytes());
     vault.with_write_txn(|wtxn| {
-        let Some(raw) = vault.store.vault_meta.get(&*wtxn, &key)? else {
+        let Some(mut row) = SKILL_EDIT.get(&vault.store, &*wtxn, proposal_id)? else {
             return Err(Error::EntityNotFound);
         };
-        let mut row: StoredSkillEdit = decode_row(&raw, SKILL_EDIT_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL));
-        }
         row.decision = Some(StoredSkillEditDecision {
             outcome: verdict.as_str().to_owned(),
             at,
         });
-        let encoded = encode_row(&row, SKILL_EDIT_ROW_LABEL)?;
-        vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+        SKILL_EDIT.put(&vault.store, wtxn, proposal_id, &row)?;
         Ok(())
     })
 }
 
-fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal> {
-    let row: StoredSkillEdit = decode_row(raw, SKILL_EDIT_ROW_LABEL)?;
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL));
-    }
-    let bytes: [u8; 16] = handle
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?;
+fn decode_skill_edit(
+    proposal_id: EntityId,
+    row: StoredSkillEdit,
+) -> Result<MinedSkillEditProposal> {
     let decision = row
         .decision
         .map(|decision| -> Result<MinedSkillEditDecision> {
@@ -129,8 +152,7 @@ fn decode_skill_edit(handle: &[u8], raw: &[u8]) -> Result<MinedSkillEditProposal
         .transpose()?;
     Ok(MinedSkillEditProposal {
         principal: row.principal,
-        proposal_id: EntityId::from_bytes(bytes)
-            .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?,
+        proposal_id,
         skill: EntityId::from_hex(&row.skill)
             .map_err(|_| Error::CorruptedIndex(SKILL_EDIT_ROW_LABEL))?,
         scope: row.scope,
@@ -154,18 +176,7 @@ pub fn miner_watermark(vault: &Vault) -> Result<MinerWatermark> {
 }
 
 fn watermark_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<MinerWatermark> {
-    let Some(raw) = vault.store.vault_meta.get(rtxn, MINER_WATERMARK_KEY)? else {
-        return Ok(MinerWatermark::default());
-    };
-    let bytes: [u8; 16] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex(WATERMARK_ROW_LABEL))?;
-    let (at, boundary) = bytes.split_at(8);
-    Ok(MinerWatermark {
-        at: u64::from_be_bytes(at.try_into().expect("an 8-byte half of 16 bytes")),
-        boundary: u64::from_be_bytes(boundary.try_into().expect("an 8-byte half of 16 bytes")),
-    })
+    Ok(WATERMARK.get(&vault.store, rtxn, &())?.unwrap_or_default())
 }
 
 /// Advances the work gate, never rewinds it.
@@ -180,13 +191,7 @@ pub(super) fn advance_watermark_in_txn(
     observed: MinerWatermark,
 ) -> Result<()> {
     if observed.advances(watermark_in_txn(vault, &*wtxn)?) {
-        let mut row = [0_u8; 16];
-        row[..8].copy_from_slice(&observed.at.to_be_bytes());
-        row[8..].copy_from_slice(&observed.boundary.to_be_bytes());
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, MINER_WATERMARK_KEY, &row)?;
+        WATERMARK.put(&vault.store, wtxn, &(), &observed)?;
     }
     Ok(())
 }
@@ -204,11 +209,4 @@ pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
     label: &'static str,
 ) -> Result<T> {
     rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
-
-pub(super) fn meta_key(prefix: &[u8], handle: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + handle.len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(handle);
-    key
 }

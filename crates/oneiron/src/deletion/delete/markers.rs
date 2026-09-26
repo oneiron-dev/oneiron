@@ -4,12 +4,13 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK};
+use crate::side_table::HexId;
 use crate::store::GateDecisionRecord;
 
 use super::super::rendezvous::maybe_fail_first_txn_pending_tombstone;
 use super::super::tombstone::{
-    DecodedTombstoneValue, TombstoneReason, TombstoneValueV2, archive_tombstone_key,
-    decode_tombstone_value, pending_tombstone_key,
+    ARCHIVE_MARKER, DecodedTombstoneValue, PENDING_TOMBSTONE, PendingTombstoneKey, TombstoneReason,
+    TombstoneValueV2, decode_tombstone_value,
 };
 
 impl Vault {
@@ -88,8 +89,11 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = pending_tombstone_key(window_label, id);
-        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        let key = PendingTombstoneKey {
+            window: window_label.to_owned(),
+            id: *id,
+        };
+        PENDING_TOMBSTONE.put(&self.store, wtxn, &key, &value.encode().to_vec())?;
         Ok(())
     }
 
@@ -121,8 +125,11 @@ impl Vault {
     /// commit + snapshot persistence have succeeded — never before.
     pub(super) fn clear_pending_tombstone(&self, window_label: &str, id: &EntityId) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            let key = pending_tombstone_key(window_label, id);
-            self.store.sync_state.delete(wtxn, &key)?;
+            let key = PendingTombstoneKey {
+                window: window_label.to_owned(),
+                id: *id,
+            };
+            PENDING_TOMBSTONE.delete(&self.store, wtxn, &key)?;
             Ok(())
         })
     }
@@ -139,8 +146,7 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
-        let key = archive_tombstone_key(id);
-        self.store.sync_state.put(wtxn, &key, &value.encode())?;
+        ARCHIVE_MARKER.put(&self.store, wtxn, &HexId(*id), &value.encode().to_vec())?;
         Ok(())
     }
 
@@ -156,11 +162,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<DecodedTombstoneValue>> {
-        let key = archive_tombstone_key(id);
-        Ok(self
-            .store
-            .sync_state
-            .get(txn, &key)?
+        Ok(ARCHIVE_MARKER
+            .get(&self.store, txn, &HexId(*id))?
             .map(|raw| decode_tombstone_value(&raw)))
     }
 
@@ -175,7 +178,6 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
-        let key = archive_tombstone_key(id);
-        self.store.sync_state.delete(wtxn, &key)
+        ARCHIVE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 }

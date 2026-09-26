@@ -339,11 +339,7 @@ fn rebuild_is_idempotent_and_repairs_a_corrupted_table() {
     let stranger = put_person(&vault, 0xC7);
     vault
         .with_write_txn(|wtxn| {
-            vault.store.vault_meta.put(
-                wtxn,
-                &redirect_key(&loser),
-                &encode_redirect_row(&[stranger]),
-            )
+            REDIRECT.put(&vault.store, wtxn, &loser, &RedirectRow(vec![stranger]))
         })
         .expect("plant bad row");
     assert_eq!(resolved(&vault, &loser), vec![stranger]);
@@ -402,7 +398,8 @@ fn resolution_never_rewrites_a_claim_subject() {
                 0.9,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: 100,
                 end: 100,
@@ -436,15 +433,8 @@ fn cycle_and_depth_guards_error_instead_of_hanging() {
     // into the projection.
     vault
         .with_write_txn(|wtxn| {
-            vault.store.vault_meta.put(
-                wtxn,
-                &redirect_key(&first),
-                &encode_redirect_row(&[second]),
-            )?;
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, &redirect_key(&second), &encode_redirect_row(&[first]))
+            REDIRECT.put(&vault.store, wtxn, &first, &RedirectRow(vec![second]))?;
+            REDIRECT.put(&vault.store, wtxn, &second, &RedirectRow(vec![first]))
         })
         .expect("plant cycle");
 
@@ -458,12 +448,7 @@ fn cycle_and_depth_guards_error_instead_of_hanging() {
 
     // A self-loop is the degenerate case and takes the same door.
     vault
-        .with_write_txn(|wtxn| {
-            vault
-                .store
-                .vault_meta
-                .put(wtxn, &redirect_key(&first), &encode_redirect_row(&[first]))
-        })
+        .with_write_txn(|wtxn| REDIRECT.put(&vault.store, wtxn, &first, &RedirectRow(vec![first])))
         .expect("plant self loop");
     assert!(matches!(
         vault.resolve_entity(&first),
@@ -490,11 +475,7 @@ fn depth_guard_bounds_an_acyclic_chain_independently_of_the_cycle_guard() {
     vault
         .with_write_txn(|wtxn| {
             for (from, to) in &links {
-                vault.store.vault_meta.put(
-                    wtxn,
-                    &redirect_key(from),
-                    &encode_redirect_row(&[*to]),
-                )?;
+                REDIRECT.put(&vault.store, wtxn, from, &RedirectRow(vec![*to]))?;
             }
             Ok(())
         })

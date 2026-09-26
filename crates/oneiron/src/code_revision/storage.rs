@@ -10,17 +10,16 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SESSION};
+use crate::side_table::{Raw, SideTable};
 use crate::store::Store;
 
-use super::codec::{
-    decode_code_revision, decode_code_revision_fork, encode_code_revision,
-    encode_code_revision_fork, validate_code_revision_fork_shape, validate_code_revision_shape,
-};
+use super::codec::validate_code_revision_fork_shape;
+use super::codec::validate_code_revision_shape;
 use super::frontier::FrontierUpdate;
 use super::frontier::{
-    delete_code_revision_frontier_for_revision_in_txn, encode_code_revision_frontier_record,
-    get_code_revision_frontier_in_txn, validate_code_revision_frontier_update,
-    verify_code_revision_frontier_in_txn, verify_code_revision_session_trace_in_txn,
+    delete_code_revision_frontier_for_revision_in_txn, get_code_revision_frontier_in_txn,
+    validate_code_revision_frontier_update, verify_code_revision_frontier_in_txn,
+    verify_code_revision_session_trace_in_txn,
 };
 use super::graph::{
     put_lifecycle_edge, require_code_artifact_body, require_code_revision_ancestor,
@@ -30,15 +29,10 @@ use super::graph::{
 use super::integrity::{
     backfill_code_revision_integrity_for_revision_in_txn,
     backfill_code_revision_integrity_for_session_in_txn, build_code_revision_integrity_record,
-    encode_code_revision_integrity_record, verify_code_revision_integrity_in_txn,
+    verify_code_revision_integrity_in_txn,
 };
 use super::keys::{
-    CODE_REVISION_FORK_PARENT_INDEX_KEY_PREFIX, CODE_REVISION_PARENT_INDEX_KEY_PREFIX,
-    CODE_REVISION_SESSION_INDEX_KEY_PREFIX, code_revision_fork_key,
-    code_revision_fork_parent_index_key, code_revision_fork_parent_index_prefix,
-    code_revision_frontier_key, code_revision_integrity_key, code_revision_parent_index_key,
-    code_revision_parent_index_prefix, code_revision_record_key, code_revision_session_index_key,
-    code_revision_session_index_prefix, id_from_index_key,
+    FORK_PARENT_INDEX, FORKS, FRONTIER, INTEGRITY, PARENT_INDEX, RECORDS, SESSION_INDEX,
 };
 use super::proposals::CodeRevisionWriteOutcome;
 
@@ -72,7 +66,7 @@ impl Vault {
 
     pub fn branch_code_revision(&self, fork: &CodeRevisionFork) -> Result<()> {
         validate_code_revision_fork_shape(fork)?;
-        let encoded = encode_code_revision_fork(fork)?;
+        FORKS.encode_value(fork)?;
         let mut wtxn = self.store.env.write_txn()?;
         require_entity_type(
             &self.store,
@@ -100,8 +94,7 @@ impl Vault {
             fork.parent_session_id,
             "base_revision_id must belong to parent_session_id",
         )?;
-        let key = code_revision_fork_key(&fork.fork_session_id);
-        if self.store.vault_meta.get(&wtxn, &key)?.is_some() {
+        if FORKS.contains(&self.store, &wtxn, &fork.fork_session_id)? {
             return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
                 "code revision fork already recorded for session",
             )));
@@ -132,11 +125,12 @@ impl Vault {
             fork.forked_at,
             &mut graph_changed,
         )?;
-        self.store.vault_meta.put(&mut wtxn, &key, &encoded)?;
-        self.store.vault_meta.put(
+        FORKS.put(&self.store, &mut wtxn, &fork.fork_session_id, fork)?;
+        FORK_PARENT_INDEX.put(
+            &self.store,
             &mut wtxn,
-            &code_revision_fork_parent_index_key(&fork.parent_session_id, &fork.fork_session_id),
-            &[],
+            &(fork.parent_session_id, fork.fork_session_id),
+            &(),
         )?;
         if graph_changed {
             ppr::increment_graph_version(&self.store, &mut wtxn)?;
@@ -152,8 +146,8 @@ impl Vault {
 
     pub fn code_revisions_for_session(&self, session_id: &EntityId) -> Result<Vec<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = code_revision_session_index_prefix(session_id);
-        let revisions = collect_code_revisions_by_index_prefix(&self.store, &rtxn, &prefix)?;
+        let revisions =
+            collect_code_revisions_by_index_prefix(&self.store, &rtxn, SESSION_INDEX, session_id)?;
         if revisions.is_empty() {
             if get_code_revision_frontier_in_txn(&self.store, &rtxn, session_id)?.is_some() {
                 return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
@@ -171,8 +165,7 @@ impl Vault {
 
     pub fn child_code_revisions(&self, parent_revision_id: &EntityId) -> Result<Vec<CodeRevision>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = code_revision_parent_index_prefix(parent_revision_id);
-        collect_code_revisions_by_index_prefix(&self.store, &rtxn, &prefix)
+        collect_code_revisions_by_index_prefix(&self.store, &rtxn, PARENT_INDEX, parent_revision_id)
     }
 
     pub fn get_code_revision_fork(
@@ -188,12 +181,10 @@ impl Vault {
         parent_session_id: &EntityId,
     ) -> Result<Vec<CodeRevisionFork>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = code_revision_fork_parent_index_prefix(parent_session_id);
         let mut forks = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, _) = entry?;
-            let fork_session_id =
-                id_from_index_key(&key, prefix.len(), "code revision fork parent index key")?;
+        for (_, fork_session_id) in
+            FORK_PARENT_INDEX.scan_keys(&self.store, &rtxn, parent_session_id.as_bytes())?
+        {
             if let Some(fork) = get_code_revision_fork_in_txn(&self.store, &rtxn, &fork_session_id)?
             {
                 forks.push(fork);
@@ -211,12 +202,10 @@ pub(crate) fn delete_code_revision_lifecycle_in_txn(
 ) -> Result<()> {
     delete_code_revision_record_in_txn(store, wtxn, id)?;
     delete_code_revision_fork_in_txn(store, wtxn, id)?;
-    store
-        .vault_meta
-        .delete(wtxn, &code_revision_frontier_key(id))?;
-    delete_index_rows_with_prefix(store, wtxn, &code_revision_session_index_prefix(id))?;
-    delete_index_rows_with_prefix(store, wtxn, &code_revision_parent_index_prefix(id))?;
-    delete_index_rows_with_prefix(store, wtxn, &code_revision_fork_parent_index_prefix(id))?;
+    FRONTIER.delete(store, wtxn, id)?;
+    SESSION_INDEX.delete_from(store, wtxn, id.as_bytes())?;
+    PARENT_INDEX.delete_from(store, wtxn, id.as_bytes())?;
+    FORK_PARENT_INDEX.delete_from(store, wtxn, id.as_bytes())?;
     Ok(())
 }
 
@@ -225,15 +214,12 @@ pub(crate) fn has_finalized_code_revision_in_txn(
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(rtxn, &code_revision_record_key(revision_id))?
-        .is_some())
+    RECORDS.contains(store, rtxn, revision_id)
 }
 
 fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRevisionWriteOutcome> {
     validate_code_revision_shape(revision)?;
-    let encoded = encode_code_revision(revision)?;
+    RECORDS.encode_value(revision)?;
     let mut wtxn = store.env.write_txn()?;
     backfill_code_revision_integrity_for_session_in_txn(store, &mut wtxn, &revision.session_id)?;
     let artifact_body = require_code_artifact_body(store, &wtxn, &revision.revision_id)?;
@@ -292,8 +278,7 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
             "provenance_claim_id must be a CLAIM entity",
         )?;
     }
-    let key = code_revision_record_key(&revision.revision_id);
-    if store.vault_meta.get(&wtxn, &key)?.is_some() {
+    if RECORDS.contains(store, &wtxn, &revision.revision_id)? {
         return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
             "code revision is already finalized",
         )));
@@ -316,14 +301,12 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
                 return Ok(CodeRevisionWriteOutcome::Proposed(Box::new(proposal)));
             }
         };
-    let encoded_integrity = encode_code_revision_integrity_record(&integrity)?;
     let frontier = CodeRevisionFrontierRecord {
         session_id: revision.session_id,
         revision_id: revision.revision_id,
         revision_fold: integrity.revision_fold,
         finalized_at: revision.finalized_at,
     };
-    let encoded_frontier = encode_code_revision_frontier_record(&frontier)?;
 
     let mut graph_changed = false;
     put_lifecycle_edge(
@@ -358,30 +341,19 @@ fn write_code_revision(store: &Store, revision: &CodeRevision) -> Result<CodeRev
         )?;
     }
 
-    store.vault_meta.put(&mut wtxn, &key, &encoded)?;
-    store.vault_meta.put(
-        &mut wtxn,
-        &code_revision_integrity_key(&revision.revision_id),
-        &encoded_integrity,
-    )?;
+    RECORDS.put(store, &mut wtxn, &revision.revision_id, revision)?;
+    INTEGRITY.put(store, &mut wtxn, &revision.revision_id, &integrity)?;
     if update_frontier {
-        store.vault_meta.put(
-            &mut wtxn,
-            &code_revision_frontier_key(&revision.session_id),
-            &encoded_frontier,
-        )?;
+        FRONTIER.put(store, &mut wtxn, &revision.session_id, &frontier)?;
     }
-    store.vault_meta.put(
+    SESSION_INDEX.put(
+        store,
         &mut wtxn,
-        &code_revision_session_index_key(&revision.session_id, &revision.revision_id),
-        &[],
+        &(revision.session_id, revision.revision_id),
+        &(),
     )?;
     if let Some(parent_id) = revision.parent_revision_id {
-        store.vault_meta.put(
-            &mut wtxn,
-            &code_revision_parent_index_key(&parent_id, &revision.revision_id),
-            &[],
-        )?;
+        PARENT_INDEX.put(store, &mut wtxn, &(parent_id, revision.revision_id), &())?;
     }
     if graph_changed {
         ppr::increment_graph_version(store, &mut wtxn)?;
@@ -407,13 +379,7 @@ pub(super) fn read_code_revision_record_in_txn(
     rtxn: &RoTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<Option<CodeRevision>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &code_revision_record_key(revision_id))?
-    else {
-        return Ok(None);
-    };
-    decode_code_revision(&raw).map(Some)
+    RECORDS.get(store, rtxn, revision_id)
 }
 
 fn get_code_revision_fork_in_txn(
@@ -421,24 +387,19 @@ fn get_code_revision_fork_in_txn(
     rtxn: &RoTxn<'_>,
     fork_session_id: &EntityId,
 ) -> Result<Option<CodeRevisionFork>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &code_revision_fork_key(fork_session_id))?
-    else {
-        return Ok(None);
-    };
-    decode_code_revision_fork(&raw).map(Some)
+    FORKS.get(store, rtxn, fork_session_id)
 }
 
+/// Collects the revisions indexed under `prefix_id` in `table` (`SESSION_INDEX` keyed by session,
+/// or `PARENT_INDEX` keyed by parent revision), verifying each one's integrity fold as it loads.
 pub(super) fn collect_code_revisions_by_index_prefix(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    prefix: &[u8],
+    table: SideTable<(EntityId, EntityId), (), Raw>,
+    prefix_id: &EntityId,
 ) -> Result<Vec<CodeRevision>> {
     let mut revisions = Vec::new();
-    for entry in store.vault_meta.prefix_iter(rtxn, prefix)? {
-        let (key, _) = entry?;
-        let revision_id = id_from_index_key(&key, prefix.len(), "code revision index key")?;
+    for (_, revision_id) in table.scan_keys(store, rtxn, prefix_id.as_bytes())? {
         if let Some(revision) = get_code_revision_in_txn(store, rtxn, &revision_id)? {
             revisions.push(revision);
         }
@@ -446,15 +407,15 @@ pub(super) fn collect_code_revisions_by_index_prefix(
     sort_code_revisions_topologically(revisions)
 }
 
+/// Like [`collect_code_revisions_by_index_prefix`] but over `SESSION_INDEX` only, reading the
+/// finalized record without re-verifying its integrity fold.
 pub(super) fn collect_code_revision_records_by_index_prefix(
     store: &Store,
     rtxn: &RoTxn<'_>,
-    prefix: &[u8],
+    session_id: &EntityId,
 ) -> Result<Vec<CodeRevision>> {
     let mut revisions = Vec::new();
-    for entry in store.vault_meta.prefix_iter(rtxn, prefix)? {
-        let (key, _) = entry?;
-        let revision_id = id_from_index_key(&key, prefix.len(), "code revision index key")?;
+    for (_, revision_id) in SESSION_INDEX.scan_keys(store, rtxn, session_id.as_bytes())? {
         if let Some(revision) = read_code_revision_record_in_txn(store, rtxn, &revision_id)? {
             revisions.push(revision);
         }
@@ -517,53 +478,28 @@ fn delete_code_revision_record_in_txn(
     wtxn: &mut RwTxn<'_>,
     revision_id: &EntityId,
 ) -> Result<()> {
-    let key = code_revision_record_key(revision_id);
-    let Some(raw) = store
-        .vault_meta
-        .get(wtxn, &key)?
-        .map(|value| value.to_vec())
-    else {
-        return Ok(());
-    };
-    match decode_code_revision(&raw) {
-        Ok(revision) => {
-            store.vault_meta.delete(wtxn, &key)?;
-            store
-                .vault_meta
-                .delete(wtxn, &code_revision_integrity_key(revision_id))?;
-            store.vault_meta.delete(
-                wtxn,
-                &code_revision_session_index_key(&revision.session_id, revision_id),
-            )?;
+    match RECORDS.get(store, wtxn, revision_id) {
+        Ok(None) => Ok(()),
+        Ok(Some(revision)) => {
+            RECORDS.delete(store, wtxn, revision_id)?;
+            INTEGRITY.delete(store, wtxn, revision_id)?;
+            SESSION_INDEX.delete(store, wtxn, &(revision.session_id, *revision_id))?;
             if let Some(parent_id) = revision.parent_revision_id {
-                store.vault_meta.delete(
-                    wtxn,
-                    &code_revision_parent_index_key(&parent_id, revision_id),
-                )?;
+                PARENT_INDEX.delete(store, wtxn, &(parent_id, *revision_id))?;
             }
             delete_code_revision_frontier_for_revision_in_txn(store, wtxn, revision_id)?;
+            Ok(())
         }
-        Err(_) => {
-            store.vault_meta.delete(wtxn, &key)?;
-            store
-                .vault_meta
-                .delete(wtxn, &code_revision_integrity_key(revision_id))?;
+        Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))) => {
+            RECORDS.delete(store, wtxn, revision_id)?;
+            INTEGRITY.delete(store, wtxn, revision_id)?;
             delete_code_revision_frontier_for_revision_in_txn(store, wtxn, revision_id)?;
-            delete_index_rows_for_id(
-                store,
-                wtxn,
-                CODE_REVISION_SESSION_INDEX_KEY_PREFIX,
-                revision_id,
-            )?;
-            delete_index_rows_for_id(
-                store,
-                wtxn,
-                CODE_REVISION_PARENT_INDEX_KEY_PREFIX,
-                revision_id,
-            )?;
+            delete_index_rows_for_trailing_id(SESSION_INDEX, store, wtxn, revision_id)?;
+            delete_index_rows_for_trailing_id(PARENT_INDEX, store, wtxn, revision_id)?;
+            Ok(())
         }
+        Err(other) => Err(other),
     }
-    Ok(())
 }
 
 fn delete_code_revision_fork_in_txn(
@@ -571,62 +507,39 @@ fn delete_code_revision_fork_in_txn(
     wtxn: &mut RwTxn<'_>,
     fork_session_id: &EntityId,
 ) -> Result<()> {
-    let key = code_revision_fork_key(fork_session_id);
-    let Some(raw) = store
-        .vault_meta
-        .get(wtxn, &key)?
-        .map(|value| value.to_vec())
-    else {
-        return Ok(());
-    };
-    match decode_code_revision_fork(&raw) {
-        Ok(fork) => {
-            store.vault_meta.delete(wtxn, &key)?;
-            store.vault_meta.delete(
-                wtxn,
-                &code_revision_fork_parent_index_key(&fork.parent_session_id, fork_session_id),
-            )?;
+    match FORKS.get(store, wtxn, fork_session_id) {
+        Ok(None) => Ok(()),
+        Ok(Some(fork)) => {
+            FORKS.delete(store, wtxn, fork_session_id)?;
+            FORK_PARENT_INDEX.delete(store, wtxn, &(fork.parent_session_id, *fork_session_id))?;
+            Ok(())
         }
-        Err(_) => {
-            store.vault_meta.delete(wtxn, &key)?;
-            delete_index_rows_for_id(
-                store,
-                wtxn,
-                CODE_REVISION_FORK_PARENT_INDEX_KEY_PREFIX,
-                fork_session_id,
-            )?;
+        Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(_))) => {
+            FORKS.delete(store, wtxn, fork_session_id)?;
+            delete_index_rows_for_trailing_id(FORK_PARENT_INDEX, store, wtxn, fork_session_id)?;
+            Ok(())
         }
+        Err(other) => Err(other),
     }
-    Ok(())
 }
 
-fn delete_index_rows_for_id(
+/// Deletes every row of `table`, across every leading id it is indexed under, whose TRAILING id
+/// half matches `id`. Used only when a record/fork row failed to decode, so the leading id (the
+/// session/parent it was indexed under) is unknown and the whole table must be swept by suffix —
+/// exactly the raw byte-suffix sweep this replaces (`key.ends_with(id.as_bytes())`).
+fn delete_index_rows_for_trailing_id(
+    table: SideTable<(EntityId, EntityId), (), Raw>,
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    prefix: &[u8],
     id: &EntityId,
 ) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(wtxn, prefix)? {
-        let (key, _) = entry?;
-        if key.ends_with(id.as_bytes()) {
-            keys.push(key.to_vec());
-        }
-    }
-    for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
-    }
-    Ok(())
-}
-
-fn delete_index_rows_with_prefix(store: &Store, wtxn: &mut RwTxn<'_>, prefix: &[u8]) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(wtxn, prefix)? {
-        let (key, _) = entry?;
-        keys.push(key.to_vec());
-    }
-    for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
+    let matches: Vec<(EntityId, EntityId)> = table
+        .scan_keys(store, wtxn, &[])?
+        .into_iter()
+        .filter(|(_, trailing)| trailing == id)
+        .collect();
+    for key in &matches {
+        table.delete(store, wtxn, key)?;
     }
     Ok(())
 }
