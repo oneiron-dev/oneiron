@@ -83,6 +83,16 @@ class MultiSignatureReaderTests(unittest.TestCase):
                 self.assertEqual(code, 0, report)
                 self.assertEqual(report["status"], "pass")
 
+    def test_pdfium_distinguishes_contents_name_value_from_key(self):
+        for fixture in ("name-value-control.pdf", "contents-name-value.pdf", "complex-values.pdf"):
+            with self.subTest(fixture=fixture):
+                code, report = self.reader("pyhanko", fixture)
+                self.assertEqual(code, 0, report)
+                self.assertTrue(report["signature_results"][0]["valid"])
+                code, report = self.reader("pdfium", fixture)
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["status"], "pass")
+
     def test_final_coverage_does_not_depend_on_field_order(self):
         for name in ("pdfbox", "dss"):
             with self.subTest(reader=name):

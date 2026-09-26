@@ -224,3 +224,41 @@ try:
             (out.parent / filename).write_bytes(output.getvalue())
 finally:
     SignatureObject.__init__ = original_init
+
+# A top-level dictionary name /Contents used as the VALUE of an extension
+# key must not be mistaken for the next /Contents KEY. Add it before signing.
+def extension_first(self, *args, **kwargs):
+    original_init(self, *args, **kwargs)
+    items = list(self.items())
+    self.clear()
+    self[pdf_name('/VendorTag')] = pdf_name(extension_value)
+    if extension_complex:
+        from pyhanko.pdf_utils.generic import ArrayObject, DictionaryObject, IndirectObject
+        self[pdf_name('/VendorRef')] = IndirectObject(1, 0, None)
+        self[pdf_name('/VendorList')] = ArrayObject([
+            pdf_name('/Contents'),
+            DictionaryObject({pdf_name('/Inner'): pdf_name('/Contents')}),
+        ])
+        self[pdf_name('/VendorDict')] = DictionaryObject({
+            pdf_name('/Inner'): pdf_name('/Contents')
+        })
+    self.update(items)
+SignatureObject.__init__ = extension_first
+try:
+    for filename, extension_value, extension_complex in (
+        ('name-value-control.pdf', '/Other', False),
+        ('contents-name-value.pdf', '/Contents', False),
+        ('complex-values.pdf', '/Contents', True),
+    ):
+        with TemporaryDirectory() as td:
+            key_path = Path(td) / 'probe.p12'
+            key_path.write_bytes(p12)
+            signer = signers.SimpleSigner.load_pkcs12(key_path, passphrase=b'probe-pass')
+            writer = IncrementalPdfFileWriter(BytesIO(source), strict=True)
+            output = BytesIO()
+            PdfSigner(PdfSignatureMetadata(field_name='BoundarySignature',
+                                           reason='Harmless extension entry'),
+                      signer=signer).sign_pdf(writer, output=output)
+            (out.parent / filename).write_bytes(output.getvalue())
+finally:
+    SignatureObject.__init__ = original_init

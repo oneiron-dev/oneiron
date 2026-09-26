@@ -77,6 +77,40 @@ def pdf_token(data,pos,limit):
  while pos<limit and data[pos] not in PDF_SPACE+PDF_DELIMITERS: pos+=1
  return ("word",data[start:pos],start,pos)
 
+def pdf_value(data,pos,limit,depth=0):
+ # Consume exactly one PDF value. A dictionary key's value may itself be a
+ # name, indirect reference, array or nested dictionary; none is another key.
+ if depth>=64: return None
+ token=pdf_token(data,pos,limit)
+ if token is None: return None
+ kind,value,begin,pos=token
+ if kind=="dict_open":
+  while True:
+   key=pdf_token(data,pos,limit)
+   if key is None: return None
+   if key[0]=="dict_close": return ("dict",value,begin,key[3])
+   if key[0]!="name": return None
+   child=pdf_value(data,key[3],limit,depth+1)
+   if child is None: return None
+   pos=child[3]
+ if kind=="delimiter" and value==b"[":
+  while True:
+   item=pdf_token(data,pos,limit)
+   if item is None: return None
+   if item[:2]==("delimiter",b"]"): return ("array",value,begin,item[3])
+   child=pdf_value(data,pos,limit,depth+1)
+   if child is None: return None
+   pos=child[3]
+ if kind=="word" and re.fullmatch(rb"[0-9]+",value):
+  number=pdf_token(data,pos,limit)
+  if number is not None and number[0]=="word" and re.fullmatch(rb"[0-9]+",number[1]):
+   ref=pdf_token(data,number[3],limit)
+   if ref is not None and ref[:2]==("word",b"R"):
+    return ("reference",value,begin,ref[3])
+ if kind in ("name","literal","hex","word"):
+  return token
+ return None
+
 def signature_contents_span(data,offset,end,obj,gen):
  if not isinstance(offset,int) or not 0<=offset<end<=len(data): return None
  header=re.match(rb"[ \t\n\f\r]*"+str(obj).encode()+rb"[ \t\n\f\r]+"
@@ -85,24 +119,19 @@ def signature_contents_span(data,offset,end,obj,gen):
  pos=offset+header.end()
  token=pdf_token(data,pos,end)
  if token is None or token[0]!="dict_open": return None
- pos=token[3];stack=["dict"];found=[]
- while stack:
-  token=pdf_token(data,pos,end)
-  if token is None: return None
-  kind,value,begin,pos=token
-  if kind=="dict_open": stack.append("dict")
-  elif kind=="dict_close":
-   if stack[-1]!="dict": return None
-   stack.pop()
-  elif kind=="delimiter" and value==b"[": stack.append("array")
-  elif kind=="delimiter" and value==b"]":
-   if stack[-1]!="array": return None
-   stack.pop()
-  elif stack==["dict"] and kind=="name" and contents_name(value):
-   token=pdf_token(data,pos,end)
-   if token is None or token[0]!="hex": return None
-   found.append(token)
-   pos=token[3]
+ pos=token[3];found=[]
+ while True:
+  key=pdf_token(data,pos,end)
+  if key is None: return None
+  if key[0]=="dict_close":
+   pos=key[3];break
+  if key[0]!="name": return None
+  value=pdf_value(data,key[3],end)
+  if value is None: return None
+  if contents_name(key[1]):
+   if value[0]!="hex": return None
+   found.append(value)
+  pos=value[3]
  # A stream or unrelated token is not a direct signature dictionary end.
  terminator=pdf_token(data,pos,end)
  if terminator is None or terminator[:2]!=("word",b"endobj") or len(found)!=1:
