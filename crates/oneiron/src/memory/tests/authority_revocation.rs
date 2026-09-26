@@ -225,6 +225,79 @@ fn revoked_binding_forbids_owner_verbs() {
     assert_eq!(err.code, MEMORY_CODE_OWNER_BINDING_REQUIRED);
 }
 
+/// An owner lane opened while the binding held and read after its revocation
+/// refuses with the binding's own code, not a generic bad request.
+#[test]
+fn an_owner_lane_read_after_revocation_keeps_the_binding_code() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    use crate::claim::{ClaimReadStatus, PointRead};
+    let (_dir, vault) = open_vault();
+    let owner = put_person(&vault, 0x6B);
+    let subject = put_person(&vault, 0x6C);
+    let facade = facade_for(&vault, owner);
+
+    let (genesis, signing) = authority_root(0x74);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = owner_entry(
+        1,
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: owner,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        vec![genesis_hash],
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    let lane = facade
+        .read_lane(ClaimReadStatus::Recorded)
+        .expect("the bound owner opens its lane");
+
+    let revoke = owner_entry(
+        2,
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+        vec![bind_hash],
+    );
+    vault
+        .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+        .expect("revoke binding");
+
+    let error = lane
+        .read(&[PointRead::id(subject)], None)
+        .expect_err("the owner key no longer holds");
+    assert_eq!(
+        MemoryError::from(error).code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+}
+
 /// fix-leg 5 item 1: the delete owner-gate is TOCTOU-closed.
 ///
 /// `evaluate_deletion_gate` folds the owner binding in a read txn it then

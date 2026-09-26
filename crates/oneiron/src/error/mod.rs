@@ -297,6 +297,7 @@ pub enum ErrorKind {
     InvalidPackByteMap,
     SideTableRow,
     SideTableKeyUndeclared,
+    ScopedReadOwnerNotLive,
 }
 
 /// Crate error type.

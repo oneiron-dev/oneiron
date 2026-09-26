@@ -121,6 +121,28 @@ fn a_side_table_key_of_another_shape_is_refused_not_sliced() -> crate::Result<()
     Ok(())
 }
 
+#[test]
+fn a_bad_side_table_row_reaches_the_facade_as_an_internal_error() -> crate::Result<()> {
+    const BY_ID: SideTable<crate::EntityId, Vec<u8>, Raw> = SideTable::new(&CODE_RUN_REPLAY);
+    let (_dir, vault) = open_vault();
+    vault.with_write_txn(|wtxn| {
+        vault
+            .store
+            .vault_meta
+            .put(wtxn, &[CODE_RUN_REPLAY.prefix, b"short"].concat(), b"row")
+    })?;
+    let rtxn = vault.store.env.read_txn()?;
+    let error = BY_ID
+        .scan(&vault.store, &rtxn)
+        .expect_err("a five-byte tail is not an id");
+    // A stored row the table cannot read is store health, not the caller's input.
+    assert_eq!(
+        crate::memory::MemoryError::from(error).code,
+        crate::memory::MEMORY_CODE_INTERNAL
+    );
+    Ok(())
+}
+
 /// Rows the full test suites wrote at main ce8fd167, before the typed keyspace: one row per
 /// declared table they wrote, as `vm|ss <key hex> <value hex>`.
 const PRE_MOVE_ROWS: &str = include_str!("../../tests/fixtures/side-table-pre-move-rows.tsv");

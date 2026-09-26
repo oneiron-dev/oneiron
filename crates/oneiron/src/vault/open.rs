@@ -558,7 +558,7 @@ impl Vault {
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
         let vault = Self {
-            vault_id: super::VaultId::resolve_at_open(&store, privacy.posture)?,
+            vault_id: super::VaultId::resolve_at_open(&store)?,
             store,
             config,
             analyzer,

@@ -11,7 +11,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
 use crate::pipeline::ScoredEntity;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
@@ -143,7 +143,7 @@ impl<'a> ScopedRead<'a> {
         let human = crate::edge::EdgeActorClass::Human;
         crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
             .and_then(|()| crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner))
-            .map_err(|_| Error::InvalidClaimBody("scoped read owner binding no longer live"))
+            .map_err(|error| Error::Claim(ClaimError::ScopedReadOwnerNotLive(Box::new(error))))
     }
 
     fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {

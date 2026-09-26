@@ -195,6 +195,9 @@ impl std::error::Error for MemoryError {}
 
 impl From<Error> for MemoryError {
     fn from(err: Error) -> Self {
+        if let Error::Claim(ClaimError::ScopedReadOwnerNotLive(refusal)) = err {
+            return *refusal;
+        }
         let message = err.to_string();
         // ONE-1936: the successor ref travels as a FIELD, not as prose. A
         // stale target is an INVALID_STATE refusal like the rest of the
@@ -352,6 +355,7 @@ impl From<Error> for MemoryError {
             ErrorKind::Storage
             | ErrorKind::Io
             | ErrorKind::CorruptedIndex
+            | ErrorKind::SideTableRow
             | ErrorKind::InvariantViolation
             | ErrorKind::MapFull
             | ErrorKind::IndexOverflow

@@ -1437,26 +1437,41 @@ fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let vault = Vault::open(tmp.path(), test_config())?;
     let unrooted = vault.vault_id();
+    assert_eq!(vault.authority_fold()?.vault_id, None);
     vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"vault identity root")?)?;
-    // A handle keeps the identity it opened with.
-    assert_eq!(vault.vault_id(), unrooted);
-    let mut genesis = Vec::new();
+    let mut entries = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)? {
-        let entry = vault.get_authority_log_entry(&id)?.expect("listed entry");
-        if matches!(entry.op, AuthorityOp::Genesis { .. }) {
-            genesis.push(entry);
-        }
+        entries.push(vault.get_authority_log_entry(&id)?.expect("listed entry"));
     }
+    let genesis: Vec<_> = entries
+        .iter()
+        .filter(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
+        .collect();
     let [genesis] = genesis.as_slice() else {
         panic!("the host root slip roots the log with one genesis");
     };
+    let canonical = genesis_vault_id(genesis)?;
+
     drop(vault);
 
-    let reopened = Vault::open(tmp.path(), test_config())?;
-    assert_eq!(
-        reopened.vault_id(),
-        VaultId::Genesis(genesis_vault_id(genesis)?)
-    );
+    // Opened again after the rooting: canon's vault_id is the genesis, and the
+    // handle still names the store it named before the rooting.
+    let rooted = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(rooted.authority_fold()?.vault_id, Some(canonical));
+    assert_eq!(rooted.vault_id(), unrooted);
+
+    // A replica that folds the same log to the same genesis is another store.
+    let replica_tmp = tempfile::tempdir()?;
+    let replica = Vault::open(replica_tmp.path(), test_config())?;
+    entries.sort_by_key(|entry| entry.seq);
+    let rows: Vec<_> = entries
+        .into_iter()
+        .zip(1..)
+        .map(|(entry, at)| (entry, crate::TimeRange { start: at, end: at }, at))
+        .collect();
+    replica.put_authority_log_entries(&rows)?;
+    assert_eq!(replica.authority_fold()?.vault_id, Some(canonical));
+    assert_ne!(replica.vault_id(), unrooted);
     Ok(())
 }
 
@@ -1464,7 +1479,6 @@ fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
 fn a_fresh_vault_holds_a_local_vault_id() -> Result<()> {
     let tmp = tempfile::tempdir()?;
     let fresh = Vault::open(tmp.path(), test_config())?.vault_id();
-    assert_matches!(fresh, VaultId::Local(_));
     assert_eq!(Vault::open(tmp.path(), test_config())?.vault_id(), fresh);
     Ok(())
 }
