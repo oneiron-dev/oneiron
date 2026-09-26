@@ -18,13 +18,14 @@ name: CI
 # mutation audit run on dispatch only.
 #
 # `Checks`, `Test` and `Test (featureless)` are required contexts on main, so the three jobs always report; a
-# diff with nothing Rust-relevant runs their cheap steps and goes green. Draft PRs skip every job (a PR stays a
-# draft until its review passes, then one CI run gates the merge). CI_PAUSED=true skips every job.
+# diff with nothing Rust-relevant runs their cheap steps and goes green. Draft PRs skip every job.
+# CI_PAUSED=true skips every job.
 #
-# Runners: our own machines. `changes` and `Checks` run on the Macs, so the Linux runners take only the two
-# Linux test jobs. Each runner keeps its persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache
-# additionally stores compilation results in GitHub's cross-run cache. Never set CARGO_TARGET_DIR here.
-# The toolchain is host rustup via rust-toolchain.toml. `clean: true` on every checkout because `_work` persists.
+# Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on Linux; the Macs
+# take the dispatch-only macOS recipe, cache proof and mutation audit. Each runner keeps its
+# persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache also stores compiler results in
+# GitHub's cross-run cache. Never set CARGO_TARGET_DIR here. The toolchain is host rustup via
+# rust-toolchain.toml. `clean: true` on every checkout because `_work` persists between runs.
 on:
   workflow_dispatch:
     inputs:
@@ -52,7 +53,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
     if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
@@ -84,7 +85,7 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: [self-hosted, macos, arm64]
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 60
     needs: changes
     if: >-

@@ -199,7 +199,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
   build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
   config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
-  are required contexts and always report; a PR stays a draft until its review passes, so it gets one CI run.
+  are required contexts and always report. All three, and `Detect changed paths`, run on the self-hosted Linux
+  runners; the Macs take only the dispatch jobs.
   `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
@@ -238,8 +239,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
-  artifacts itself. Cache maintenance is opt-in per workflow: the macOS Checks/Test jobs and
-  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
+  artifacts itself. Cache maintenance is opt-in per workflow: the Checks job, the macOS Test job and
+  the binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
   has a cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
   commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
   Never share a runner's target directory with concurrent developer jobs.
