@@ -8517,6 +8517,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_run/vault_read/tests/support.rs",
+     "purpose": "Shared retrieval-telemetry fixture for vault-read tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12146,9 +12156,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/verb_class.rs",
-     "purpose": "Scope presets for the credential door's operations",
+     "purpose": "Registered verb classes for the credential door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -18118,10 +18128,33 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImportedClaimBatch",
+      "ImportedClaimBatchEntry",
+      "ImportedClaimBatchReceipt"
+     ],
+     "path": "src/ingest/bulk_review.rs",
+     "purpose": "One import-time human act for the exact set of imported claim candidates",
+     "surface": {
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/bulk_review_tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -18514,7 +18547,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 3,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -18913,15 +18946,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "InstrumentAtoms",
-      "InstrumentView",
       "LensExecutionRuntime"
      ],
-     "path": "src/lens/instrument.rs",
-     "purpose": "The single escaped Instrument renderer and read-only lens interpreter",
+     "path": "src/lens/guest.rs",
+     "purpose": "Sandboxed, read-only lens authoring",
      "surface": {
-      "fn": 6,
-      "struct": 3
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InstrumentAtoms",
+      "InstrumentView"
+     ],
+     "path": "src/lens/instrument.rs",
+     "purpose": "The single escaped Instrument renderer for a validated atom stream",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -19050,7 +19096,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -19094,7 +19140,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/instrument.rs",
@@ -19361,7 +19407,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -19374,6 +19420,30 @@
      "surface": {
       "crate-vis": 18
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInContainerSandboxHost",
+      "LinkedInSeatHostServices",
+      "LinkedInSeatSandbox"
+     ],
+     "path": "src/linkedin_connector/sandbox_host.rs",
+     "purpose": "Container-backed, per-vault LinkedIn seat lifecycle",
+     "surface": {
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linkedin_connector/sandbox_host/tests.rs",
+     "purpose": "Lifecycle acceptance using a recording Docker-compatible executable",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -19589,6 +19659,7 @@
       "RsiBudgetError",
       "RsiBudgetRead",
       "RsiBudgetShare",
+      "RsiExplorationRead",
       "RsiSettlement",
       "RsiSpendPurpose"
      ],
@@ -19596,8 +19667,8 @@
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
       "enum": 3,
-      "fn": 7,
-      "struct": 3
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -21846,7 +21917,7 @@
      "path": "src/off_record/lifecycle/telemetry.rs",
      "purpose": "Retrieval-run registration door (register/finalize/discard, staged/published arms)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -21916,7 +21987,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/off_record/tests.rs",
@@ -25332,7 +25403,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 89,
+      "crate-vis": 90,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -27945,7 +28016,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/admission_tests.rs",
@@ -28549,7 +28620,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -28574,7 +28645,7 @@
      "path": "src/skill_optimize/gate/basis.rs",
      "purpose": "What a ruling rests on before the gate decides: the held-out split, the identity a verdict binds itself to…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 11,
       "static": 1,
       "struct": 2,
@@ -28601,6 +28672,24 @@
      "surface": {
       "crate-vis": 3,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuditPair",
+      "BlindPreference",
+      "JudgeMeasurements",
+      "PreferredResponse",
+      "WorldAxisScore"
+     ],
+     "path": "src/skill_optimize/gate/measurement.rs",
+     "purpose": "Receipt-only DecoEvo measurements and per-axis world-outcome calibration",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -29267,7 +29356,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 3
      }
     },
@@ -29286,7 +29375,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/store/retrieval_telemetry/state_tests.rs",
@@ -34038,7 +34127,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34507,7 +34596,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 39,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34521,7 +34610,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34542,7 +34631,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34913,7 +35002,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35111,8 +35200,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2073,
-   "test_files": 711
+   "source_files": 2077,
+   "test_files": 714
   },
   "oneiron-android": {
    "files": [
@@ -35366,7 +35455,7 @@
      "path": "src/beam/infra.rs",
      "purpose": "Vector-database cost framing",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -37778,7 +37867,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -37830,7 +37919,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "NapiBatchEntity",
       "NapiCodebaseFileEntry",
       "NapiCodebaseSnapshot",
       "NapiEdgeInfo",
@@ -37842,7 +37930,8 @@
      "path": "src/types.rs",
      "purpose": "—",
      "surface": {
-      "struct": 8
+      "crate-vis": 1,
+      "struct": 7
      }
     }
    ],
