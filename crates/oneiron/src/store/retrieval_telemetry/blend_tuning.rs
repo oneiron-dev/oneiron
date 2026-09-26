@@ -94,8 +94,19 @@ impl Store {
             let outcomes = retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)?;
             let run_reward_count_before = reward_count;
             let run_candidate_count_before = data_window.candidate_count;
-            for outcome in outcomes.iter().filter(|outcome| outcome.reward.is_some()) {
-                let reward = f64::from(outcome.reward.expect("filtered reward"));
+            for outcome in &outcomes {
+                let Some(evidence) = &outcome.reward_evidence else {
+                    continue;
+                };
+                let computed = evidence
+                    .reward(&record)
+                    .map_err(|_| Error::CorruptedIndex("retrieval gated reward"))?;
+                if outcome.reward != Some(computed)
+                    || outcome.accepted != Some(evidence.confirmed_fact_hit)
+                {
+                    return Err(Error::CorruptedIndex("retrieval gated reward"));
+                }
+                let reward = f64::from(computed);
                 let mut outcome_gradient = [0.0_f64; 4];
                 let mut outcome_component_count = 0_usize;
                 let mut outcome_candidate_count = 0_u32;

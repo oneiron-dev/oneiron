@@ -29047,6 +29047,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/retrieval_telemetry/end_outcome.rs",
+     "purpose": "Terminal attribution-gated retrieval outcome writer",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
@@ -29061,7 +29071,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "fn": 3
      }
     },
@@ -29108,8 +29118,10 @@
       "RetrievalBlendWeightDataWindow",
       "RetrievalBlendWeightTableEntry",
       "RetrievalBlendWeights",
+      "RetrievalEndOutcome",
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
+      "RetrievalRewardEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
       "RetrievalScoreBreakdown",
@@ -29123,10 +29135,10 @@
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 9,
-      "struct": 13,
+      "struct": 15,
       "type": 1
      }
     },
@@ -31906,7 +31918,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -34735,7 +34747,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34910,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

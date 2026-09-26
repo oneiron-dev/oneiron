@@ -7,9 +7,10 @@ use crate::error::{Error, Result};
 use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
-    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalOutcome,
-    RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
-    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
+    RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalEndOutcome,
+    RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord,
+    RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
+    RetrievalTraceForkHash,
 };
 use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25};
 use std::time::Instant;
@@ -337,6 +338,11 @@ impl Vault {
         config: RetrievalBlendTuningConfig,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         self.store.tune_retrieval_blend_weights(config)
+    }
+
+    /// Record a terminal, gate-attributed outcome for offline retrieval tuning.
+    pub fn record_retrieval_end_outcome(&self, outcome: RetrievalEndOutcome) -> Result<()> {
+        self.store.record_retrieval_end_outcome(outcome)
     }
 
     /// Idempotently writes or replaces a retrieval outcome row for one run.

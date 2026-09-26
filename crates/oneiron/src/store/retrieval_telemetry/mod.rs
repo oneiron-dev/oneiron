@@ -3,6 +3,7 @@
 //! session-side [`SessionStoreView`] retrieval siblings.
 
 mod blend_tuning;
+mod end_outcome;
 mod run_store;
 mod state;
 #[cfg(test)]
@@ -34,8 +35,8 @@ pub(in crate::store) use self::types::{
 pub use self::types::{
     RetrievalAction, RetrievalBlendSignal, RetrievalBlendTuningConfig,
     RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
-    RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunId, RetrievalRunRecord,
-    RetrievalScoreBreakdown, RetrievalScoreComponent, RetrievalSignal, RetrievalTrace,
-    RetrievalTraceChannelRecord, RetrievalTraceForkHash, RetrievalTraceStage,
-    RetrievalTraceStageRecord,
+    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRewardEvidence,
+    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
+    RetrievalSignal, RetrievalTrace, RetrievalTraceChannelRecord, RetrievalTraceForkHash,
+    RetrievalTraceStage, RetrievalTraceStageRecord,
 };
