@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 3 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
+| `src/lib.rs` | src | s | 4 re-export | — | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) |
 | `src/session.rs` | src | m | 3 struct · 2 enum · 10 fn · 2 const · 1 crate-vis | SessionHint, SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
 | `src/session/tests.rs` | test | XL | — | — | — |
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
@@ -34,3 +34,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_push.rs` | test | m | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
 | `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 3 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
+| `src/wave.rs` | src | s | 1 struct · 3 fn | WaveHost | Host-side consumption of a queued planning attempt and live TASK dispatch |
+| `src/wave/tests.rs` | test | s | — | — | — |

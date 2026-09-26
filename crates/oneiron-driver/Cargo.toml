@@ -33,6 +33,7 @@ oneiron-llm-local = { version = "0.1.0", path = "../oneiron-llm-local" }
 # "full": the driver is a plain event consumer, no net/io stack of its own.
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 tracing = { version = "0.1" }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # Turns on the engine's `test-support` seam for THIS crate's tests only (same

@@ -516,6 +516,7 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
         || Ok(()),
     );
     let listener = tokio::net::TcpListener::from_std(host.listener()?)?;
+    let linear_handle = crate::linear_host::spawn(sync_server.clone())?;
     let lifecycle_handle = sync_server.spawn_lifecycle_scheduler();
     let embedding_handle = sync_server.spawn_embedding_worker();
     let app = build_app(sync_server).layer(cors_layer);
@@ -528,6 +529,10 @@ async fn serve_with_config(config: ServeConfig) -> anyhow::Result<()> {
     host.on_stop()?;
     lifecycle_handle.abort();
     let _ = lifecycle_handle.await;
+    if let Some(handle) = linear_handle {
+        handle.abort();
+        let _ = handle.await;
+    }
     if let Some(handle) = embedding_handle {
         handle.abort();
         let _ = handle.await;

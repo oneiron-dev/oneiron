@@ -313,7 +313,8 @@ impl MirroredTaskFields {
 }
 
 /// One normalized inbound change record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearIssueChange {
     /// Tracker event id; third component of the inbound idempotency key, and
     /// the only component that separates two events sharing an `updated_at` or
@@ -367,7 +368,8 @@ pub enum LinearSyncError {
 }
 
 /// One page of normalized inbound changes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct LinearChangePage {
     /// Changes in ascending `updated_at_ms` order.
     pub changes: Vec<LinearIssueChange>,

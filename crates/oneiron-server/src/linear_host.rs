@@ -1,0 +1,238 @@
+//! Opt-in scheduled Linear mirror over an authenticated host-owned bridge.
+//!
+//! This host boundary carries normalized tracker events with stable event IDs.
+//! The bridge, not the vault, owns the Linear provider credential and the
+//! outbound effect door. A raw issue-list poll cannot supply exact event IDs.
+
+use std::io::Read;
+use std::sync::Arc;
+use std::time::Duration;
+
+use oneiron::{
+    EntityId, LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange,
+    LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, MirroredTaskFields,
+};
+use reqwest::blocking::Client;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+
+use crate::server::SyncServer;
+use oneiron::linear_sync::VaultLinearTaskStore;
+
+#[derive(Clone)]
+struct LinearBridge {
+    client: Client,
+    base: reqwest::Url,
+    credential: reqwest::header::HeaderValue,
+}
+
+impl LinearBridge {
+    fn configured() -> anyhow::Result<Option<Self>> {
+        let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
+        let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
+        anyhow::ensure!(
+            base.is_some() == token.is_some(),
+            "Linear bridge requires both URL and token"
+        );
+        let (Some(base), Some(token)) = (base, token) else {
+            return Ok(None);
+        };
+        anyhow::ensure!(!token.trim().is_empty(), "Linear bridge token is empty");
+        let mut base = reqwest::Url::parse(&base)?;
+        let normalized_path = format!("{}/", base.path().trim_end_matches('/'));
+        base.set_path(&normalized_path);
+        anyhow::ensure!(
+            base.scheme() == "https"
+                || (base.scheme() == "http"
+                    && base.host_str().is_some_and(|host| host == "localhost"
+                        || host == "127.0.0.1"
+                        || host == "[::1]")),
+            "Linear bridge must use HTTPS or local loopback"
+        );
+        anyhow::ensure!(
+            base.username().is_empty()
+                && base.password().is_none()
+                && base.query().is_none()
+                && base.fragment().is_none(),
+            "Linear bridge URL must not embed credentials or parameters"
+        );
+        let credential = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
+        let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(15))
+            .build()?;
+        Ok(Some(Self {
+            client,
+            base,
+            credential,
+        }))
+    }
+
+    fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> LinearSyncResult<Value> {
+        let endpoint = self
+            .base
+            .join(path)
+            .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
+        let mut request = self
+            .client
+            .request(method, endpoint)
+            .header(reqwest::header::AUTHORIZATION, self.credential.clone());
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request
+            .send()
+            .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
+        if !response.status().is_success() {
+            // Provider bodies can contain secrets; report the status only.
+            return Err(LinearSyncError::Transport(format!(
+                "Linear bridge returned {}",
+                response.status()
+            )));
+        }
+        bounded_json(response)
+    }
+}
+
+const MAX_BRIDGE_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+
+fn bounded_json<T: DeserializeOwned>(response: reqwest::blocking::Response) -> LinearSyncResult<T> {
+    let mut bytes = Vec::new();
+    response
+        .take(MAX_BRIDGE_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            LinearSyncError::Transport(format!("Linear bridge read failed: {error}"))
+        })?;
+    if bytes.len() as u64 > MAX_BRIDGE_RESPONSE_BYTES {
+        return Err(LinearSyncError::Transport(
+            "Linear bridge response exceeds limit".into(),
+        ));
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|error| LinearSyncError::Transport(format!("invalid Linear bridge JSON: {error}")))
+}
+
+impl LinearChangeSource for LinearBridge {
+    fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
+        let mut endpoint = self
+            .base
+            .join("changes")
+            .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
+        if let Some(cursor) = cursor {
+            endpoint.query_pairs_mut().append_pair("cursor", cursor);
+        }
+        let response = self
+            .client
+            .get(endpoint)
+            .header(reqwest::header::AUTHORIZATION, self.credential.clone())
+            .send()
+            .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
+        if !response.status().is_success() {
+            return Err(LinearSyncError::Transport(format!(
+                "Linear bridge returned {}",
+                response.status()
+            )));
+        }
+        bounded_json(response)
+    }
+}
+
+impl LinearEgress for LinearBridge {
+    fn create_issue(
+        &mut self,
+        operation_id: [u8; 32],
+        task_ref: EntityId,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        serde_json::from_value(self.request(reqwest::Method::POST, "issues", Some(json!({
+            "operation_id": hex_operation_id(operation_id), "task_ref": task_ref.to_hex(), "fields": fields,
+        })))?).map_err(|error| LinearSyncError::Transport(format!("invalid Linear create receipt: {error}")))
+    }
+
+    fn update_issue(
+        &mut self,
+        operation_id: [u8; 32],
+        issue: &LinearIssueRef,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        // Fixed path: opaque issue IDs never become URL path components.
+        serde_json::from_value(self.request(
+            reqwest::Method::POST,
+            "issues/update",
+            Some(json!({
+                "operation_id": hex_operation_id(operation_id), "issue": issue, "fields": fields,
+            })),
+        )?)
+        .map_err(|error| {
+            LinearSyncError::Transport(format!("invalid Linear update receipt: {error}"))
+        })
+    }
+}
+
+fn hex_operation_id(id: [u8; 32]) -> String {
+    id.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn synchronize_once(
+    vault: &oneiron::Vault,
+    inbound: LinearBridge,
+    outbound: LinearBridge,
+    now: u64,
+) -> LinearSyncResult<(
+    Vec<oneiron::LinearMirrorReceipt>,
+    oneiron::LinearPullReceipt,
+)> {
+    LinearSyncAdapter::new(VaultLinearTaskStore::new(vault), inbound, outbound).synchronize(now)
+}
+
+/// Start a scheduled mirror when the host configured its authenticated bridge.
+/// Every pass uses the vault's durable dirty outbox and pull cursor; errors
+/// leave both for the next pass. This timer lives in the server, never core.
+pub(crate) fn spawn(
+    server: Arc<SyncServer>,
+) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    let Some(bridge) = LinearBridge::configured()? else {
+        return Ok(None);
+    };
+    let handle = tokio::spawn(async move {
+        let mut ticks = tokio::time::interval(Duration::from_secs(30));
+        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticks.tick().await;
+            let vault = server.vault().clone();
+            let inbound = bridge.clone();
+            let outbound = bridge.clone();
+            let outcome = tokio::task::spawn_blocking(move || {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |time| time.as_secs());
+                synchronize_once(&vault, inbound, outbound, now)
+            })
+            .await;
+            match outcome {
+                Ok(Ok((pushed, pulled))) => tracing::debug!(
+                    pushed = pushed.len(),
+                    pulled = pulled.applied,
+                    "Linear mirror pass"
+                ),
+                Ok(Err(error)) => {
+                    tracing::warn!(error = %error, "Linear mirror pass failed; will retry");
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "Linear mirror worker failed; will retry");
+                }
+            }
+        }
+    });
+    Ok(Some(handle))
+}
+
+#[cfg(test)]
+#[path = "linear_host/tests.rs"]
+mod tests;

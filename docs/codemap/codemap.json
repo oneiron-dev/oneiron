@@ -36485,7 +36485,7 @@
      "path": "src/lib.rs",
      "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -36752,6 +36752,27 @@
       "fn": 6,
       "struct": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WaveHost"
+     ],
+     "path": "src/wave.rs",
+     "purpose": "Host-side consumption of a queued planning attempt and live TASK dispatch",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/wave/tests.rs",
+     "purpose": "—",
+     "surface": {}
     }
    ],
    "modules": {
@@ -36775,12 +36796,19 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)"
+    },
+    "wave": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "Host-side consumption of a queued planning attempt and live TASK dispatch"
     }
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 14,
-   "test_files": 9
+   "source_files": 15,
+   "test_files": 10
   },
   "oneiron-ffi": {
    "files": [
@@ -40943,6 +40971,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/linear_host.rs",
+     "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linear_host/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
@@ -42154,6 +42200,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_linear_host.rs",
+     "purpose": "Compile the exact host module as an isolated transport test",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42270,6 +42326,13 @@
      "layout": "file+dir",
      "purpose": "—"
     },
+    "linear_host": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
+    },
     "livequery": {
      "files": 17,
      "impl_vault": false,
@@ -42364,8 +42427,8 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
-   "test_files": 96
+   "source_files": 231,
+   "test_files": 98
   },
   "oneiron-uniffi": {
    "files": [

@@ -31,6 +31,7 @@
 mod session;
 mod supervisor;
 mod tick;
+mod wave;
 
 pub use session::{
     DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
@@ -46,3 +47,5 @@ pub use tick::{
     HintSignal, HybridTick, NowMillis, PushTick, Tick, TickPushError, TickSource, TimerTick,
     WakePusher, WakeSignal,
 };
+
+pub use wave::WaveHost;

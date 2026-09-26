@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2082 | 714 | 9 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 97 | 18 | 0 |
-| [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
+| [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 15 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 1 | 0 |
@@ -31,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 8 | 9 | 1 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 31 | 9 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 230 | 96 | 1 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 231 | 98 | 1 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | Definition-only UniFFI interface surface for the WIRE head contract | 6 | 1 | 0 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 11 | 3 | 0 |
 
@@ -255,6 +255,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `session` | file+dir | 2 | m | RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints |
 | `supervisor` | dir | 12 | m | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `tick` | dir | 8 | m | Tick sources: what wakes the supervisor (ONE-1684) |
+| `wave` | file+dir | 2 | s | Host-side consumption of a queued planning attempt and live TASK dispatch |
 
 ## oneiron-ffi
 
@@ -377,6 +378,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `feedback_delivery` | file+dir | 2 | s | Deployment-selected feedback transport |
 | `handler` | dir | 15 | m | WebSocket upgrade handler and connection lifecycle |
 | `idempotency` | file+dir | 2 | m | — |
+| `linear_host` | file+dir | 2 | s | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `livequery` | file+dir | 17 | m | App-tier framing and coarse live-query state, separate from WindowSync |
 | `managed` | dir | 10 | m | Managed serve mode: the vault engine as a supervised child process |
 | `mcp` | dir | 22 | m | MCP connector actor registry |

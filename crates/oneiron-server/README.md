@@ -84,3 +84,34 @@ lms load text-embedding-harrier-oss-v1-0.6b --context-length 4096 -y
 # Linux, llama-server
 llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096 --port 8089
 ```
+
+## Linear mirror host bridge (opt-in)
+
+The server starts a 30-second mirror pass only when both
+`ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set. The URL
+must be HTTPS (or loopback HTTP for a local bridge). A partial or blank config
+stops startup. The token is sent only as an `Authorization: Bearer` header; it
+is not stored in the vault. Unmanaged `serve` starts the pass. A failed pass
+keeps the TASK outbox revision and inbound cursor for retry.
+
+The bridge is a host-owned authenticated provider/OF-327 outbound-door adapter,
+not a direct Linear GraphQL client. A snapshot poll of current issues cannot
+supply stable per-change event IDs or the historical field values needed for
+safe echo and conflict handling. The bridge must preserve those from its
+authenticated Linear event source (for example a webhook inbox), and must
+collapse repeated `operation_id` values before making provider writes.
+
+It exposes three JSON operations below the configured URL:
+
+- `GET changes?cursor=<opaque>` returns `LinearChangePage` (`changes` plus
+  `next_cursor`), ordered by `updated_at_ms`; each `LinearIssueChange` contains
+  stable nonempty `event_id`, `issue`, `updated_at_ms`, and `fields`.
+- `POST issues` accepts `operation_id` (64 lowercase hex), `task_ref` (entity
+  hex), and `fields`; returns `LinearIssueChange` for the created issue.
+- `POST issues/update` accepts `operation_id`, `issue` (`LinearIssueRef`), and
+  `fields`; returns `LinearIssueChange` for the updated issue.
+
+The bridge must return non-2xx on transport or authority failure, not an empty
+success page. The pass reads one page at a time and stores its cursor only
+following successful application. Host deployments without a bridge do not
+start any mirror or make a tracker request.
