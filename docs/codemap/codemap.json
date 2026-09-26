@@ -3800,8 +3800,8 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 12,
+      "fn": 8,
       "struct": 1
      }
     },
