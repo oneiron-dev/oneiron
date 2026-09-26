@@ -95,7 +95,7 @@ impl Vault {
                 )?;
             }
             let at = crate::unix_seconds_now();
-            let candidates = self.import_pack_skills_in_txn(txn, &source, at)?;
+            let candidates = self.import_pack_skills_in_txn(txn, &source, &ask.hub, at)?;
             let receipt = PackInstallReceipt {
                 source_id: ask.source_id.to_hex(),
                 pack_name: source.manifest.name.clone(),

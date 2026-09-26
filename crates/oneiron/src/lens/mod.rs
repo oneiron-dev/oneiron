@@ -19,6 +19,8 @@ mod instrument;
 pub use instrument::{InstrumentAtoms, InstrumentView, LensExecutionRuntime, render_instrument};
 mod generated_ui;
 mod mediation;
+mod mount;
+pub use mount::LensMount;
 mod self_ui;
 mod validate;
 mod wire_ids;
