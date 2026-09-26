@@ -16998,7 +16998,7 @@
      "path": "src/genui/mod.rs",
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -17053,6 +17053,19 @@
      "path": "src/genui/tests/failure_integrity.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceGrantOffer"
+     ],
+     "path": "src/genui/voice_offer.rs",
+     "purpose": "Voice-only disclosure widening is an offer, not an authorization",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -32547,7 +32560,7 @@
      "path": "src/voice_identity/vault.rs",
      "purpose": "Vault surface for consent, enrollment, segment matching, roster reads, withdrawal, and pruning",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -34246,8 +34259,8 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 10,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "OF-336 generated-UI component contract"
@@ -34920,7 +34933,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {

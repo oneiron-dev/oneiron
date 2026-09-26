@@ -381,14 +381,13 @@ fn blank_principal_never_authenticates() {
     assert!(
         !ConsentActorIdentity::VoicePath {
             speaker_ref: String::new(),
-            owner_voice_print_verified: true,
         }
         .authenticates_owner("", &owner)
     );
 }
 
 #[test]
-fn voice_path_uses_store_authentication_not_the_request_boolean() -> Result<()> {
+fn voice_path_cannot_borrow_a_store_authenticated_owner_handle() -> Result<()> {
     let card = ask_card()?;
     let (_dir, vault, owner) = owner_context();
     let attacker = authenticated_person(&vault, 0x72, "attacker");
@@ -398,7 +397,6 @@ fn voice_path_uses_store_authentication_not_the_request_boolean() -> Result<()> 
         ConsentActionKind::Approve,
         ConsentActorIdentity::VoicePath {
             speaker_ref: "owner".to_owned(),
-            owner_voice_print_verified: false,
         },
         ConsentSurface::Voice,
         103,
@@ -411,9 +409,10 @@ fn voice_path_uses_store_authentication_not_the_request_boolean() -> Result<()> 
         crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
     assert_eq!(
-        card.evaluate_action(&request, &owner)?.decision,
-        ConsentActionDecision::ApprovedOnce,
-        "the host-authenticated owner handle is authority, not the request boolean"
+        card.evaluate_action(&request, &owner)
+            .expect_err("voice claim cannot borrow a device-authenticated handle")
+            .kind(),
+        crate::error::ErrorKind::ConsentUnauthenticatedActor
     );
     Ok(())
 }
@@ -476,6 +475,20 @@ fn consent_actor_identity_pin_is_not_a_free_text_claim() {
         "occurred_at": 104
     });
     assert!(serde_json::from_value::<ConsentActionRequest>(untagged).is_err());
+
+    let forged_voice_bit = serde_json::json!({
+        "component_id": "ask-1",
+        "action_id": "approve_once",
+        "action": "approve",
+        "actor": {
+            "identity": "voice_path",
+            "speaker_ref": "owner",
+            "owner_voice_print_verified": true
+        },
+        "surface": "voice",
+        "occurred_at": 104
+    });
+    assert!(serde_json::from_value::<ConsentActionRequest>(forged_voice_bit).is_err());
 
     let tagged = serde_json::json!({
         "component_id": "ask-1",

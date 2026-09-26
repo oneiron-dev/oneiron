@@ -1666,12 +1666,10 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
         "the seam is tested against an accepted match"
     );
 
-    // The most a caller can assemble from roster data is a CLAIMED voice path
-    // whose verification flag no voice result supplies. It authenticates
-    // nobody — not the owner principal, not even the speaker it names.
+    // The most a caller can assemble from roster data is a CLAIMED voice path.
+    // It authenticates nobody — not even the speaker it names.
     let claimed = ConsentActorIdentity::VoicePath {
         speaker_ref: resolved.speaker_label.clone(),
-        owner_voice_print_verified: false,
     };
     assert_eq!(claimed.actor_ref(), subject.to_hex());
     assert!(!claimed.authenticates_principal("principal:owner"));
@@ -1716,5 +1714,169 @@ fn similarity_result_is_not_a_consent_actor_and_cannot_auto_clear() -> Result<()
             .kind(),
         ErrorKind::ConsentUnauthenticatedActor,
     ));
+    Ok(())
+}
+
+#[test]
+fn voice_offer_nonce_requires_exact_device_confirm_and_is_single_use() -> Result<()> {
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+    use crate::genui::ConsentSurface;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB1);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    enroll_principal(
+        &vault,
+        actor,
+        actor,
+        "consent-voice-offer",
+        [1.0, 0.0, 0.0, 0.0],
+    )?;
+    let space_id = space().space_id;
+    vault.resolve_voice_segments(&match_request(
+        "call-voice-offer",
+        &space_id,
+        vec![segment("owner-intent", 0, [1.0, 0.0, 0.0, 0.0], &space_id)],
+        Vec::new(),
+    ))?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::singleton("contact:friend")?,
+        DisclosureClass::new("private")?,
+        DisclosureEnvelope::new(["named-set:friends".to_owned()])?,
+    )?;
+    let altered = GrantBound::disclosure(
+        AudienceBound::singleton("contact:other")?,
+        DisclosureClass::new("private")?,
+        DisclosureEnvelope::new(["named-set:friends".to_owned()])?,
+    )?;
+    let offer = vault.offer_voice_disclosure_grant(
+        actor,
+        "principal:owner",
+        "call-voice-offer",
+        "owner-intent",
+        &bound,
+    )?;
+    assert!(offer.owner_voice_print_verified);
+    assert_eq!(offer.bound_digest, bound.digest().to_hex());
+    assert!(!offer.grant_offer_nonce.is_empty());
+
+    let owner = vault.authenticate_owner(
+        actor,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let wrong_principal = vault.authenticate_owner(
+        actor,
+        "principal:other",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        vault
+            .confirm_voice_grant_offer(
+                &wrong_principal,
+                &offer.grant_offer_nonce,
+                bound.clone(),
+                ConsentSurface::Dashboard,
+            )
+            .is_err()
+    );
+    for (candidate, surface) in [
+        (bound.clone(), ConsentSurface::Voice),
+        (bound.clone(), ConsentSurface::SharedSlack),
+        (altered, ConsentSurface::Dashboard),
+    ] {
+        assert!(
+            vault
+                .confirm_voice_grant_offer(&owner, &offer.grant_offer_nonce, candidate, surface)
+                .is_err()
+        );
+    }
+    assert!(
+        vault
+            .confirm_voice_grant_offer(
+                &owner,
+                &"00".repeat(32),
+                bound.clone(),
+                ConsentSurface::Dashboard
+            )
+            .is_err()
+    );
+    let receipt = vault.confirm_voice_grant_offer(
+        &owner,
+        &offer.grant_offer_nonce,
+        bound.clone(),
+        ConsentSurface::Dashboard,
+    )?;
+    let grant_ref = receipt.grant_ref().expect("standing disclosure grant");
+    assert!(vault.consent_grant(&grant_ref)?.is_some());
+    assert!(
+        vault
+            .confirm_voice_grant_offer(
+                &owner,
+                &offer.grant_offer_nonce,
+                bound,
+                ConsentSurface::Dashboard
+            )
+            .is_err(),
+        "spent nonce cannot mint twice"
+    );
+    Ok(())
+}
+
+#[test]
+fn voice_offer_verification_is_engine_derived_and_not_authority() -> Result<()> {
+    use crate::consent::{AudienceBound, DisclosureClass, DisclosureEnvelope, GrantBound};
+    use crate::genui::ConsentSurface;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0xB3);
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let bound = GrantBound::disclosure(
+        AudienceBound::singleton("contact:friend")?,
+        DisclosureClass::new("private")?,
+        DisclosureEnvelope::new(["named-set:friends".to_owned()])?,
+    )?;
+    let offer = vault.offer_voice_disclosure_grant(
+        actor,
+        "principal:owner",
+        "unknown-room",
+        "claimed-owner",
+        &bound,
+    )?;
+    assert!(!offer.owner_voice_print_verified);
+    let json = serde_json::to_value(&offer).expect("serialize display-only offer");
+    assert_eq!(json["owner_voice_print_verified"], false);
+    // A caller cannot turn the serializable offer into trusted proof; a voice
+    // surface never confirms even with a valid authenticated-owner handle.
+    let owner = vault.authenticate_owner(
+        actor,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    assert!(
+        vault
+            .confirm_voice_grant_offer(
+                &owner,
+                &offer.grant_offer_nonce,
+                bound,
+                ConsentSurface::Voice,
+            )
+            .is_err()
+    );
     Ok(())
 }

@@ -279,6 +279,46 @@ impl Vault {
         decode_roster(&bytes).map(Some)
     }
 
+    /// Display-only corroboration for a voice grant offer. No caller boolean
+    /// participates: the matched segment and current owner print are read from
+    /// the same vault. A match never authorizes consent on its own.
+    pub(crate) fn voice_owner_print_verified(
+        &self,
+        voice_session_ref: &str,
+        segment_id: &str,
+        owner_actor: EntityId,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let Some(raw) = self
+            .store
+            .vault_meta
+            .get(&rtxn, &voice_roster_key(voice_session_ref))?
+        else {
+            return Ok(false);
+        };
+        let roster = decode_roster(&raw)?;
+        let Some(print) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
+            return Ok(false);
+        };
+        if print.contact_ref.is_some()
+            || print.space.space_id != roster.embedding_space_id
+            || print
+                .delete_after
+                .is_some_and(|deadline| deadline <= self.now_recorded_at())
+        {
+            return Ok(false);
+        }
+        Ok(roster.segments.iter().any(|segment| {
+            segment.segment_id == segment_id
+                && segment.subject_ref == Some(owner_actor)
+                && matches!(
+                    segment.evidence,
+                    VoiceAttributionEvidence::EnrolledPrint { subject_ref, score, .. }
+                        if subject_ref == owner_actor && score >= roster.known_threshold
+                )
+        }))
+    }
+
     /// Ends a voice-print retention relationship and stamps `delete_after`.
     ///
     /// The relationship must resolve to an existing RELATIONSHIP entity and
