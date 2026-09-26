@@ -27718,7 +27718,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests/sweep.rs",
@@ -27732,6 +27732,8 @@
       "AttemptOutcome",
       "AttributionJudgment",
       "AttributionVerdict",
+      "DeviationCause",
+      "FollowedState",
       "OutcomeEvidence",
       "SkillEditProposal"
      ],
@@ -27739,8 +27741,8 @@
      "purpose": "Verdict taxonomy and row shapes: evidence in, judgments and edit proposals out",
      "surface": {
       "const": 1,
-      "enum": 2,
-      "fn": 8,
+      "enum": 4,
+      "fn": 9,
       "struct": 3
      }
     },

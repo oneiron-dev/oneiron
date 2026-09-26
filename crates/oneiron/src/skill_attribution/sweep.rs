@@ -3,9 +3,10 @@
 use super::codec::{decode_u64, evidence_after, validate_evidence};
 use super::projector::record_evidence_in_txn;
 use super::{
-    AttemptOutcome, AttributionJudge, OutcomeEvidence, RuleAttributionJudge, attribution_judgments,
-    read_attribution_cursor, run_attribution_projector_with_judge,
+    AttemptOutcome, AttributionJudge, FollowedState, OutcomeEvidence, RuleAttributionJudge,
+    attribution_judgments, read_attribution_cursor, run_attribution_projector_with_judge,
 };
+use crate::attempt_queue::ManifestEntry;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt_page};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -19,7 +20,7 @@ const CAPTURED_PREFIX: &[u8] = b"skill_attribution:sweep_receipt:v1:";
 pub struct ReceiptAttributionFacts {
     pub actor: EntityId,
     pub skill: Option<EntityId>,
-    pub followed_skill: bool,
+    pub followed_state: FollowedState,
     pub skill_covered_step: bool,
 }
 
@@ -120,6 +121,8 @@ pub fn run_task_attribution_sweep_with_judge(
     for (sequence, evidence) in evidence_after(vault, applied)? {
         if sequence <= routed
             && evidence.outcome == AttemptOutcome::Succeeded
+            && (matches!(evidence.followed_state, Some(FollowedState::Followed))
+                || evidence.followed_state.is_none() && evidence.followed_skill == Some(true))
             && let Some(skill) = evidence.skill
         {
             crate::skill_reliability::record_skill_contributing_win(
@@ -175,6 +178,40 @@ fn capture_receipt(
             "too many attribution facts for one receipt".to_owned(),
         ));
     }
+    // A partial host answer must not mark this receipt captured forever. The
+    // terminal manifest is the authority on which tier-2 skills were loaded.
+    if let Some(manifest) = receipt.pack_manifest_skills() {
+        let loaded = manifest
+            .iter()
+            .map(|wire| {
+                ManifestEntry::parse_wire_form(wire)
+                    .map(|(reference, _)| reference.to_owned())
+                    .ok_or(Error::InvalidConfig(
+                        "invalid skill manifest reference".to_owned(),
+                    ))
+            })
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        let named = facts
+            .iter()
+            .map(|fact| {
+                let skill = fact.skill.ok_or(Error::InvalidConfig(
+                    "attribution fact must name a loaded skill".to_owned(),
+                ))?;
+                vault
+                    .get_skill_record(&skill)?
+                    .map(|record| record.skill_id)
+                    .ok_or(Error::InvalidConfig(
+                        "attribution fact names an unknown skill".to_owned(),
+                    ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let unique_named: std::collections::BTreeSet<_> = named.iter().cloned().collect();
+        if unique_named != loaded || unique_named.len() != named.len() {
+            return Err(Error::InvalidConfig(
+                "attribution facts must cover every loaded skill exactly once".to_owned(),
+            ));
+        }
+    }
     let mut unique = std::collections::BTreeSet::new();
     let mut evidence = Vec::new();
     for fact in facts {
@@ -189,7 +226,8 @@ fn capture_receipt(
             outcome,
             receipt.occurred_at,
         )
-        .with_routing_facts(fact.followed_skill, fact.skill_covered_step);
+        .with_followed_state(fact.followed_state);
+        row.skill_covered_step = Some(fact.skill_covered_step);
         row.skill = fact.skill;
         validate_evidence(vault, &row)?;
         evidence.push(row);

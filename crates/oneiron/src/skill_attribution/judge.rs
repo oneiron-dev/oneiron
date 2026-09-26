@@ -4,7 +4,9 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::CallPurpose;
 
-use super::types::{AttemptOutcome, AttributionVerdict, OutcomeEvidence};
+use super::types::{
+    AttemptOutcome, AttributionVerdict, DeviationCause, FollowedState, OutcomeEvidence,
+};
 
 /// [`CallPurpose::Other`] name for the LLM classification tier. Ambiguous
 /// evidence rides the EXISTING engine LLM call surface under this purpose —
@@ -43,7 +45,9 @@ pub fn attribution_call_purpose() -> CallPurpose {
 /// | outcome | followed skill | skill covered step | verdict |
 /// |---|---|---|---|
 /// | failed | yes | yes | `SkillDefect` — the content was wrong |
-/// | failed | no | — | `ExecutionLapse` — the executor departed from it |
+/// | failed | ignored | — | `ExecutionLapse` — the executor ignored it |
+/// | failed | partly | — | abstain — assess the partial work |
+/// | failed | deviated with reason | — | resolved cause routes defect, discovery or lapse; otherwise abstain |
 /// | failed | yes | no | `Discovery` — the content was missing |
 /// | succeeded | — | — | abstain — a win attributes nothing here |
 /// | any fact unsettled | | | abstain — the LLM tier's case |
@@ -59,11 +63,33 @@ impl AttributionJudge for RuleAttributionJudge {
         if evidence.outcome != AttemptOutcome::Failed {
             return Ok(None);
         }
-        let Some(followed_skill) = evidence.followed_skill else {
-            return Ok(None);
-        };
-        if !followed_skill {
-            return Ok(Some(AttributionVerdict::ExecutionLapse));
+        if let Some(state) = &evidence.followed_state {
+            match state {
+                FollowedState::Ignored => return Ok(Some(AttributionVerdict::ExecutionLapse)),
+                FollowedState::Partly => return Ok(None),
+                FollowedState::DeviatedWithReason { cause, .. } => {
+                    return Ok(match cause {
+                        Some(DeviationCause::ExecutorError) => {
+                            Some(AttributionVerdict::ExecutionLapse)
+                        }
+                        Some(DeviationCause::IncorrectInstruction) if evidence.skill.is_some() => {
+                            Some(AttributionVerdict::SkillDefect)
+                        }
+                        Some(DeviationCause::MissingInstruction) if evidence.skill.is_some() => {
+                            Some(AttributionVerdict::Discovery)
+                        }
+                        _ => None,
+                    });
+                }
+                FollowedState::Followed => {}
+            }
+        } else {
+            let Some(followed_skill) = evidence.followed_skill else {
+                return Ok(None);
+            };
+            if !followed_skill {
+                return Ok(Some(AttributionVerdict::ExecutionLapse));
+            }
         }
         // The remaining branches attribute to the SKILL, so an evidence row
         // with no skill in the manifest cannot be routed: fail to the actor's

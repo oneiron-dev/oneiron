@@ -687,3 +687,43 @@ fn an_empty_fixture_set_scores_zero() {
 }
 
 mod sweep;
+
+#[test]
+fn stated_deviation_causes_route_differently_and_empty_reasons_are_refused() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let Grounded { actor, skill } = ground(&vault, 0x71, 0x72)?;
+    let receipt = stamped_receipt(&vault, FIXTURE_SKILL_ID)?;
+    for (cause, expected) in [
+        (
+            DeviationCause::IncorrectInstruction,
+            AttributionVerdict::SkillDefect,
+        ),
+        (
+            DeviationCause::MissingInstruction,
+            AttributionVerdict::Discovery,
+        ),
+        (
+            DeviationCause::ExecutorError,
+            AttributionVerdict::ExecutionLapse,
+        ),
+    ] {
+        let row = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
+            .with_skill(skill)
+            .with_followed_state(FollowedState::DeviatedWithReason {
+                reason: "stated departure".to_owned(),
+                cause: Some(cause),
+            });
+        assert_eq!(RuleAttributionJudge.judge(&row)?, Some(expected));
+    }
+    let invalid = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
+        .with_skill(skill)
+        .with_followed_state(FollowedState::DeviatedWithReason {
+            reason: "   ".to_owned(),
+            cause: Some(DeviationCause::ExecutorError),
+        });
+    assert!(matches!(
+        record_attribution_evidence(&vault, &invalid),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    Ok(())
+}

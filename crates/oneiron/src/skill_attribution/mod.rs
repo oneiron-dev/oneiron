@@ -46,8 +46,8 @@ pub use self::projector::{
     record_attribution_evidence, run_attribution_projector, run_attribution_projector_with_judge,
 };
 pub use self::types::{
-    AttemptOutcome, AttributionJudgment, AttributionVerdict, OutcomeEvidence,
-    SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
+    AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, FollowedState,
+    OutcomeEvidence, SKILL_ATTRIBUTION_SCHEMA_VERSION, SkillEditProposal,
 };
 
 #[cfg(test)]
