@@ -13453,7 +13453,7 @@
      "path": "src/dreamer_runner/maintenance/mod.rs",
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority",
      "surface": {
-      "const": 4,
+      "const": 3,
       "crate-vis": 4,
       "fn": 1,
       "mod": 2,
@@ -13814,15 +13814,17 @@
       "WakeIdleState",
       "WakePolicyDecision",
       "WakePolicyOutcome",
+      "WakePolicyTimerLease",
       "WakePolicyTrigger",
       "WakeRecipe"
      ],
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
      }
     },
     {

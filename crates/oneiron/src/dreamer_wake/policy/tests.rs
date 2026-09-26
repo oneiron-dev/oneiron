@@ -70,6 +70,7 @@ fn idle(last: u64) -> WakeIdleState {
     WakeIdleState {
         running_turns: false,
         live_background_work: false,
+        compute_available: true,
         last_inbound_at: last,
     }
 }
@@ -317,6 +318,49 @@ fn policy_wake_is_executable_and_completes_in_the_production_driver() -> Result<
 }
 
 #[test]
+fn missing_recipe_input_cannot_complete_dispatch_receipt() -> Result<()> {
+    let (_dir, vault) = open();
+    let mut policy = v3();
+    policy.new_records = 1;
+    row(&vault, policy)?;
+    claim(&vault, ClaimSource::UserStated, 1)?;
+    assert!(
+        vault
+            .enqueue_due_dreamer_wake(idle(0), 3601)?
+            .attempt
+            .is_some()
+    );
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .vault_meta
+            .delete(txn, &[OUTBOX_PREFIX, &[WakeRecipe::Weave.key()]].concat())?;
+        Ok(())
+    })?;
+    let mut driver = crate::dreamer_wake::DreamerWakeDriver::new(
+        &vault,
+        "policy-missing-input",
+        crate::dreamer_wake::WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0)),
+    );
+    let report = crate::dreamer_wake::block_on_ready(driver.run_wake_pass(
+        crate::dreamer_wake::RunWakePass {
+            trigger: crate::dreamer_wake::WakeTrigger::Event,
+            scope: DreamerConsolidationScope::Micro,
+            local_node_id: 1,
+            lease_owner: "policy-missing-input".into(),
+            budget_total_units: 1_000,
+            reserve_units: 10,
+            now: 3601,
+        },
+        &mut NoPartitionExecutor,
+        &crate::dreamer_wake::WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.completed, 0);
+    assert_eq!(report.failed, 1);
+    Ok(())
+}
+
+#[test]
 fn late_replayed_explicit_row_after_wake_is_not_lost_by_learned_at() -> Result<()> {
     let (_dir, vault) = open();
     let mut config = v3();
@@ -414,5 +458,66 @@ fn nightly_recipe_is_a_separate_row_dial() -> Result<()> {
         vault.dreamer_wake_recipe_inputs()?[0].recipe,
         WakeRecipe::Nightly
     );
+    Ok(())
+}
+
+#[test]
+fn repeated_continuous_receipts_do_not_double_count_pending_weave_or_nightly() -> Result<()> {
+    let (_dir, vault) = open();
+    let mut policy = v3();
+    policy.new_records = 100;
+    row(&vault, policy)?;
+    claim(&vault, ClaimSource::UserStated, 1)?;
+    for (at_time, now) in [(2, 3601), (3, 3602)] {
+        let mut body = Vec::new();
+        rmpv::encode::write_value(&mut body, &Value::Map(vec![("spkr".into(), "user".into())]))
+            .unwrap();
+        vault.put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_TURN,
+            at(at_time),
+            at_time,
+            &body,
+        )?;
+        assert_eq!(
+            vault.enqueue_due_dreamer_wake(idle(0), now)?.decision,
+            WakePolicyDecision::Enqueue {
+                recipe: WakeRecipe::Continuous
+            }
+        );
+    }
+    let pending = vault.dreamer_wake_recipe_inputs()?;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].turn_count, 2);
+    assert_eq!(
+        pending[0].record_count, 3,
+        "claim plus two user turns, not cumulative double count"
+    );
+    assert_eq!(pending[0].nightly_count, 3);
+    Ok(())
+}
+
+#[test]
+fn zero_compute_suspends_even_with_due_explicit_input() -> Result<()> {
+    let (_dir, vault) = open();
+    let mut policy = v3();
+    policy.new_records = 1;
+    row(&vault, policy)?;
+    claim(&vault, ClaimSource::UserStated, 1)?;
+    let no_compute = WakeIdleState {
+        compute_available: false,
+        ..idle(0)
+    };
+    assert_eq!(
+        vault.evaluate_dreamer_wake(no_compute, 3601)?,
+        WakePolicyDecision::Silent
+    );
+    assert!(
+        vault
+            .enqueue_due_dreamer_wake(no_compute, 3601)?
+            .attempt
+            .is_none()
+    );
+    assert!(vault.dreamer_wake_recipe_inputs()?.is_empty());
     Ok(())
 }

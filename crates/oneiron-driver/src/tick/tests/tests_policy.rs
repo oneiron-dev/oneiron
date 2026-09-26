@@ -24,6 +24,7 @@ fn sample(last: Arc<AtomicU64>) -> IdleSample {
     Arc::new(move || WakeIdleState {
         running_turns: false,
         live_background_work: false,
+        compute_available: true,
         last_inbound_at: last.load(Ordering::SeqCst),
     })
 }
@@ -48,7 +49,8 @@ async fn policy_timer_cancels_on_inbound_and_fires_at_new_quiet_deadline() {
         &vault,
         sample(Arc::clone(&last)),
         Arc::clone(&now_ms),
-    );
+    )
+    .expect("one timer per vault");
     let (tick, ()) = tokio::join!(ticks.next_tick(), async {
         tokio::time::sleep(Duration::from_secs(10)).await;
         last.store(now_ms() / 1_000, Ordering::SeqCst);
@@ -86,9 +88,58 @@ async fn empty_vault_has_no_policy_timer_or_queued_wake() {
         &vault,
         sample(Arc::new(AtomicU64::new(0))),
         now_ms,
-    );
+    )
+    .expect("one timer per vault");
     assert!(
         tokio::time::timeout(Duration::from_secs(172_800), ticks.next_tick())
+            .await
+            .is_err()
+    );
+    assert!(AttemptQueue::new(&vault).list().unwrap().is_empty());
+}
+
+#[test]
+fn only_one_idle_timer_can_own_an_open_vault() {
+    let (_dir, vault) = open_vault();
+    let clock = frozen_clock(0);
+    let idle = sample(Arc::new(AtomicU64::new(0)));
+    let (one, _wake_one, _hint_one) = PushTick::channel(0);
+    let first = WakePolicyTicks::new(one, &vault, Arc::clone(&idle), Arc::clone(&clock))
+        .expect("first timer owns vault");
+    let (two, _wake_two, _hint_two) = PushTick::channel(0);
+    assert!(matches!(
+        WakePolicyTicks::new(two, &vault, Arc::clone(&idle), Arc::clone(&clock)),
+        Err(oneiron::Error::InvalidConfig(_))
+    ));
+    drop(first);
+    let (three, _wake_three, _hint_three) = PushTick::channel(0);
+    assert!(WakePolicyTicks::new(three, &vault, idle, clock).is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn zero_compute_has_no_due_policy_timer_or_attempt() {
+    let (_dir, vault) = open_vault();
+    seed_user_turn(&vault);
+    let started = tokio::time::Instant::now();
+    let now_ms: NowMillis = Arc::new(move || {
+        4_000_000 + u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    });
+    let idle: IdleSample = Arc::new(|| WakeIdleState {
+        running_turns: false,
+        live_background_work: false,
+        compute_available: false,
+        last_inbound_at: 0,
+    });
+    let node_id = vault_client_node_id(&vault);
+    let (push, _wake, _hint) = PushTick::channel_with_clock(Arc::clone(&now_ms), COALESCE_FLOOR_MS);
+    let timer = TimerTick::with_clock(
+        AttemptQueueDeadlines::new(&vault, node_id),
+        Arc::clone(&now_ms),
+    );
+    let mut ticks = WakePolicyTicks::new(HybridTick::new(timer, push), &vault, idle, now_ms)
+        .expect("one timer per vault");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(7_200), ticks.next_tick())
             .await
             .is_err()
     );

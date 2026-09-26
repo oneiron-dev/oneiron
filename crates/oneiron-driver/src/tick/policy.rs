@@ -2,12 +2,14 @@
 use super::{NowMillis, Tick, TickSource, sleep_until_due};
 use oneiron::{
     Vault,
-    dreamer_wake::{WakeIdleState, WakePolicyDecision},
+    dreamer_wake::{WakeIdleState, WakePolicyDecision, WakePolicyTimerLease},
 };
 use std::sync::Arc;
 
 /// Host liveness signal. It must report the latest inbound timestamp before
-/// waking the inner source for an inbound turn. No process-global timer exists.
+/// waking the inner source for an inbound turn. The host must also push a
+/// hint when compute becomes available again: zero compute arms no timer.
+/// No process-global timer exists.
 pub type IdleSample = Arc<dyn Fn() -> WakeIdleState + Send + Sync>;
 
 /// A per-vault wake policy decorator: it re-reads rows on each genuine event,
@@ -22,16 +24,22 @@ pub struct WakePolicyTicks<'a, T> {
     vault: &'a Vault,
     idle: IdleSample,
     now_ms: NowMillis,
+    _timer_lease: WakePolicyTimerLease<'a>,
 }
 impl<'a, T: TickSource> WakePolicyTicks<'a, T> {
-    #[must_use]
-    pub fn new(inner: T, vault: &'a Vault, idle: IdleSample, now_ms: NowMillis) -> Self {
-        Self {
+    pub fn new(
+        inner: T,
+        vault: &'a Vault,
+        idle: IdleSample,
+        now_ms: NowMillis,
+    ) -> oneiron::Result<Self> {
+        Ok(Self {
             inner,
             vault,
             idle,
             now_ms,
-        }
+            _timer_lease: vault.claim_dreamer_wake_timer()?,
+        })
     }
 }
 impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {

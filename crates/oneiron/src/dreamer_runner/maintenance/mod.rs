@@ -18,7 +18,7 @@ pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";
 pub const CURATOR_FACET: &str = "dreamer.curator";
 pub const HARNESS_FACET: &str = "dreamer.harness_maintenance";
 /// Executable, zero-model wake-policy receipt. Recipe jobs may be attached by the loop.
-pub const POLICY_WAKE_FACET: &str = "dreamer.policy_wake";
+const POLICY_WAKE_FACET: &str = "dreamer.policy_wake";
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer maintenance row".into())
 }
@@ -92,10 +92,12 @@ pub(crate) fn execute(
             let trigger: crate::dreamer_wake::WakePolicyTrigger =
                 serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
                     .map_err(|_| invalid())?;
-            if trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0 {
+            if (trigger.turn_count == 0 && trigger.record_count == 0 && trigger.nightly_count == 0)
+                || !crate::dreamer_wake::wake_policy_input_covers(ctx.vault, &trigger)?
+            {
                 return Err(invalid());
             }
-            // Completion acknowledges dispatch, not the recipe body. Its
+            // Completion acknowledges a durable recipe-input handoff, not the recipe body. Its
             // replayable input remains in the policy outbox.
         }
         _ => return Err(invalid()),

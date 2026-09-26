@@ -5,9 +5,10 @@ use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
 };
 use crate::error::{Error, Result};
-use crate::ports::{ChangeLogRecord, ChangeOp, EntityStoreRead, TombstoneStore};
+use crate::ports::{ChangeLogRecord, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 
 const POLICY_KEY: &[u8] = b"settings:dreamer:wake-policy:v1";
 const STATE_KEY: &[u8] = b"dreamer:wake-policy:state:v1";
@@ -51,6 +52,8 @@ impl DreamerWakePolicy {
 pub struct WakeIdleState {
     pub running_turns: bool,
     pub live_background_work: bool,
+    /// False when the vault has no usable compute lease; idle must suspend.
+    pub compute_available: bool,
     pub last_inbound_at: u64,
 }
 
@@ -97,6 +100,20 @@ pub struct WakePolicyTrigger {
     pub observed_at: u64,
 }
 
+/// Exclusive in-process timer ownership for one open vault. The private
+/// constructor and Drop release make two live idle sleeps on that vault
+/// impossible without process-global state.
+pub struct WakePolicyTimerLease<'a> {
+    vault: &'a Vault,
+}
+impl Drop for WakePolicyTimerLease<'_> {
+    fn drop(&mut self) {
+        self.vault
+            .wake_policy_timer_owned
+            .store(false, Ordering::Release);
+    }
+}
+
 /// A policy check either enqueues a single attempt or returns the next quiet
 /// deadline. The host can arm ONE cancellable sleep per vault for `ArmIdle`.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +132,12 @@ struct WakeState {
     turn_change_id: Option<[u8; 16]>,
     record_change_id: Option<[u8; 16]>,
     nightly_change_id: Option<[u8; 16]>,
+    // A cached follower prefix. Each real event is decoded once per commit;
+    // pending maps keep only eligible current rows since each recipe's cursor.
+    processed_change_id: Option<[u8; 16]>,
+    pending_turns: std::collections::BTreeMap<String, u64>,
+    pending_records: std::collections::BTreeMap<String, u64>,
+    pending_nightly: std::collections::BTreeMap<String, u64>,
 }
 
 fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
@@ -147,38 +170,20 @@ struct WakeCounts {
     last: Option<[u8; 16]>,
 }
 
-fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &WakeState) -> Result<WakeCounts> {
+fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &mut WakeState) -> Result<WakeCounts> {
     let prefix = crate::ports::CHANGE_LOG_KEY_PREFIX;
-    let cursor = [
-        state.turn_change_id,
-        state.record_change_id,
-        state.nightly_change_id,
-    ]
-    .into_iter()
-    .flatten()
-    .min();
-    let cursor = if state.turn_change_id.is_none()
-        || state.record_change_id.is_none()
-        || state.nightly_change_id.is_none()
-    {
-        None
-    } else {
-        cursor
-    };
     let mut start = prefix.to_vec();
-    if let Some(id) = cursor {
+    if let Some(id) = state.processed_change_id {
         start.extend_from_slice(&id);
     }
     let mut upper = prefix.to_vec();
     *upper.last_mut().expect("nonempty prefix") += 1;
-    let mut last = cursor;
-    let mut turn_candidates = std::collections::BTreeSet::new();
-    let mut record_candidates = std::collections::BTreeSet::new();
-    let mut nightly_candidates = std::collections::BTreeSet::new();
+    let mut last = state.processed_change_id;
+    let mut changed = std::collections::BTreeSet::new();
     for entry in vault.store.vault_meta.range(
         txn,
         &(
-            if cursor.is_some() {
+            if state.processed_change_id.is_some() {
                 std::ops::Bound::Excluded(start.as_slice())
             } else {
                 std::ops::Bound::Included(start.as_slice())
@@ -200,78 +205,68 @@ fn count_new(vault: &Vault, txn: &heed::RoTxn<'_>, state: &WakeState) -> Result<
             return Err(Error::CorruptedIndex("dreamer wake mutation identity"));
         }
         last = Some(id);
-        if matches!(change.op, ChangeOp::Create | ChangeOp::Update) {
-            if state.turn_change_id.is_none_or(|seen| id > seen) {
-                turn_candidates.insert(change.entity);
-            }
-            if state.record_change_id.is_none_or(|seen| id > seen) {
-                record_candidates.insert(change.entity);
-            }
-            if state.nightly_change_id.is_none_or(|seen| id > seen) {
-                nightly_candidates.insert(change.entity);
-            }
-        }
+        changed.insert(change.entity);
     }
-    let mut out = WakeCounts {
-        turns: 0,
-        records: 0,
-        nightly: 0,
-        first: None,
-        first_nightly: None,
-        last,
-    };
-    let candidates: std::collections::BTreeSet<_> = turn_candidates
-        .union(&record_candidates)
-        .copied()
-        .chain(nightly_candidates.iter().copied())
-        .collect();
-    for id in &candidates {
-        let Some(row) = vault.store.port_entity_record(txn, id)? else {
-            continue;
+    // Re-validate the current row under this SAME snapshot. A superseded or
+    // deleted candidate must leave every pending queue; a Generated-to-explicit
+    // rewrite has a new log id and enters it, even with an older learned_at.
+    for id in changed {
+        let key = id.to_hex();
+        let row = vault.store.port_entity_record(txn, &id)?;
+        let row = match row {
+            Some(row) if !vault.port_tombstone_is_deleted(txn, &id)? => Some(row),
+            _ => None,
         };
-        if vault.port_tombstone_is_deleted(txn, id)? {
-            continue;
-        }
-        let eligible = match row.entity_type {
-            ENTITY_TYPE_CLAIM => {
+        let (eligible, turn, learned_at) = match row {
+            Some(row) if row.entity_type == ENTITY_TYPE_CLAIM => {
                 let body = decode_claim_body(&row.body, true)?;
-                body.lifecycle == ClaimLifecycleStatus::Active
-                    && !crate::claim::is_reserved_predicate(&body.predicate)
-                    && body
-                        .source
-                        .is_some_and(|source| source != ClaimSource::Generated)
+                (
+                    body.lifecycle == ClaimLifecycleStatus::Active
+                        && !crate::claim::is_reserved_predicate(&body.predicate)
+                        && body
+                            .source
+                            .is_some_and(|source| source != ClaimSource::Generated),
+                    false,
+                    row.learned_at,
+                )
             }
-            ENTITY_TYPE_TURN => {
+            Some(row) if row.entity_type == ENTITY_TYPE_TURN => {
                 let speaker = crate::dreamer_consolidation::decode_turn_body(&row.body).speaker;
-                dreamer_turn_role(speaker.as_deref(), &vault.config.assistant_display_names)
-                    == DreamerTurnRole::User
+                let user =
+                    dreamer_turn_role(speaker.as_deref(), &vault.config.assistant_display_names)
+                        == DreamerTurnRole::User;
+                (user, user, row.learned_at)
             }
-            _ => false,
+            _ => (false, false, 0),
         };
-        if !eligible {
-            continue;
-        }
-        if row.entity_type == ENTITY_TYPE_TURN && turn_candidates.contains(id) {
-            out.turns = out.turns.saturating_add(1);
-        }
-        if record_candidates.contains(id) {
-            out.records = out.records.saturating_add(1);
-        }
-        if nightly_candidates.contains(id) {
-            out.nightly = out.nightly.saturating_add(1);
-            out.first_nightly = Some(
-                out.first_nightly
-                    .map_or(row.learned_at, |earliest: u64| earliest.min(row.learned_at)),
-            );
-        }
-        if turn_candidates.contains(id) || record_candidates.contains(id) {
-            out.first = Some(
-                out.first
-                    .map_or(row.learned_at, |earliest: u64| earliest.min(row.learned_at)),
-            );
+        if eligible {
+            state.pending_records.insert(key.clone(), learned_at);
+            state.pending_nightly.insert(key.clone(), learned_at);
+            if turn {
+                state.pending_turns.insert(key, learned_at);
+            } else {
+                state.pending_turns.remove(&key);
+            }
+        } else {
+            state.pending_turns.remove(&key);
+            state.pending_records.remove(&key);
+            state.pending_nightly.remove(&key);
         }
     }
-    Ok(out)
+    state.processed_change_id = last;
+    Ok(WakeCounts {
+        turns: state.pending_turns.len() as u64,
+        records: state.pending_records.len() as u64,
+        nightly: state.pending_nightly.len() as u64,
+        first: state
+            .pending_records
+            .values()
+            .chain(state.pending_turns.values())
+            .copied()
+            .min(),
+        first_nightly: state.pending_nightly.values().copied().min(),
+        last,
+    })
 }
 
 fn decide(
@@ -284,7 +279,7 @@ fn decide(
     if counts.turns == 0 && counts.records == 0 && counts.nightly == 0 {
         return WakePolicyDecision::Silent;
     }
-    if idle.running_turns || idle.live_background_work {
+    if !idle.compute_available || idle.running_turns || idle.live_background_work {
         return WakePolicyDecision::Silent;
     }
     let quiet_due = idle.last_inbound_at.saturating_add(policy.idle_secs);
@@ -330,7 +325,32 @@ fn decide(
     }
 }
 
+/// A policy dispatch receipt may complete only while its recipe input is
+/// still durably reachable. A newer coalesced input covers the older range.
+pub(crate) fn wake_policy_input_covers(vault: &Vault, trigger: &WakePolicyTrigger) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let key = [OUTBOX_PREFIX, &[trigger.recipe.key()]].concat();
+    let Some(bytes) = vault.store.vault_meta.get(&txn, &key)? else {
+        return Ok(false);
+    };
+    let pending: WakePolicyTrigger = serde_json::from_slice(&bytes)
+        .map_err(|_| Error::CorruptedIndex("dreamer wake recipe input row"))?;
+    Ok(pending.recipe == trigger.recipe
+        && pending.through >= trigger.through
+        && pending.after_turn <= trigger.after_turn
+        && pending.after_record <= trigger.after_record
+        && pending.after_nightly <= trigger.after_nightly)
+}
+
 impl Vault {
+    /// Claims the single cancellable idle timer slot for this open vault.
+    pub fn claim_dreamer_wake_timer(&self) -> Result<WakePolicyTimerLease<'_>> {
+        self.wake_policy_timer_owned
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::InvalidConfig("Dreamer wake timer already owned".into()))?;
+        Ok(WakePolicyTimerLease { vault: self })
+    }
+
     /// An owner-authenticated v1 policy write; no chat text can impersonate a policy row.
     pub fn set_dreamer_wake_policy(
         &self,
@@ -355,10 +375,13 @@ impl Vault {
         idle: WakeIdleState,
         now: u64,
     ) -> Result<WakePolicyDecision> {
+        if !idle.compute_available || idle.running_turns || idle.live_background_work {
+            return Ok(WakePolicyDecision::Silent);
+        }
         let txn = self.store.env.read_txn()?;
         let policy = policy_in_txn(self, &txn)?;
-        let state = state_in_txn(self, &txn)?;
-        let counts = count_new(self, &txn, &state)?;
+        let mut state = state_in_txn(self, &txn)?;
+        let counts = count_new(self, &txn, &mut state)?;
         Ok(decide(policy, &state, &counts, idle, now))
     }
     /// At most one outstanding input span per recipe. Repeated wake receipts
@@ -386,10 +409,17 @@ impl Vault {
         idle: WakeIdleState,
         now: u64,
     ) -> Result<WakePolicyOutcome> {
+        if !idle.compute_available || idle.running_turns || idle.live_background_work {
+            return Ok(WakePolicyOutcome {
+                decision: WakePolicyDecision::Silent,
+                attempt: None,
+            });
+        }
         self.with_write_txn(|txn| {
             let policy = policy_in_txn(self, txn)?;
             let mut state = state_in_txn(self, txn)?;
-            let counts = count_new(self, txn, &state)?;
+            let previous_processed = state.processed_change_id;
+            let counts = count_new(self, txn, &mut state)?;
             let decision = decide(policy, &state, &counts, idle, now);
             let WakePolicyDecision::Enqueue { recipe } = decision else {
                 // Irrelevant rows advance only their own recipe cursor;
@@ -407,7 +437,7 @@ impl Vault {
                     state.nightly_change_id = counts.last;
                     changed = true;
                 }
-                if changed {
+                if changed || state.processed_change_id != previous_processed {
                     self.store.vault_meta.put(
                         txn,
                         STATE_KEY,
@@ -442,12 +472,22 @@ impl Vault {
                 if prior.recipe != recipe {
                     return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
                 }
+                // A stream whose cursor has not moved is CUMULATIVE in the
+                // current snapshot: replacing its count avoids counting the
+                // old range twice. A moved cursor names a disjoint suffix.
+                if pending.after_turn != prior.after_turn {
+                    pending.turn_count = pending.turn_count.saturating_add(prior.turn_count);
+                }
+                if pending.after_record != prior.after_record {
+                    pending.record_count = pending.record_count.saturating_add(prior.record_count);
+                }
+                if pending.after_nightly != prior.after_nightly {
+                    pending.nightly_count =
+                        pending.nightly_count.saturating_add(prior.nightly_count);
+                }
                 pending.after_turn = prior.after_turn;
                 pending.after_record = prior.after_record;
                 pending.after_nightly = prior.after_nightly;
-                pending.turn_count = pending.turn_count.saturating_add(prior.turn_count);
-                pending.record_count = pending.record_count.saturating_add(prior.record_count);
-                pending.nightly_count = pending.nightly_count.saturating_add(prior.nightly_count);
             }
             self.store.vault_meta.put(
                 txn,
@@ -455,13 +495,18 @@ impl Vault {
                 &serde_json::to_vec(&pending).map_err(|_| invalid())?,
             )?;
             match recipe {
-                WakeRecipe::Continuous => state.turn_change_id = counts.last,
+                WakeRecipe::Continuous => {
+                    state.turn_change_id = counts.last;
+                    state.pending_turns.clear();
+                }
                 WakeRecipe::Weave => {
                     state.record_change_id = counts.last;
+                    state.pending_records.clear();
                     state.last_weave_at = Some(now);
                 }
                 WakeRecipe::Nightly => {
                     state.nightly_change_id = counts.last;
+                    state.pending_nightly.clear();
                     state.last_nightly_at = Some(now);
                 }
             }
