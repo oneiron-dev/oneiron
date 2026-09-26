@@ -15,6 +15,14 @@
 //!   minted. What makes such a row true is a live custody record that NAMES
 //!   THIS MAILBOX, so the proof carries the mailbox and only the engine can
 //!   mint one.
+//!
+//! A downstream crate cannot name the transaction-bound proof. It can only
+//! ask the vault to verify or provision a delegated identity:
+//!
+//! ```compile_fail
+//! use oneiron::channel_identity::DelegatedCustodyProof;
+//! let _: Option<DelegatedCustodyProof<'static>> = None;
+//! ```
 
 mod actors;
 mod address;
@@ -34,8 +42,8 @@ pub use address::{
     AssignmentAddress, AssignmentKey, ChannelKey, MailboxAddr, normalize_email_domain,
 };
 pub use custody::{
-    DelegatedCustodyProof, DelegatedGrant, DelegatedGrantScope, delegated_custody_effector,
-    delegated_custody_scopes, delegated_custody_subject_scope,
+    DelegatedGrant, DelegatedGrantScope, delegated_custody_effector, delegated_custody_scopes,
+    delegated_custody_subject_scope,
 };
 
 pub use self::binding::{ChannelIdentityBinding, ChannelIdentityFulfillment};
