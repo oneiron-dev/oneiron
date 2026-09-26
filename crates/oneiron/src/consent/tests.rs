@@ -1836,6 +1836,24 @@ fn consent_settle_bound_shape_is_action_domain_and_target_exact() {
     assert!(!other_actor.contains(&bound));
 }
 
+fn widen_agent_credential(vault: &Vault, agent: crate::EntityId) -> crate::authority::VerifiedSlip {
+    use crate::authority::HostSlipIssuer;
+    let issuer = HostSlipIssuer::from_secret(b"consent widen agent credential").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = [0x71; 32];
+    claims.parent_id = None;
+    claims.holder_ref = agent.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"consent-widen").unwrap();
+    vault
+        .verify_capability_slip(&issuer, &slip, b"consent-widen", &proof)
+        .unwrap()
+}
+
 #[test]
 fn agent_widen_parks_canonical_delta_and_only_owner_can_establish_grant() {
     use super::widen::{WidenKind, canonical_widen_delta};
@@ -1844,13 +1862,12 @@ fn agent_widen_parks_canonical_delta_and_only_owner_can_establish_grant() {
     vault
         .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent actor")
         .unwrap();
-    let actor = crate::WriteActor::new(agent, EdgeActorClass::Agent);
+    let credential = widen_agent_credential(&vault, agent);
     let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
     let delta = canonical_widen_delta(WidenKind::AutoConfirm, &bound).unwrap();
     let proposal = vault
-        .propose_widen(
-            actor,
-            WidenKind::AutoConfirm,
+        .propose_auto_confirm_widen(
+            &credential,
             bound.clone(),
             owner.principal_ref(),
             crate::unix_seconds_now() + 600,
@@ -1923,14 +1940,174 @@ fn widen_rejects_non_actor_entities_before_recording_proposal() {
     vault
         .put_entity(&id, crate::registry::ENTITY_TYPE_WORLD, at(1), 1, b"world")
         .unwrap();
+    let credential = widen_agent_credential(&vault, id);
     let error = vault
-        .propose_widen(
-            crate::WriteActor::new(id, EdgeActorClass::Agent),
-            super::widen::WidenKind::Action,
+        .propose_action_widen(
+            &credential,
             action_bound(&id.to_hex(), "claim.put", &["world:home"]),
             owner.principal_ref(),
             crate::unix_seconds_now() + 600,
         )
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::ActorClassMismatch);
+}
+
+#[test]
+fn credential_widen_verbs_park_three_deltas_without_grant_and_refuse_revocation() {
+    use super::widen::{WidenKind, canonical_widen_delta};
+    use crate::authority::HostSlipIssuer;
+    use crate::federation::{Scope, ScopeAxis};
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner) = owner_vault();
+    let agent = entity(0x62);
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent")
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"agent widen credential fixture").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = [0x42; 32];
+    claims.parent_id = None;
+    claims.holder_ref = agent.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    claims.scope = Scope::top();
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "propose_action_widen".into(),
+        "propose_disclosure_widen".into(),
+        "propose_auto_confirm_widen".into(),
+    ]));
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"widen-request").unwrap();
+    let verified = vault
+        .verify_capability_slip(&issuer, &slip, b"widen-request", &proof)
+        .unwrap();
+    let action = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
+    let disclosure = disclosure_bound(&["person:recipient"], "claim.private", &["world:home"]);
+    let expiry = crate::unix_seconds_now() + 300;
+    let proposals = [
+        (
+            vault
+                .propose_action_widen(&verified, action.clone(), owner.principal_ref(), expiry)
+                .unwrap(),
+            WidenKind::Action,
+            action,
+        ),
+        (
+            vault
+                .propose_disclosure_widen(
+                    &verified,
+                    disclosure.clone(),
+                    owner.principal_ref(),
+                    expiry,
+                )
+                .unwrap(),
+            WidenKind::Disclosure,
+            disclosure,
+        ),
+        (
+            vault
+                .propose_auto_confirm_widen(
+                    &verified,
+                    action_bound(&agent.to_hex(), "claim.put", &["world:work"]),
+                    owner.principal_ref(),
+                    expiry,
+                )
+                .unwrap(),
+            WidenKind::AutoConfirm,
+            action_bound(&agent.to_hex(), "claim.put", &["world:work"]),
+        ),
+    ];
+    for (proposal, kind, bound) in proposals {
+        assert_eq!(proposal.proposer, agent.to_hex());
+        assert_eq!(
+            proposal.canonical_delta,
+            canonical_widen_delta(kind, &bound).unwrap()
+        );
+        assert_eq!(
+            vault.widen_proposal(&proposal.proposal_ref).unwrap(),
+            Some(proposal)
+        );
+        assert!(
+            vault
+                .consent_grant(&bound.digest().to_hex())
+                .unwrap()
+                .is_none()
+        );
+    }
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    let denied = vault.propose_action_widen(
+        &verified,
+        action_bound(&agent.to_hex(), "claim.put", &["world:other"]),
+        owner.principal_ref(),
+        expiry,
+    );
+    assert!(denied.is_err());
+}
+
+#[test]
+fn credential_widen_refuses_missing_verb_and_non_agent_identity() {
+    use crate::authority::HostSlipIssuer;
+    use crate::federation::{Scope, ScopeAxis};
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner) = owner_vault();
+    let agent = entity(0x62);
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent")
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"agent widen negative fixture").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [0x43; 32];
+    claims.parent_id = None;
+    claims.holder_ref = agent.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    claims.scope = Scope::top();
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["propose_action_widen".into()]));
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"request").unwrap();
+    let verified = vault
+        .verify_capability_slip(&issuer, &slip, b"request", &proof)
+        .unwrap();
+    let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
+    assert!(
+        vault
+            .propose_auto_confirm_widen(
+                &verified,
+                bound.clone(),
+                owner.principal_ref(),
+                crate::unix_seconds_now() + 300
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .propose_action_widen(
+                &vault
+                    .verify_capability_slip(
+                        &issuer,
+                        &root,
+                        b"root",
+                        &issuer.binding_proof(&root, b"root").unwrap()
+                    )
+                    .unwrap(),
+                bound.clone(),
+                owner.principal_ref(),
+                crate::unix_seconds_now() + 300
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
 }

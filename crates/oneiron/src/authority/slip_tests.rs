@@ -1229,3 +1229,34 @@ fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
     );
     assert!(verify(&vault, &issuer, &slip).is_err());
 }
+
+#[test]
+fn verifier_rejects_nested_act_act_agent_delegation() {
+    let (_dir, vault, issuer, root) = fixture();
+    let mut direct_claims = root.claims;
+    direct_claims.slip_id = [0x91; 32];
+    direct_claims.parent_id = None;
+    direct_claims.holder_ref = crate::EntityId::from_bytes([0x62; 16]).unwrap().to_hex();
+    direct_claims.actor_class = Some("agent".into());
+    direct_claims.expires_at = direct_claims.issued_at + 600;
+    direct_claims.ttl_secs = 600;
+    let direct = vault.mint_capability_slip(&issuer, direct_claims).unwrap();
+    assert!(verify(&vault, &issuer, &direct).is_ok());
+
+    let mut nested_claims = direct.claims.clone();
+    nested_claims.slip_id = [0x92; 32];
+    nested_claims.parent_id = Some(direct.claims.slip_id);
+    nested_claims.expires_at -= 1;
+    nested_claims.ttl_secs -= 1;
+    // Mint re-runs the slip verifier against the new log in its transaction.
+    assert!(vault.mint_capability_slip(&issuer, nested_claims).is_err());
+    assert!(
+        !vault
+            .authority_fold()
+            .unwrap()
+            .slips
+            .mints
+            .contains_key(&[0x92; 32])
+    );
+    assert!(verify(&vault, &issuer, &direct).is_ok());
+}

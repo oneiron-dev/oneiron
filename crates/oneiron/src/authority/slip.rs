@@ -293,6 +293,17 @@ impl CapabilitySlip {
         if mint.action.claims != self.claims || !fold.slip_is_live(&self.claims.slip_id) {
             return Err(invalid_authority());
         }
+        // A direct agent grant is usable; a grant descended from another
+        // agent grant is transitive act.act delegation and never authorizes.
+        if self.claims.actor_class.as_deref() == Some("agent")
+            && self.claims.parent_id.is_some_and(|parent| {
+                fold.slips.mints.get(&parent).is_some_and(|ancestor| {
+                    ancestor.action.claims.actor_class.as_deref() == Some("agent")
+                })
+            })
+        {
+            return Err(invalid_authority());
+        }
         let key = blake3::derive_key(MAC_CONTEXT, secret);
         let mut mac = *blake3::keyed_hash(&key, &canonical(&self.claims)?).as_bytes();
         let mut effective = self.claims.clone();
