@@ -53,6 +53,16 @@ concurrency:
 # `Test (macOS)`. A runner runs ONE job at a time, so the cheap checks
 # share a single job (one checkout, one slot).
 #
+# Build speed (2026-09-26): PR cargo steps unset the runner's CARGO_INCREMENTAL=0
+# and set dev/test profile incremental=true. sccache stays as RUSTC_WRAPPER for
+# non-incremental dependency units; incremental workspace units pass through.
+# Do not set CARGO_INCREMENTAL=1: sccache 0.15 rejects every invocation.
+# Main pushes select dev/test incremental=false (the full-build backstop).
+# Build/test steps use the core-only RUSTC_WORKSPACE_WRAPPER for -Zthreads=8;
+# ONEIRON_PARALLEL_FRONTEND=0 opts out. Clippy owns its compiler wrapper.
+# Linux test steps use /dev/shm/ci-<runner>-* only if >=12 GiB is free and
+# clean their own temp after each step, otherwise keep the disk TMPDIR.
+#
 # Caches are the host's, not the workflow's: each runner's `.env` exports a
 # persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
 # with ~/.cargo/bin; the toolchain is the host rustup resolving
@@ -143,6 +153,11 @@ jobs:
       always()
       && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
       && (github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    env:
+      # The runner has CARGO_INCREMENTAL=0. Cargo commands below unset it so
+      # these profile values can select PR incremental vs main non-incremental.
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -171,23 +186,25 @@ jobs:
         run: cargo fmt --check
       - name: Clippy (workspace, all features)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: env -u CARGO_INCREMENTAL cargo clippy --workspace --all-targets --all-features -- -D warnings
       # Wave-6 acceptance gate (AGENTS.md, featureless builds): the oneiron
       # crate and its test targets must compile and lint with no features.
       - name: Clippy (oneiron, featureless)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+        run: env -u CARGO_INCREMENTAL cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
       # Match verify.sh's production server graph: no dev-dependency feature
       # unification from --all-targets (notably sync without test-hooks).
       - name: Clippy (standalone server production graph)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo clippy -p oneiron-server --all-features -- -D warnings
+        run: env -u CARGO_INCREMENTAL cargo clippy -p oneiron-server --all-features -- -D warnings
       # Existing mandatory documentation policy, kept in the scripted gate too.
       # Encoded flags override RUSTDOCFLAGS even when empty; unset only for this
       # child command. Never set workspace-wide RUSTFLAGS.
       - name: Rustdoc (workspace, warnings denied)
+        env:
+          RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+        run: env -u CARGO_INCREMENTAL -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
       # typos, pinned like cargo-deny: the exact version matters (its
       # dictionary changes between releases, and a host's own typos is
       # whatever brew last installed), and the crate-ci action re-downloads
@@ -237,7 +254,7 @@ jobs:
     timeout-minutes: 90
     needs: changes
     # PRs: skipped; the Linux `Test` and `Test (featureless)` contexts
-    # report on every non-draft PR instead. No change to this macOS recipe.
+    # report on every non-draft PR instead. Keep this non-incremental main recipe.
     # Dispatch: always (a manual run is the full gate).
     # Main pushes: rust diffs (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
@@ -257,6 +274,8 @@ jobs:
           || needs.changes.result != 'success'
         ))
       )
+    env:
+      RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -367,6 +386,12 @@ jobs:
           || needs.changes.result != 'success'
         ))
       )
+    env:
+      # The runner has CARGO_INCREMENTAL=0. Cargo commands below unset it so
+      # these profile values can select PR incremental vs main non-incremental.
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -395,10 +420,10 @@ jobs:
           cargo nextest --version
       - name: Workspace tests (nextest, full tier, bench included)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
+        run: env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo nextest run --cargo-verbose --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
       - name: Doctests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+        run: env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   test-linux-featureless:
     name: Test (featureless)
@@ -420,6 +445,12 @@ jobs:
           || needs.changes.result != 'success'
         ))
       )
+    env:
+      # The runner has CARGO_INCREMENTAL=0. Cargo commands below unset it so
+      # these profile values can select PR incremental vs main non-incremental.
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -448,10 +479,10 @@ jobs:
           cargo nextest --version
       - name: Featureless oneiron library tests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test -p oneiron --lib --no-default-features
+        run: env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo test -v -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+        run: env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
 
   package:
     name: Package oneiron-server

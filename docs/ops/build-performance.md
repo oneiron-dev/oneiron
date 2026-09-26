@@ -29,6 +29,43 @@ incremental default count. It is not a measured incremental edit-loop gain.
 Other packages' profile settings and release/bench defaults are unchanged.
 See the follow-up results and package-specific comparison override below.
 
+## PR CI: incremental workspace, parallel front end, tmpfs temp (2026-09-26)
+
+PR `Checks`, `Test`, and `Test (featureless)` set
+`CARGO_PROFILE_DEV_INCREMENTAL=true` and `CARGO_PROFILE_TEST_INCREMENTAL=true`.
+Their Cargo build commands use `env -u CARGO_INCREMENTAL` to remove the
+runner's inherited `CARGO_INCREMENTAL=0`, which otherwise overrides the
+profile setting. Main pushes explicitly set both profile values to `false` for
+non-incremental full builds. The same persistent `CARGO_TARGET_DIR` still holds
+dependency artifacts. sccache 0.15 remains `RUSTC_WRAPPER`: it passes through
+incremental workspace units and can cache non-incremental dependency units.
+Do **not** set `CARGO_INCREMENTAL=1`: sccache rejects all compiles with
+"incremental compilation is prohibited: Unset CARGO_INCREMENTAL to continue".
+
+Build/test steps use `scripts/ci/rustc-threads.sh` as
+`RUSTC_WORKSPACE_WRAPPER`. It gives only the `oneiron` crate the parallel
+front end (`RUSTC_BOOTSTRAP=oneiron`, `-Zthreads=8`), retries an exit-101
+compiler crash without the flag, and leaves other crates and probes unchanged.
+`ONEIRON_PARALLEL_FRONTEND=0` opts out. Clippy supplies its own workspace
+wrapper, so this setting is not needed for Clippy. The script logs the core
+invocation so CI can verify that it ran.
+
+On Linux, each test step uses `scripts/ci/with-test-tmpdir.sh`. It checks the
+available space on `/dev/shm`; at 12 GiB or more it creates a unique
+`/dev/shm/ci-<runner>-*` directory, sets `TMPDIR` for that step and cleans
+it on exit, including a failing test. If space is lower or tmpfs is unavailable,
+it leaves the runner's disk `TMPDIR` unchanged. It does not change macOS temp.
+
+Clean 16-core Arch box, main `97bb7049`, rustc 1.96.1 (2026-09-26): core test
+edit rebuild **84 s incremental vs 236 s** with CI's previous
+`CARGO_INCREMENTAL=0`. The parallel-front-end probe on the core crate alone
+measured cold test build **334 s → 169–198 s** and edit rebuild **84 s → 76 s**,
+with sccache compatibility checked separately. Clippy was also checked, but
+its own workspace wrapper ignores ours. These are scoped builds, not whole-CI
+speedups. The featureless nextest run took **733 s on disk vs 608 s** with test
+`TMPDIR` on `/dev/shm`. PR job-time comparisons need the PR's own CI logs;
+these measurements do not predict a combined percentage gain.
+
 ## Cache retention
 
 The CI jobs that run cache maintenance keep their existing 20 GiB cap; the
@@ -169,7 +206,7 @@ not the symlinked system default.
 
 Capture the host, toolchain, revision, exact command/environment, wall time, CPU
 time, peak RSS, target size, and Cargo's timing HTML for each stage. The examples
-below disable incremental compilation to match the current CI runner contract;
+below disable incremental compilation to match the non-incremental main CI contract;
 they are not a prediction for a developer's incremental edit loop.
 
 The command below is a **macOS example**. On Linux, use a run-owned path under

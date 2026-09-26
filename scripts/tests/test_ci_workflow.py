@@ -1,4 +1,4 @@
-"""Pin the split CI test jobs and both featureless process models."""
+"""Pin the split CI jobs, incremental build policy and featureless models."""
 
 import unittest
 from pathlib import Path
@@ -82,10 +82,11 @@ class CiWorkflowTests(unittest.TestCase):
             names = [s.get("name") for s in steps]
             one_process = steps[names.index(FEATURELESS[0])]
             per_test = steps[names.index(FEATURELESS[1])]
-            self.assertEqual(one_process["run"], "cargo test -p oneiron --lib --no-default-features", job)
+            self.assertEqual(one_process["run"], ("env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh " if job == "test-linux-featureless" else "") + ("cargo test -v" if job == "test-linux-featureless" else "cargo test") + " -p oneiron --lib --no-default-features", job)
             self.assertEqual(
                 per_test["run"],
-                "cargo nextest run -p oneiron --lib --no-default-features "
+                ("env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh " if job == "test-linux-featureless" else "")
+                + "cargo nextest run -p oneiron --lib --no-default-features "
                 "--profile featureless --no-fail-fast --retries 0",
                 job,
             )
@@ -95,9 +96,34 @@ class CiWorkflowTests(unittest.TestCase):
         names = [s.get("name") for s in workspace]
         self.assertTrue(all(name not in names for name in FEATURELESS))
         self.assertEqual(names[-2:], ["Workspace tests (nextest, full tier, bench included)", "Doctests"])
-        self.assertEqual(workspace[-2]["run"], "cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast")
-        self.assertEqual(workspace[-1]["run"], "cargo test --doc --workspace --exclude oneiron-bench --all-features")
+        self.assertEqual(workspace[-2]["run"], "env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo nextest run --cargo-verbose --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast")
+        self.assertEqual(workspace[-1]["run"], "env -u CARGO_INCREMENTAL scripts/ci/with-test-tmpdir.sh cargo test --doc --workspace --exclude oneiron-bench --all-features")
         self.assertEqual([s.get("name") for s in self.steps("test-linux-featureless")][-2:], list(FEATURELESS))
+
+    def test_pr_profile_incremental_and_main_non_incremental_with_sccache(self):
+        expected = "${{ github.event_name == 'pull_request' && 'true' || 'false' }}"
+        for job in ("checks", "test-linux", "test-linux-featureless"):
+            lines = self.job_lines(job)
+            for profile in ("DEV", "TEST"):
+                self.assertIn(f"      CARGO_PROFILE_{profile}_INCREMENTAL: {expected}", lines)
+            self.assertIn("          echo \"RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache\" >> \"$GITHUB_ENV\"", lines)
+        checks = self.steps("checks")
+        for step in checks:
+            if step.get("name", "").startswith("Clippy"):
+                self.assertTrue(step["run"].startswith("env -u CARGO_INCREMENTAL cargo clippy"))
+        rustdoc = next(step for step in checks if step.get("name", "").startswith("Rustdoc"))
+        self.assertTrue(rustdoc["run"].startswith("env -u CARGO_INCREMENTAL -u CARGO_ENCODED_RUSTDOCFLAGS"))
+
+    def test_only_build_and_test_steps_use_core_wrapper(self):
+        wrapper = "RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh"
+        for job in ("test", "test-linux", "test-linux-featureless"):
+            self.assertIn(f"      {wrapper}", self.job_lines(job))
+        checks = self.job_lines("checks")
+        self.assertIn(f"          {wrapper}", checks)  # Rustdoc step only.
+        self.assertNotIn(f"      {wrapper}", checks)  # Not job-wide for Clippy.
+        script = WORKFLOW.parents[2] / "scripts/ci/rustc-threads.sh"
+        self.assertTrue(script.stat().st_mode & 0o111)
+        self.assertIn("ONEIRON_PARALLEL_FRONTEND", script.read_text())
 
     def test_workflow_guard_is_executed_by_python_check(self):
         lines = WORKFLOW.read_text()
