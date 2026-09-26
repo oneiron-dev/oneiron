@@ -35949,6 +35949,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/swarm.rs",
+     "purpose": "Seeded single-vault, in-process agent-swarm baseline",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -36040,6 +36050,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "swarm": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Seeded single-vault, in-process agent-swarm baseline"
+    },
     "vector": {
      "files": 5,
      "impl_vault": false,
@@ -36050,7 +36067,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 95,
+   "source_files": 96,
    "test_files": 18
   },
   "oneiron-driver": {
