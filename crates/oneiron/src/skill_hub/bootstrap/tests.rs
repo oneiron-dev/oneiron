@@ -152,13 +152,7 @@ fn deferred_judge_import_with_capability(
     drop(vault);
 
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_none()
-    );
+    assert!(!SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     vault.with_write_txn(|wtxn| {
         crate::batch::deindex_entity_for_test(&vault.store, wtxn, &manifest)
     })?;
@@ -211,13 +205,7 @@ fn open_succeeds_when_an_earlier_import_holds_a_seed_under_another_id() -> Resul
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     assert_ne!(imported, stable_id("judge")?);
     assert!(vault.get_skill_record(&imported)?.is_some());
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_some()
-    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     assert_eq!(
         vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
         FILES.len() as u64
@@ -324,12 +312,6 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     );
     assert_eq!(vault.hub_import_receipt(&id, &source)?, Some(receipt));
     assert!(vault.hub_import_receipt(&id, &bootstrap_source)?.is_none());
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&vault.store.env.read_txn()?, SEED_KEY)?
-            .is_some()
-    );
+    assert!(SEEDED.contains(&vault.store, &vault.store.env.read_txn()?, &())?);
     Ok(())
 }
