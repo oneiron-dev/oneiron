@@ -123,6 +123,32 @@ struct Snapshot {
     binding: String,
 }
 
+/// The deletion scope includes headerless branch proposals and their receipts.
+/// It is checked before a delete emits a tombstone, and again in the purge txn.
+pub(crate) fn claim_refinement_scope_exists_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(store.vault_meta.get(txn, &key(DELTA, id))?.is_some()
+        || store.vault_meta.get(txn, &key(RECEIPT, id))?.is_some()
+        || store.vault_meta.get(txn, &key(RESERVE, id))?.is_some())
+}
+
+/// Erase every claim-refinement byte carrier for this entity. Content-free
+/// deletion markers belong to the ordinary deletion engine, not this module.
+pub(crate) fn erase_claim_refinement_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let existed = claim_refinement_scope_exists_in_txn(store, txn, id)?;
+    store.vault_meta.delete(txn, &key(DELTA, id))?;
+    store.vault_meta.delete(txn, &key(RECEIPT, id))?;
+    store.vault_meta.delete(txn, &key(RESERVE, id))?;
+    Ok(existed)
+}
+
 /// Generic/raw/replay writes cannot use a pending branch candidate's id. The
 /// only release is the accepted merge transaction, which removes DELTA before
 /// the ordinary claim put and restores it with the immutable ruling at commit.
@@ -220,6 +246,8 @@ impl Vault {
         }
         let encoded = encode_claim_body(body)?;
         decode_claim_body(&encoded, false)?;
+        crate::batch::secret_scan::scan_staged_payload(&encoded)?;
+        crate::batch::secret_scan::scan_metadata_field(session_tag)?;
         let id = EntityId::now();
         self.with_write_txn(|txn| {
             require_resident(self, txn, resident)?;
@@ -242,11 +270,10 @@ impl Vault {
                 occurred_end: occurred.end,
                 learned_at,
             };
-            self.store.vault_meta.put(
-                txn,
-                &key(DELTA, &id),
-                &serde_json::to_vec(&delta).map_err(|_| invalid("claim delta encode failed"))?,
-            )?;
+            let bytes =
+                serde_json::to_vec(&delta).map_err(|_| invalid("claim delta encode failed"))?;
+            crate::batch::secret_scan::scan_staged_payload(&bytes)?;
+            self.store.vault_meta.put(txn, &key(DELTA, &id), &bytes)?;
             Ok(id)
         })
     }
@@ -267,6 +294,9 @@ impl Vault {
         question: DecisionQuestion,
     ) -> Result<ClaimRefinementMergeAsk> {
         question.validate()?;
+        crate::batch::secret_scan::scan_staged_payload(
+            &serde_json::to_vec(&question).map_err(|_| invalid("question encode failed"))?,
+        )?;
         if question.id != candidate
             || question.class != DecisionClass::UsefulUpstream
             || !matches!(question.contract, AnswerContract::Noul)
@@ -375,6 +405,11 @@ impl Vault {
             accepted,
             at,
         };
+        // Provider/model metadata also enters the durable receipt. Scan it
+        // before the first transactional CLAIM or metadata write.
+        let receipt_bytes = serde_json::to_vec(&receipt)
+            .map_err(|_| invalid("claim merge receipt encode failed"))?;
+        crate::batch::secret_scan::scan_staged_payload(&receipt_bytes)?;
         self.with_write_txn(|txn| {
             self.check_claim_refinement_ask(txn, ask)?;
             let authorization =
@@ -411,12 +446,9 @@ impl Vault {
             } else {
                 crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             }
-            self.store.vault_meta.put(
-                txn,
-                &key(RECEIPT, &ask.candidate),
-                &serde_json::to_vec(&receipt)
-                    .map_err(|_| invalid("claim merge receipt encode failed"))?,
-            )?;
+            self.store
+                .vault_meta
+                .put(txn, &key(RECEIPT, &ask.candidate), &receipt_bytes)?;
             Ok(ClaimRefinementMergeDisposition::Ruled(Box::new(receipt)))
         })
     }

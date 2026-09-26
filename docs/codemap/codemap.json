@@ -3150,7 +3150,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27842,7 +27842,7 @@
      "path": "src/skill_hub/claim_refinement.rs",
      "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "struct": 4,
@@ -27850,7 +27850,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/claim_refinement_tests.rs",

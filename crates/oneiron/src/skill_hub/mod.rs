@@ -22,11 +22,14 @@ pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
 pub(crate) use admission_guard::check_hub_skill_put;
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
 pub(crate) use bootstrap::HubAdmissionProof;
-pub(crate) use claim_refinement::claim_refinement_pending_in_txn;
 pub use claim_refinement::{
     ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
     HeldOutClaimReplayCase, HeldOutClaimReplayScorer, LocalClaimRefinement,
     UsefulUpstreamClaimJudge,
+};
+pub(crate) use claim_refinement::{
+    claim_refinement_pending_in_txn, claim_refinement_scope_exists_in_txn,
+    erase_claim_refinement_in_txn,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;

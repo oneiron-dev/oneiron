@@ -7,6 +7,7 @@ use crate::{
         encode_claim_body,
     },
     consent::AuthenticatedOwner,
+    deletion::{ReplayedTombstoneOutcome, TombstoneReason, TombstoneValueV2},
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
         DecisionReceipt, DecisionRung, ProviderPin, TypedDecision,
@@ -272,5 +273,197 @@ fn claim_tie_keeps_the_branch_and_base() -> Result<()> {
         f.vault.get_claim(&f.base)?.unwrap().lifecycle,
         ClaimLifecycleStatus::Active
     );
+    Ok(())
+}
+
+#[test]
+fn staged_claim_scans_private_keys_sensitive_fields_and_session_metadata_before_persistence()
+-> Result<()> {
+    let f = Fixture::new()?;
+    let private_key = "-----BEGIN PRIVATE KEY-----\nsynthetic-not-a-key\n-----END PRIVATE KEY-----";
+    let mut proposals = vec![f.proposal(private_key)];
+    let mut sensitive = f.proposal("ordinary");
+    sensitive.value = rmpv::Value::Map(vec![(
+        "password".into(),
+        "synthetic-sensitive-value".into(),
+    )]);
+    proposals.push(sensitive);
+    for proposal in &proposals {
+        let error = f
+            .vault
+            .submit_local_claim_refinement(
+                f.base,
+                f.resident,
+                "session:claim-refine",
+                proposal,
+                at(5),
+                5,
+            )
+            .expect_err("scan before staging");
+        assert!(matches!(
+            error,
+            crate::Error::Gate(crate::error::GateError::GateWriteRejected { .. })
+        ));
+    }
+    let mut metadata = f.proposal("ordinary");
+    metadata.session_tag = Some(private_key.to_owned());
+    assert!(
+        f.vault
+            .submit_local_claim_refinement(f.base, f.resident, private_key, &metadata, at(5), 5)
+            .is_err()
+    );
+    let txn = f.vault.store.env.read_txn()?;
+    assert!(
+        f.vault
+            .store
+            .vault_meta
+            .prefix_iter(&txn, b"skill_hub/claim-refinement/v1\0")?
+            .next()
+            .is_none(),
+        "no recoverable branch body entered vault_meta"
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_delete_erases_pending_rejected_and_admitted_claim_branch_bytes_even_after_reopen()
+-> Result<()> {
+    for state in ["pending", "rejected"] {
+        let f = Fixture::new()?;
+        let candidate = f.submit("unique-branch-payload")?;
+        if state == "rejected" {
+            let ask = f.vault.prepare_claim_refinement_merge(
+                candidate,
+                f.resident,
+                question(candidate),
+            )?;
+            f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+            assert!(
+                matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?,
+                ClaimRefinementMergeDisposition::Ruled(receipt) if !receipt.accepted)
+            );
+        }
+        assert!(
+            f.vault.delete_entity(&candidate)?,
+            "{state} must count as real delete scope"
+        );
+        assert!(f.vault.local_claim_refinement(candidate)?.is_none());
+        assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
+        let Fixture {
+            vault, _dir: dir, ..
+        } = f;
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+        assert!(reopened.local_claim_refinement(candidate)?.is_none());
+        assert!(
+            reopened
+                .claim_refinement_merge_receipt(candidate)?
+                .is_none()
+        );
+    }
+    let f = Fixture::new()?;
+    let candidate = f.submit("improved")?;
+    let ask = f
+        .vault
+        .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
+    f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+    assert!(
+        matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Replay, 8)?,
+        ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted)
+    );
+    assert!(f.vault.local_claim_refinement(candidate)?.is_some());
+    assert!(f.vault.delete_entity(&candidate)?);
+    assert!(f.vault.local_claim_refinement(candidate)?.is_none());
+    assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
+    assert!(f.vault.get_claim(&candidate)?.is_none());
+    let Fixture {
+        vault, _dir: dir, ..
+    } = f;
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert!(reopened.local_claim_refinement(candidate)?.is_none());
+    assert!(
+        reopened
+            .claim_refinement_merge_receipt(candidate)?
+            .is_none()
+    );
+    assert!(reopened.get_claim(&candidate)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn replayed_delete_erases_admitted_claim_branch_copy_after_reopen() -> Result<()> {
+    for reason in [TombstoneReason::UserDelete, TombstoneReason::GdprDelete] {
+        let f = Fixture::new()?;
+        let candidate = f.submit("improved")?;
+        let ask =
+            f.vault
+                .prepare_claim_refinement_merge(candidate, f.resident, question(candidate))?;
+        f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+        assert!(
+            matches!(f.vault.merge_local_claim_refinement(&ask, &Useful(true), &Replay, 8)?,
+            ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted)
+        );
+        let tombstone = TombstoneValueV2 {
+            reason,
+            deleted_at: 9,
+            request_id: *EntityId::now().as_bytes(),
+        }
+        .encode();
+        let outcome = f.vault.apply_replayed_tombstone(&candidate, &tombstone)?;
+        assert!(matches!(
+            outcome,
+            ReplayedTombstoneOutcome::SoftErased { changed: true }
+                | ReplayedTombstoneOutcome::HardPurged { erased: true, .. }
+        ));
+        assert!(f.vault.local_claim_refinement(candidate)?.is_none());
+        assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
+        let Fixture {
+            vault, _dir: dir, ..
+        } = f;
+        drop(vault);
+        let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+        assert!(reopened.local_claim_refinement(candidate)?.is_none());
+        assert!(
+            reopened
+                .claim_refinement_merge_receipt(candidate)?
+                .is_none()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn replayed_soft_and_hard_delete_erase_headerless_claim_refinement() -> Result<()> {
+    for reason in [TombstoneReason::UserDelete, TombstoneReason::GdprDelete] {
+        for rejected in [false, true] {
+            let f = Fixture::new()?;
+            let candidate = f.submit("branch-replay-payload")?;
+            if rejected {
+                let ask = f.vault.prepare_claim_refinement_merge(
+                    candidate,
+                    f.resident,
+                    question(candidate),
+                )?;
+                f.vault.approve_claim_refinement_merge(&ask, &f.owner)?;
+                f.vault
+                    .merge_local_claim_refinement(&ask, &Useful(false), &NoReplay, 8)?;
+            }
+            let tombstone = TombstoneValueV2 {
+                reason,
+                deleted_at: 9,
+                request_id: *EntityId::now().as_bytes(),
+            }
+            .encode();
+            let outcome = f.vault.apply_replayed_tombstone(&candidate, &tombstone)?;
+            assert!(matches!(
+                outcome,
+                ReplayedTombstoneOutcome::SoftErased { changed: true }
+                    | ReplayedTombstoneOutcome::HardPurged { erased: true, .. }
+            ));
+            assert!(f.vault.local_claim_refinement(candidate)?.is_none());
+            assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
+        }
+    }
     Ok(())
 }
