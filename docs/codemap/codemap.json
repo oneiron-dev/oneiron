@@ -19011,7 +19011,20 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 7
+      "re-export": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensMount"
+     ],
+     "path": "src/lens/mount.rs",
+     "purpose": "Pack-aware lens mount decision, evaluated against the live vault on each render",
+     "surface": {
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -28107,6 +28120,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
      "surface": {
+      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -28145,7 +28159,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -34449,7 +34463,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35039,7 +35053,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2069,
+   "source_files": 2070,
    "test_files": 710
   },
   "oneiron-android": {

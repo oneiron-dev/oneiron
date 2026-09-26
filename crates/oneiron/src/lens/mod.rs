@@ -21,6 +21,8 @@ pub use instrument::{InstrumentAtoms, InstrumentView, LensExecutionRuntime, rend
 pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
 mod mediation;
+mod mount;
+pub use mount::LensMount;
 mod self_ui;
 mod validate;
 mod wire_ids;
