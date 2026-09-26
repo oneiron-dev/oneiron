@@ -53,6 +53,14 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("        run: scripts/ci/run_scoped.sh test", self.job_lines("test-linux"))
         self.assertIn("        run: scripts/ci/run_scoped.sh featureless", self.job_lines("test-linux-featureless"))
 
+    def test_only_clippy_receives_reverse_dependents(self):
+        self.assertIn("      dependents: ${{ steps.scope.outputs.dependents }}", self.job_lines("changes"))
+        self.assertIn("      SCOPE_DEPENDENTS: ${{ needs.changes.outputs.dependents }}", self.job_lines("checks"))
+        self.assertNotIn("SCOPE_DEPENDENTS", "\n".join(self.job_lines("test-linux")))
+        self.assertNotIn("SCOPE_DEPENDENTS", "\n".join(self.job_lines("test-linux-featureless")))
+        self.assertIn('for p in $packages $dependents; do pk+=(-p "$p"); done', self.runner)
+        self.assertIn('cargo clippy "${pk[@]}" --all-targets --all-features', self.runner)
+
     def test_full_gate_runs_nightly_and_keeps_both_featureless_process_models(self):
         self.assertIn("    - cron: '0 18 * * *'", self.lines)
         first, second = (self.runner.index(c) for c in FEATURELESS_FULL)
@@ -86,13 +94,29 @@ class ScopeTests(unittest.TestCase):
         self.assertFalse(s["rust"])
         self.assertFalse(s["full"])
         self.assertEqual(s["packages"], [])
+        self.assertEqual(s["dependents"], [])
 
     def test_module_change_scopes_to_that_module(self):
         s = self.scope(["crates/oneiron/src/authority/fold_engine.rs", "crates/oneiron/src/memory.rs"], False)
         self.assertTrue(s["rust"] and s["oneiron"])
         self.assertEqual(s["packages"], ["oneiron"])
+        self.assertIn("oneiron-server", s["dependents"])
+        self.assertIn("oneiron-remote", s["dependents"])
+        self.assertIn("oneiron-bench", s["dependents"])
+        self.assertNotIn("oneiron", s["dependents"])
         self.assertEqual(s["modules"], {"authority", "memory"})
         self.assertFalse(s["full"])
+
+    def test_reverse_dependents_include_dev_dependencies_and_are_transitive(self):
+        s = self.scope(["crates/oneiron-remote/src/lib.rs"], False)
+        self.assertEqual(s["packages"], ["oneiron-remote"])
+        self.assertIn("oneiron-server", s["dependents"])  # server uses remote as a dev-dependency
+        self.assertIn("oneiron-bench", s["dependents"])  # bench depends on server
+
+    def test_leaf_crate_has_no_reverse_dependents(self):
+        s = self.scope(["crates/oneiron-android/src/lib.rs"], False)
+        self.assertEqual(s["packages"], ["oneiron-android"])
+        self.assertEqual(s["dependents"], [])
 
     def test_crate_root_or_many_modules_means_the_whole_crate(self):
         self.assertEqual(self.scope(["crates/oneiron/src/lib.rs"], False)["modules"], {"ALL"})
@@ -101,7 +125,9 @@ class ScopeTests(unittest.TestCase):
 
     def test_build_files_force_the_full_gate(self):
         for f in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"):
-            self.assertTrue(self.scope([f], False)["full"], f)
+            s = self.scope([f], False)
+            self.assertTrue(s["full"], f)
+            self.assertEqual(s["dependents"], [])
 
     def test_other_crates_and_integration_tests(self):
         s = self.scope(["crates/oneiron-server/src/lib.rs", "crates/oneiron/tests/it/main.rs"], False)

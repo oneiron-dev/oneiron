@@ -2,11 +2,11 @@ name: CI
 
 # Scoped CI (owner ruling 2026-09-26: "test only the part that was relevant ... radically cut and minimize it").
 #
-# A PR or a main push builds and tests what its diff touched, and nothing else:
-#   * `changes` runs scripts/ci/ci_scope.py on the diff: the touched workspace packages, and for the `oneiron`
-#     crate the touched top-level modules (more than 12, or a crate-root file, means all of the crate).
-#   * `Checks`: fmt, then clippy -D warnings for the touched packages (plus the featureless build when `oneiron`
-#     changed); cargo-deny only when Cargo.lock or deny.toml changed; the tooling tests only when scripts/ or
+# A PR or main push tests only what its diff touched and lints the touched packages and their dependents:
+#   * `changes` runs scripts/ci/ci_scope.py on the diff: touched workspace packages, their reverse dependents,
+#     and for `oneiron` the touched top-level modules (more than 12, or a crate-root file, means all of it).
+#   * `Checks`: fmt, then clippy -D warnings for touched packages and dependents (plus the featureless build
+#     when `oneiron` changed); cargo-deny only when Cargo.lock or deny.toml changed; tooling tests only when scripts/ or
 #     .github/ changed.
 #   * `Test`: nextest for the touched packages; for `oneiron`, the lib tests of the touched modules, and the
 #     integration tests only when crates/oneiron/tests changed. No doctests on PRs.
@@ -52,6 +52,7 @@ jobs:
       rust: ${{ steps.scope.outputs.rust }}
       full: ${{ steps.scope.outputs.full }}
       packages: ${{ steps.scope.outputs.packages }}
+      dependents: ${{ steps.scope.outputs.dependents }}
       oneiron: ${{ steps.scope.outputs.oneiron }}
       modules: ${{ steps.scope.outputs.modules }}
       it: ${{ steps.scope.outputs.it }}
@@ -86,6 +87,7 @@ jobs:
     env:
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
+      SCOPE_DEPENDENTS: ${{ needs.changes.outputs.dependents }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +105,7 @@ jobs:
       - name: Format
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
-      - name: Clippy (touched packages; the full gate nightly)
+      - name: Clippy (touched packages and dependents; the full gate nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: scripts/ci/run_scoped.sh clippy
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
