@@ -9,12 +9,14 @@ mod fingerprint;
 pub use fingerprint::{BlobBirthDecision, BlobFingerprintSnapshot, FingerprintRung};
 pub(crate) use fingerprint::{invalidate_blob_fingerprint, prepare_blob_artifact_birth};
 mod docs;
+mod docs_deep;
 mod docs_import;
 mod summary_ladder;
 pub use docs::{
     DOCS_EXPORT_SOURCE_ID, DocsExport, DocsExportSource, DocsPage, DocsSegment, docs_extraction_id,
     docs_semantic_segments,
 };
+pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,

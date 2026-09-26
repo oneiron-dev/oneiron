@@ -18082,7 +18082,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 2
      }
@@ -18108,6 +18108,25 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DocsDeepClaim",
+      "DocsDeepExtractor",
+      "DocsDeepReceipt",
+      "DocsDeepTrigger"
+     ],
+     "path": "src/ingest/docs_deep.rs",
+     "purpose": "On-demand docs NER: only a named trigger crosses the thin-star boundary",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "DocsDerivationEnvelope",
       "DocsImportCeiling",
       "DocsImportReceipt",
@@ -18123,7 +18142,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18478,7 +18497,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 3,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -18556,7 +18575,7 @@
      "path": "src/ingest/summary_ladder.rs",
      "purpose": "Summary-first rank fusion",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -34420,7 +34439,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35043,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {

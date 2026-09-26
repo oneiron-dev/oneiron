@@ -20,6 +20,29 @@ impl DocsInjectionClassifier for Classifier {
         Ok(json!({"label":"suspected_injection"}))
     }
 }
+fn field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
+    match value {
+        rmpv::Value::Map(entries) => entries
+            .iter()
+            .find_map(|(name, value)| (name.as_str() == Some(key)).then_some(value)),
+        _ => None,
+    }
+}
+
+struct FalseQuote;
+impl DocsDeepExtractor for FalseQuote {
+    fn binding(&self) -> &str {
+        "fixture.false-quote"
+    }
+    fn extract(&self, _: &DocsSegment) -> Result<Vec<DocsDeepClaim>> {
+        Ok(vec![DocsDeepClaim {
+            predicate: "docs.topic".into(),
+            value: json!("bad"),
+            quote: "not in source".into(),
+        }])
+    }
+}
+
 fn document() -> DocsExport {
     DocsExport {
         corpus_id: "manual".into(),
@@ -270,5 +293,186 @@ fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Resul
     assert!(vault.blob_fingerprint(&asset)?.is_some());
     vault.delete_entity(&asset)?;
     assert!(vault.blob_fingerprint(&asset)?.is_none());
+    Ok(())
+}
+
+struct Ner(std::sync::atomic::AtomicUsize);
+impl DocsDeepExtractor for Ner {
+    fn binding(&self) -> &str {
+        "fixture.ner.v1"
+    }
+    fn extract(&self, segment: &DocsSegment) -> Result<Vec<DocsDeepClaim>> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if segment.text.contains("Gravity describes attraction") {
+            Ok(vec![DocsDeepClaim {
+                predicate: "docs.topic".into(),
+                value: json!("gravity"),
+                quote: "Gravity describes attraction".into(),
+            }])
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
+#[test]
+fn thin_docs_wait_for_authorized_read_or_explicit_deep_trigger() -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner =
+        vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
+    let document = document();
+    let ceiling = DocsImportCeiling {
+        max_pages: 2,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    let request = EntityId::now();
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, request, &document, ceiling)?
+            .digest(),
+    )?;
+    let receipt = vault.ingest_docs_export(&owner, request, &document, ceiling, None, None, 2)?;
+    let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
+    let ner = Ner(AtomicUsize::new(0));
+    assert!(receipt.summary_refs.is_empty());
+    assert!(vault.claims_for_subject(&asset)?.is_empty());
+    assert_eq!(ner.0.load(Ordering::Relaxed), 0);
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    let hits = reader.search_docs_summaries("Gravity", 4)?;
+    assert!(!hits.value.is_empty());
+    let other = vault.scoped_read(crate::claim::ScopedReadActorKey::new("other").unwrap());
+    assert!(
+        other
+            .expand_doc_ref_deep(&receipt.asset_refs[0], &owner, &ner, 3)
+            .is_err()
+    );
+    assert_eq!(ner.0.load(Ordering::Relaxed), 0);
+    assert!(
+        vault
+            .deep_ingest_docs_asset(&owner, person, DocsDeepTrigger::Explicit, &ner, 3)
+            .is_err()
+    );
+    assert_eq!(ner.0.load(Ordering::Relaxed), 0);
+    assert!(
+        reader
+            .expand_doc_ref(&receipt.asset_refs[0])?
+            .value
+            .is_some()
+    );
+    assert_eq!(ner.0.load(Ordering::Relaxed), 0);
+    assert!(vault.claims_for_subject(&asset)?.is_empty());
+    let (_, deep) = reader.expand_doc_ref_deep(&receipt.asset_refs[0], &owner, &ner, 3)?;
+    let deep = deep.unwrap();
+    assert_eq!(deep.trigger, DocsDeepTrigger::OnRead);
+    assert_eq!(deep.claim_refs.len(), 1);
+    assert_eq!(deep.derivation.source, "imported");
+    let claim_id = EntityId::from_hex(&deep.claim_refs[0])?;
+    let claim = vault.get_claim(&claim_id)?.unwrap();
+    assert_eq!(claim.source, Some(crate::claim::ClaimSource::Imported));
+    assert_eq!(claim.approval, crate::claim::ClaimApprovalStatus::Proposed);
+    assert_eq!(claim.subject, crate::claim::ClaimSubject::Entity(asset));
+    let evidence = claim.evidence.as_ref().unwrap();
+    let candidate = field(
+        evidence,
+        crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+    )
+    .unwrap();
+    let derivation = field(candidate, "derivation").unwrap();
+    assert_eq!(
+        field(derivation, "source").and_then(rmpv::Value::as_str),
+        Some("imported")
+    );
+    assert_eq!(
+        field(derivation, "source_ref").and_then(rmpv::Value::as_str),
+        Some(receipt.chunk_refs[1].as_str())
+    );
+    let calls = ner.0.load(Ordering::Relaxed);
+    let again = vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 4)?;
+    assert_eq!(again.claim_refs, deep.claim_refs);
+    assert_eq!(ner.0.load(Ordering::Relaxed), calls);
+    Ok(())
+}
+
+#[test]
+fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner =
+        vault.authenticate_owner(person, "owner", true, crate::store::GateDecisionId::now())?;
+    let ceiling = DocsImportCeiling {
+        max_pages: 2,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    let import = |doc: &DocsExport, ceiling, now| -> Result<EntityId> {
+        let request = EntityId::now();
+        vault.approve_once(
+            &owner,
+            vault
+                .docs_import_effect(&owner, request, doc, ceiling)?
+                .digest(),
+        )?;
+        let receipt = vault.ingest_docs_export(&owner, request, doc, ceiling, None, None, now)?;
+        EntityId::from_hex(&receipt.asset_refs[0])
+    };
+    let mut doc = document();
+    let asset = import(&doc, ceiling, 2)?;
+    assert!(
+        vault
+            .deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &FalseQuote, 3)
+            .is_err()
+    );
+    assert!(vault.claims_for_subject(&asset)?.is_empty());
+    let ner = Ner(std::sync::atomic::AtomicUsize::new(0));
+    let deep = vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Dreamer, &ner, 3)?;
+    assert_eq!(deep.trigger, DocsDeepTrigger::Dreamer);
+    doc.pages[0].text = "# A new page\n\nNew facts.".into();
+    assert_eq!(asset, import(&doc, ceiling, 4)?);
+    assert_eq!(
+        vault
+            .get_claim(&EntityId::from_hex(&deep.claim_refs[0])?)?
+            .unwrap()
+            .lifecycle,
+        crate::claim::ClaimLifecycleStatus::Retracted
+    );
+    assert!(
+        vault
+            .deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 4)?
+            .claim_refs
+            .is_empty()
+    );
+    let denied = DocsImportCeiling {
+        allow_derivations: false,
+        ..ceiling
+    };
+    import(&doc, denied, 5)?;
+    let calls = ner.0.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(
+        vault
+            .deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 5)
+            .is_err()
+    );
+    assert_eq!(ner.0.load(std::sync::atomic::Ordering::Relaxed), calls);
     Ok(())
 }

@@ -64,6 +64,43 @@ impl ScopedRead<'_> {
         value.truncate(limit);
         Ok(ScopedReadResult { value, receipt })
     }
+    /// Explicitly expand an authorized docs asset and run its opt-in NER on read.
+    /// A search hit alone never performs model work or writes claims.
+    pub fn expand_doc_ref_deep(
+        &self,
+        reference: &str,
+        owner: &crate::consent::AuthenticatedOwner,
+        extractor: &dyn super::DocsDeepExtractor,
+        now: u64,
+    ) -> Result<(
+        ScopedReadResult<Option<serde_json::Value>>,
+        Option<super::DocsDeepReceipt>,
+    )> {
+        if self.actor_key().actor_ref() != owner.principal_ref() {
+            return Err(crate::Error::InvalidConfig(
+                "docs read principal differs from owner".into(),
+            ));
+        }
+        let expanded = self.expand_doc_ref(reference)?;
+        let deep = if expanded.value.is_some()
+            && expanded
+                .value
+                .as_ref()
+                .is_some_and(|body| body.get("page_id").is_some())
+        {
+            Some(self.vault().deep_ingest_docs_asset(
+                owner,
+                EntityId::from_hex(reference)?,
+                super::DocsDeepTrigger::OnRead,
+                extractor,
+                now,
+            )?)
+        } else {
+            None
+        };
+        Ok((expanded, deep))
+    }
+
     /// Engine-issued references use the same live read authority as ordinary hydrate.
     pub fn expand_doc_ref(
         &self,

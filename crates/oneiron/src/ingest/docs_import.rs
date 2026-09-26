@@ -266,6 +266,16 @@ impl Vault {
                 .push((asset.to_hex(), fingerprint.decision.clone()));
             let unchanged = matches!(fingerprint.decision, super::BlobBirthDecision::Unchanged(_));
             fingerprint_updates.push((asset, fingerprint));
+            // The approve-once ceiling applies to this source revision, not to a
+            // later replacement of the same stable page id.
+            super::docs_deep::set_deep_ceiling(
+                self,
+                &mut txn,
+                asset,
+                &page.text,
+                ceiling.allow_derivations,
+                now,
+            )?;
             ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
             if unchanged {
                 continue;
