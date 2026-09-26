@@ -13036,6 +13036,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/step_charge.rs",
+     "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
@@ -13059,6 +13069,14 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/contradictions.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/late_budget.rs",
+     "purpose": "Real wake-driver accounting across late step checkpoint and resume",
      "surface": {}
     },
     {
@@ -13092,6 +13110,16 @@
      "path": "src/dreamer_consolidation/tests/scope_enforcement.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/support.rs",
+     "purpose": "Shared backend fixture for deadline-driven consolidation tests",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -13303,7 +13331,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -13360,7 +13388,7 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "fn": 2
      }
     },
@@ -13387,7 +13415,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 16,
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -13828,7 +13856,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",
@@ -34099,7 +34127,7 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 32,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34934,8 +34962,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2064,
-   "test_files": 706
+   "source_files": 2065,
+   "test_files": 708
   },
   "oneiron-android": {
    "files": [
