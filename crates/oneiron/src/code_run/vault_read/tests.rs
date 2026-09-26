@@ -16,7 +16,9 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSo
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{RetrievalAction, RetrievalRunRecord};
 use crate::temporal::TimeRange;
-use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
+use crate::test_util::{
+    embedding_test_config, entity, open_test_vault_with, put_policy_manifest_bytes,
+};
 
 // ── Test doubles ────────────────────────────────────────────────────────
 
