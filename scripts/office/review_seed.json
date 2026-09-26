@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "questions": [
+    {
+      "id": "claim-strength",
+      "text": "Does the claim overstate its one piece of evidence?",
+      "unit": "slide-or-shape",
+      "bands": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "evidence": [
+        "slide text",
+        "one evidence excerpt"
+      ]
+    },
+    {
+      "id": "audience-terms",
+      "text": "Does this slide use a term outside the editable audience glossary without defining it?",
+      "unit": "slide-or-shape",
+      "evidence": [
+        "slide text",
+        "glossary version"
+      ]
+    }
+  ],
+  "glossary": {
+    "version": 1,
+    "audience": "general",
+    "terms": []
+  }
+}
