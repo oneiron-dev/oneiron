@@ -100,14 +100,8 @@ pub(super) fn entry_waits_on_pending_parent_outside_group(
 /// dependency: a revocation is not time-based, and this decides nothing about
 /// when any pending widen matures.
 ///
-/// KNOWN DURABILITY RESIDUAL. A revocation rescued by this bypass survives the
-/// widen merely maturing
-/// (`revocation_folded_past_a_freeze_survives_the_widen_maturing`), but NOT the
-/// skipped grant later becoming retroactively invalid through the matured
-/// state — that durability is a GATE-2 packet item, not an in-lane fix. Closing
-/// it needs a representation in which an accepted revocation's effect outlives
-/// ancestry invalidation of the entries above it (a journal, or per-hash bypass
-/// state), which is a design surface rather than a change to this function.
+/// If a skipped grant later becomes invalid, `revoke_floor` rechecks the
+/// revocation against surviving ancestry and retains only its epoch floor.
 pub(in crate::authority) fn revocation_bypass_states(
     entry: &AuthorityLogEntry,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,

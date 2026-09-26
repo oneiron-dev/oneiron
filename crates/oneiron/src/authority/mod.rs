@@ -50,6 +50,7 @@ mod observation_policy;
 mod op_apply;
 mod readonly_fold;
 mod recovery_ceremony;
+mod revoke_floor;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;

@@ -1347,3 +1347,66 @@ fn write_concurrent_with_revoke_regrant_window_quarantines() {
     let reverse: Vec<_> = entries.into_iter().rev().collect();
     assert_eq!(fold_authority_log_without_seen_time_delay(&reverse), folded);
 }
+
+#[test]
+fn verified_revoke_floor_survives_invalid_grant_ancestry() {
+    let fixture = bind_fixture(189);
+    let key = fixture.owner_key.clone();
+    let enroll_hash = authority_entry_hash(&fixture.enroll).unwrap();
+    let bind = cosigned_entry(
+        &fixture,
+        vec![enroll_hash],
+        2,
+        bind_op(&key, fixture.actor, "human", 1),
+        102,
+    );
+    let bind_hash = authority_entry_hash(&bind).unwrap();
+    // This signed grant is invalid: it attempts a second BindActor on a live
+    // binding. Neither it nor its permissive child may land.
+    let invalid_grant = cosigned_entry(
+        &fixture,
+        vec![bind_hash],
+        3,
+        bind_op(&key, scope_entity(0x67), "human", 10),
+        103,
+    );
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let revoke = cosigned_entry(
+        &fixture,
+        vec![invalid_hash],
+        4,
+        revoke_actor_op(&key, 2),
+        104,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let invalid_child = cosigned_entry(
+        &fixture,
+        vec![invalid_hash],
+        5,
+        bind_op(&key, scope_entity(0x68), "human", 20),
+        105,
+    );
+    let invalid_child_hash = authority_entry_hash(&invalid_child).unwrap();
+    let base = vec![fixture.genesis, fixture.enroll, bind, invalid_grant];
+    let before = fold_authority_log_without_seen_time_delay(&base);
+    assert!(actor_binding_is_active(&before, &fixture.actor, "human"));
+    assert!(!before.valid_entries.contains(&invalid_hash));
+
+    let mut entries = base;
+    entries.extend([revoke, invalid_child]);
+    let after = fold_authority_log_without_seen_time_delay(&entries);
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&after, &fixture.actor, "human"));
+    assert!(!after.valid_entries.contains(&invalid_hash));
+    assert!(!after.valid_entries.contains(&invalid_child_hash));
+    assert!(
+        after
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    entries.reverse();
+    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+}

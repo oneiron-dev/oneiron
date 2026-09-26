@@ -586,6 +586,7 @@ fn fold_authority_log_once(
             state,
         );
     }
+    let authority_forks_for_revoke = authority_forks.clone();
     let authority_forks: Vec<_> = reported_authority_forks.into_values().collect();
     let fork_alarms = build_fork_alarms(&authority_forks);
     // Collision poison is part of the externally auditable fold result, not
@@ -600,6 +601,23 @@ fn fold_authority_log_once(
                         confirm_id: *confirm_id,
                     },
                 ),
+        );
+    }
+    if let Some(state) = &mut merged {
+        super::revoke_floor::retain_invalid_ancestry_revoke_floors(
+            state,
+            &states,
+            &by_hash,
+            &issues,
+            FoldContext {
+                authority_forks: &authority_forks_for_revoke,
+                authority_fork_vault_ids: &authority_fork_vault_ids,
+                equivocation_groups: &equivocation_groups,
+                unresolved_equivocation_groups: &unresolved_equivocation_groups,
+                entry_ancestors: Some(&entry_ancestors),
+                chain_validated_fork_candidates: Some(&chain_validated_fork_candidates),
+                ..context
+            },
         );
     }
     let actor_bindings = merged.as_ref().map_or_else(BTreeMap::new, |state| {

@@ -598,6 +598,82 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
     );
 }
 
+/// A frozen grant can later fail its own transition when the widen matures.
+/// Its verified child revoke must retain the floor, not its invalid parent.
+#[test]
+fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
+    let freeze = pending_widen_freeze(253);
+    let key = freeze.fixture.owner_key.clone();
+    // A second BindActor on this live key is invalid after maturity, but while
+    // the widen is pending this grant waits before its transition is checked.
+    let invalid_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&key, scope_entity(0x76), "human", 10),
+        104,
+    );
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![invalid_hash],
+        5,
+        revoke_actor_op(&key, 10),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = freeze.entries;
+    entries.extend([invalid_grant, revoke.clone()]);
+    let mut first_seen = freeze.first_seen;
+    first_seen.insert(invalid_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+
+    let frozen = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    assert!(frozen.valid_entries.contains(&revoke_hash));
+    assert!(!frozen.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&frozen, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+
+    let matured = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert!(!matured.pending_widens.contains_key(&freeze.widen_hash));
+    assert_eq!(
+        binding_rejection(&matured, &entries[4]),
+        Some(ActorBindingRejection::BindingExists)
+    );
+    assert!(
+        matured
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    assert!(!matured.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&matured, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(
+        &matured,
+        &freeze.fixture.actor,
+        "human"
+    ));
+
+    // A bad co-signature cannot inherit the ancestry exception.
+    let mut bad_revoke = revoke;
+    bad_revoke.cosigns[0].signature[0] ^= 1;
+    entries[5] = bad_revoke;
+    let bad = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert_eq!(folded_status(&bad, &key), Some(ActorBindingStatus::Active));
+}
+
 /// fix-leg 11 P1-2: a matured ENROLLMENT must survive a restart under a
 /// rolled-back wall clock, which is what makes the write fold's floor
 /// persistence load-bearing in the GRANT direction.

@@ -1967,6 +1967,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/revoke_floor.rs",
+     "purpose": "Verified actor-revocation floors that survive ancestry invalidation",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/sequence_ancestry.rs",
      "purpose": "Causally vouched history may arrive after its already-observed descendant",
      "surface": {
@@ -33783,7 +33793,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35034,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {
