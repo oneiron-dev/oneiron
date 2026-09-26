@@ -116,9 +116,9 @@ pub(super) fn maybe_fail_first_txn_pending_tombstone() {}
 /// and commit a `RevokeActor`, so the authority race is driven deterministically
 /// instead of hoped for.
 ///
-/// The three steps bracket the linearization point, which is what makes them
-/// worth naming: one strictly BEFORE the publish commit (refusal expected,
-/// nothing published) and two strictly AFTER it (completion expected, because a
+/// The publish-boundary steps bracket the linearization point: one strictly
+/// BEFORE the publish commit (refusal expected, nothing published) and two
+/// strictly AFTER it (completion expected, because a
 /// revocation ordered after the publish commit does not reach back — fix-leg 7's
 /// ruling). Constructed on every build; only the parking machinery is test-only.
 ///
@@ -138,6 +138,9 @@ pub(crate) enum DeleteRendezvous {
     /// publication to bracket (its `write_crdt_tombstone` is a no-op).
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     BeforeTombstonePublish,
+    /// After the target header/scope probe and facade gate, before deletion's
+    /// first write txn. A second owner may delete the bound actor here.
+    BeforeFirstDeletionTxn,
     /// The publish txn has COMMITTED. Next comes the first post-publication
     /// destructive step: the soft-erase for gdpr/policy, the purge otherwise.
     AfterTombstonePublish,
