@@ -8635,7 +8635,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_sandbox/firecracker/protocol.rs",
@@ -8732,6 +8732,7 @@
      "path": "src/code_sandbox/microvm/handle.rs",
      "purpose": "The VM value objects: guest image, running handle, exit and execution budget",
      "surface": {
+      "crate-vis": 1,
       "fn": 11,
       "struct": 4
      }
@@ -8743,6 +8744,7 @@
      "path": "src/code_sandbox/microvm/mod.rs",
      "purpose": "MicroVM execution lane for foreign and ingested guest code",
      "surface": {
+      "crate-vis": 1,
       "re-export": 6
      }
     },
@@ -8753,8 +8755,18 @@
      "path": "src/code_sandbox/microvm/overlay.rs",
      "purpose": "The host-side scratch root and the bounded overlay walk that turns guest writes into proposals",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_sandbox/microvm/scratch.rs",
+     "purpose": "Private, clone-safe per-VM scratch custody and crash-leftover reclamation",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -8798,7 +8810,10 @@
      "kind": "src",
      "notable": [
       "SandboxClaimProposal",
+      "SandboxDirectoryOpaqueProposal",
+      "SandboxFileDeleteProposal",
       "SandboxFileEditProposal",
+      "SandboxFileRenameProposal",
       "SandboxFileWriteProposal",
       "SandboxProposalDelta",
       "SandboxProposalKind",
@@ -8810,7 +8825,7 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 10,
-      "struct": 4
+      "struct": 7
      }
     },
     {
@@ -33840,7 +33855,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls"
     },
     "code_sandbox": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,7 +34914,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

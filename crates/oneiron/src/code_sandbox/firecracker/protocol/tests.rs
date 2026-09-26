@@ -158,3 +158,100 @@ fn oversized_frame_and_expired_deadline_fail_closed() {
     assert!(read_frame(&mut host, Instant::now() + Duration::from_secs(1)).is_err());
     assert!(read_frame(&mut host, Instant::now()).is_err());
 }
+
+#[test]
+fn socket_protocol_delete_and_rename_are_typed_and_do_not_mutate_base() -> Result<()> {
+    let dir = tempfile::tempdir().expect("fixture");
+    let base_root = dir.path().join("base");
+    std::fs::create_dir(&base_root).expect("fixture");
+    std::fs::write(base_root.join("removed"), b"old").expect("fixture");
+    std::fs::write(base_root.join("moved"), b"identity").expect("fixture");
+    let vm = MicroVmHandle::new(
+        "protocol-rename",
+        crate::code_sandbox::SandboxGuestTier::Foreign,
+        &base_root,
+        dir.path().join("upper"),
+        dir.path().join("egress.sock"),
+    )?;
+    let base = super::super::snapshot::files(&base_root)?;
+    let resolver = Arc::new(Resolver {
+        calls: Mutex::new(vec![]),
+    });
+    let mut proxy = CredentialEgressProxy::new(CredentialAllowlist::new(), resolver);
+    proxy.arm();
+    let (host, mut guest) = UnixStream::pair().expect("fixture");
+    let (exit, proposals) = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            send(&mut guest, json!({"type":"delete", "path":"/mnt/workspace/removed"}));
+            assert_eq!(receive(&mut guest), json!({"type":"receipt","accepted":true}));
+            send(&mut guest, json!({"type":"rename", "from":"/mnt/workspace/moved", "to":"/mnt/workspace/destination"}));
+            assert_eq!(receive(&mut guest), json!({"type":"receipt","accepted":true}));
+            send(&mut guest, json!({"type":"finish","status":0}));
+        });
+        receive_proposals(
+            host,
+            &vm,
+            &base,
+            Instant::now() + Duration::from_secs(3),
+            &proxy,
+            None,
+        )
+    })?;
+    assert!(exit.overlay_dirty);
+    assert!(proposals.iter().any(|proposal| matches!(proposal,
+        SandboxProposalWrite::FileDelete(delete) if delete.path.as_str() == "/mnt/workspace/removed")));
+    assert!(proposals.iter().any(|proposal| matches!(proposal,
+        SandboxProposalWrite::FileRename(rename) if rename.from.as_str() == "/mnt/workspace/moved"
+            && rename.to.as_str() == "/mnt/workspace/destination")));
+    assert_eq!(
+        std::fs::read(base_root.join("removed")).expect("fixture"),
+        b"old"
+    );
+    assert_eq!(
+        std::fs::read(base_root.join("moved")).expect("fixture"),
+        b"identity"
+    );
+    assert!(!base_root.join("destination").exists());
+    Ok(())
+}
+
+#[test]
+fn socket_protocol_rejects_delete_of_unknown_and_rename_over_existing_base() -> Result<()> {
+    let dir = tempfile::tempdir().expect("fixture");
+    let base_root = dir.path().join("base");
+    std::fs::create_dir(&base_root).expect("fixture");
+    std::fs::write(base_root.join("old"), b"existing").expect("fixture");
+    let vm = MicroVmHandle::new(
+        "protocol-error",
+        crate::code_sandbox::SandboxGuestTier::Foreign,
+        &base_root,
+        dir.path().join("upper"),
+        dir.path().join("egress.sock"),
+    )?;
+    let base = super::super::snapshot::files(&base_root)?;
+    let resolver = Arc::new(Resolver {
+        calls: Mutex::new(vec![]),
+    });
+    let mut proxy = CredentialEgressProxy::new(CredentialAllowlist::new(), resolver);
+    proxy.arm();
+    for frame in [
+        json!({"type":"delete","path":"/mnt/workspace/missing"}),
+        json!({"type":"rename","from":"/mnt/workspace/old","to":"/mnt/workspace/old"}),
+    ] {
+        let (host, mut guest) = UnixStream::pair().expect("fixture");
+        send(&mut guest, frame);
+        drop(guest);
+        assert!(
+            receive_proposals(
+                host,
+                &vm,
+                &base,
+                Instant::now() + Duration::from_secs(3),
+                &proxy,
+                None
+            )
+            .is_err()
+        );
+    }
+    Ok(())
+}

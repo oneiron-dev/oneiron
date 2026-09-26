@@ -1,5 +1,8 @@
 //! The host-side scratch root and the bounded overlay walk that turns guest writes into proposals.
 
+#[cfg(unix)]
+use std::os::unix::fs::FileTypeExt;
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -8,8 +11,9 @@ use std::{
 };
 
 use crate::code_sandbox::{
-    SANDBOX_WORKSPACE_ROOT, SandboxBoundaryContract, SandboxFileWriteProposal, SandboxMount,
-    SandboxMountTable, SandboxProposalWrite, SandboxVirtualPath,
+    SANDBOX_WORKSPACE_ROOT, SandboxBoundaryContract, SandboxDirectoryOpaqueProposal,
+    SandboxFileDeleteProposal, SandboxFileWriteProposal, SandboxMount, SandboxMountTable,
+    SandboxProposalWrite, SandboxVirtualPath,
 };
 use crate::{EntityId, Error, Result};
 
@@ -40,18 +44,19 @@ pub fn prepare_overlay_handle(
 
     let base_root = mounts.resolve_host_path(&SandboxVirtualPath::try_new(SANDBOX_WORKSPACE_ROOT)?);
     let vm_id = EntityId::now().to_hex();
-    let vm_root = root.join(&vm_id);
+    let (vm_root, scratch) = super::scratch::provision(root, &vm_id, backend)?;
     let overlay_upper = vm_root.join("upper");
-    fs::create_dir_all(&overlay_upper)
+    fs::create_dir(&overlay_upper)
         .map_err(|error| backend_error(backend, overlay_io_detail("upper", &error)))?;
 
-    MicroVmHandle::new(
+    Ok(MicroVmHandle::new(
         vm_id,
         contract.tier(),
         base_root,
         overlay_upper,
         vm_root.join("egress.sock"),
-    )
+    )?
+    .with_scratch(scratch))
 }
 
 fn ensure_private_scratch_root(root: &Path, backend: &'static str) -> Result<()> {
@@ -164,7 +169,10 @@ pub(super) struct OverlayWalkBounds {
     pub(super) directory_count: usize,
 }
 
-/// Diffs an overlay upper directory into write proposals.
+/// Collects an overlay upper directory into typed review proposals.
+/// A whiteout is a deletion; an opaque marker is a directory hide request.
+/// A whiteout paired with a new file does not prove a rename of one document:
+/// explicit rename intent must come from the guest protocol.
 ///
 /// Backends share this so the "writes are proposals" shape is identical across
 /// the dev and isolating lanes. The base mount is never opened here.
@@ -173,7 +181,7 @@ pub(super) struct OverlayWalkBounds {
 ///
 /// Returns [`CodeError::MicroVmOverlayError`](crate::error::CodeError::MicroVmOverlayError) when the overlay root is missing or
 /// invalid, an entry vanishes during traversal, a resource bound is exceeded,
-/// or an entry has a non-UTF-8 name, is a symlink, or is not a plain file.
+/// or an entry has a non-UTF-8 name, is a symlink, or is an unsupported type.
 pub fn collect_overlay_writes(
     upper_root: &Path,
     mount: SandboxMount,
@@ -198,7 +206,7 @@ pub fn collect_overlay_writes(
         )));
     }
 
-    let mut files = BTreeMap::<String, Vec<u8>>::new();
+    let mut files = BTreeMap::<String, SandboxProposalWrite>::new();
     let mut bounds = OverlayWalkBounds::default();
     let mut stack = vec![(upper_root.to_path_buf(), String::new(), 0_usize)];
     while let Some((dir, prefix, depth)) = stack.pop() {
@@ -213,14 +221,7 @@ pub fn collect_overlay_writes(
         )?;
     }
 
-    let mut writes = Vec::with_capacity(files.len());
-    for (path, bytes) in files {
-        let virtual_path = SandboxVirtualPath::try_new(&path)?;
-        writes.push(SandboxProposalWrite::FileWrite(
-            SandboxFileWriteProposal::new(virtual_path, bytes),
-        ));
-    }
-    Ok(writes)
+    Ok(files.into_values().collect())
 }
 
 pub(super) fn walk_overlay_dir(
@@ -228,10 +229,23 @@ pub(super) fn walk_overlay_dir(
     prefix: &str,
     depth: usize,
     mount: SandboxMount,
-    files: &mut BTreeMap<String, Vec<u8>>,
+    files: &mut BTreeMap<String, SandboxProposalWrite>,
     stack: &mut Vec<(PathBuf, String, usize)>,
     bounds: &mut OverlayWalkBounds,
 ) -> Result<()> {
+    // The root and each nested directory may carry the kernel's opaque xattr.
+    // An OCI-style .wh..wh..opq marker is handled as an entry below.
+    if is_opaque(dir)? {
+        let path = SandboxVirtualPath::try_new(if prefix.is_empty() {
+            mount.root().to_owned()
+        } else {
+            format!("{}/{prefix}", mount.root())
+        })?;
+        files.insert(
+            format!("{}/{prefix}/.opaque", mount.root()),
+            SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
+        );
+    }
     let entries = fs::read_dir(dir).map_err(|error| {
         overlay_error(format!(
             "overlay directory `{}` disappeared or cannot be read: {}",
@@ -256,10 +270,51 @@ pub(super) fn walk_overlay_dir(
         }
 
         let relative = if prefix.is_empty() {
-            name
+            name.clone()
         } else {
             format!("{prefix}/{name}")
         };
+        if name == ".wh..wh..opq" {
+            if !metadata.is_file() || metadata.len() != 0 {
+                return Err(overlay_error("invalid opaque directory marker"));
+            }
+            let path = SandboxVirtualPath::try_new(if prefix.is_empty() {
+                mount.root().to_owned()
+            } else {
+                format!("{}/{prefix}", mount.root())
+            })?;
+            files.insert(
+                format!("{}/{prefix}/.opaque", mount.root()),
+                SandboxProposalWrite::DirectoryOpaque(SandboxDirectoryOpaqueProposal { path }),
+            );
+            count_entry(bounds, &relative)?;
+            continue;
+        }
+        if let Some(target) = name.strip_prefix(".wh.") {
+            if target.is_empty() || !metadata.is_file() || metadata.len() != 0 {
+                return Err(overlay_error("invalid whiteout marker"));
+            }
+            let target = if prefix.is_empty() {
+                target.to_owned()
+            } else {
+                format!("{prefix}/{target}")
+            };
+            add_delete(&target, mount, files)?;
+            count_entry(bounds, &relative)?;
+            continue;
+        }
+        #[cfg(unix)]
+        if metadata.file_type().is_char_device() {
+            use std::os::unix::fs::MetadataExt;
+            if metadata.rdev() != 0 {
+                return Err(overlay_error(format!(
+                    "overlay entry `{relative}` is not a whiteout"
+                )));
+            }
+            add_delete(&relative, mount, files)?;
+            count_entry(bounds, &relative)?;
+            continue;
+        }
         if metadata.is_dir() {
             let child_depth = depth + 1;
             if child_depth > MAX_OVERLAY_DEPTH {
@@ -335,7 +390,16 @@ pub(super) fn walk_overlay_dir(
 
         bounds.file_count += 1;
         bounds.total_bytes = actual_total;
-        files.insert(format!("{}/{relative}", mount.root()), bytes);
+        let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
+        if files
+            .insert(
+                path.as_str().to_owned(),
+                SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
+            )
+            .is_some()
+        {
+            return Err(overlay_error("overlay path has conflicting entries"));
+        }
     }
     Ok(())
 }
@@ -348,4 +412,81 @@ pub(super) fn overlay_error(detail: impl Into<String>) -> Error {
     Error::Code(CodeError::MicroVmOverlayError {
         detail: detail.into(),
     })
+}
+
+fn count_entry(bounds: &mut OverlayWalkBounds, path: &str) -> Result<()> {
+    if bounds.file_count >= MAX_OVERLAY_FILES {
+        return Err(overlay_error(format!(
+            "overlay file count bound {MAX_OVERLAY_FILES} exceeded at `{path}`"
+        )));
+    }
+    bounds.file_count += 1;
+    Ok(())
+}
+
+fn add_delete(
+    relative: &str,
+    mount: SandboxMount,
+    files: &mut BTreeMap<String, SandboxProposalWrite>,
+) -> Result<()> {
+    let path = SandboxVirtualPath::try_new(format!("{}/{relative}", mount.root()))?;
+    if files
+        .insert(
+            path.as_str().to_owned(),
+            SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
+        )
+        .is_some()
+    {
+        return Err(overlay_error("overlay path has conflicting entries"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn is_opaque(dir: &Path) -> Result<bool> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let path = CString::new(dir.as_os_str().as_bytes())
+        .map_err(|_| overlay_error("invalid overlay directory name"))?;
+    for key in [c"trusted.overlay.opaque", c"user.overlay.opaque"] {
+        let mut value = [0_u8; 2];
+        // SAFETY: both C strings and the writable buffer remain valid for the call.
+        let size = unsafe {
+            libc::lgetxattr(
+                path.as_ptr(),
+                key.as_ptr(),
+                value.as_mut_ptr().cast(),
+                value.len(),
+            )
+        };
+        if size == -1 {
+            let error = std::io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(libc::ENODATA | libc::ENOTSUP | libc::EPERM)
+            ) {
+                continue;
+            }
+            return Err(overlay_error(overlay_io_detail("opaque xattr", &error)));
+        }
+        if size == 1 && value[0] == b'y' {
+            return Ok(true);
+        }
+        return Err(overlay_error("invalid overlay opaque xattr"));
+    }
+    Ok(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_opaque(_dir: &Path) -> Result<bool> {
+    Ok(false)
+}
+
+/// Reclaim crash leftovers when an isolating backend starts, before it accepts VMs.
+#[cfg(all(unix, any(test, feature = "microvm-firecracker")))]
+pub(in crate::code_sandbox) fn reap_overlay_scratch(
+    root: &Path,
+    backend: &'static str,
+) -> Result<()> {
+    ensure_private_scratch_root(root, backend)?;
+    super::scratch::reap(root, backend)
 }

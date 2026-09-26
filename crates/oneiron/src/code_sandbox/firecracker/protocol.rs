@@ -4,8 +4,9 @@ use super::refused;
 use crate::{
     Result,
     code_sandbox::{
-        SandboxCredentialCall, SandboxCredentialHandle, SandboxFileWriteProposal, SandboxMount,
-        SandboxProposalWrite, SandboxVirtualPath,
+        SandboxCredentialCall, SandboxCredentialHandle, SandboxFileDeleteProposal,
+        SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxMount, SandboxProposalWrite,
+        SandboxVirtualPath,
         microvm::{
             CredentialEgressProxy, CredentialReadTransport, ExecutionBudget, MicroVmExit,
             MicroVmHandle,
@@ -41,6 +42,13 @@ enum GuestFrame {
     Write {
         path: String,
         bytes: Vec<u8>,
+    },
+    Delete {
+        path: String,
+    },
+    Rename {
+        from: String,
+        to: String,
     },
     Finish {
         status: i32,
@@ -132,18 +140,23 @@ pub(super) fn exchange(
         )?;
     }
     write_frame(&mut stream, &HostFrame::Ready, deadline)?;
-    let (mut exit, writes) = receive_proposals(stream, vm, deadline, proxy, transport)?;
+    let (mut exit, writes) = receive_proposals(stream, vm, &base, deadline, proxy, transport)?;
     let mut edits = Vec::new();
     for write in writes {
-        let SandboxProposalWrite::FileWrite(file) = write else {
-            return Err(refused("unexpected guest write kind"));
-        };
-        let old = base
-            .iter()
-            .find(|entry| entry.path == file.path)
-            .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
-        if let Some(edit) = file.lower_to_edit(old)? {
-            edits.push(SandboxProposalWrite::FileEdit(edit));
+        match write {
+            SandboxProposalWrite::FileWrite(file) => {
+                let old = base
+                    .iter()
+                    .find(|entry| entry.path == file.path)
+                    .map_or(b"".as_slice(), |entry| entry.bytes.as_slice());
+                if let Some(edit) = file.lower_to_edit(old)? {
+                    edits.push(SandboxProposalWrite::FileEdit(edit));
+                }
+            }
+            SandboxProposalWrite::FileDelete(_) | SandboxProposalWrite::FileRename(_) => {
+                edits.push(write);
+            }
+            _ => return Err(refused("unexpected guest proposal kind")),
         }
     }
     exit.overlay_dirty = !edits.is_empty();
@@ -153,11 +166,13 @@ pub(super) fn exchange(
 fn receive_proposals(
     mut stream: UnixStream,
     vm: &MicroVmHandle,
+    base: &[SandboxFileWriteProposal],
     deadline: Instant,
     proxy: &CredentialEgressProxy,
     transport: Option<&dyn CredentialReadTransport>,
 ) -> Result<(MicroVmExit, Vec<SandboxProposalWrite>)> {
     let mut writes = BTreeMap::new();
+    let mut occupied = std::collections::BTreeSet::new();
     let mut total = 0_usize;
     for _ in 0..MAX_REQUESTS {
         match read_frame(&mut stream, deadline)? {
@@ -184,9 +199,8 @@ fn receive_proposals(
             }
             GuestFrame::Write { path, bytes } => {
                 let path = SandboxVirtualPath::try_new(path)?;
-                if path.mount() != SandboxMount::Workspace
-                    || path.relative_path().is_empty()
-                    || writes.contains_key(path.as_str())
+                if !proposal_path(&path)
+                    || !occupied.insert(path.as_str().to_owned())
                     || writes.len() >= MAX_FILES
                     || bytes.len() > MAX_FILE
                 {
@@ -201,6 +215,51 @@ fn receive_proposals(
                 writes.insert(
                     path.as_str().to_owned(),
                     SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
+                );
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
+            }
+            GuestFrame::Delete { path } => {
+                let path = SandboxVirtualPath::try_new(path)?;
+                if !proposal_path(&path)
+                    || !base.iter().any(|file| file.path == path)
+                    || !occupied.insert(path.as_str().to_owned())
+                    || writes.len() >= MAX_FILES
+                {
+                    return Err(refused("guest delete path or count refused"));
+                }
+                writes.insert(
+                    path.as_str().to_owned(),
+                    SandboxProposalWrite::FileDelete(SandboxFileDeleteProposal { path }),
+                );
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
+            }
+            GuestFrame::Rename { from, to } => {
+                let from = SandboxVirtualPath::try_new(from)?;
+                let to = SandboxVirtualPath::try_new(to)?;
+                if !proposal_path(&from)
+                    || !proposal_path(&to)
+                    || from == to
+                    || !base.iter().any(|file| file.path == from)
+                    || base.iter().any(|file| file.path == to)
+                    || occupied.contains(from.as_str())
+                    || occupied.contains(to.as_str())
+                    || writes.len() >= MAX_FILES
+                {
+                    return Err(refused("guest rename path or count refused"));
+                }
+                occupied.insert(from.as_str().to_owned());
+                occupied.insert(to.as_str().to_owned());
+                writes.insert(
+                    from.as_str().to_owned(),
+                    SandboxProposalWrite::FileRename(SandboxFileRenameProposal { from, to }),
                 );
                 write_frame(
                     &mut stream,
@@ -266,3 +325,9 @@ fn write_frame(stream: &mut UnixStream, value: &HostFrame<'_>, deadline: Instant
 
 #[cfg(test)]
 mod tests;
+
+fn proposal_path(path: &SandboxVirtualPath) -> bool {
+    path.mount() == SandboxMount::Workspace
+        && !path.relative_path().is_empty()
+        && path.as_str().len() <= 4096
+}
