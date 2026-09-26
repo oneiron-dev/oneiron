@@ -19249,7 +19249,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -19280,8 +19280,28 @@
      "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
      "surface": {
       "enum": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInConnectionObservation",
+      "LinkedInConnectionState",
+      "LinkedInMcpConnectRequest",
+      "LinkedInMcpConnectTransport",
+      "LinkedInMcpVerifiedConnectSink",
+      "LinkedInVerifiedConnectPlan"
+     ],
+     "path": "src/linkedin_connector/verified_connect.rs",
+     "purpose": "Connect-request execution with fresh profile observations and fail-closed retries",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -19297,7 +19317,7 @@
      "path": "src/linkedin_connector/verified_send.rs",
      "purpose": "Verify-after-send plan, sink, observation, and receipt helpers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 8,
       "struct": 3,
       "trait": 1
@@ -22627,6 +22647,14 @@
      "notable": [],
      "path": "src/outbound/tests/gate_window.rs",
      "purpose": "Gate-pending holds, delivery-window door evaluation, pending re-arm and retry-after authority",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/linkedin_connect.rs",
+     "purpose": "LinkedIn connect-request execution through the outbound gate and verified sink",
      "surface": {}
     },
     {
@@ -34336,7 +34364,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34406,7 +34434,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,8 +34926,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
