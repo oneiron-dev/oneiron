@@ -263,7 +263,7 @@ impl Vault {
         if principal
             .actor_class
             .as_deref()
-            .is_some_and(|class| !matches!(class, "human" | "agent" | "system"))
+            .is_some_and(|class| !ACTOR_BINDING_CLASSES.contains(&class))
         {
             return Err(invalid_authority());
         }

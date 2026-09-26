@@ -111,7 +111,7 @@ pub(crate) fn migrate_in_txn(
             }
         }
         if visited != turns.len() {
-            return Err(crate::error::RegistryError::CycleDetected.into());
+            return Err(graph::invalid("received DAG contains a Parent cycle"));
         }
     } else {
         let mut batch = vault.batch_in();
@@ -139,12 +139,12 @@ impl Vault {
         self.with_write_txn(|txn| migrate_in_txn(self, txn, conversation))
     }
 
-    pub(crate) fn migrate_all_conversation_dags(&self) -> Result<(u64, u64)> {
+    pub(crate) fn migrate_all_conversation_dags(&self) -> Result<(u64, Vec<EntityId>)> {
         // Stream one type-index page at a time, with a separate atomic commit
         // per conversation. No vault-wide unbounded materialization.
         let mut after = None;
         let mut migrated = 0_u64;
-        let mut skipped_invalid = 0_u64;
+        let mut skipped_invalid = Vec::new();
         loop {
             let ids = self.entities_by_type_page(ENTITY_TYPE_CONVERSATION, after.as_ref(), 256)?;
             if ids.is_empty() {
@@ -170,7 +170,7 @@ impl Vault {
                         Ok(true) => migrated += 1,
                         Ok(false) => {}
                         Err(Error::Record(RecordError::InvalidConversationDag(_))) => {
-                            skipped_invalid += 1;
+                            skipped_invalid.push(*id);
                         }
                         Err(error) => return Err(error),
                     }

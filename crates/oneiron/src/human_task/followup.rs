@@ -348,7 +348,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
             cursor = page.last().copied();
             for task_ref in page {
                 // One malformed body must not wedge the rebuild for every other
-                // human task — the same degrade `tasks.check` already applies.
+                // human task — the same degrade `describe` already applies.
                 let Ok(Some(actor_ref)) = task_human_assignee(self.vault, task_ref) else {
                     continue;
                 };

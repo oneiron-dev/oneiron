@@ -124,7 +124,7 @@ fn cancel_rejection_pathology(record: &AttemptRecord) -> Option<CancelRejectionP
 pub(super) const TASK_PRESENCE_PAGE_SIZE: usize = 256;
 /// Maximum TASK entity ids inspected for ONE board assembly. It bounds WORK;
 /// `TasksSection::RENDER_ROW_CAP` bounds tokens. A row beyond this prefix is
-/// hidden from the collapsed board, never gone — `tasks.expand` / `tasks.ack`
+/// hidden from the collapsed board, never gone — `describe` / `tasks.update`
 /// still reach it by id.
 pub(super) const TASK_PRESENCE_SCAN_CAP: usize = 4_096;
 
@@ -288,7 +288,7 @@ pub(super) fn task_presence_with_limits(
                 // malformed fact body, a fact re-pointed at a subject it does
                 // not name — poisons exactly one row, never the section. Those
                 // companions REPLICATE, so propagating here would let one
-                // peer's corrupt row take `tasks.check` down on every node.
+                // peer's corrupt row take `describe` down on every node.
                 //
                 // The degrade is a SKIP, not a render with false bits: a task
                 // whose facts cannot be read may really carry a Cancelled
@@ -314,7 +314,7 @@ pub(super) fn task_presence_with_limits(
                 // abort the whole board. A body that decodes badly — e.g. a
                 // role byte carrying `subkind:"typed"` but missing the typed
                 // fields — is skipped/degraded, never propagated as a hard
-                // error that takes down `tasks.check`.
+                // error that takes down `describe`.
                 match task_page_slot_in(vault, &rtxn, task_ref, &task_hex, jobs, state.acked, now) {
                     Ok(Some(slot)) => slots.push(slot),
                     Ok(None) | Err(_) => continue,
@@ -378,7 +378,7 @@ pub(super) fn task_presence_with_limits(
     Ok(snapshot)
 }
 
-/// Direct-by-id projection behind `tasks.expand` / `tasks.ack`.
+/// Direct-by-id projection behind a `describe` card and `tasks.update`.
 ///
 /// It hydrates the requested TASK plus the jobs backlinked to it and NEVER
 /// walks the TASK type index: the board's bounded prefix bounds what is SHOWN,
@@ -653,7 +653,7 @@ pub(super) fn cancel_target_state(
                 // so fail CLOSED to the foreign ladder (propose-only) rather
                 // than vacuously trusting the caller — no principal may directly
                 // cancel another's role-only task. Visibility (fix-r1 F6) is
-                // unaffected: role-only Tasks still render in `tasks.check` and
+                // unaffected: role-only Tasks still render in `describe` and
                 // remain cancellable via a proposal. (F6 also narrows this
                 // fallback to `Task`; Goal/Milestone/Habit/HabitCheckin ids are
                 // not TASKS and fall through to `EntityNotFound`.)

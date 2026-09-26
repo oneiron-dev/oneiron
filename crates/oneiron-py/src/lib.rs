@@ -175,24 +175,17 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
-    fn tasks_ack(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "tasks.ack")?;
+    fn cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "cancel")?;
         let output = py
-            .detach(|| self.inner.agent_verb("tasks.ack", input))
+            .detach(|| self.inner.agent_verb("cancel", input))
             .map_err(raise)?;
         encode(&output)
     }
-    fn tasks_cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "tasks.cancel")?;
+    fn describe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "describe")?;
         let output = py
-            .detach(|| self.inner.agent_verb("tasks.cancel", input))
-            .map_err(raise)?;
-        encode(&output)
-    }
-    fn tasks_check(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "tasks.check")?;
-        let output = py
-            .detach(|| self.inner.agent_verb("tasks.check", input))
+            .detach(|| self.inner.agent_verb("describe", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -203,10 +196,10 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    fn tasks_expand(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
-        let input: serde_json::Value = decode(input_json, "tasks.expand")?;
+    fn tasks_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.update")?;
         let output = py
-            .detach(|| self.inner.agent_verb("tasks.expand", input))
+            .detach(|| self.inner.agent_verb("tasks.update", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -164,7 +164,9 @@ impl Vault {
         let at = occurred.start;
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
-            if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live() {
+            if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
+                != crate::vault::LiveEntityRow::Absent
+            {
                 return Err(state("conversation already exists"));
             }
             for person in &body.member_ids {

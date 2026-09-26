@@ -229,7 +229,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
             origin_action_id: "cancel".into(),
             origin_receipt_ref: None,
             scope: crate::genui::GrantMintIntentScope::VerbClass {
-                verb_class: AgentVerb::TasksCancel.as_str().into(),
+                verb_class: AgentVerb::Cancel.as_str().into(),
             },
         },
         1,
@@ -249,7 +249,7 @@ fn cancelled_ask_member_cannot_answer_or_mint_a_wait_trap() -> Result<()> {
     )?;
     assert!(
         memory
-            .tasks_cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
+            .cancel_with_mode(TaskCancelTarget::Task(task), TaskCancelMode::FullAccess)?
             .effected
     );
     assert!(vault.task_authority_state(task)?.unwrap().cancelled);
@@ -611,6 +611,16 @@ impl RuledAskFixture {
     }
 
     fn word(&self, handle: TaskAskHandle, seat: usize, option: &str) -> Result<TaskAskAnswer> {
+        self.word_with_sources(handle, seat, option, Default::default())
+    }
+
+    fn word_with_sources(
+        &self,
+        handle: TaskAskHandle,
+        seat: usize,
+        option: &str,
+        provenance_refs: std::collections::BTreeSet<ConsultPayloadRef>,
+    ) -> Result<TaskAskAnswer> {
         Ok(self
             .vault
             .memory(self.people[seat], EdgeActorClass::Human)
@@ -620,9 +630,43 @@ impl RuledAskFixture {
                     result_ref: self.people[seat],
                     option: Some(TaskAskOptionId::new(option)?),
                     inform_for: None,
-                    provenance_refs: Default::default(),
+                    provenance_refs,
                 },
             )?)
+    }
+
+    fn ask_with_uncounted_word(&self, bind: bool) -> Result<TaskAskResult> {
+        let mut spec = self.spec();
+        let mut class = self.policy(false);
+        class.required_sources = [self.question].into();
+        spec.class = Some(class);
+        spec.need = TaskAskNeed {
+            count: 3,
+            of: TaskAskElectorate::Any,
+        };
+        spec.decide = Some(TaskAskDecide::AtLeast {
+            count: 2,
+            of: TaskAskElectorate::Any,
+            answer: TaskAskOptionId::new("yes")?,
+        });
+        if bind {
+            super::tests::support::permit_outcome_fixture_predicates(&self.vault, self.owner)?;
+            spec.what.outcome_binding = Some(crate::llm::decision::questions::OutcomeBinding {
+                source: crate::llm::decision::questions::OutcomeSource::Claim {
+                    predicate: "outcome.earned".into(),
+                },
+                horizon: 60,
+                mapping: [("yes".into(), true), ("no".into(), false)].into(),
+                noise_weight: 1.0,
+                linked_by: None,
+            });
+        }
+        let handle = self.ask(&spec)?;
+        self.word_with_sources(handle, 0, "yes", [self.question].into())?;
+        self.word_with_sources(handle, 1, "yes", [self.question].into())?;
+        self.word(handle, 2, "no")?;
+        self.clock.set(1_101);
+        self.result(handle)
     }
 
     fn result(&self, handle: TaskAskHandle) -> Result<TaskAskResult> {
@@ -635,6 +679,205 @@ impl RuledAskFixture {
         };
         Ok(*result)
     }
+}
+
+// A PERSON holder explicitly addressed as a peer is an agent-bound consult TASK.
+fn peer_option_ask() -> Result<(RuledAskFixture, TaskAskHandle, EntityId, EntityId)> {
+    let fixture = RuledAskFixture::new(1)?;
+    let peer = fixture.people[0];
+    let mut spec = fixture.spec();
+    spec.who = Some(TaskAskTarget::Responder(TaskAssignee::Peer {
+        actor_ref: peer,
+    }));
+    let receipt = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask(&spec)?;
+    let task = receipt.task_refs[0];
+    Ok((fixture, receipt.handle, peer, task))
+}
+
+#[test]
+fn consult_result_with_an_option_settles_its_member_task() -> Result<()> {
+    let (fixture, handle, peer, task) = peer_option_ask()?;
+    let yes = TaskAskOptionId::new("yes")?;
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: Some(yes.clone()),
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    fixture
+        .vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_consult_result(task, &input)?;
+    assert!(
+        super::wire_decode::task_verb_body(&fixture.vault, task)?
+            .expect("member task")
+            .terminal()
+            .is_some()
+    );
+    let evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].word.option, Some(yes));
+    Ok(())
+}
+
+#[test]
+fn consult_result_replay_requires_the_stored_ask_option() -> Result<()> {
+    let (fixture, handle, peer, task) = peer_option_ask()?;
+    let memory = fixture.vault.memory(peer, EdgeActorClass::Agent);
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: Some(TaskAskOptionId::new("yes")?),
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    let first = memory.land_consult_result(task, &input)?;
+    assert!(!first.idempotent_replay);
+    let replay = memory.land_consult_result(task, &input)?;
+    assert!(replay.idempotent_replay);
+    assert_eq!(replay.terminal, first.terminal);
+
+    let original_evidence = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask_evidence(handle)?;
+    for option in [Some("no"), None, Some("unknown")] {
+        let mut changed = input.clone();
+        if let ConsultResultKind::Answer {
+            option: selected, ..
+        } = &mut changed.kind
+        {
+            *selected = option.map(TaskAskOptionId::new).transpose()?;
+        }
+        let error = memory
+            .land_consult_result(task, &changed)
+            .expect_err("a changed option cannot be an idempotent replay");
+        assert_eq!(
+            error.code,
+            if option == Some("no") {
+                crate::memory::MEMORY_CODE_INVALID_STATE
+            } else {
+                crate::memory::MEMORY_CODE_BAD_REQUEST
+            }
+        );
+        assert_eq!(
+            fixture
+                .vault
+                .memory(fixture.owner, EdgeActorClass::Human)
+                .tasks_ask_evidence(handle)?,
+            original_evidence
+        );
+        assert_eq!(
+            super::wire_decode::task_verb_body(&fixture.vault, task)?
+                .expect("member task")
+                .terminal(),
+            Some(&first.terminal)
+        );
+    }
+    assert!(memory.land_consult_result(task, &input)?.idempotent_replay);
+    Ok(())
+}
+
+#[test]
+fn consult_result_without_an_option_on_an_options_ask_is_refused_before_the_write() -> Result<()> {
+    let (fixture, _handle, peer, task) = peer_option_ask()?;
+    let input = ConsultResultInput {
+        kind: ConsultResultKind::Answer {
+            result_ref: fixture.question.entity_ref(),
+            option: None,
+            evidence_refs: vec![fixture.question],
+        },
+        completed_at: 1_001,
+    };
+    let refused = fixture
+        .vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_consult_result(task, &input)
+        .expect_err("an options ask needs an option id");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(refused.suggestions.iter().any(|s| s.contains("option ids")));
+    assert!(
+        super::wire_decode::task_verb_body(&fixture.vault, task)?
+            .expect("member task")
+            .terminal()
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn uncounted_source_less_reply_cannot_restore_an_impossible_threshold() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.spec();
+    let mut class = fixture.policy(false);
+    class.required_sources = [fixture.question].into();
+    spec.class = Some(class);
+    spec.need = TaskAskNeed {
+        count: 3,
+        of: TaskAskElectorate::Any,
+    };
+    spec.decide = Some(TaskAskDecide::AtLeast {
+        count: 2,
+        of: TaskAskElectorate::Any,
+        answer: TaskAskOptionId::new("yes")?,
+    });
+    let handle = fixture.ask(&spec)?;
+    fixture.word_with_sources(handle, 0, "no", [fixture.question].into())?;
+    fixture.word(handle, 1, "yes")?;
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(result.decision, TaskAskDecision::No);
+    assert_eq!(result.coverage.unknown, [fixture.people[2]].into());
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|entry| entry.reason == TaskAskEvidenceReason::MissingSource)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn ask_word_missing_a_required_source_does_not_veto_the_counted_words() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let result = fixture.ask_with_uncounted_word(false)?;
+    assert_eq!(
+        result.decision,
+        TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
+    );
+    assert_eq!(result.settlement.unmet_sources, [fixture.question].into());
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .filter(|entry| entry.reason == TaskAskEvidenceReason::MissingSource)
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn ask_decided_despite_an_uncounted_word_binds_its_outcome() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let result = fixture.ask_with_uncounted_word(true)?;
+    assert_eq!(
+        result.decision,
+        TaskAskDecision::Answer(TaskAskOptionId::new("yes")?)
+    );
+    assert!(result.settlement.outcome_answer_ref.is_some());
+    Ok(())
 }
 
 #[test]

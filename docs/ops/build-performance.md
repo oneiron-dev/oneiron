@@ -82,7 +82,7 @@ The behavior tests use stub tools and disposable directories, not a live cache:
 python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
 ```
 
-## Featureless nextest inner loop
+## Featureless nextest process models
 
 Full verification always runs `cargo test -p oneiron --lib --no-default-features`.
 This mandatory libtest lane runs tests as parallel threads in one process, so it
@@ -100,7 +100,7 @@ scripts/verify.sh --list
 scripts/verify.sh
 ```
 
-For an optional **inner loop only**, run the strict featureless profile directly:
+For a local **inner loop**, run the strict featureless profile directly:
 
 ```sh
 env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
@@ -110,17 +110,20 @@ env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
 This includes all non-ignored featureless library tests, including the slow set.
 The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
 only to this command. It is not full verification, does not emit `VERIFY-OK`, and
-must not replace the mandatory shared-process libtest lane. CI is unchanged.
+must not replace the mandatory shared-process libtest lane. Both CI test jobs run
+the shared-process `cargo test` lane and the per-test-process nextest lane, in
+that order. The CI nextest commands pin `--retries 0` even if the runner exports
+`NEXTEST_RETRIES`; they do not suppress user configuration or set eight threads.
 
-These **inner-loop** results are a latency/compute choice, not equivalent gate coverage. On the
-**Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
+These **local inner-loop measurements** are a latency/compute choice, not
+equivalent gate coverage. On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
 featureless-library comparisons reduced wall time by **4.02%, 9.25%, and 6.90%**
 (median paired reduction **6.90%**). Median user CPU rose from **197.7 to 251.8 s**;
 median system CPU rose from **76.4 to 88.2 s**. These measurements establish no
 aggregate-RAM benefit and no full-script speedup. Two clean Arch pairs showed no
 improvement (nextest was slightly slower); a contaminated third pair was excluded.
 No precise pooled Linux effect is claimed. These results do not show a speedup for
-the current 10/16-thread CI recipes, which remain unchanged.
+the CI recipes, which now include both process models.
 
 ## Diagnosing macOS vault-open ENOSPC
 
@@ -359,9 +362,10 @@ cargo test --config 'profile.dev.package.oneiron.codegen-units=16' \
   remain. Fixture compilation errors now surface later; standalone helper use
   rejects stale lockfiles. Two fewer invocations are certain; elapsed-time
   savings were not measured.
-- **Featureless nextest retained for the inner loop only**, with the scoped Mini
-  latency/CPU tradeoff above. Mandatory shared-process libtest verification and CI
-  remain unchanged; matching test IDs do not make the runners coverage-equivalent.
+- **Featureless nextest was initially retained for the local inner loop**, with the
+  scoped Mini latency/CPU tradeoff above. Wave 8 later added it alongside the
+  mandatory shared-process libtest lane in CI. Matching test IDs do not make
+  the two process models coverage-equivalent.
 - **No linker switch adopted.** Native probe output identified LLD 22.1.2, and
   captured workspace link invocations already selected `-fuse-ld=lld`. External
   Arch work interrupted the complete link-share/alternate-linker comparison.

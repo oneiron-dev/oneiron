@@ -95,7 +95,7 @@
      "purpose": "AccessGrant record and scope, capability, and status enums",
      "surface": {
       "enum": 3,
-      "fn": 19,
+      "fn": 18,
       "struct": 2
      }
     },
@@ -1709,7 +1709,7 @@
      "path": "src/authority/device.rs",
      "purpose": "Device authority material and the folded-device consent predicates",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "struct": 1
      }
     },
@@ -11907,7 +11907,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/mod.rs",
@@ -16300,7 +16300,7 @@
      "path": "src/gate/ceiling.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -16588,7 +16588,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 1
      }
@@ -16871,7 +16871,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/manifest_authenticity.rs",
@@ -22081,7 +22081,7 @@
      "purpose": "Bounded streaming ingress: validate before publishing, then commit small chunk transactions",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -27520,7 +27520,7 @@
      "path": "src/share/tests.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28017,7 +28017,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/bootstrap/tests.rs",
@@ -28997,7 +28997,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "struct": 4
      }
     },
@@ -30898,8 +30898,16 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/ask_record/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -31236,7 +31244,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -31265,22 +31273,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "TaskAckReceipt",
       "TaskCancelMode",
       "TaskCancelReceipt",
       "TaskCancelTarget",
       "TaskCreateReceipt",
+      "TaskDescription",
       "TaskResultInput",
       "TaskRouteLane",
       "TaskRouteOutcome",
-      "TaskStartedReceipt"
+      "TaskStartedReceipt",
+      "TaskUpdateReceipt"
      ],
      "path": "src/task_verb/route_receipts.rs",
      "purpose": "—",
      "surface": {
       "const": 2,
       "crate-vis": 1,
-      "enum": 4,
+      "enum": 5,
       "fn": 3,
       "struct": 5
      }
@@ -31302,6 +31311,7 @@
       "BoardExpandRequest",
       "BoardRefreshRequest",
       "BoardSubscriptionRequest",
+      "DescribeRequest",
       "EmptyRequest",
       "RecallRequest",
       "ReceiptsRequest",
@@ -31316,7 +31326,7 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -31477,7 +31487,7 @@
      "path": "src/task_verb/tests/support.rs",
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
-      "crate-vis": 59
+      "crate-vis": 60
      }
     },
     {
@@ -33745,6 +33755,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/temporal_query_window.rs",
+     "purpose": "Query-derived occurred windows must not lose their eligible hit to learned-time candidates",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/type_boundaries_compilefail.rs",
      "purpose": "Compile-fail proofs of three type boundaries from external-crate positions",
      "surface": {}
@@ -34973,7 +34991,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35095,7 +35113,7 @@
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2081,
-   "test_files": 706
+   "test_files": 708
   },
   "oneiron-android": {
    "files": [
@@ -36171,6 +36189,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/swarm.rs",
+     "purpose": "Seeded single-vault, in-process agent-swarm baseline",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -36262,6 +36290,13 @@
      "layout": "file",
      "purpose": "—"
     },
+    "swarm": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Seeded single-vault, in-process agent-swarm baseline"
+    },
     "vector": {
      "files": 5,
      "impl_vault": false,
@@ -36272,7 +36307,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 95,
+   "source_files": 96,
    "test_files": 18
   },
   "oneiron-driver": {
@@ -37314,6 +37349,79 @@
    "source_files": 1,
    "test_files": 2
   },
+  "oneiron-mesh-transport": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IrohTransport"
+     ],
+     "path": "src/iroh_transport.rs",
+     "purpose": "Private iroh data plane",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AcceptPolicy",
+      "MachineAddress",
+      "MachineAddressEnvelope",
+      "MachineGrants",
+      "MachineRoster",
+      "MeshConnection",
+      "MeshError",
+      "MeshStream",
+      "MeshTransport",
+      "VaultMachineRoster"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Vault-scoped mesh transport",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 3,
+      "mod": 1,
+      "struct": 4,
+      "trait": 5,
+      "type": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/conformance.rs",
+     "purpose": "The same admission, stream and reconnect laws for the in-memory and iroh transports",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/roster.rs",
+     "purpose": "A vault MACHINE row is an address hint only when it carries the exact versioned envelope",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "iroh_transport": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Private iroh data plane"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Vault-scoped mesh transport",
+   "source_files": 2,
+   "test_files": 2
+  },
   "oneiron-napi": {
    "files": [
     {
@@ -37387,7 +37495,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 22
+      "fn": 21
      }
     },
     {
@@ -37681,7 +37789,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 23
+      "fn": 22
      }
     },
     {
@@ -38302,7 +38410,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/oracle.rs",
@@ -40936,7 +41044,7 @@
      "purpose": "JSON schemas for endpoint tools: setup, execute-code, paging, and verbs",
      "surface": {
       "const": 5,
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {

@@ -30,12 +30,35 @@ impl Vault {
         &self,
         expected_oid: LfsOid,
         expected_size: Option<u64>,
+        reader: R,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<LfsPutOutcome> {
+        self.put_lfs_object_stream_with_cap(
+            expected_oid,
+            expected_size,
+            None,
+            reader,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Uploads with an optional operator-set per-object limit. `None` imposes no cap.
+    /// Refusal happens at the first read crossing the cap, before any ASSET write.
+    pub fn put_lfs_object_stream_with_cap<R: Read>(
+        &self,
+        expected_oid: LfsOid,
+        expected_size: Option<u64>,
+        max_object_bytes: Option<u64>,
         mut reader: R,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<LfsPutOutcome> {
         let params = self.lfs_chunk_parameters()?;
-        let mut spool = tempfile::tempfile()?;
+        let staging = self.store.lfs_staging_directory();
+        std::fs::create_dir_all(&staging)?;
+        let mut spool = tempfile::tempfile_in(staging)?;
         let mut sha = Sha256::new();
         let mut scanner = super::scanner::CredentialStream::default();
         let mut buffer = vec![0u8; LFS_CHUNK_MAX];
@@ -51,6 +74,9 @@ impl Vault {
             size = size
                 .checked_add(count as u64)
                 .ok_or_else(|| chunks::invalid("lfs size overflow"))?;
+            if max_object_bytes.is_some_and(|limit| size > limit) {
+                return Err(chunks::invalid("lfs size exceeds configured object cap"));
+            }
             if expected_size.is_some_and(|limit| size > limit) {
                 return Err(chunks::invalid("lfs size exceeds declaration"));
             }

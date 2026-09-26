@@ -39,6 +39,14 @@ pub struct RoomClaimRequest {
 pub struct TaskRequest {
     pub task_ref: String,
 }
+/// `describe`'s one input: the task to describe, or none for the whole
+/// TASKS section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    #[serde(default)]
+    pub task_ref: Option<String>,
+}
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateRequest {
@@ -63,8 +71,8 @@ pub struct BoardSubscriptionRequest {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> MemoryResult<T> {
-    serde_json::from_value(value)
-        .map_err(|_| MemoryError::bad_request("invalid typed SDK arguments"))
+    serde_path_to_error::deserialize(value)
+        .map_err(|error| MemoryError::bad_request(format!("invalid SDK request: {error}")))
 }
 fn encode<T: Serialize>(value: T) -> MemoryResult<serde_json::Value> {
     serde_json::to_value(value).map_err(|_| MemoryError::bad_request("SDK result encoding failed"))
@@ -104,6 +112,14 @@ include!("sdk_generated.rs");
 
 #[cfg(test)]
 #[test]
+fn verb_input_schema_is_built_once_per_process() {
+    let first = input_schema("tasks.ask").expect("tasks.ask input schema");
+    let second = input_schema("tasks.ask").expect("tasks.ask input schema");
+    assert!(std::ptr::eq(first, second));
+}
+
+#[cfg(test)]
+#[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
     let mut names = std::collections::BTreeSet::new();
     for verb in AgentVerb::ALL {
@@ -120,4 +136,51 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
     assert!(!AgentVerb::BoardExpand.is_facade());
     assert!(!AgentVerb::Recall.is_mcp());
     assert!(AgentVerb::from_name("not.a.verb").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn a_typed_argument_shape_error_names_its_field() {
+    let error = validate_input(
+        "key_value_search",
+        &serde_json::json!({"namespace_prefix": "a"}),
+    )
+    .expect_err("a string cannot stand in for a namespace sequence");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(error.message.contains("namespace_prefix"), "{error:?}");
+}
+
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+#[cfg(test)]
+#[test]
+fn retired_task_verb_names_are_unknown() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("open vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner actor");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        assert!(AgentVerb::from_name(name).is_none(), "{name}");
+        let refusal = invoke(&memory, name, serde_json::json!({})).expect_err(name);
+        assert_eq!(
+            refusal.code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST,
+            "{name}"
+        );
+        assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
+    }
+    for name in ["describe", "tasks.update", "cancel"] {
+        assert!(AgentVerb::from_name(name).is_some(), "{name}");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn non_keyed_sdk_request_does_not_claim_a_keyed_decoder() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let error = invoke(&memory, "recall", serde_json::json!({})).expect_err("missing query");
+    assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert!(!error.message.contains("keyed"), "{error:?}");
 }

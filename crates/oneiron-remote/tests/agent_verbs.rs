@@ -74,3 +74,21 @@ fn generated_sdk_ask_answer_and_wait_round_trip() {
             .is_err()
     );
 }
+
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows, with no alias.
+#[test]
+fn retired_task_verb_names_are_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = OneironClient::open(Some(dir.path()), &OpenOptions::default()).unwrap();
+    for name in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        let refusal = client
+            .agent_verb(name, serde_json::json!({}))
+            .expect_err(name);
+        assert_eq!(
+            refusal.code,
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            "{name}"
+        );
+        assert_eq!(refusal.message, "unknown SDK agent verb", "{name}");
+    }
+}

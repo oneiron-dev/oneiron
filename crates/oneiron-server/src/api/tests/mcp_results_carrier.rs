@@ -102,7 +102,7 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "negotiated-check",
-            "tasks.check",
+            "describe",
             mcp_endpoint_envelope(actor_ref, "read_tasks"),
         ),
     )
@@ -120,7 +120,7 @@ async fn mcp_results_carry_usable_data_in_negotiated_content() {
     )
     .expect("the negotiated content item states the result data as JSON");
     assert_eq!(data, result["structuredContent"]);
-    assert_eq!(data["tool"], Value::from("tasks.check"));
+    assert_eq!(data["tool"], Value::from("describe"));
     assert_eq!(data["output"]["kind"], Value::from("tasks_section"));
     assert!(
         data.get("carrier").is_none(),
@@ -484,7 +484,7 @@ async fn mcp_carrier_drains_exactly_once_on_next_arbitrary_result() {
             MCP_TOOL_FIRST_PATH,
             credential,
             id,
-            "tasks.check",
+            "describe",
             mcp_endpoint_envelope(actor_ref, "read_tasks"),
         )
     };

@@ -7,6 +7,7 @@ use crate::consult_ladder::LadderTerminalDisposition;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+use super::ask_types::TaskAskOptionId;
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef, ConsultRecovery};
 use super::terminal_state::{ConsultResultSummary, TaskExecutionState, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
@@ -17,6 +18,7 @@ use crate::error::RecordError;
 pub enum ConsultResultKind {
     Answer {
         result_ref: EntityId,
+        option: Option<TaskAskOptionId>,
         evidence_refs: Vec<ConsultPayloadRef>,
     },
     Abstain {

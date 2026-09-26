@@ -148,7 +148,6 @@ pub(super) fn settle_in(
     };
     if result.coverage.met
         && result.fallback.is_none()
-        && result.settlement.unmet_sources.is_empty()
         && let Some(binding) = &group.effective.what.outcome_binding
     {
         let selection = match &result.decision {
@@ -365,7 +364,7 @@ fn reduce(
                 && decision_seats.contains(&entry.person_ref)
         })
         .collect();
-    let mut decision = match &spec.decide {
+    let decision = match &spec.decide {
         None => TaskAskDecision::Collected,
         Some(TaskAskDecide::First) => words.first().map_or(TaskAskDecision::Unknown, |entry| {
             TaskAskDecision::First(entry.answer)
@@ -405,16 +404,13 @@ fn reduce(
                 TaskAskDecision::Conflict
             } else if yes >= threshold {
                 TaskAskDecision::Answer(answer.clone())
-            } else if yes + decision_seats.len().saturating_sub(words.len()) < threshold {
+            } else if yes + decision_seats.difference(&coverage.responded).count() < threshold {
                 TaskAskDecision::No
             } else {
                 TaskAskDecision::Unknown
             }
         }
     };
-    if !unmet_sources.is_empty() {
-        decision = TaskAskDecision::Unknown;
-    }
     Ok((coverage, decision))
 }
 

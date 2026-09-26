@@ -37,6 +37,7 @@ xxhash-rust = { workspace = true }
 serde = { workspace = true }
 schemars = "=0.8.22"
 serde_json = { workspace = true }
+serde_path_to_error = "0.1"
 jsonschema = { version = "0.33", default-features = false }
 postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
@@ -75,9 +76,8 @@ zstd = { version = "0.13", optional = true }
 tracing = { version = "0.1" }
 whichlang = "0.1.1"
 rust-stemmers = "1.2.0"
-# Direct path keeps generated compile-test workspaces and consumers on the same
-# audited Android-capable snapshot, without relying on an outer workspace patch.
-sudachi = { version = "0.6.11", path = "vendor/sudachi-0.6.11/sudachi" }
+# Upstream v0.6.11 plus fork branch oneiron/v0.6.11: Android plugin-loader name, reasoned allows.
+sudachi = { git = "https://github.com/oneiron-dev/sudachi.rs", rev = "d8cba3609521805ebf35bfc2b71d8099a13befef" }
 jieba-rs = { version = "0.9", default-features = false }
 lindera = { version = "3.0", default-features = false }
 kamadak-exif = "0.5"
