@@ -54,7 +54,9 @@ pub(super) const BEAM_HELP: &str = "usage: oneiron-bench beam <subcommand>\n\
                                     run a BEAM manifest; fixture datasets load dataset.path JSON\n\
                                     relative to the manifest; emit declared packs.jsonl outputs\n\
                            trace-export\n\
-                                    export RetrievalTrace records to JSONL by fork hash (ONE-1311)";
+                                    export RetrievalTrace records to JSONL by fork hash (ONE-1311)\n\
+                           corpus-export / corpus-replay\n\
+                                    export turn-indexed runs and replay their packs and traces";
 pub(crate) fn run_manifest_path(path: &Path) -> BeamResult<BeamReport> {
     let manifest_json = std::fs::read_to_string(path)?;
     let mut manifest = parse_manifest_json(&manifest_json)?;
