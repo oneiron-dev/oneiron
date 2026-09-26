@@ -93,6 +93,13 @@ impl PdfSealEngine for NativeSealEngine {
         // operation_id is validated before any signing or fetch work (§4).
         seal_request.validate_operation_id()?;
         let prepared = pdf::validate_prepared(input_bytes, &self.config.resource_limits)?;
+        if verify::analyze_modifications(&prepared.bytes, None, &self.config.resource_limits)
+            != crate::api::ModificationStatus::Clean(crate::api::ModificationLevel::None)
+        {
+            return Err(SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::MalformedXref,
+            });
+        }
         let ctx = profile::SealContext {
             config: &self.config,
             backend: &self.backend,
@@ -174,6 +181,51 @@ mod tests {
             fetch_policy,
             resource_limits: SealResourceLimits::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn unsigned_unknown_incremental_revision_is_refused_before_backend() {
+        let input = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let limits = SealResourceLimits::default();
+        let state = pdf::reparse_revision(&input, &limits).unwrap();
+        let id = state.max_obj + 1;
+        let appended = pdf::append_revision(
+            &input,
+            &state,
+            &pdf::RevisionKind::Dss {
+                material_objects: vec![(id, b"<< /Type /DSS >>".to_vec())],
+                dss_obj: id,
+            },
+            0,
+        )
+        .unwrap();
+        let engine = NativeSealEngine::new(
+            test_config(FetchPolicy::default()),
+            Arc::new(NoopBackend),
+            Arc::new(crate::api::OfflineFetcher),
+            Arc::new(Clock),
+        )
+        .unwrap();
+        let err = engine
+            .seal_pdf(
+                &appended.bytes,
+                &SealRequest {
+                    operation_id: "reject-extra-revision".into(),
+                    target_profile: PadesProfile::BaselineB,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: crate::error::InputInvalidCode::MalformedXref
+            }
+        ));
     }
 
     #[test]

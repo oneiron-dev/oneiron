@@ -15,6 +15,7 @@ use super::verify_revocation::gen_time_beyond_skew;
 #[derive(Debug)]
 pub(super) struct SigEntry {
     pub(super) is_doc_ts: bool,
+    pub(super) field_name: Option<String>,
     pub(super) byte_range: [u64; 4],
     /// Decoded `/Contents` bytes (DER CMS followed by zero padding).
     pub(super) contents: Vec<u8>,
@@ -216,8 +217,13 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
+        let field_name = match field.get(b"T") {
+            Ok(Object::String(name, _)) => Some(String::from_utf8_lossy(name).into_owned()),
+            _ => None,
+        };
         out.push(SigEntry {
             is_doc_ts,
+            field_name,
             byte_range: br,
             contents: contents.clone(),
         });
@@ -250,8 +256,16 @@ impl Checks {
     pub(super) fn absent(&mut self, kind: VerifyCheckKind) {
         self.list.push(VerifyCheck {
             kind,
-            status: VerifyCheckStatus::AbsentAllowed,
+            status: VerifyCheckStatus::NotApplicable,
             finding: None,
+        });
+    }
+
+    pub(super) fn not_run(&mut self, kind: VerifyCheckKind, reason: VerifyFindingCode) {
+        self.list.push(VerifyCheck {
+            kind,
+            status: VerifyCheckStatus::NotRun,
+            finding: Some(reason),
         });
     }
 
@@ -277,45 +291,44 @@ pub(super) fn decoded_contents_within_input(decoded_len: usize, input_len: usize
 }
 
 /// ByteRange shape, bounds, non-overlap, and exact `/Contents` exclusion.
-pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
+pub(super) fn check_byte_range_shape(bytes: &[u8], e: &SigEntry) -> bool {
     let [s1, l1, s2, l2] = e.byte_range;
-    let (s1, l1, s2, l2) = match (
-        usize::try_from(s1),
-        usize::try_from(l1),
-        usize::try_from(s2),
-        usize::try_from(l2),
-    ) {
-        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
-        _ => return false,
-    };
-    if s1 != 0 || l1 >= s2 {
-        return false; // span1 must start at 0 and end before span2
+    s1 == 0
+        && l1 < s2
+        && s2
+            .checked_add(l2)
+            .is_some_and(|end| end <= bytes.len() as u64)
+}
+
+pub(super) fn check_unsigned_gap(bytes: &[u8], e: &SigEntry) -> bool {
+    if !check_byte_range_shape(bytes, e) {
+        return false;
     }
-    let Some(end2) = s2.checked_add(l2) else {
+    let Ok(l1) = usize::try_from(e.byte_range[1]) else {
         return false;
     };
-    if end2 > bytes.len() {
-        return false; // out of bounds
-    }
-    // Exact /Contents exclusion: gap delimiters and hex length must line up.
-    if l1 >= bytes.len() || s2 > bytes.len() || s2 < l1 + 2 {
+    let Ok(s2) = usize::try_from(e.byte_range[2]) else {
+        return false;
+    };
+    // The only unsigned bytes must be the exact /Contents hex string.
+    if l1 >= bytes.len()
+        || s2 > bytes.len()
+        || s2 < l1 + 2
+        || bytes[l1] != b'<'
+        || bytes[s2 - 1] != b'>'
+    {
         return false;
     }
-    if bytes[l1] != b'<' || bytes[s2 - 1] != b'>' {
-        return false;
-    }
-    // Whitespace inside the hex string is spec-legal: strip it before the
-    // length check so padded real-world /Contents values verify.
     let hex_chars = bytes[l1 + 1..s2 - 1]
         .iter()
         .filter(|b| !is_pdf_whitespace(**b))
         .count();
-    // botfix7 P3: enforce the bytes cap on the decoded /Contents (defense
-    // in depth) after the whitespace strip has measured the digit count.
-    if !decoded_contents_within_input(e.contents.len(), bytes.len()) {
-        return false;
-    }
-    hex_chars == e.contents.len() * 2
+    decoded_contents_within_input(e.contents.len(), bytes.len())
+        && hex_chars == e.contents.len().saturating_mul(2)
+}
+
+pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
+    check_byte_range_shape(bytes, e) && check_unsigned_gap(bytes, e)
 }
 
 /// Strip the zero padding after the leading CMS DER; reject nonzero padding.
@@ -341,10 +354,17 @@ pub(super) fn verify_cades_sig(
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
 ) {
-    let br_ok = check_byte_range(bytes, e);
+    let br_shape_ok = check_byte_range_shape(bytes, e);
+    let gap_ok = check_unsigned_gap(bytes, e);
+    let br_ok = br_shape_ok && gap_ok;
     checks.record(
         VerifyCheckKind::ByteRange,
-        br_ok,
+        br_shape_ok,
+        VerifyFindingCode::InvalidByteRange,
+    );
+    checks.record(
+        VerifyCheckKind::UnsignedGap,
+        gap_ok,
         VerifyFindingCode::InvalidByteRange,
     );
     let spans_digest = if br_ok {
@@ -491,11 +511,18 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    checks.record(
-        VerifyCheckKind::CertificatePath,
-        validate_chain(&chain_ders, anchors, at_unix).is_ok(),
-        VerifyFindingCode::CertificatePathInvalid,
-    );
+    if anchors.is_empty() {
+        checks.not_run(
+            VerifyCheckKind::CertificatePath,
+            VerifyFindingCode::TrustRootUnavailable,
+        );
+    } else {
+        checks.record(
+            VerifyCheckKind::CertificatePath,
+            validate_chain(&chain_ders, anchors, at_unix).is_ok(),
+            VerifyFindingCode::CertificatePathInvalid,
+        );
+    }
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -589,7 +616,19 @@ pub(super) fn verify_doc_ts(
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
 ) -> Option<u64> {
-    let br_ok = check_byte_range(bytes, e);
+    let br_shape_ok = check_byte_range_shape(bytes, e);
+    let gap_ok = check_unsigned_gap(bytes, e);
+    let br_ok = br_shape_ok && gap_ok;
+    checks.record(
+        VerifyCheckKind::ByteRange,
+        br_shape_ok,
+        VerifyFindingCode::InvalidByteRange,
+    );
+    checks.record(
+        VerifyCheckKind::UnsignedGap,
+        gap_ok,
+        VerifyFindingCode::InvalidByteRange,
+    );
     let covers_end = !is_last
         || e.byte_range
             .get(2..4)

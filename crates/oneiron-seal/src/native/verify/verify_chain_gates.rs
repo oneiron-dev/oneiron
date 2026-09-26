@@ -3,12 +3,17 @@
 use lopdf::{Document, LoadOptions};
 
 use crate::api::{
-    PadesProfile, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+    ModificationStatus, PadesProfile, RevisionKind, SealConfig, SignatureKind, VerifyCheckKind,
+    VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyRevision,
 };
 use crate::error::{InputInvalidCode, SealError};
 
 use super::super::cms;
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
+use super::verify_modifications::{
+    analyze_modifications, revision_boundaries, structural_anomalies,
+};
+use super::verify_report::signature_entry;
 use super::verify_sig_pipeline::{Checks, collect_signatures, verify_cades_sig, verify_doc_ts};
 
 pub(crate) struct VerifyCtx<'a> {
@@ -190,7 +195,7 @@ pub(crate) fn verify_document(
         .collect();
     let sigs = collect_signatures(&doc)?;
     let last_idx = sigs.len().saturating_sub(1);
-    let mut saw_cades = false;
+    let mut signatures = Vec::new();
     // Certificates of the CMS signer/TSA chains this report covers; the DSS
     // binding requires the validation material to speak about them.
     let mut covered: Vec<EmbeddedCert> = Vec::new();
@@ -210,12 +215,13 @@ pub(crate) fn verify_document(
     // archival profile.
     let mut covering_dts_valid = false;
     for (i, e) in sigs.iter().enumerate() {
+        let mut signature_checks = Checks::new();
         if e.is_doc_ts {
             if let Some(gen_time) = verify_doc_ts(
                 bytes,
                 e,
                 &anchors,
-                &mut checks,
+                &mut signature_checks,
                 i == last_idx,
                 &mut covered,
                 ctx.clock_ms,
@@ -227,12 +233,9 @@ pub(crate) fn verify_document(
                 }
             }
         } else {
-            saw_cades = true;
-            verify_cades_sig(bytes, e, ctx, &anchors, &mut checks, &mut covered);
+            verify_cades_sig(bytes, e, ctx, &anchors, &mut signature_checks, &mut covered);
         }
-    }
-    if !saw_cades {
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
+        signatures.push(signature_entry(bytes, e, i, signature_checks));
     }
     verify_dss(
         &doc,
@@ -242,17 +245,79 @@ pub(crate) fn verify_document(
         limits.max_input_bytes,
         &mut checks,
     );
-    let valid = saw_cades
-        && eof_ok
-        && !checks
-            .list
-            .iter()
-            .any(|c| c.status == VerifyCheckStatus::Fail);
-    let achieved = classify(&checks, valid, covering_dts_valid);
+    let first_signer_end = sigs
+        .iter()
+        .filter(|e| !e.is_doc_ts)
+        .filter_map(|e| e.byte_range[2].checked_add(e.byte_range[3]))
+        .min();
+    let modifications = analyze_modifications(bytes, first_signer_end, limits);
+    checks.record(
+        VerifyCheckKind::Modification,
+        modifications != ModificationStatus::Suspicious,
+        VerifyFindingCode::ModificationNotAllowed,
+    );
+    let global_ok = eof_ok
+        && !checks.list.iter().any(|c| {
+            c.kind != VerifyCheckKind::Modification && c.status == VerifyCheckStatus::Fail
+        });
+    let timestamp_checks: Vec<_> = signatures
+        .iter()
+        .filter(|s| s.kind == SignatureKind::DocumentTimestamp)
+        .flat_map(|s| s.checks.iter().cloned())
+        .collect();
+    for sig in &mut signatures {
+        if sig.kind == SignatureKind::Signer {
+            let sig_ok = global_ok
+                && !sig
+                    .checks
+                    .iter()
+                    .any(|c| c.status == VerifyCheckStatus::Fail)
+                && !sig
+                    .checks
+                    .iter()
+                    .any(|c| c.status == VerifyCheckStatus::NotRun);
+            let combined = Checks {
+                list: sig
+                    .checks
+                    .iter()
+                    .cloned()
+                    .chain(checks.list.iter().cloned())
+                    .chain(timestamp_checks.iter().cloned())
+                    .collect(),
+            };
+            sig.achieved_profile = classify(&combined, sig_ok, covering_dts_valid);
+        }
+    }
+    let boundaries = revision_boundaries(bytes);
+    let revisions = boundaries
+        .iter()
+        .enumerate()
+        .map(|(index, end)| {
+            let signer = signatures.iter().find(|s| {
+                s.byte_range
+                    .covers_to
+                    .and_then(|n| usize::try_from(n).ok())
+                    .is_some_and(|n| n >= *end && n - end <= 4)
+            });
+            VerifyRevision {
+                index,
+                kind: match signer.map(|s| s.kind) {
+                    Some(SignatureKind::Signer) => RevisionKind::Signature,
+                    Some(SignatureKind::DocumentTimestamp) => RevisionKind::DocumentTimestamp,
+                    None => RevisionKind::Unsigned,
+                },
+                byte_end: *end as u64,
+                signed_by: signer.map(|s| s.id.clone()),
+            }
+        })
+        .collect();
+    let anomalies = structural_anomalies(bytes, &boundaries, limits);
     Ok(VerifyReport {
-        valid,
-        achieved_profile: achieved,
-        evidence_sha256,
+        artifact_sha256: evidence_sha256,
+        revisions,
+        signatures,
+        modifications,
+        anomalies,
         checks: checks.list,
     })
 }

@@ -139,9 +139,9 @@ pub(crate) mod tests {
         // bytes sit inside the hashed spans (the only excluded range is the
         // /Contents gap inside the doc-ts object itself). The uncovered
         // filler/xref/trailer bytes feed no evidence evaluation; the xref
-        // chain is attested by the final covering signature. Regression pin:
-        // a gate change to revision-end semantics flips this honest-but-
-        // unusual document to Invalid (dss_revision_end no longer == br_end).
+        // chain is attested by the final covering signature. The cryptographic
+        // profile remains informative, but this unusual filler revision is
+        // deliberately Other under the default-deny modification whitelist.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
@@ -156,17 +156,21 @@ pub(crate) mod tests {
         eprintln!(
             "PROBE-A br_end={br_end} dss_end={:?} rev_xref={rev_xref} newest_dss={newest_dss} -> {:?}",
             dss_revision_end(&doc, &bytes),
-            report.achieved_profile
+            report.achieved_profile()
         );
-        assert!(report.valid, "attested evidence must validate: {report:?}");
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        assert!(
+            report.verdict() == crate::api::VerifyVerdict::Failed,
+            "a non-whitelisted filler revision must not pass: {report:?}"
+        );
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
     }
 
     #[test]
     fn non_covering_doc_timestamp_confers_lt_not_lta() {
         // A VALID DocTimeStamp that does NOT cover the final /DSS keeps its
         // DocumentTimestamp check but must not confer B-LTA: fresh-at-clock
-        // evidence plus a non-covering DTS classifies BaselineLt.
+        // evidence plus a non-covering DTS classifies BaselineLt. The later
+        // co-sign remains Other under the v1 modification whitelist.
         let signer = test_ca("nc-signer");
         let signer2 = test_ca("nc-signer-two");
         let tsa = tsa_ca();
@@ -191,15 +195,17 @@ pub(crate) mod tests {
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b4).unwrap();
-        assert!(report.valid, "fresh evidence must validate: {report:?}");
+        assert!(
+            report.verdict() == crate::api::VerifyVerdict::Failed,
+            "later co-signing is Other under the v1 LTA-only whitelist: {report:?}"
+        );
         let dts = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
             .unwrap();
         assert_eq!(dts.status, VerifyCheckStatus::Pass);
         assert_eq!(
-            report.achieved_profile,
+            report.achieved_profile(),
             Some(PadesProfile::BaselineLt),
             "a non-covering DocTimeStamp confers no archival rung"
         );
@@ -248,12 +254,14 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile);
-        assert!(!report.valid, "stale unattested evidence must not launder");
-        assert_eq!(report.achieved_profile, None);
+        eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile());
+        assert!(
+            report.verdict() != crate::api::VerifyVerdict::Passed,
+            "stale unattested evidence must not launder"
+        );
+        assert_eq!(report.achieved_profile(), None);
         let vm = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -296,7 +304,8 @@ pub(crate) mod tests {
         let c2_offset = written2.iter().find(|w| w.0 == c2_num).unwrap().1;
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
         // Activation: trailer /Root switch only (one filler object carries
-        // the revision; the doc-ts does not cover this revision).
+        // the revision; the doc-ts does not cover this revision). The new
+        // default-deny classifier refuses this shape despite valid crypto.
         let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
         let filler = state4.max_obj + 1;
         let (b4, _) = emit_revision(
@@ -314,12 +323,12 @@ pub(crate) mod tests {
         assert!(dss_end <= ts_br_end, "gate passes over staged objects");
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile);
+        eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile());
         assert!(
-            report.valid,
-            "attested staged evidence must validate: {report:?}"
+            report.verdict() == crate::api::VerifyVerdict::Failed,
+            "a root switch is not a whitelisted renewal: {report:?}"
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
     }
 
     /// Probe C (the sharpening found while building A/B): the /CRLs array
@@ -372,20 +381,19 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-C outcome -> {:?}", report.achieved_profile);
+        eprintln!("PROBE-C outcome -> {:?}", report.achieved_profile());
         assert!(
             dss_end > ts_br_end,
             "chain-resolved gate must measure the planted stream"
         );
         assert!(
-            !report.valid,
+            report.verdict() != crate::api::VerifyVerdict::Passed,
             "unattested planted evidence laundered to {:?}",
-            report.achieved_profile
+            report.achieved_profile()
         );
-        assert_eq!(report.achieved_profile, None);
+        assert_eq!(report.achieved_profile(), None);
         let vm = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -627,10 +635,10 @@ pub(crate) mod tests {
         let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
         assert!(
-            report.valid,
+            report.verdict() == crate::api::VerifyVerdict::Passed,
             "typeless signature doc must verify: {report:?}"
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
     }
 
     #[test]

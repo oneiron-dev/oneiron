@@ -11,10 +11,12 @@ mod error;
 mod native;
 
 pub use api::{
-    BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, PadesProfile,
-    PdfSealEngine, ProfileDegradeReason, SealBackend, SealClock, SealRequest, SealWarning,
-    SealedPdf, Sha256Digest, SignDigestRequest, SignatureAlgorithm, SigningIdentity, VerifyCheck,
-    VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+    BackendError, BackendRejectCode, BackendSignature, ByteRangeEvidence, DigestAlgorithm,
+    ModificationLevel, ModificationStatus, PadesProfile, PdfSealEngine, ProfileDegradeReason,
+    RevisionKind, SealBackend, SealClock, SealRequest, SealWarning, SealedPdf, Sha256Digest,
+    SignDigestRequest, SignatureAlgorithm, SignatureCoverage, SignatureKind, SignatureVerification,
+    SignedRangeDigest, SigningIdentity, VerifyAnomaly, VerifyCheck, VerifyCheckKind,
+    VerifyCheckStatus, VerifyFindingCode, VerifyReport, VerifyRevision, VerifyVerdict,
 };
 #[cfg(feature = "native")]
 pub use api::{

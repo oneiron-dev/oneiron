@@ -97,10 +97,12 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, AT_UNIX);
         let report = engine.verify_sealed_pdf(&future).unwrap();
-        assert!(!report.valid, "future-dated token must fail verification");
+        assert!(
+            report.verdict() != crate::api::VerifyVerdict::Passed,
+            "future-dated token must fail verification"
+        );
         let ts = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::SignatureTimestamp)
             .unwrap();
         assert_eq!(
@@ -119,8 +121,11 @@ pub(crate) mod tests {
             AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS - 1,
         );
         let report = engine.verify_sealed_pdf(&near).unwrap();
-        assert!(report.valid, "within-skew token must pass: {report:?}");
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineT));
+        assert!(
+            report.verdict() == crate::api::VerifyVerdict::Passed,
+            "within-skew token must pass: {report:?}"
+        );
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineT));
     }
 
     #[test]
@@ -135,8 +140,7 @@ pub(crate) mod tests {
         let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], AT_UNIX);
         let report = engine.verify_sealed_pdf(&b2).unwrap();
         let dts = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
             .unwrap();
         assert_eq!(
@@ -147,7 +151,7 @@ pub(crate) mod tests {
             ),
             "future-dated DocTimeStamp must fail its check"
         );
-        assert!(!report.valid);
+        assert!(report.verdict() != crate::api::VerifyVerdict::Passed);
     }
 
     #[test]
@@ -193,6 +197,7 @@ pub(crate) mod tests {
         let anchors = anchors_of(&tsa);
         let bytes = b"%PDF-fake-body-for-hash";
         let entry = SigEntry {
+            field_name: None,
             is_doc_ts: true,
             byte_range: [4, 2, 10, 4], // s1 != 0: ByteRange check fails
             contents: {
@@ -544,6 +549,56 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn revision_classifier_allows_writer_lta_but_denies_unlisted_post_sign_object() {
+        let signer = test_ca("classifier-signer");
+        let tsa = tsa_ca();
+        let input = std::fs::read(format!(
+            "{}/tests/fixtures/pdf-input/classic_1page.pdf",
+            env!("CARGO_MANIFEST_DIR")
+        ))
+        .unwrap();
+        let signed = append_sig_revision(&input, &signer, "classifier", Some(&tsa), AT_UNIX);
+        let crl = build_crl(&signer, AT_UNIX - 60, Some(AT_UNIX + 3600), None, vec![]);
+        let dss = append_dss_revision(
+            &signed,
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            vec![crl],
+        );
+        let renewed = append_doc_ts_revision(&dss, &tsa, AT_UNIX);
+        let engine = verify_engine(vec![signer.cert_der, tsa.cert_der], VERIFY_SECS);
+        let clean = engine.verify_sealed_pdf(&renewed).unwrap();
+        assert_eq!(
+            clean.modifications,
+            crate::api::ModificationStatus::Clean(crate::api::ModificationLevel::LtaUpdates)
+        );
+        assert_eq!(clean.verdict(), crate::api::VerifyVerdict::Passed);
+        assert_eq!(
+            clean.signatures[0].achieved_profile,
+            Some(PadesProfile::BaselineLta)
+        );
+        let state = pdf::reparse_revision(&renewed, &SealResourceLimits::default()).unwrap();
+        let (tampered, _) = emit_revision(
+            &renewed,
+            &state,
+            &[(state.max_obj + 1, b"<< /Type /Unknown >>".to_vec())],
+            None,
+        );
+        let report = engine.verify_sealed_pdf(&tampered).unwrap();
+        assert_eq!(
+            report.modifications,
+            crate::api::ModificationStatus::Suspicious
+        );
+        assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+        assert!(report.all_checks().any(
+            |c| c.kind == VerifyCheckKind::Modification && c.status == VerifyCheckStatus::Fail
+        ));
+        assert!(
+            report.signatures[0].digest.is_some(),
+            "old signed bytes remain checkable"
+        );
+    }
+
+    #[test]
     fn covering_doc_timestamp_keeps_lta_at_later_verify_clock() {
         // The final /DSS IS covered by the DocTimeStamp: its genTime is the
         // archival applicable time, so evidence stale at the verify clock
@@ -551,11 +606,16 @@ pub(crate) mod tests {
         let fx = lta_multisig();
         let engine = verify_engine(fx.anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&fx.bytes).unwrap();
-        assert!(
-            report.valid,
-            "covering DocTimeStamp must keep the archived profile: {report:?}"
+        assert_eq!(
+            report.verdict(),
+            crate::api::VerifyVerdict::Failed,
+            "later co-signing is not a v1 LTA renewal: {report:?}"
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        assert_eq!(
+            report.modifications,
+            crate::api::ModificationStatus::Suspicious
+        );
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
     }
 
     #[test]
@@ -574,11 +634,10 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(fx.anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&attacked).unwrap();
-        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLt));
-        assert_ne!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        assert_ne!(report.achieved_profile(), Some(PadesProfile::BaselineLt));
+        assert_ne!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
         let vm = report
-            .checks
-            .iter()
+            .all_checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(

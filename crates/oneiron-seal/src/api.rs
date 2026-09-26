@@ -151,7 +151,9 @@ pub enum SealWarning {
 #[serde(rename_all = "snake_case")]
 pub enum VerifyCheckKind {
     PdfRevision,
+    Modification,
     ByteRange,
+    UnsignedGap,
     CmsEnvelope,
     SignedAttributes,
     ContentDigest,
@@ -168,8 +170,16 @@ pub enum VerifyCheckKind {
 pub enum VerifyCheckStatus {
     Pass,
     Fail,
-    AbsentAllowed,
+    NotRun,
     NotApplicable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyVerdict {
+    Passed,
+    Failed,
+    Indeterminate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,9 +193,11 @@ pub enum VerifyFindingCode {
     SignatureMismatch,
     CertificateBindingMismatch,
     CertificatePathInvalid,
+    TrustRootUnavailable,
     TimestampInvalid,
     ValidationMaterialInvalid,
     DocumentTimestampInvalid,
+    ModificationNotAllowed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,18 +207,175 @@ pub struct VerifyCheck {
     pub finding: Option<VerifyFindingCode>,
 }
 
+/// Ordered signed-byte coverage. An intact old revision is not the entire file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignatureCoverage {
+    Unclear,
+    ContiguousFromStart,
+    EntireRevision,
+    EntireFile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignatureKind {
+    Signer,
+    DocumentTimestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ByteRangeEvidence {
+    pub values: [u64; 4],
+    pub well_formed: bool,
+    pub covers_to: Option<u64>,
+    pub file_len: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedRangeDigest {
+    pub algorithm: DigestAlgorithm,
+    pub value: Sha256Digest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModificationLevel {
+    None,
+    LtaUpdates,
+    FormFilling,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModificationStatus {
+    NotRun,
+    Clean(ModificationLevel),
+    Suspicious,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevisionKind {
+    Signature,
+    DocumentTimestamp,
+    Unsigned,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifyRevision {
+    pub index: usize,
+    pub kind: RevisionKind,
+    pub byte_end: u64,
+    pub signed_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyAnomaly {
+    DuplicateObjectNumber,
+    PointerOnlyRevision,
+    RetypedObject,
+}
+
+/// Trust is independent of the signed-byte integrity and modification axes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignatureVerification {
+    pub id: String,
+    pub kind: SignatureKind,
+    pub byte_range: ByteRangeEvidence,
+    pub coverage: SignatureCoverage,
+    pub digest: Option<SignedRangeDigest>,
+    pub integrity: VerifyVerdict,
+    pub trust: VerifyVerdict,
+    pub achieved_profile: Option<PadesProfile>,
+    pub checks: Vec<VerifyCheck>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyReport {
-    pub valid: bool,
-    pub achieved_profile: Option<PadesProfile>,
-    pub evidence_sha256: Sha256Digest,
+    /// Whole-file identifier only; signed-range digests identify signed evidence.
+    pub artifact_sha256: Sha256Digest,
+    pub revisions: Vec<VerifyRevision>,
+    pub signatures: Vec<SignatureVerification>,
+    pub modifications: ModificationStatus,
+    pub anomalies: Vec<VerifyAnomaly>,
+    /// Document-level checks, separate from each envelope's checks.
     pub checks: Vec<VerifyCheck>,
 }
 
 impl VerifyReport {
+    /// No serialized verdict or validity flag can disagree with the evidence.
+    #[must_use]
+    pub fn verdict(&self) -> VerifyVerdict {
+        if self.modifications == ModificationStatus::Suspicious
+            || self
+                .all_checks()
+                .any(|c| c.status == VerifyCheckStatus::Fail)
+        {
+            return VerifyVerdict::Failed;
+        }
+        if !self
+            .signatures
+            .iter()
+            .any(|s| s.kind == SignatureKind::Signer)
+            || self
+                .all_checks()
+                .any(|c| c.status == VerifyCheckStatus::NotRun)
+            || self.modifications == ModificationStatus::NotRun
+            || self.checks.is_empty()
+            || self.signatures.iter().any(|s| s.checks.is_empty())
+        {
+            return VerifyVerdict::Indeterminate;
+        }
+        VerifyVerdict::Passed
+    }
+
+    pub fn all_checks(&self) -> impl Iterator<Item = &VerifyCheck> {
+        self.checks
+            .iter()
+            .chain(self.signatures.iter().flat_map(|s| s.checks.iter()))
+    }
+
+    #[must_use]
+    pub fn achieved_profile(&self) -> Option<PadesProfile> {
+        self.signatures
+            .iter()
+            .filter(|s| s.kind == SignatureKind::Signer)
+            .filter_map(|s| s.achieved_profile)
+            .max()
+    }
+
+    /// Named failed-check reasons, derived so they cannot drift from checks.
+    #[must_use]
+    pub fn reasons(&self) -> Vec<VerifyFindingCode> {
+        let mut reasons: Vec<_> = self
+            .all_checks()
+            .filter(|c| {
+                matches!(
+                    c.status,
+                    VerifyCheckStatus::Fail | VerifyCheckStatus::NotRun
+                )
+            })
+            .filter_map(|c| c.finding)
+            .collect();
+        if self.modifications == ModificationStatus::Suspicious
+            && !reasons.contains(&VerifyFindingCode::ModificationNotAllowed)
+        {
+            reasons.push(VerifyFindingCode::ModificationNotAllowed);
+        }
+        reasons
+    }
+
     #[must_use]
     pub fn passes_self_verify(&self) -> bool {
-        self.valid && self.achieved_profile.is_some()
+        self.verdict() == VerifyVerdict::Passed
+            && self.achieved_profile().is_some()
+            && !matches!(
+                self.modifications,
+                ModificationStatus::NotRun | ModificationStatus::Suspicious
+            )
     }
 }
 
@@ -223,8 +392,8 @@ pub struct SealedPdf {
 /// Seal + verify engine. `seal_pdf` runs the verifier against its candidate
 /// output before returning and converts an invalid report into
 /// [`crate::SealError::VerifyFailed`]; `verify_sealed_pdf` returns
-/// `Ok(VerifyReport { valid: false, .. })` for a parseable but
-/// cryptographically invalid sealed PDF.
+/// `Ok(VerifyReport)` with a derived `Failed` or `Indeterminate` verdict
+/// for a parseable PDF that cannot pass verification.
 #[async_trait]
 pub trait PdfSealEngine: Send + Sync {
     async fn seal_pdf(
@@ -378,3 +547,99 @@ pub use config::{
     FetchError, FetchMethod, FetchPolicy, FetchPurpose, FetchRequest, FetchResponse,
     OfflineFetcher, SealConfig, SealFetcher, SealResourceLimits, TsaEndpoint,
 };
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    fn report() -> VerifyReport {
+        VerifyReport {
+            artifact_sha256: [4; 32],
+            revisions: vec![VerifyRevision {
+                index: 0,
+                kind: RevisionKind::Signature,
+                byte_end: 100,
+                signed_by: Some("name:0".into()),
+            }],
+            signatures: vec![SignatureVerification {
+                id: "name:0".into(),
+                kind: SignatureKind::Signer,
+                byte_range: ByteRangeEvidence {
+                    values: [0, 4, 50, 50],
+                    well_formed: true,
+                    covers_to: Some(100),
+                    file_len: 100,
+                },
+                coverage: SignatureCoverage::EntireFile,
+                digest: Some(SignedRangeDigest {
+                    algorithm: DigestAlgorithm::Sha256,
+                    value: [2; 32],
+                }),
+                integrity: VerifyVerdict::Passed,
+                trust: VerifyVerdict::Passed,
+                achieved_profile: Some(PadesProfile::BaselineB),
+                checks: vec![VerifyCheck {
+                    kind: VerifyCheckKind::ContentDigest,
+                    status: VerifyCheckStatus::Pass,
+                    finding: None,
+                }],
+            }],
+            modifications: ModificationStatus::Clean(ModificationLevel::None),
+            anomalies: Vec::new(),
+            checks: vec![VerifyCheck {
+                kind: VerifyCheckKind::PdfRevision,
+                status: VerifyCheckStatus::Pass,
+                finding: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn verdict_is_derived_across_every_envelope_not_the_artifact_hash() {
+        let mut report = report();
+        assert_eq!(report.verdict(), VerifyVerdict::Passed);
+        assert!(report.passes_self_verify());
+        report.artifact_sha256 = [8; 32];
+        assert_eq!(report.verdict(), VerifyVerdict::Passed);
+        report.signatures.push(report.signatures[0].clone());
+        report.signatures[1].checks[0].status = VerifyCheckStatus::NotRun;
+        assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
+        assert!(!report.passes_self_verify());
+        report.signatures[0].checks[0].status = VerifyCheckStatus::Fail;
+        assert_eq!(report.verdict(), VerifyVerdict::Failed);
+        report.signatures[1].checks[0].status = VerifyCheckStatus::NotApplicable;
+        assert_eq!(report.verdict(), VerifyVerdict::Failed);
+        report.signatures[0].checks[0].status = VerifyCheckStatus::Pass;
+        assert_eq!(report.verdict(), VerifyVerdict::Passed);
+        report.signatures[0].checks[0].status = VerifyCheckStatus::Pass;
+        report.modifications = ModificationStatus::Suspicious;
+        assert_eq!(report.verdict(), VerifyVerdict::Failed);
+        report.modifications = ModificationStatus::NotRun;
+        assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
+        report.modifications = ModificationStatus::Clean(ModificationLevel::None);
+        report.anomalies.push(VerifyAnomaly::RetypedObject);
+        assert_eq!(report.verdict(), VerifyVerdict::Passed);
+        report.signatures.clear();
+        assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
+    }
+
+    #[test]
+    fn untrusted_root_does_not_claim_modified_bytes() {
+        let mut report = report();
+        report.signatures[0].trust = VerifyVerdict::Indeterminate;
+        report.signatures[0].checks.push(VerifyCheck {
+            kind: VerifyCheckKind::CertificatePath,
+            status: VerifyCheckStatus::NotRun,
+            finding: Some(VerifyFindingCode::TrustRootUnavailable),
+        });
+        assert_eq!(report.verdict(), VerifyVerdict::Indeterminate);
+        assert_eq!(
+            report.reasons(),
+            vec![VerifyFindingCode::TrustRootUnavailable]
+        );
+        assert_eq!(
+            report.modifications,
+            ModificationStatus::Clean(ModificationLevel::None)
+        );
+    }
+}

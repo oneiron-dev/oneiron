@@ -94,9 +94,11 @@ mod tests {
 
     fn report() -> VerifyReport {
         VerifyReport {
-            valid: false,
-            achieved_profile: None,
-            evidence_sha256: [0; 32],
+            artifact_sha256: [0; 32],
+            revisions: Vec::new(),
+            signatures: Vec::new(),
+            modifications: crate::api::ModificationStatus::NotRun,
+            anomalies: Vec::new(),
             checks: Vec::new(),
         }
     }

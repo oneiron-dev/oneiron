@@ -51,8 +51,7 @@ fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
 
 fn finding(report: &VerifyReport, kind: VerifyCheckKind) -> Option<VerifyFindingCode> {
     report
-        .checks
-        .iter()
+        .all_checks()
         .find(|c| c.kind == kind && c.status == VerifyCheckStatus::Fail)
         .and_then(|c| c.finding)
 }
@@ -132,12 +131,12 @@ fn one_byte_mutation_in_signed_span_fails_digest() {
     let mut mutated = bytes;
     mutated[40] ^= 0x01;
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
     assert_eq!(
         finding(&report, VerifyCheckKind::ContentDigest),
         Some(VerifyFindingCode::DigestMismatch)
     );
-    assert_eq!(report.achieved_profile, None);
+    assert_eq!(report.achieved_profile(), None);
 }
 
 #[test]
@@ -156,7 +155,7 @@ fn mutation_inside_cms_signed_attributes_fails() {
     let at = pos + needle.len() + 24;
     mutated[at] = if mutated[at] == b'0' { b'1' } else { b'0' };
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
     let f = [
         finding(&report, VerifyCheckKind::ContentDigest),
         finding(&report, VerifyCheckKind::SignedAttributes),
@@ -183,7 +182,7 @@ fn trailing_bytes_after_final_eof_fail() {
     let mut mutated = bytes;
     mutated.extend_from_slice(b"\njunk-after-eof");
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
     assert_eq!(
         finding(&report, VerifyCheckKind::PdfRevision),
         Some(VerifyFindingCode::InvalidPdfRevision)
@@ -196,8 +195,8 @@ fn unsigned_document_is_not_valid() {
     let report = engine
         .verify_sealed_pdf(&fixture_pdf("classic_1page.pdf"))
         .unwrap();
-    assert!(!report.valid);
-    assert_eq!(report.achieved_profile, None);
+    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
+    assert_eq!(report.achieved_profile(), None);
 }
 
 #[test]
@@ -226,7 +225,7 @@ fn wrong_anchor_fails_certificate_path() {
     )
     .unwrap();
     let report = engine2.verify_sealed_pdf(&bytes).unwrap();
-    assert!(!report.valid);
+    assert!(report.verdict() != oneiron_seal::VerifyVerdict::Passed);
     assert_eq!(
         finding(&report, VerifyCheckKind::CertificatePath),
         Some(VerifyFindingCode::CertificatePathInvalid)

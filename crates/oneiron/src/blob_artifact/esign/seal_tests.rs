@@ -50,7 +50,11 @@ impl PdfSealEngine for RejectVerify<'_> {
     }
     fn verify_sealed_pdf(&self, bytes: &[u8]) -> std::result::Result<VerifyReport, SealError> {
         let mut report = self.0.verify_sealed_pdf(bytes)?;
-        report.valid = false;
+        report.checks.push(VerifyCheck {
+            kind: VerifyCheckKind::PdfRevision,
+            status: VerifyCheckStatus::Fail,
+            finding: Some(VerifyFindingCode::InvalidPdfRevision),
+        });
         Ok(report)
     }
 }
@@ -209,7 +213,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     assert!(vault.sealed_esign_document(id)?.is_none());
     let sealed = run(vault.seal_esign_attempt(&attempt, &engine, PadesProfile::BaselineB, url))?;
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Completed);
-    assert!(vault.verify_esign_item(id, 0, &engine)?.valid);
+    assert!(vault.verify_esign_item(id, 0, &engine)?.verdict() == VerifyVerdict::Passed);
     let sealed_bytes = vault
         .read_blob_artifact_version(&EntityId::from_hex(&sealed.items[0].sealed_artifact)?, 1)?
         .unwrap();
@@ -265,7 +269,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         resealed.items[0].sealed_artifact,
         sealed.items[0].sealed_artifact
     );
-    assert!(vault.verify_esign_item(id, 0, &engine)?.valid);
+    assert!(vault.verify_esign_item(id, 0, &engine)?.verdict() == VerifyVerdict::Passed);
     assert_eq!(
         vault.read_blob_artifact_version(&id, 1)?.as_deref(),
         Some(original.as_slice())

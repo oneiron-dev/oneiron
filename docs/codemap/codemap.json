@@ -38051,6 +38051,7 @@
       "BackendError",
       "BackendRejectCode",
       "BackendSignature",
+      "ByteRangeEvidence",
       "DigestAlgorithm",
       "FetchError",
       "FetchMethod",
@@ -38058,10 +38059,13 @@
       "FetchPurpose",
       "FetchRequest",
       "FetchResponse",
+      "ModificationLevel",
+      "ModificationStatus",
       "OfflineFetcher",
       "PadesProfile",
       "PdfSealEngine",
       "ProfileDegradeReason",
+      "RevisionKind",
       "SealBackend",
       "SealClock",
       "SealConfig",
@@ -38072,23 +38076,30 @@
       "SealedPdf",
       "SignDigestRequest",
       "SignatureAlgorithm",
+      "SignatureCoverage",
+      "SignatureKind",
+      "SignatureVerification",
+      "SignedRangeDigest",
       "SigningIdentity",
       "TsaEndpoint",
+      "VerifyAnomaly",
       "VerifyCheck",
       "VerifyCheckKind",
       "VerifyCheckStatus",
       "VerifyFindingCode",
-      "VerifyReport"
+      "VerifyReport",
+      "VerifyRevision",
+      "VerifyVerdict"
      ],
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
       "const": 2,
-      "enum": 14,
-      "fn": 2,
+      "enum": 21,
+      "fn": 6,
       "mod": 1,
       "re-export": 1,
-      "struct": 13,
+      "struct": 17,
       "trait": 4,
       "type": 1
      }
@@ -38341,11 +38352,11 @@
      "path": "src/native/verify/mod.rs",
      "purpose": "Native verifier and profile classifier (§7.7)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/verify/verify_chain_gates.rs",
@@ -38368,6 +38379,26 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/native/verify/verify_modifications.rs",
+     "purpose": "Conservative, shared pre-sign and post-sign incremental-revision analysis",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_report.rs",
+     "purpose": "Per-envelope report facts, separate from PDF trust and modification policy",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/verify/verify_revocation.rs",
      "purpose": "CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds",
      "surface": {
@@ -38381,7 +38412,7 @@
      "path": "src/native/verify/verify_sig_pipeline.rs",
      "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -38445,7 +38476,7 @@
      "kind": "test",
      "notable": [],
      "path": "tests/it/main.rs",
-     "purpose": "Consolidated integration-test binary for the vector suites",
+     "purpose": "Consolidated integration-test binary for the native vector suites",
      "surface": {}
     },
     {
@@ -38499,7 +38530,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 31,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38508,7 +38539,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 31,
+   "source_files": 33,
    "test_files": 9
   },
   "oneiron-server": {

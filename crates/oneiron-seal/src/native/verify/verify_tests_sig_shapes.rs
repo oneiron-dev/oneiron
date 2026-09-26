@@ -83,7 +83,7 @@ mod tests {
         let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
         assert!(
-            report.valid,
+            report.verdict() == crate::api::VerifyVerdict::Passed,
             "whitespace-padded /Contents must verify: {report:?}"
         );
     }
@@ -95,18 +95,21 @@ mod tests {
         // stripped, not counted as content).
         let bytes = b"xx<AB CD>yy";
         let ok = SigEntry {
+            field_name: None,
             is_doc_ts: false,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB, 0xCD],
         };
         assert!(check_byte_range(bytes, &ok));
         let short = SigEntry {
+            field_name: None,
             is_doc_ts: false,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB],
         };
         assert!(!check_byte_range(bytes, &short));
         let long = SigEntry {
+            field_name: None,
             is_doc_ts: false,
             byte_range: [0, 2, 9, 2],
             contents: vec![0xAB, 0xCD, 0xEF],
@@ -122,6 +125,7 @@ mod tests {
         // fail the gate before any hex-length comparison.
         let bytes = b"xx<AB CD>yy";
         let oversized = SigEntry {
+            field_name: None,
             is_doc_ts: false,
             byte_range: [0, 2, 9, 2],
             contents: vec![0u8; bytes.len() + 1],
