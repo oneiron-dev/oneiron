@@ -1072,6 +1072,10 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
         )
         .expect("pair");
 
+    // The pairing establishes an authority root. This fixture actor is not
+    // bound as its owner, so grant the positive read explicitly.
+    crate::test_util::authorize_readers(&vault, &[&actor.to_hex()]);
+
     // Medium is the SDKs' default recall effort; no vector makes it sparse.
     let pack = facade
         .recall(
@@ -1212,6 +1216,8 @@ fn assert_recall_after_control_writes_has_only_context(pack: &crate::memory::Mem
 fn owner_recall_after_control_writes_holds_no_control_kind() {
     for effort in [Effort::Medium, Effort::Light] {
         let (_dir, vault, owner, _scoped) = recall_after_control_writes_fixture();
+        // The root established by pairing does not bind this fixture PERSON.
+        crate::test_util::authorize_readers(&vault, &[&owner.to_hex()]);
         let pack = facade_for(&vault, owner)
             .recall(
                 "window seat",
@@ -1230,6 +1236,7 @@ fn owner_recall_after_control_writes_holds_no_control_kind() {
 fn scoped_person_recall_after_control_writes_holds_no_control_kind() {
     for effort in [Effort::Medium, Effort::Light] {
         let (_dir, vault, _owner, scoped) = recall_after_control_writes_fixture();
+        crate::test_util::authorize_readers(&vault, &[&scoped.to_hex()]);
         let pack = facade_for(&vault, scoped)
             .recall(
                 "window seat",

@@ -8,7 +8,7 @@ use std::{collections::HashSet, sync::Mutex};
 
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::context_pack::{ContextEntity, ContextPack, EmptyContext, EmptyReason};
+use crate::context_pack::ContextEntity;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -18,6 +18,7 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, 
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod claim_admission;
+mod context_pack_filter;
 mod diagnostic_reads;
 mod graph_reads;
 mod note_visibility;
@@ -53,6 +54,9 @@ pub struct ScopedRead<'a> {
     /// Which claim statuses this lane admits; retrieval's surfaceable set
     /// unless a record verb asks for [`ClaimReadStatus::Recorded`].
     claim_status: ClaimReadStatus,
+    /// Reused only during one recall candidate scan. Cleared before final
+    /// projection, whose fresh transaction must observe revocations.
+    recall_authority: Mutex<Option<crate::authority::AuthorityFold>>,
 }
 
 impl crate::vault::Vault {
@@ -65,6 +69,7 @@ impl crate::vault::Vault {
             audience_cache: Mutex::new(Default::default()),
             session_view: None,
             claim_status: ClaimReadStatus::Surfaceable,
+            recall_authority: Mutex::new(None),
         }
     }
 
@@ -89,6 +94,7 @@ impl crate::vault::Vault {
             audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
             claim_status: ClaimReadStatus::Surfaceable,
+            recall_authority: Mutex::new(None),
         }
     }
 }
@@ -197,6 +203,41 @@ impl<'a> ScopedRead<'a> {
     #[must_use]
     pub fn actor_key(&self) -> &ScopedReadActorKey {
         &self.actor_key
+    }
+
+    /// Resolve a bounded query's actor/proof ceiling once. The terminal read
+    /// checks fresh authority again, so this snapshot can never widen it.
+    pub(crate) fn recall_plan(
+        &self,
+    ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let txn = self.vault.store.env.read_txn()?;
+        let plan = self.resolve_retrieval_filter_in(&txn, None)?;
+        let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
+        Ok(plan)
+    }
+
+    /// The final result and receipt must recheck authority in a fresh read.
+    pub(crate) fn end_recall_plan(&self) -> Result<()> {
+        *self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))? = None;
+        Ok(())
+    }
+
+    /// Admit one candidate in the retrieval transaction under the query plan.
+    pub(crate) fn recall_candidate_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
     }
 
     /// Searches within this actor's resolved read authority. Unset means the floor.
@@ -425,87 +466,6 @@ impl<'a> ScopedRead<'a> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult { value, receipt })
-    }
-
-    pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
-        let rtxn = self.vault.store.env.read_txn()?;
-        let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
-        let had_l2_base = pack.l2_base.is_some();
-        let mut auxiliary_suppressed = 0;
-        if let Some(summary) = pack.l2_base.as_ref() {
-            let visibility = self.retrieval_visibility_in(&rtxn, None)?;
-            let mut admitted = true;
-            for id in summary.evidence_ids() {
-                if !crate::ppr::PprNodeVisibility::ppr_node_visible(&visibility, &rtxn, id)? {
-                    admitted = false;
-                    auxiliary_suppressed +=
-                        usize::from(self.entity_record_in(&rtxn, id)?.is_some());
-                    break;
-                }
-            }
-            if !admitted {
-                pack.l2_base = None;
-            }
-        }
-        let had_capabilities = !pack.capabilities.is_empty();
-        let mut capabilities = Vec::new();
-        for hit in std::mem::take(&mut pack.capabilities) {
-            if self.is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
-                && let Some(current) =
-                    crate::pipeline::capability_hit(&self.vault.store, &rtxn, hit.id)?
-            {
-                capabilities.push(current);
-            } else if self.entity_record_in(&rtxn, &hit.id)?.is_some() {
-                auxiliary_suppressed += 1;
-            }
-        }
-        pack.capabilities = capabilities;
-        let previously_suppressed = pack.stats.claims_suppressed;
-        let previous_results = pack.results.len();
-        let previous_count = previous_results + pack.neighbors.len();
-        let (results, result_suppressed, result_rows_suppressed) = self.filter_context_entities(
-            &rtxn,
-            &policy,
-            &filter,
-            std::mem::take(&mut pack.results),
-        )?;
-        let (mut neighbors, neighbor_suppressed, neighbor_rows_suppressed) = self
-            .filter_context_entities(
-                &rtxn,
-                &policy,
-                &filter,
-                std::mem::take(&mut pack.neighbors),
-            )?;
-        let readable_neighbors = neighbors.len();
-        let reachability_suppressed = if results.len() < previous_results {
-            self.retain_neighbors_reachable_from_results(&rtxn, &mut neighbors, &results)?
-        } else {
-            0
-        };
-        let suppressed = previously_suppressed
-            .saturating_add(auxiliary_suppressed)
-            .saturating_add(result_rows_suppressed)
-            .saturating_add(neighbor_rows_suppressed)
-            .saturating_add(readable_neighbors.saturating_sub(neighbors.len()));
-        pack.results = results;
-        pack.neighbors = neighbors;
-        pack.stats.claims_suppressed +=
-            result_suppressed + neighbor_suppressed + reachability_suppressed;
-
-        if (previous_count > 0 || had_capabilities || had_l2_base)
-            && pack.capabilities.is_empty()
-            && pack.results.is_empty()
-            && pack.neighbors.is_empty()
-            && pack.l2_base.is_none()
-        {
-            pack.empty = Some(EmptyContext {
-                retrieval_quality: pack.retrieval_quality.clone(),
-                reason: EmptyReason::FilterMatchedNone,
-                total_in_scope: 0,
-                hint: "scoped_read returned no actor-readable entities".to_owned(),
-            });
-        }
-        Ok(self.receipt_for(None, &policy, &filter, suppressed))
     }
 
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {

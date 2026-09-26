@@ -732,6 +732,19 @@ fn every_memory_read_verb_returns_a_receipt() {
             assert_eq!(read.value.len(), 1);
             read.receipt
         }),
+        memory
+            .recall(
+                "solar",
+                Effort::Light,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+            )
+            .map(|pack| {
+                assert!(!pack.items.is_empty());
+                *pack.narrowing
+            }),
         memory.neighbors(&subject.to_hex(), &neighbors).map(|read| {
             assert!(!read.value.is_empty());
             read.receipt
@@ -774,6 +787,19 @@ fn every_memory_read_verb_returns_a_receipt() {
             assert!(read.value.is_empty());
             read.receipt
         }),
+        memory
+            .recall(
+                "solar",
+                Effort::Light,
+                &RecallScope::default(),
+                10,
+                None,
+                None,
+            )
+            .map(|pack| {
+                assert!(pack.items.is_empty());
+                *pack.narrowing
+            }),
         memory.neighbors(&subject.to_hex(), &neighbors).map(|read| {
             assert!(read.value.is_empty());
             read.receipt
@@ -907,6 +933,30 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
     let lexical = memory.query_bm25("Shelly", 10).expect("bm25");
     assert!(lexical.value.is_empty());
     assert_eq!(lexical.receipt.suppressed_count, 0);
+    let recalled = memory
+        .recall(
+            "Shelly",
+            Effort::Light,
+            &RecallScope::default(),
+            10,
+            Some("json"),
+            None,
+        )
+        .expect("recall after deletion");
+    assert!(
+        recalled
+            .items
+            .iter()
+            .all(|item| !item.value_text.contains("Shelly"))
+    );
+    assert!(
+        !recalled
+            .rendered
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Shelly")
+    );
+    assert!(!recalled.narrowing.applied.deny_all);
     let calendar = memory
         .calendar_read(&crate::CalendarReadRequest {
             event_ref: id.to_hex(),

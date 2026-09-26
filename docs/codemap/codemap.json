@@ -7462,8 +7462,8 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 13,
+      "crate-vis": 9,
+      "fn": 12,
       "re-export": 3,
       "struct": 1
      }
@@ -7500,6 +7500,16 @@
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/context_pack_filter.rs",
+     "purpose": "Final actor-bound context-pack filtering before rendering and telemetry",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -11255,7 +11265,7 @@
      "path": "src/context_pack/builder/assembly.rs",
      "purpose": "Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 8
      }
     },
@@ -11306,7 +11316,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -20871,7 +20881,7 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -20882,7 +20892,17 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/recall/items.rs",
-     "purpose": "Builds typed recall items from the exact selected entity revision",
+     "purpose": "Builds typed recall items from actor-admitted rows at the selected revision",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/scope_honesty.rs",
+     "purpose": "Scope-honesty world names come only from actor-admitted claim rows",
      "surface": {
       "crate-vis": 1
      }
@@ -21116,6 +21136,14 @@
      "notable": [],
      "path": "src/memory/tests_regressions/recall_revision.rs",
      "purpose": "Exact revision consistency across facade recall, hydration, and document chat",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/tests_regressions/recall_security.rs",
+     "purpose": "Recall must not be a broader read side channel than point reads or BM25",
      "surface": {}
     },
     {
@@ -27612,7 +27640,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/side_table/tests.rs",
@@ -33997,7 +34025,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34578,7 +34606,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35112,7 +35140,7 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2081,
+   "source_files": 2084,
    "test_files": 708
   },
   "oneiron-android": {

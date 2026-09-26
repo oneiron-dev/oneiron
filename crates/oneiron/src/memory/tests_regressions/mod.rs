@@ -17,4 +17,5 @@ mod consolidation_outbound;
 mod outbound_actor_scope;
 mod recall;
 mod recall_revision;
+mod recall_security;
 mod retrieval_quality;

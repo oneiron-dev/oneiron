@@ -479,6 +479,8 @@ pub struct NapiMemoryPack {
     pub pack_version: u32,
     /// Text rendering in the requested format; absent = typed only.
     pub rendered: Option<String>,
+    /// The actor-scoped read receipt, including applied ceiling and suppression.
+    pub narrowing: NapiReadReceipt,
 }
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).

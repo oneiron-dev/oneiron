@@ -642,6 +642,8 @@ pub struct MemoryPack {
     pub pack_version: u32,
     /// Text rendering in the requested format; absent means typed only.
     pub rendered: Option<String>,
+    /// The actor-scoped read receipt.
+    pub narrowing: ReadReceipt,
 }
 
 // ── jobs and effects ────────────────────────────────────────────────────

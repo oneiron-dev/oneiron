@@ -385,6 +385,7 @@ impl Memory<'_> {
 
         let mut views: Vec<EntityView> = Vec::new();
         let mut gaps: Vec<String> = Vec::new();
+        let mut narrowing = None;
         for (index, reference) in requested.iter().enumerate() {
             if views.len() == limit {
                 for unread in &requested[index..] {
@@ -393,9 +394,10 @@ impl Memory<'_> {
                 break;
             }
             match self.hydrate(std::slice::from_ref(*reference)) {
-                // The hydrate receipt stops at the document pack until
-                // `MemoryPack` carries one (the recall follow-on).
-                Ok(hydrated) => views.extend(hydrated.value),
+                Ok(hydrated) => {
+                    super::read_lane::fold_receipt(&mut narrowing, hydrated.receipt);
+                    views.extend(hydrated.value);
+                }
                 Err(err) if err.code == MEMORY_CODE_NOT_FOUND => {
                     gaps.push(format!("document {reference:?} does not resolve"));
                 }
@@ -411,6 +413,12 @@ impl Memory<'_> {
         let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let total_candidates = items.len() as u64;
+        let narrowing = match narrowing {
+            Some(receipt) => receipt,
+            None => self
+                .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
+                .read_receipt(None, 0)?,
+        };
         Ok((
             MemoryPack {
                 items,
@@ -425,6 +433,7 @@ impl Memory<'_> {
                 },
                 pack_version: MEMORY_PACK_VERSION,
                 rendered,
+                narrowing: Box::new(narrowing),
             },
             gaps,
         ))
