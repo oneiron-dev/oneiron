@@ -71,6 +71,16 @@ impl From<TaskAskOptionId> for String {
     }
 }
 
+/// The lower rung's answer before a person is consulted. This is not an
+/// authorization and never substitutes for a person's word.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskLadderPrediction {
+    pub option: TaskAskOptionId,
+    pub rung: crate::llm::decision::DecisionRung,
+    pub probability: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskQuestion {
@@ -80,6 +90,12 @@ pub struct TaskAskQuestion {
     pub context_refs: Vec<ConsultPayloadRef>,
     pub label: Option<String>,
     pub outcome_binding: Option<crate::llm::decision::questions::OutcomeBinding>,
+    /// Snapshot of the lower rung before a person is asked; stable option identity.
+    #[serde(default)]
+    pub ladder_answer: Option<TaskAskLadderPrediction>,
+    /// The learning bucket. If omitted, a governed class supplies its key.
+    #[serde(default)]
+    pub class_key: Option<String>,
 }
 impl TaskAskQuestion {
     pub fn new(reference: ConsultPayloadRef) -> Self {
@@ -90,6 +106,8 @@ impl TaskAskQuestion {
             context_refs: Vec::new(),
             label: None,
             outcome_binding: None,
+            ladder_answer: None,
+            class_key: None,
         }
     }
 }
@@ -303,10 +321,44 @@ impl TaskAskSpec {
             }
             effective.class = Some(bound);
         }
+        if let Some(ladder) = &self.what.ladder_answer
+            && (!self.what.options.contains_key(&ladder.option)
+                || !matches!(
+                    ladder.rung,
+                    crate::llm::decision::DecisionRung::Rule
+                        | crate::llm::decision::DecisionRung::SystemOne
+                )
+                || ladder
+                    .probability
+                    .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
+                || (ladder.rung == crate::llm::decision::DecisionRung::SystemOne
+                    && ladder.probability.is_none()))
+        {
+            return Err(MemoryError::bad_request("invalid ask ladder prediction"));
+        }
+        if self
+            .what
+            .class_key
+            .as_ref()
+            .is_some_and(|key| key.is_empty() || key.len() > 256)
+        {
+            return Err(MemoryError::bad_request("invalid ask question class"));
+        }
         if let Some(binding) = &self.what.outcome_binding {
             binding.validate()?;
         }
         if let Some(class) = &effective.class {
+            if self
+                .what
+                .class_key
+                .as_deref()
+                .is_some_and(|key| key != class.key)
+            {
+                return Err(MemoryError::bad_request(
+                    "ask question class conflicts with task policy",
+                ));
+            }
+            effective.what.class_key = Some(class.key.clone());
             if class.key.is_empty()
                 || class.key.len() > 256
                 || class.version == 0
@@ -512,6 +564,8 @@ pub struct TaskAskEvidence {
     pub person_ref: EntityId,
     pub order: u64,
     pub reason: TaskAskEvidenceReason,
+    /// True only for an admitted human option that differs from the pinned ladder answer.
+    pub ladder_changed: Option<bool>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

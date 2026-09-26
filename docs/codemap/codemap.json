@@ -28310,6 +28310,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskBandLabel",
+      "AskBandPolicy"
+     ],
+     "path": "src/skill_optimize/ask_band.rs",
+     "purpose": "Question-class band policy input from settled human ask receipts",
+     "surface": {
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SkillEditDraft",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
@@ -28439,7 +28453,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -30666,6 +30680,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_band.rs",
+     "purpose": "Owner-scoped, consume-once ask labels and the policy-owned question-class band",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -30713,7 +30737,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_tests.rs",
@@ -30739,6 +30763,7 @@
       "TaskAskFallback",
       "TaskAskHandle",
       "TaskAskHoldReason",
+      "TaskAskLadderPrediction",
       "TaskAskNeed",
       "TaskAskOptionId",
       "TaskAskProvisional",
@@ -30761,7 +30786,7 @@
       "crate-vis": 2,
       "enum": 14,
       "fn": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -34700,7 +34725,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34777,7 +34802,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34923,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2064,
    "test_files": 705
   },
   "oneiron-android": {

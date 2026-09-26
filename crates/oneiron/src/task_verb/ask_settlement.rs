@@ -356,6 +356,15 @@ fn reduce(
             }
             TaskAskSource::Human => TaskAskEvidenceReason::Counted,
         };
+        entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted {
+            spec.what
+                .ladder_answer
+                .as_ref()
+                .zip(entry.word.option.as_ref())
+                .map(|(ladder, person)| &ladder.option != person)
+        } else {
+            None
+        };
     }
     let words: Vec<_> = evidence
         .iter()
@@ -474,6 +483,7 @@ pub(super) fn evidence(
                     .find(|at_cut| at_cut.answer.word_ref == entry.answer.word_ref)
                 {
                     entry.reason = counted.reason;
+                    entry.ladder_changed = counted.ladder_changed;
                 } else {
                     entry.reason = TaskAskEvidenceReason::Late;
                 }

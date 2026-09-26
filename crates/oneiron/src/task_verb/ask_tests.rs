@@ -19,6 +19,8 @@ fn spec(vault: &Vault, owner: EntityId, key: &str) -> TaskAskSpec {
                 context_refs: Vec::new(),
                 label: None,
                 outcome_binding: None,
+                ladder_answer: None,
+                class_key: None,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,
@@ -1403,5 +1405,178 @@ fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()
         .tasks_ask(&spec)
         .expect_err("two governed tasks cannot both bind one ask");
     assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
+fn ask_receipt_labels_only_counted_human_words_against_pinned_ladder_option() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.all();
+    spec.what.class_key = Some("fixture-choice-class".into());
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::SystemOne,
+        probability: Some(0.6),
+    });
+    let handle = fixture.ask(&spec)?;
+    fixture.word(handle, 0, "yes")?;
+    fixture.word(handle, 1, "no")?;
+    fixture.word(handle, 2, "yes")?;
+    let receipt = fixture.result(handle)?;
+    assert_eq!(
+        receipt
+            .evidence
+            .iter()
+            .map(|e| e.ladder_changed)
+            .collect::<Vec<_>>(),
+        vec![Some(false), Some(true), Some(false)]
+    );
+    assert_eq!(
+        receipt.settlement.effective.what.class_key.as_deref(),
+        Some("fixture-choice-class")
+    );
+    assert_eq!(fixture.result(handle)?, receipt);
+
+    let mut invalid = fixture.spec();
+    invalid.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("missing")?,
+        rung: crate::llm::decision::DecisionRung::Rule,
+        probability: None,
+    });
+    assert!(fixture.ask(&invalid).is_err());
+    Ok(())
+}
+
+#[test]
+fn ask_class_band_consumes_42_rubber_stamps_then_30_overrules_once() -> Result<()> {
+    use crate::llm::decision::DecisionBand;
+    use crate::skill_optimize::{AskBandLabel, AskBandPolicy};
+    struct Policy {
+        expected: usize,
+        changes: usize,
+        band: DecisionBand,
+    }
+    impl AskBandPolicy for Policy {
+        fn revise(&self, _: DecisionBand, labels: &[AskBandLabel]) -> crate::Result<DecisionBand> {
+            assert_eq!(labels.len(), self.expected);
+            assert_eq!(
+                labels.iter().filter(|label| label.changed).count(),
+                self.changes
+            );
+            Ok(self.band)
+        }
+    }
+    let fixture = RuledAskFixture::new(1)?;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let mut first = Vec::new();
+    for i in 0..42 {
+        let mut spec = fixture.spec();
+        spec.intent_key = format!("same-{i}");
+        spec.what.class_key = Some("one-question-class".into());
+        spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+            option: TaskAskOptionId::new("yes")?,
+            rung: crate::llm::decision::DecisionRung::SystemOne,
+            probability: Some(0.6),
+        });
+        let handle = fixture.ask(&spec)?;
+        fixture.word(handle, 0, if i < 40 { "yes" } else { "no" })?;
+        assert_eq!(
+            fixture.result(handle)?.evidence[0].ladder_changed,
+            Some(i >= 40)
+        );
+        first.push(handle);
+    }
+    // An invalid policy band rolls back both the band and consume markers.
+    assert!(
+        memory
+            .tasks_optimize_ask_band(
+                "one-question-class",
+                &first,
+                &Policy {
+                    expected: 42,
+                    changes: 2,
+                    band: DecisionBand {
+                        low: 0.9,
+                        high: 0.1
+                    }
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(
+        memory.tasks_ask_band("one-question-class")?,
+        DecisionBand::default()
+    );
+    first.push(first[0]); // repeated handle in the same optimization pass
+    let no_ask = DecisionBand {
+        low: 0.7,
+        high: 0.9,
+    };
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &first,
+            &Policy {
+                expected: 42,
+                changes: 2,
+                band: no_ask
+            }
+        )?,
+        no_ask
+    );
+    assert!(!memory.tasks_should_ask("one-question-class", 0.6)?);
+    // Re-reading a receipt cannot train the class twice, even with a
+    // different policy proposal.
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &first,
+            &Policy {
+                expected: 0,
+                changes: 0,
+                band: DecisionBand::default()
+            }
+        )?,
+        no_ask
+    );
+    let mut second = Vec::new();
+    for i in 0..30 {
+        let mut spec = fixture.spec();
+        spec.intent_key = format!("changed-{i}");
+        spec.what.class_key = Some("one-question-class".into());
+        spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+            option: TaskAskOptionId::new("yes")?,
+            rung: crate::llm::decision::DecisionRung::Rule,
+            probability: Some(0.6),
+        });
+        let handle = fixture.ask(&spec)?;
+        fixture.word(handle, 0, "no")?;
+        assert_eq!(
+            fixture.result(handle)?.evidence[0].ladder_changed,
+            Some(true)
+        );
+        second.push(handle);
+    }
+    let earlier = DecisionBand {
+        low: 0.5,
+        high: 0.9,
+    };
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &second,
+            &Policy {
+                expected: 30,
+                changes: 30,
+                band: earlier
+            }
+        )?,
+        earlier
+    );
+    assert!(memory.tasks_should_ask("one-question-class", 0.6)?);
+    assert_eq!(
+        memory.tasks_ask_band("other-question-class")?,
+        DecisionBand::default()
+    );
     Ok(())
 }
