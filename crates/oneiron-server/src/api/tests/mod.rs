@@ -856,12 +856,48 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
+    // The clearance is a six-axis scope, not an entity-id allowlist. Select
+    // the bands of the examples; an empty list remains deny-all.
+    let mut clearance = oneiron::federation::Scope::default();
+    if !entities.is_empty() {
+        clearance = oneiron::federation::Scope::top();
+        clearance.bands = oneiron::federation::ScopeAxis::Some(
+            entities
+                .iter()
+                .map(|id| {
+                    server
+                        .vault
+                        .get_entity_type(id)
+                        .expect("example type read")
+                        .expect("example exists")
+                })
+                .collect(),
+        );
+    }
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)
         .expect("set disclosure scope");
+}
+
+/// A different kind with the same query words proves the six-axis band ceiling
+/// actually excludes candidates, rather than relying on lexical nonmatches.
+pub(super) fn seed_text_claim(
+    server: &SyncServer,
+    subject: oneiron::EntityId,
+    text: &str,
+) -> oneiron::EntityId {
+    let id = oneiron::EntityId::now();
+    seed_active_claim(server, id, subject, text, 100);
+    server
+        .vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("index claim text");
+    id
 }
 
 // ─── Surface events (ONE-1259) ───────────────────────────────────────────────
