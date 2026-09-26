@@ -141,7 +141,7 @@ def dialog_class(titles: list[str], expected_stem: str) -> str | None:
         low = text.lower()
         # An exact document title is not a repair prompt, even if its name
         # contains "recovery", "repair", or "permission".
-        if kind != 'DIALOG' and low in allowed:
+        if low in allowed:
             continue
         if kind != 'WINDOW':
             if any(word in low for word in REPAIR_WORDS):

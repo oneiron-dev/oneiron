@@ -206,6 +206,8 @@ class OfflineContracts(unittest.TestCase):
             with self.subTest(stem=stem):
                 self.assertIsNone(oracle.dialog_class([stem + '.pptx'], stem))
                 self.assertIsNone(oracle.dialog_class(['WINDOW:' + stem + '.pptx'], stem))
+                # PowerPoint can label its ordinary document window AXDialog.
+                self.assertIsNone(oracle.dialog_class(['DIALOG:' + stem + '.pptx'], stem))
         self.assertEqual(oracle.dialog_class(['DIALOG:PowerPoint found a problem with content'],
                                              'Disaster Recovery'), 'repaired')
         with mock.patch.object(oracle, 'command', return_value=(
