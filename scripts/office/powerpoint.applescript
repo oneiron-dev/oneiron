@@ -3,6 +3,8 @@ on run argv
     set actionName to item 1 of argv
     if actionName is "custody" then
         tell application "Microsoft PowerPoint"
+            -- PowerPoint returns "missing value" for an empty "name of every" query.
+            if (count of presentations) is 0 then return ""
             set names to name of every presentation
         end tell
         set AppleScript's text item delimiters to (ASCII character 10)

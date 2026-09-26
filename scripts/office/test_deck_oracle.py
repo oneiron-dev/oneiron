@@ -79,6 +79,11 @@ class OfflineContracts(unittest.TestCase):
             status, _ = oracle.run_script(ROOT / 'fixtures/clean.pptx', 'open', None, 'cua', 9)
         self.assertEqual(status, 'timed_out')
         proc.terminate.assert_called_once()
+    def test_empty_inventory_is_not_missing_value(self):
+        with mock.patch.object(oracle, 'command', return_value='') as command:
+            self.assertEqual(oracle.presentations(), [])
+        self.assertIn('custody', command.call_args.args[0])
+
     def test_saved_unrelated_presentation_blocks_custody(self):
         # A real saved deck can be open without a repair dialog or suspect window.
         with tempfile.TemporaryDirectory() as tmp, \

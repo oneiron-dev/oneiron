@@ -25,8 +25,8 @@ PNGs there. The harness moves outputs to the result directory and removes the
 staging directory in `finally`. It launches PowerPoint in the background, never
 activates it, hides it after each call, and closes only the staged presentation.
 It refuses any pre-existing open presentation, including a saved but hidden one.
-The serial fixture runner quits PowerPoint once at the end, and only if no
-presentations remain. A standalone `run` leaves the app running without its deck.
+The serial fixture runner quits PowerPoint once at the end only when it
+started the app and no presentations remain. It leaves an existing app running. A standalone `run` leaves the app running without its deck.
 Use a new result directory each time.
 
 From the repository root on the Mac mini, run the live matrix exactly as follows:
