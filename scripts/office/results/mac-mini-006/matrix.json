@@ -1,0 +1,42 @@
+{
+  "cases": [
+    {
+      "id": "clean",
+      "expected": "clean",
+      "actual": "clean",
+      "verdict": "pass",
+      "preservation": "no-op all OPC entries"
+    },
+    {
+      "id": "failed-open",
+      "expected": "failed",
+      "actual": "failed",
+      "verdict": "pass",
+      "preservation": "not a ZIP"
+    },
+    {
+      "id": "damaged-candidate",
+      "expected": "failed",
+      "actual": "failed",
+      "verdict": "pass",
+      "preservation": "broken required presentation XML must not settle"
+    },
+    {
+      "id": "timeout",
+      "expected": "timed_out",
+      "actual": "timed_out",
+      "verdict": "pass",
+      "preservation": "injected stalled scripting process"
+    },
+    {
+      "id": "repair-prompt",
+      "expected": "repaired",
+      "actual": "repaired",
+      "verdict": "pass",
+      "preservation": "missing referenced slide part; repair must not pass"
+    }
+  ],
+  "counts": {
+    "pass": 5
+  }
+}

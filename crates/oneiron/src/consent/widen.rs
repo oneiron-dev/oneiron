@@ -68,7 +68,7 @@ pub fn canonical_widen_delta(kind: WidenKind, bound: &GrantBound) -> Result<Vec<
     let value = Value::Array(vec![
         Value::from(1),
         Value::from(kind.label()),
-        encode_bound_value(bound),
+        encode_bound_value(bound)?,
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value).map_err(|_| invalid_row())?;
