@@ -83,8 +83,8 @@ inconclusive, and both fail the CLI exit status.
 
 ## Recorded Mac mini result
 
-The passing live fixture run and hashed outputs are committed under
-[`results/mac-mini-006/`](results/mac-mini-006/). Its summary and host pin are
+The post-review passing live fixture run and hashed outputs are committed
+under [`results/mac-mini-008/`](results/mac-mini-008/). Its summary and host pin are
 in [`results/README.md`](results/README.md). Use a **new** result directory for
 each later run; the command above shows the invocation shape, not a reusable
 output path.

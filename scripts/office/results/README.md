@@ -1,5 +1,22 @@
 # Mac mini live fixture matrix — ONE-2531
 
+## Current passing run (post-review)
+
+- Source commit: `7084af94` (approved environment, hash-bound cases, deadline
+  checks, exact deck-title exemption and modal cleanup).
+- Command: `python3 scripts/office/run_fixture_matrix.py
+  scripts/office/fixtures/.runs/mac-mini-008` from the Mac mini clone.
+- Result: **5/5 passed** — clean, failed-open, damaged-candidate, timeout and
+  repair-prompt. See [matrix.json](mac-mini-008/matrix.json), the per-case
+  receipts and the clean PDF/PNG/save-back. The copied files match all receipt
+  SHA-256 values and byte counts. No cleanup warnings, open presentations,
+  PowerPoint process or staging directories remained.
+- The observed Mac/renderer pin matches [`environment.json`](../environment.json)
+  exactly. The 100 PPTArena cases remain an offline manifest/classifier scope;
+  their binaries were not opened.
+
+## Earlier passing baseline
+
 - Host: dedicated Mac mini; PowerPoint for Mac 16.113.2, macOS 27.0 (26A428),
   PDFKit 27.0; observer: System Events; raster scale: 2.
 - Branch source: `w8/one-2531` at `1684a843`.
