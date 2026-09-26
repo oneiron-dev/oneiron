@@ -10,11 +10,45 @@ except ModuleNotFoundError as e:
 version=importlib.metadata.version("pypdfium2")
 def result(status,detail,code):
  print(json.dumps({"reader":"pdfium","version":version,"mode":"parse","status":status,"detail":detail})); raise SystemExit(code)
+
+def gap_is_signature_contents(data, b, c, end, sig, raw):
+ # The excluded bytes must be the *same signature object's* hex /Contents,
+ # not simply any gap in a parseable signed prefix. PDFium supplies its
+ # decoded contents; the raw gap supplies the exact on-disk boundaries.
+ if not re.search(rb"/Contents[ \t\n\f\r\x00]*$", data[max(0,b-64):b]):
+  return False
+ gap=data[b:c]
+ encoded=re.fullmatch(rb"<([0-9a-fA-F \t\n\f\r\x00]+)>", gap)
+ if not encoded:
+  return False
+ hex_bytes=re.sub(rb"[ \t\n\f\r\x00]", b"", encoded.group(1))
+ if not hex_bytes or len(hex_bytes)%2:
+  return False
+ size=raw.FPDFSignatureObj_GetContents(sig,None,0)
+ if size!=len(hex_bytes)//2:
+  return False
+ contents=(ctypes.c_ubyte*size)()
+ if raw.FPDFSignatureObj_GetContents(sig,contents,size)!=size:
+  return False
+ decoded=bytes(contents)
+ if decoded!=bytes.fromhex(hex_bytes.decode("ascii")):
+  return False
+ # Reject ambiguous copies even if the hex blob uses different case or
+ # whitespace. The one matching /Contents string must occupy exactly this gap.
+ matches=0
+ for item in re.finditer(rb"/Contents[ \t\n\f\r\x00]*(<([0-9a-fA-F \t\n\f\r\x00]+)>)", data[:end]):
+  candidate=re.sub(rb"[ \t\n\f\r\x00]", b"", item.group(2))
+  if len(candidate)==len(hex_bytes) and bytes.fromhex(candidate.decode("ascii"))==decoded:
+   matches+=1
+   if item.span(1)!=(b,c):
+    return False
+ return matches==1
+
 try:
  raw=pdfium.raw
  with open(sys.argv[1],"rb") as f: data=f.read()
  doc=pdfium.PdfDocument(sys.argv[1])
- required=("FPDF_GetSignatureCount","FPDF_GetSignatureObject","FPDFSignatureObj_GetByteRange")
+ required=("FPDF_GetSignatureCount","FPDF_GetSignatureObject","FPDFSignatureObj_GetByteRange","FPDFSignatureObj_GetContents")
  missing=[name for name in required if not hasattr(raw,name)]
  if missing:
   doc.close(); result("unavailable","pypdfium2 binding lacks required signature API: "+", ".join(missing),77)
@@ -38,7 +72,8 @@ try:
   # Both signed spans must contain bytes. A matching ByteRange in the
   # parsed revision does not itself prove that the revision was signed.
   well_formed=(a==0 and b>0 and c>b and d>0 and end<=len(data)
-               and data[:end].rstrip(b"\0\t\n\f\r ").endswith(b"%%EOF"))
+               and data[:end].rstrip(b"\0\t\n\f\r ").endswith(b"%%EOF")
+               and gap_is_signature_contents(data,b,c,end,sig,raw))
   if not well_formed:
    covers.append(False); continue
   # Parse the exact signed prefix and find this ByteRange in that revision.

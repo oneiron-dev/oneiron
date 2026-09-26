@@ -78,6 +78,16 @@ def with_empty_signed_ranges(pdf, earlier_only=False):
     with_empty_signed_ranges(second, earlier_only=True)
 )
 
+# A nonempty but misplaced gap excludes almost the entire earlier revision,
+# rather than the first signature's /Contents interval.
+misplaced = bytearray(second)
+match = next(re.finditer(rb"/ByteRange\s*\[([^\]]+)\]", second))
+a, b, c, d = map(int, match.group(1).split())
+replacement = f"0 1 {c+d-1} 1".encode().ljust(len(match.group(1)), b" ")
+assert len(replacement) == len(match.group(1))
+misplaced[match.start(1):match.end(1)] = replacement
+(out.parent / 'nonempty-earlier-range.pdf').write_bytes(misplaced)
+
 # Form field order differs from signing chronology: the last enumerated
 # field holds the earlier revision; the first enumerated field signs last.
 from pyhanko.sign.fields import append_signature_field, SigFieldSpec

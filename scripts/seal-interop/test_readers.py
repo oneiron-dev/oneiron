@@ -43,8 +43,8 @@ class MultiSignatureReaderTests(unittest.TestCase):
                 self.assertIn("signatures=2", report["detail"])
                 self.assertIn("final_document_coverage=true", report["detail"])
 
-    def test_pdfium_rejects_zero_length_signed_segments(self):
-        for fixture in ("empty-ranges.pdf", "empty-earlier-range.pdf"):
+    def test_pdfium_rejects_uncovered_contents_gaps(self):
+        for fixture in ("empty-ranges.pdf", "empty-earlier-range.pdf", "nonempty-earlier-range.pdf"):
             with self.subTest(fixture=fixture):
                 code, report = self.reader("pdfium", fixture)
                 self.assertEqual(code, 1, report)
