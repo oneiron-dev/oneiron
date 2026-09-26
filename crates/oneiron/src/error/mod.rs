@@ -295,6 +295,7 @@ pub enum ErrorKind {
     PackKindNameCollision,
     PackKindNotInstalled,
     InvalidPackByteMap,
+    PackPredicateNameCollision,
 }
 
 /// Crate error type.
