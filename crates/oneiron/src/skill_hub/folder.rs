@@ -21,6 +21,23 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
             return serde_json::from_str(value)
                 .map_err(|_| invalid("invalid quoted frontmatter scalar"));
         }
+        if let Some(quoted) = value.strip_prefix('\'') {
+            let inner = quoted
+                .strip_suffix('\'')
+                .ok_or_else(|| invalid("unterminated single-quoted frontmatter scalar"))?;
+            let mut decoded = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                if c == '\'' && chars.next() != Some('\'') {
+                    return Err(invalid("single quote must be doubled in a quoted scalar"));
+                }
+                decoded.push(c);
+            }
+            if decoded.is_empty() {
+                return Err(invalid("empty frontmatter scalar"));
+            }
+            return Ok(decoded);
+        }
         if value.is_empty()
             || value
                 .chars()

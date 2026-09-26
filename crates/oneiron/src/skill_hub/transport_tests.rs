@@ -433,3 +433,63 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn single_quoted_frontmatter_decodes_without_changing_source_hash() -> Result<()> {
+    for (name, description, version, expected_description) in [
+        (
+            "'review-evidence'",
+            "'Owner''s cited evidence'",
+            "'1.0.0'",
+            "Owner's cited evidence",
+        ),
+        (
+            "review-evidence",
+            "Review a person's cited evidence",
+            "1.0.0",
+            "Review a person's cited evidence",
+        ),
+    ] {
+        let markdown = format!(
+            "---\nname: {name}\ndescription: {description}\nversion: {version}\n---\n# Review evidence\nCite the source.\n"
+        );
+        let package =
+            super::folder::package_from_files(vec![HubFile::new("SKILL.md", markdown.as_bytes())])?;
+        assert_eq!(package.record.skill_id, "review-evidence");
+        assert_eq!(package.record.desc, expected_description);
+        assert_eq!(package.record.version, "1.0.0");
+        let hash = package.content_hash()?;
+        assert_eq!(package.files[0].content, markdown.as_bytes());
+        let dir = tempfile::tempdir()?;
+        let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let reference = HubRef::new(
+            EntityId::now(),
+            "skills/review-evidence",
+            HubPin::ContentHash(hash.to_hex()),
+        )?;
+        let id = vault.import_skill_from_hub(
+            &reference,
+            &package,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+        let stored = vault.get_skill_record(&id)?.expect("imported record");
+        assert_eq!(stored.skill_id, "review-evidence");
+        assert_eq!(stored.desc, expected_description);
+        assert_eq!(stored.version, "1.0.0");
+        assert_eq!(stored.content_hash, Some(hash));
+    }
+    for malformed in ["'missing end", "'lone'quote'", "'empty''"] {
+        assert!(
+            super::folder::package_from_files(vec![HubFile::new(
+                "SKILL.md",
+                format!(
+                    "---\nname: {malformed}\ndescription: fixture\nversion: 1.0.0\n---\nBody\n"
+                )
+                .into_bytes(),
+            )])
+            .is_err()
+        );
+    }
+    Ok(())
+}
