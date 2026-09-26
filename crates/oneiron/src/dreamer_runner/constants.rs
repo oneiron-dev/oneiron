@@ -121,6 +121,8 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 5] = [
 ];
 pub(super) const DREAMER_PRIVATE_BUDGET_PREFIX: &[u8] = b"dreamer:budget:";
 pub(super) const DREAMER_PRIVATE_BUDGET_RESERVATION_PREFIX: &[u8] = b"dreamer:budget_reservation:";
+/// Device-local receipt for a step already charged to the shared wake ledger.
+pub(super) const DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX: &[u8] = b"dreamer:budget_step_charge:";
 pub(super) const DREAMER_PRIVATE_RUN_TREE_PREFIX: &[u8] = b"dreamer:run_tree:";
 pub(super) const DREAMER_PRIVATE_PARKED_PREFIX: &[u8] = b"dreamer:parked:";
 pub(super) const DREAMER_PRIVATE_HOME_NODE_KEY: &[u8] = b"dreamer:home_node_macro:v1";

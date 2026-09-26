@@ -110,6 +110,15 @@ pub enum DreamerAttemptExecution {
     Park {
         reason: String,
     },
+    /// Checkpoint a stopped run after admitted calls have already spent units.
+    /// The driver settles the wake reservation before parking the attempt.
+    ParkWithSpend {
+        reason: String,
+        completed_units: u64,
+        /// Terminal step identities this checkpoint charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
+    },
     /// Selection holds are scheduled retries, never unspent parked attempts.
     Deferred {
         completed_units: u64,
