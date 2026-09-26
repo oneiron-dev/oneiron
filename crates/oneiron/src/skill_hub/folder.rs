@@ -21,10 +21,27 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
             return serde_json::from_str(value)
                 .map_err(|_| invalid("invalid quoted frontmatter scalar"));
         }
+        if let Some(quoted) = value.strip_prefix('\'') {
+            let inner = quoted
+                .strip_suffix('\'')
+                .ok_or_else(|| invalid("unterminated single-quoted frontmatter scalar"))?;
+            let mut decoded = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                if c == '\'' && chars.next() != Some('\'') {
+                    return Err(invalid("single quote must be doubled in a quoted scalar"));
+                }
+                decoded.push(c);
+            }
+            if decoded.is_empty() {
+                return Err(invalid("empty frontmatter scalar"));
+            }
+            return Ok(decoded);
+        }
         if value.is_empty()
             || value
                 .chars()
-                .any(|c| matches!(c, '\'' | '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
+                .any(|c| matches!(c, '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
         {
             return Err(invalid("unsupported YAML scalar"));
         }
@@ -55,13 +72,39 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
 fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabilitySurface)> {
     let mut fields = BTreeMap::new();
     let mut caps = SkillCapabilitySurface::default();
+    let mut metadata_block = false;
+    let mut metadata_keys = std::collections::BTreeSet::new();
     for line in front.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         }
         if line.starts_with(char::is_whitespace) {
-            return Err(invalid("nested YAML requires normalization before import"));
+            // The shipped hub uses the plain YAML scalar-map spelling of
+            // metadata. It is inert attribution, not parsed as capabilities.
+            let nested = line
+                .strip_prefix("  ")
+                .ok_or_else(|| invalid("invalid metadata indent"))?;
+            let (key, value) = nested
+                .split_once(':')
+                .ok_or_else(|| invalid("invalid metadata field"))?;
+            if !metadata_block
+                || key.is_empty()
+                || !key
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                || value.trim().is_empty()
+                || value
+                    .trim_start()
+                    .chars()
+                    .next()
+                    .is_some_and(|c| matches!(c, '[' | '{' | '!' | '&' | '*' | '|' | '>'))
+                || !metadata_keys.insert(key)
+            {
+                return Err(invalid("unsupported metadata scalar"));
+            }
+            continue;
         }
+        metadata_block = false;
         let (key, value) = line
             .split_once(':')
             .ok_or_else(|| invalid("invalid frontmatter field"))?;
@@ -71,6 +114,7 @@ fn frontmatter_fields(front: &str) -> Result<(BTreeMap<&str, &str>, SkillCapabil
         }
         match key {
             "name" | "description" | "version" | "license" | "compatibility" => {}
+            "metadata" if value.is_empty() => metadata_block = true,
             "metadata" => {
                 let _: BTreeMap<String, String> = serde_json::from_str(value)
                     .map_err(|_| invalid("metadata requires a JSON string map"))?;

@@ -348,13 +348,12 @@ fn batch_put_text_put_deindexes_text_from_non_final_body() -> Result<()> {
     Ok(())
 }
 
-/// Replicated LWW writes follow the same OF-476 publication frontier as local
-/// edits. ONE-1141's complete index cleanup is preserved at idle publication:
-/// forward/meta/length/posting/stat rows and TOTAL_DOCS move together, while
-/// reads before publication still pair the retained postings with the old body.
+/// Replicated LWW overwrites retire loser text postings in the overwrite
+/// transaction. The old Indexed body remains readable until idle publication,
+/// but no search can match its dead text in that interval.
 #[cfg(feature = "sync")]
 #[test]
-fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Result<()> {
+fn replicated_overwrite_changed_body_drops_loser_text_postings_before_idle() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     crate::test_util::publish_seeded_revisions(&vault);
     let id = EntityId::now();
@@ -369,8 +368,8 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Resu
         "precondition: the loser term must be indexed and searchable"
     );
 
-    // The Observer-B replay door advances Live in its externally owned txn.
-    // It must not mix that new body with the still-published old text index.
+    // The Observer-B replay door advances Live in its externally owned txn
+    // and removes the loser's postings without moving the Indexed frontier.
     vault.with_write_txn(|wtxn| {
         vault
             .batch_in()
@@ -381,9 +380,19 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Resu
     // The winner body is stored (header + body layout, body at offset 25)…
     let raw = vault.get_raw(&id)?.expect("entity stored");
     assert_eq!(&raw[ENTITY_METADATA_HEADER_LEN..], b"payload-from-winner");
-    assert_indexed_text_body(&vault, &id, "loseronlyterm", b"payload-from-loser")?;
+    assert!(
+        vault.search_text("loseronlyterm", 10)?.is_empty(),
+        "loser postings must not match searches before idle publication"
+    );
+    let indexed = vault
+        .get_raw_with_mode(&id, crate::memory::ReadMode::Indexed)?
+        .expect("retained Indexed body");
+    assert_eq!(
+        &indexed[ENTITY_METADATA_HEADER_LEN..],
+        b"payload-from-loser"
+    );
     publish_text_revision_at_idle(&vault, &id)?;
-    // The old term no longer serves after publication.
+    // Idle publication must not resurrect the old term.
     assert!(
         vault.search_text("loseronlyterm", 10)?.is_empty(),
         "loser postings must not match searches after idle publication"
@@ -432,7 +441,7 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Resu
     assert_eq!(
         vault.store.text_meta.get(&rtxn, &[0u8; 16])?.as_deref(),
         Some(&0u32.to_le_bytes()[..]),
-        "TOTAL_DOCS must be decremented with idle index publication"
+        "TOTAL_DOCS must remain decremented after idle publication"
     );
     Ok(())
 }
@@ -444,7 +453,7 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_at_idle() -> Resu
 ///   convergence exchange) must NOT touch the text index — postings keep
 ///   serving and the `text_forward` row stays byte-identical. Metadata-only
 ///   changes (occurred/learned) are NOT body changes.
-/// * Body changes retain the old indexed projection until idle publication;
+/// * Local body changes retain the old indexed projection until idle publication;
 ///   same-bytes replay and metadata-only changes never invalidate its terms.
 #[cfg(feature = "sync")]
 #[test]

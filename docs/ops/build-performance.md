@@ -83,6 +83,46 @@ scripts/build dependencies without optimization too, add
 also use `CARGO_PROFILE_DEV_DEBUG=2` as described above. Keep override choices
 the same across commands when you want to reuse their artifacts.
 
+## Scoped CI speedups (2026-09-26)
+
+The scope selector (`scripts/ci/ci_scope.py`) remains the authority for what a
+PR or main push tests. Within those selected packages, PR `Checks`, `Test` and
+`Test (featureless)` set `CARGO_PROFILE_DEV_INCREMENTAL=true` and
+`CARGO_PROFILE_TEST_INCREMENTAL=true`. Their scoped runner invocation uses
+`env -u CARGO_INCREMENTAL` to remove the runner's inherited
+`CARGO_INCREMENTAL=0`, which otherwise overrides the profile. Main pushes,
+nightly runs, and dispatch select both profiles as `false`: the full nightly
+and dispatch lanes remain non-incremental backstops. The persistent target
+retains dependency artifacts; sccache 0.15 remains `RUSTC_WRAPPER` and can
+cache non-incremental units, while incremental workspace units pass through.
+Do **not** set `CARGO_INCREMENTAL=1`: sccache rejects every compile, including
+Cargo's version probe, with "incremental compilation is prohibited".
+
+The scoped runner sets `RUSTC_WORKSPACE_WRAPPER` for each build/test command to
+`scripts/ci/rustc-threads.sh`. It gives only `oneiron` the parallel front end
+(`RUSTC_BOOTSTRAP=oneiron`, `-Zthreads=8`); it retries a compiler exit 101
+without the flag. `ONEIRON_PARALLEL_FRONTEND=0` opts out. Clippy supplies its
+own workspace wrapper; the scoped runner only sets this wrapper for rustdoc
+and the test commands, not Clippy. The macOS dispatch test job also uses the
+wrapper. On Linux, `scripts/ci/with-test-tmpdir.sh` checks `/dev/shm` before
+each test command. With at least 12 GiB free it makes a per-command
+`/dev/shm/ci-<runner>-*` directory and cleans it even on failure. It also executes a small probe in the new
+directory; a `noexec` mount falls back to disk so test-created hooks still run.
+If the space or execution check fails, it leaves the disk `TMPDIR` unchanged. The scope and test selection do not change.
+
+Clean 16-core Arch box, main `97bb7049`, rustc 1.96.1: core test edit rebuild
+**84 s incremental vs 236 s** under `CARGO_INCREMENTAL=0`. Core-only parallel
+front end: cold test build **334 s → 169–198 s**, edit rebuild **84 s → 76 s**.
+Featureless nextest runtime: **733 s** with test temp on disk vs **608 s** on
+`/dev/shm`. These are separate measurements, not a combined CI saving. The
+first PR #1003 CI run (before scoped CI landed) was cancelled after `Checks`
+passed. Its Linux `Test (featureless)` runner log showed `sccache`
+wrapping `rustc-threads.sh` on `--crate-name oneiron` with
+`-C incremental=.../debug/incremental`; the compile completed and libtests
+were running when the superseded run was cancelled. That is live coexistence
+evidence, not a passed test job. Scoped PR job times must be compared with a scoped run,
+not this older full-build run.
+
 ## Cache retention
 
 The CI jobs that run cache maintenance keep their existing 20 GiB cap: `Checks`
@@ -167,8 +207,10 @@ only to this command. It is not full verification, does not emit `VERIFY-OK`, an
 must not replace the mandatory shared-process libtest lane.
 
 CI is scoped (owner ruling 2026-09-26). A PR or main push runs
-`scripts/ci/ci_scope.py` on its diff: `Checks` lints only the touched packages,
-`Test` runs nextest for the touched packages and, for `oneiron`, the lib tests of
+`scripts/ci/ci_scope.py` on its diff: `Checks` lints the touched workspace
+packages and their transitive reverse dependents (including dev-dependencies)
+with `--all-targets`, so dependent test code compiles. `Test` still runs nextest
+only for the touched packages and, for `oneiron`, the lib tests of
 the touched top-level modules, and `Test (featureless)` runs the shared-process
 `cargo test` lane for those modules. The full gate runs nightly (03:00 JST), on
 manual dispatch, and when a build file changes: there `Test (featureless)` runs
@@ -227,7 +269,7 @@ not the symlinked system default.
 
 Capture the host, toolchain, revision, exact command/environment, wall time, CPU
 time, peak RSS, target size, and Cargo's timing HTML for each stage. The examples
-below disable incremental compilation to match the current CI runner contract;
+below disable incremental compilation to match the non-incremental main/full CI contract;
 they are not a prediction for a developer's incremental edit loop.
 
 The command below is a **macOS example**. On Linux, use a run-owned path under
