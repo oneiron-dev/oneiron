@@ -8,9 +8,7 @@ use loro::LoroDoc;
 
 #[cfg(unix)]
 use super::{CanonicalSnapshot, canonical::capture_canonical_window, quarantine};
-#[cfg(not(unix))]
-use crate::Error;
-use crate::{Result, Vault};
+use crate::{Error, Result, Vault};
 
 /// Capture and durably publish a canonical window without replacing an existing artifact.
 ///
