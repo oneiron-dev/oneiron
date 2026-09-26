@@ -11,6 +11,200 @@ fn frame(viewer: &str) -> LensRenderFrame {
     )
 }
 
+// A Component Model guest, not a JSON atom-stream decoder. The guest can
+// request a scoped read, resolve a host ref, then emit only closed atoms.
+fn lens_component(imports: bool) -> Vec<u8> {
+    lens_component_with_atom(
+        imports,
+        r#"{"kind":"text_block","props":{"spans":[{"type":"literal","value":"<script>"}]}}"#,
+    )
+}
+
+fn lens_component_with_atom(imports: bool, atom: &str) -> Vec<u8> {
+    let data = atom
+        .as_bytes()
+        .iter()
+        .map(|b| format!("\\{b:02x}"))
+        .collect::<String>();
+    let code = if imports {
+        format!(
+            r#"(import "scoped-read" (func $read (param "handle" string) (result string)))
+            (import "resolve-backing-ref" (func $resolve (param "handle" string) (result string)))
+            (import "emit-atom" (func $emit (param "atom" string)))
+            (core func $lower-read (canon lower (func $read) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))
+            (core func $lower-resolve (canon lower (func $resolve) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))
+            (core func $lower-emit (canon lower (func $emit) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))
+            (core module $main
+                (import "mem" "memory" (memory 1))
+                (import "host" "read" (func $read (param i32 i32 i32)))
+                (import "host" "resolve" (func $resolve (param i32 i32 i32)))
+                (import "host" "emit" (func $emit (param i32 i32)))
+                (func (export "run")
+                    i32.const 64 i32.const 7 i32.const 0 call $read
+                    i32.const 64 i32.const 7 i32.const 16 call $resolve
+                    i32.const 128 i32.const {length} call $emit))
+            (core instance $host (export "read" (func $lower-read)) (export "resolve" (func $lower-resolve)) (export "emit" (func $lower-emit)))
+            (core instance $main (instantiate $main (with "mem" (instance $mem)) (with "host" (instance $host))))
+            (func (export "run") (canon lift (core func $main "run")))"#,
+            length = atom.len()
+        )
+    } else {
+        format!(
+            r#"(import "emit-atom" (func $emit (param "atom" string)))
+            (core func $lower-emit (canon lower (func $emit) (memory (core memory $mem "memory")) (realloc (core func $mem "realloc"))))
+            (core module $main
+                (import "mem" "memory" (memory 1))
+                (import "host" "emit" (func $emit (param i32 i32)))
+                (func (export "run") i32.const 128 i32.const {length} call $emit))
+            (core instance $host (export "emit" (func $lower-emit)))
+            (core instance $main (instantiate $main (with "mem" (instance $mem)) (with "host" (instance $host))))
+            (func (export "run") (canon lift (core func $main "run")))"#,
+            length = atom.len()
+        )
+    };
+    format!(
+        r#"(component
+        (core module $mem
+            (memory (export "memory") 1)
+            (global $next (mut i32) (i32.const 4096))
+            (func (export "realloc") (param i32 i32 i32 i32) (result i32)
+                (local $ptr i32) global.get $next local.tee $ptr local.get 3 i32.add
+                i32.const 7 i32.add i32.const -8 i32.and global.set $next local.get $ptr)
+            (data (i32.const 64) "current")
+            (data (i32.const 128) "{data}"))
+        (core instance $mem (instantiate $mem))
+        {code})"#
+    )
+    .into_bytes()
+}
+
+#[test]
+fn guest_component_rejects_write_and_unknown_imports_at_construction() {
+    for import in [
+        "vault-write",
+        "batch-write",
+        "evaluate-gate",
+        "wasi:filesystem/preopens@0.2.0",
+    ] {
+        let component = format!(r#"(component (import "{import}" (func $write)))"#);
+        assert!(
+            LensExecutionRuntime::from_component(component.as_bytes()).is_err(),
+            "{import}"
+        );
+    }
+    // An atom stream is data, never a component or executable lens program.
+    assert!(
+        LensExecutionRuntime::from_component(include_bytes!("fixtures/instrument.json")).is_err()
+    );
+}
+
+#[test]
+fn guest_executes_imports_under_principal_scoped_read_and_host_backing() -> crate::Result<()> {
+    use crate::pipeline::WorldAuthoritySet;
+    let (_dir, vault) = test_vault();
+    let target = test_entity_id(67);
+    put_person(&vault, &target)?;
+    install_viewer_base_grant(&vault)?;
+    let read = vault.scoped_read(actor_key("viewer"));
+    let mut bound = frame("viewer");
+    bound.mint_backing_ref(
+        &read,
+        handle("current"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let bound = bound.with_world_set(WorldAuthoritySet::new(true, [])?);
+    let guest = LensExecutionRuntime::from_component(&lens_component_with_atom(
+        true,
+        r#"{"kind":"text_block","props":{"spans":[{"type":"literal","value":"<script>"},{"type":"interpolation","value":{"key":"current","fallback":"hidden"}}]}}"#,
+    ))?;
+    assert_eq!(
+        guest.imports(),
+        &[
+            LensHostImport::ScopedRead,
+            LensHostImport::ResolveBackingRef,
+            LensHostImport::EmitAtom
+        ]
+    );
+    assert!(
+        guest
+            .run(&bound, &read)?
+            .html
+            .contains("&lt;script&gt;person")
+    );
+    assert!(
+        guest
+            .run(&bound, &vault.scoped_read(actor_key("other")))
+            .is_err()
+    );
+    // The same host row cannot cross into a narrower WorldSet.
+    let denied = bound.with_world_set(WorldAuthoritySet::new(false, [])?);
+    assert!(guest.run(&denied, &read).is_err());
+    // An unbound handle cannot be supplied by the component itself.
+    let empty = frame("viewer").with_world_set(WorldAuthoritySet::new(true, [])?);
+    assert!(guest.run(&empty, &read).is_err());
+    Ok(())
+}
+
+#[test]
+fn guest_invalid_atom_and_fuel_exhaustion_fail_closed() -> crate::Result<()> {
+    use crate::pipeline::WorldAuthoritySet;
+    let (_dir, vault) = test_vault();
+    let read = vault.scoped_read(actor_key("viewer"));
+    let scoped = frame("viewer").with_world_set(WorldAuthoritySet::new(true, [])?);
+    let invalid = LensExecutionRuntime::from_component(&lens_component_with_atom(
+        false,
+        r#"{"kind":"raw_html","html":"<script>"}"#,
+    ))?;
+    assert!(invalid.run(&scoped, &read).is_err());
+    let spin = LensExecutionRuntime::from_component(
+        br#"(component
+      (core module $m (func (export "run") (loop br 0)))
+      (core instance $i (instantiate $m))
+      (func (export "run") (canon lift (core func $i "run"))))"#,
+    )?;
+    assert!(spin.run(&scoped, &read).is_err());
+    Ok(())
+}
+
+#[test]
+fn repeated_scoped_interpolation_cannot_expand_render_without_bound() -> crate::Result<()> {
+    use crate::pipeline::WorldAuthoritySet;
+    let (_dir, vault) = test_vault();
+    let target = test_entity_id(68);
+    vault.put_entity(
+        &target,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        &vec![b'a'; 2048],
+    )?;
+    install_viewer_base_grant(&vault)?;
+    let read = vault.scoped_read(actor_key("viewer"));
+    let mut frame = frame("viewer");
+    frame.mint_backing_ref(
+        &read,
+        handle("current"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let frame = frame.with_world_set(WorldAuthoritySet::new(true, [])?);
+    let atoms = InstrumentAtoms::new(
+        (0..600)
+            .map(|_| {
+                LensAtom::TextBlock(TextBlockAtom {
+                    spans: vec![LensTextSpan::Interpolation {
+                        key: handle("current"),
+                        fallback: text("hidden"),
+                    }],
+                })
+            })
+            .collect(),
+    )?;
+    assert!(render_instrument(&atoms, &frame, &read).is_err());
+    Ok(())
+}
+
 #[test]
 fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> {
     let (_dir, vault) = test_vault();
@@ -61,15 +255,14 @@ fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> 
             .contains("&lt;updated&gt;")
     );
     assert!(InstrumentAtoms::decode(br#"[{"kind":"raw_html","html":"<script>"}]"#).is_err());
-    let runtime = LensExecutionRuntime::link(vec![
-        LensHostImport::ScopedRead,
-        LensHostImport::ResolveBackingRef,
-        LensHostImport::EmitAtom,
-    ])?;
-    assert!(runtime.run(b"[]", &frame, &read).is_err()); // an unscoped frame is not a lens frame
+    let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
+    assert!(runtime.run(&frame, &read).is_err()); // an unscoped frame is not a lens frame
     assert!(
-        LensExecutionRuntime::link(vec![LensHostImport::ScopedRead, LensHostImport::VaultWrite])
-            .is_err()
+        LensExecutionBoundary::read_only(vec![
+            LensHostImport::ScopedRead,
+            LensHostImport::VaultWrite
+        ])
+        .is_err()
     );
     Ok(())
 }
@@ -148,17 +341,8 @@ fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
     assert!(fa.scoped_body(&read, &b)?.is_none());
     assert!(fb.scoped_body(&read, &a)?.is_none());
     assert!(fb.scoped_body(&read, &b)?.is_some());
-    let runtime = LensExecutionRuntime::link(vec![
-        LensHostImport::ScopedRead,
-        LensHostImport::ResolveBackingRef,
-        LensHostImport::EmitAtom,
-    ])?;
-    assert!(
-        runtime
-            .run(include_bytes!("fixtures/instrument.json"), &fa, &read)?
-            .html
-            .contains("&lt;script&gt;")
-    );
+    let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
+    assert!(runtime.run(&fa, &read)?.html.contains("&lt;script&gt;"));
     Ok(())
 }
 
@@ -232,17 +416,8 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
             .entity_id(),
         &a
     );
-    let runtime = LensExecutionRuntime::link(vec![
-        LensHostImport::ScopedRead,
-        LensHostImport::ResolveBackingRef,
-        LensHostImport::EmitAtom,
-    ])?;
-    assert!(
-        runtime
-            .run(b"[]", &fa, &read)?
-            .html
-            .contains("data-instrument")
-    );
+    let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
+    assert!(runtime.run(&fa, &read)?.html.contains("data-instrument"));
     let empty = frame("viewer").with_world_set(WorldAuthoritySet::default());
     for id in [a, b, base, subject] {
         assert!(empty.scoped_body(&read, &id)?.is_none());

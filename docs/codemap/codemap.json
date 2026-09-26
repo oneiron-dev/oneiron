@@ -18826,15 +18826,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "InstrumentAtoms",
-      "InstrumentView",
       "LensExecutionRuntime"
      ],
-     "path": "src/lens/instrument.rs",
-     "purpose": "The single escaped Instrument renderer and read-only lens interpreter",
+     "path": "src/lens/guest.rs",
+     "purpose": "Sandboxed, read-only lens authoring",
      "surface": {
-      "fn": 6,
-      "struct": 3
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InstrumentAtoms",
+      "InstrumentView"
+     ],
+     "path": "src/lens/instrument.rs",
+     "purpose": "The single escaped Instrument renderer for a validated atom stream",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -18946,7 +18959,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -18990,7 +19003,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/lens/tests/instrument.rs",
@@ -34315,7 +34328,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,7 +34911,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

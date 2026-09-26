@@ -264,7 +264,10 @@ impl LensRenderFrame {
         ))
     }
 
-    pub(super) fn ensure_scoped_read_actor(&self, scoped_read: &ScopedRead<'_>) -> Result<()> {
+    pub(in crate::lens) fn ensure_scoped_read_actor(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+    ) -> Result<()> {
         if scoped_read.actor_key() == self.principal.selected_read_key() {
             return Ok(());
         }
