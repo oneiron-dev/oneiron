@@ -3269,6 +3269,18 @@ fn put_disclosure_claim(
     text: &str,
     band: Option<&str>,
 ) {
+    put_disclosure_claim_in_world(vault, id, subject, predicate, text, band, None);
+}
+
+fn put_disclosure_claim_in_world(
+    vault: &Vault,
+    id: &EntityId,
+    subject: EntityId,
+    predicate: &str,
+    text: &str,
+    band: Option<&str>,
+    world: Option<EntityId>,
+) {
     let mut body = crate::claim::ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
@@ -3277,6 +3289,7 @@ fn put_disclosure_claim(
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
     );
+    body.world = world;
     if let Some(band) = band {
         body.scope = Some(rmpv::Value::Map(vec![(
             rmpv::Value::from("sensitivity"),
@@ -3296,6 +3309,16 @@ fn put_disclosure_claim(
         .text(id, &[("body", text)])
         .commit()
         .expect("put claim");
+}
+
+// Clearance for the base world (or an explicit set of record worlds).
+fn disclosure_world_clearance(
+    worlds: impl IntoIterator<Item = EntityId>,
+) -> crate::federation::Scope {
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some(worlds.into_iter().map(ScopeId).collect());
+    scope
 }
 
 fn pack_ids(pack: &ContextPack) -> Vec<EntityId> {
@@ -3369,10 +3392,21 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     );
     put_disclosure_turn(&vault, &marked, "owner marked private needle");
     vault.set_disclosure_tier_a(&marked, 100)?;
-    put_disclosure_turn(&vault, &diary, "private diary entry needle");
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private diary entry needle",
+        Some("private"),
+        Some(disclosure_id(0xF1)),
+    );
 
-    let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party planning", vec![party], 100)?;
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party planning",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
@@ -3388,13 +3422,13 @@ fn n1_owner_absent_tier_a_and_out_of_scope_ids_appear_nowhere() -> Result<()> {
     assert!(surfaced.contains(&party), "in-scope party event surfaces");
     assert!(
         surfaced.contains(&party_fact),
-        "claims about the allowlisted party are the payload"
+        "claims within the shared base world are the payload"
     );
     for (id, label) in [
         (off_record, "off-record turn"),
         (band2, "band-2 claim"),
         (marked, "owner-marked turn"),
-        (diary, "tier-B out-of-scope turn"),
+        (diary, "tier-B out-of-world claim"),
     ] {
         assert_id_absent_everywhere(&pack, &id, label);
     }
@@ -3434,10 +3468,22 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     let party = disclosure_id(0x57);
     let diary = disclosure_id(0xD8);
     put_disclosure_turn(&vault, &party, "party summary needle2");
-    put_disclosure_turn(&vault, &diary, "private diary tangent");
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private diary tangent",
+        Some("private"),
+        Some(disclosure_id(0xF2)),
+    );
     vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &diary, 0.9)?;
 
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
     let ctx = absence_ctx_for_contact(&vault, contact_id);
 
@@ -3452,7 +3498,7 @@ fn n2_out_of_scope_neighbor_absent_from_neighbors_and_edge_lists() -> Result<()>
     assert!(pack_ids(&pack).contains(&party));
     assert!(
         pack.neighbors.is_empty(),
-        "tier-B out-of-scope 1-hop neighbor must be absent"
+        "tier-B out-of-world 1-hop neighbor must be absent"
     );
     assert_id_absent_everywhere(&pack, &diary, "out-of-scope edge neighbor");
 
@@ -3502,7 +3548,8 @@ fn n7_owner_drop_flips_on_next_assembly_with_no_sticky_state() -> Result<()> {
     seed_disclosure_contact(&vault, contact_id, "kenji@example.com");
     let diary = disclosure_id(0xDA);
     put_disclosure_turn(&vault, &diary, "tier b private memory needle7");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![], 100)?;
+    let scope =
+        crate::disclosure::DisclosureScope::new(crate::federation::Scope::default(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     // Assembly 1 — supervised: Tier B present.
@@ -3546,17 +3593,52 @@ fn n8_disjoint_scopes_intersect_most_restrictive_wins() -> Result<()> {
     let event_a = disclosure_id(0xDB);
     let event_b = disclosure_id(0xDC);
     let event_c = disclosure_id(0xDD);
-    put_disclosure_turn(&vault, &event_a, "event alpha needle8");
-    put_disclosure_turn(&vault, &event_b, "event beta needle8");
-    put_disclosure_turn(&vault, &event_c, "event gamma needle8");
+    let base = crate::claim::base_world_id();
+    let world_a = disclosure_id(0xF3);
+    let world_c = disclosure_id(0xF4);
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_a,
+        event_a,
+        "event.alpha",
+        "event alpha needle8",
+        Some("public"),
+        Some(world_a),
+    );
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_b,
+        event_b,
+        "event.beta",
+        "event beta needle8",
+        Some("public"),
+        None,
+    );
+    put_disclosure_claim_in_world(
+        &vault,
+        &event_c,
+        event_c,
+        "event.gamma",
+        "event gamma needle8",
+        Some("public"),
+        Some(world_c),
+    );
 
     vault.set_counterparty_disclosure_scope(
         &contact_a,
-        &crate::disclosure::DisclosureScope::task_scoped("ab", vec![event_a, event_b], 100)?,
+        &crate::disclosure::DisclosureScope::new(
+            disclosure_world_clearance([world_a, base]),
+            "ab",
+            100,
+        )?,
     )?;
     vault.set_counterparty_disclosure_scope(
         &contact_b,
-        &crate::disclosure::DisclosureScope::task_scoped("bc", vec![event_b, event_c], 100)?,
+        &crate::disclosure::DisclosureScope::new(
+            disclosure_world_clearance([base, world_c]),
+            "bc",
+            100,
+        )?,
     )?;
 
     let ctx = DisclosureContext::resolve(
@@ -3591,10 +3673,10 @@ fn n10_tier_a_never_traversed_into_even_from_in_scope_seed() -> Result<()> {
     put_disclosure_turn(&vault, &vaulted, "reachable only by edge");
     vault.put_edge(&party, crate::edge::EdgeKind::Mentions, &vaulted, 0.9)?;
     // The target is IN scope but owner-marked Tier A: tier supremacy blocks
-    // the walk regardless of the allowlist (I2).
+    // the walk regardless of the Scope (I2).
     vault.set_disclosure_tier_a(&vaulted, 100)?;
     let scope =
-        crate::disclosure::DisclosureScope::task_scoped("party", vec![party, vaulted], 100)?;
+        crate::disclosure::DisclosureScope::new(crate::federation::Scope::top(), "party", 100)?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     let ctx = absence_ctx_for_contact(&vault, contact_id);
@@ -3714,8 +3796,20 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
     let party = disclosure_id(0xE4);
     let diary = disclosure_id(0xE5);
     put_disclosure_turn(&vault, &party, "party trace needle25");
-    put_disclosure_turn(&vault, &diary, "private trace needle25");
-    let scope = crate::disclosure::DisclosureScope::task_scoped("party", vec![party], 100)?;
+    put_disclosure_claim_in_world(
+        &vault,
+        &diary,
+        party,
+        "event.diary",
+        "private trace needle25",
+        Some("private"),
+        Some(disclosure_id(0xF5)),
+    );
+    let scope = crate::disclosure::DisclosureScope::new(
+        disclosure_world_clearance([crate::claim::base_world_id()]),
+        "party",
+        100,
+    )?;
     vault.set_counterparty_disclosure_scope(&contact_id, &scope)?;
 
     // Control: an owner-alone assembly with capture on records a stage trace.
