@@ -39,6 +39,10 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
         | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
         let stamp = vault.dreamer_attempt_authority(status.attempt.id)?.unwrap();
         assert_eq!(stamp.actor, authority.entity_ref());
+        assert_eq!(
+            stamp.facet,
+            dreamer_facet_for_job_type(&status.payload.attempt_type).unwrap()
+        );
         let envelope = vault.dreamer_proposal_envelope(&stamp.facet, status.attempt.id)?;
         assert_eq!(envelope.actor(), authority);
         assert_eq!(envelope.approval(), ClaimApprovalStatus::Proposed);
@@ -58,4 +62,61 @@ fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<
     let (_other_dir, other_node) = open_test_vault_with(embedding_test_config());
     assert_eq!(other_node.dreamer_authority()?, authority);
     Ok(())
+}
+
+#[test]
+fn job_types_share_facets_without_minting_new_agents() {
+    use super::{DreamerAgentBoundary, dreamer_facet_for_job_type, warrants_new_agent};
+    use crate::agent_def::AgentCeiling;
+    use crate::llm::ModelLocality;
+
+    for (job, facet) in [
+        ("micro", "dreamer.consolidation"),
+        ("meso", "dreamer.consolidation"),
+        ("macro", "dreamer.consolidation"),
+        ("dreamer.reflection.gap_scan", "dreamer.consolidation"),
+        (
+            "dreamer.edit_distance.substitution_mine",
+            "dreamer.consolidation",
+        ),
+        ("dreamer.skill_optimize", "dreamer.skill_optimize"),
+        ("dreamer.vault_cleanup", "dreamer.vault_cleanup"),
+        ("dreamer.curator", "dreamer.curator"),
+        ("dreamer.harness_maintenance", "dreamer.harness_maintenance"),
+        ("dreamer.representation", "dreamer.representation"),
+        ("dreamer.plugin_suggest", "dreamer.plugin_suggest"),
+        ("connector_event", "connector_event"),
+    ] {
+        assert_eq!(dreamer_facet_for_job_type(job), Some(facet));
+    }
+    assert_eq!(dreamer_facet_for_job_type("agent_dispatch"), None);
+    assert_eq!(dreamer_facet_for_job_type("unknown"), None);
+
+    let original = DreamerAgentBoundary {
+        soul: "same principal",
+        access_ceiling: AgentCeiling::Proposed,
+        locality: ModelLocality::OnDevice,
+    };
+    assert!(!warrants_new_agent(original, original));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            soul: "another principal",
+            ..original
+        }
+    ));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            access_ceiling: AgentCeiling::Auto,
+            ..original
+        }
+    ));
+    assert!(warrants_new_agent(
+        original,
+        DreamerAgentBoundary {
+            locality: ModelLocality::OwnServer,
+            ..original
+        }
+    ));
 }

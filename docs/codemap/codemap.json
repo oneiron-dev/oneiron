@@ -13368,6 +13368,20 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAgentBoundary"
+     ],
+     "path": "src/dreamer_runner/authority/policy.rs",
+     "purpose": "Dreamer job roster and the boundary for minting a separate agent",
+     "surface": {
+      "fn": 2,
       "struct": 1
      }
     },
@@ -34266,7 +34280,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35080,7 +35094,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2071,
+   "source_files": 2072,
    "test_files": 711
   },
   "oneiron-android": {
