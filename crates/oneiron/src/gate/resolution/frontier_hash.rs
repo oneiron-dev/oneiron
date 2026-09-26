@@ -50,6 +50,11 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    if let Some(threshold) = resolution.proposal_check_threshold {
+        hash_str(hasher, "proposal_check_threshold");
+        hash_u64(hasher, threshold);
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

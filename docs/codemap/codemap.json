@@ -16589,8 +16589,24 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProposalSubmissionCheck",
+      "ProposalSubmissionReceipt"
+     ],
+     "path": "src/gate/proposal_observation.rs",
+     "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -16618,7 +16634,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -16642,7 +16658,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
@@ -26833,7 +26849,6 @@
      "path": "src/self_heal/healer_host.rs",
      "purpose": "External healer capability, durable propose receipts, and human-only PR release",
      "surface": {
-      "crate-vis": 1,
       "enum": 2,
       "fn": 10,
       "struct": 5
@@ -26866,7 +26881,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -34336,7 +34351,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35039,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {

@@ -563,3 +563,57 @@ fn authored_source_save_update_and_fork_keep_real_files_atomic_and_candidate() {
             .is_err()
     );
 }
+
+#[test]
+fn generic_propose_lane_counts_authenticated_actor_and_asks_once_without_rate_refusal() {
+    let (_dir, vault) = open_vault();
+    let policy_id = crate::gate::default_policy_manifest_id().unwrap();
+    let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(
+        vault.get(&policy_id).unwrap().unwrap(),
+    ))
+    .unwrap();
+    let Value::Map(entries) = &mut manifest else {
+        panic!("manifest map")
+    };
+    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
+    crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();
+
+    let actor = put_person(&vault, 0x61);
+    let other = put_person(&vault, 0x62);
+    let subject = put_person(&vault, 0x63);
+    for (index, actor_id) in [
+        (0x64, actor),
+        (0x65, actor),
+        (0x66, actor),
+        (0x67, actor),
+        (0x68, other),
+    ] {
+        let mut input = claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!(index),
+        );
+        let id = id(index);
+        input.id = Some(id.to_hex());
+        let receipt = facade_for(&vault, actor_id).claim_propose(&input).unwrap();
+        assert_eq!(receipt.approval, "proposed");
+        assert_eq!(
+            vault.get_claim(&id).unwrap().unwrap().approval,
+            ClaimApprovalStatus::Proposed
+        );
+        let accounting = vault
+            .proposal_submission_receipt(&actor_id, &format!("claim:{}", id.to_hex()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(accounting.actor, actor_id.to_hex());
+    }
+    let check = vault.proposal_submission_check(&actor).unwrap().unwrap();
+    assert_eq!(check.actor, actor.to_hex());
+    assert_eq!(check.count, 3);
+    assert_eq!(check.threshold, 2);
+    assert_eq!(check.proposal_ref, format!("claim:{}", id(0x66).to_hex()));
+    assert!(vault.proposal_submission_check(&other).unwrap().is_none());
+}
