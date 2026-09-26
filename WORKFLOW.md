@@ -72,7 +72,10 @@ are not substitutes for this gate.
 
 The nine scripted stages are code-map pin, fmt, workspace clippy, featureless
 clippy, server-production clippy, strict rustdoc, full workspace nextest,
-featureless library tests, and doctests. Formatting is members-only (`cargo fmt --check`, never `--all`,
+featureless library tests, and doctests. All compiling Cargo steps in the scripted and
+distributed gates, and in scoped CI, use `--locked`: stale manifests must fail rather
+than rewrite the committed `Cargo.lock`. Keep `cargo fmt --check` separate; it does
+not resolve dependencies. Formatting is members-only (`cargo fmt --check`, never `--all`,
 which follows the ONE-218 heed vendor). Server clippy deliberately omits
 `--all-targets` so test-only features cannot hide production errors. Workspace
 nextest retains its `oneiron-napi` exclusion; the crate's separate Linux Rust tests now
