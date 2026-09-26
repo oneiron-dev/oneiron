@@ -425,9 +425,9 @@ fn concurrent_edit_same_entity_lww_converges_and_displaces_loser_metadata_rows()
     assert_converged(&a, &b, WINDOW);
 }
 
-/// OF-476 keeps each node's indexed body with its text postings until idle.
-/// Both Live rows converge immediately; idle atomically retires the loser's
-/// postings while leaving the unchanged winner's index intact.
+/// Both Live rows converge immediately. Replicated LWW overwrites retire
+/// loser postings at once while retaining the old Indexed body until idle;
+/// the unchanged winner's index stays intact.
 #[test]
 fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
     let (a, b) = vault_pair();
@@ -483,9 +483,14 @@ fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
             .as_ref(),
         Some(loser_body),
     );
-    assert_eq!(
-        loser_node.vault.search_text(loser_term, 10).unwrap()[0].id,
-        id
+    assert!(
+        loser_node
+            .vault
+            .search_text(loser_term, 10)
+            .unwrap()
+            .is_empty(),
+        "{}: loser postings must disappear on replicated overwrite",
+        loser_node.name
     );
     loser_node.vault.set_indexed_idle_delay_ms(0).unwrap();
     let published = loser_node
@@ -513,7 +518,7 @@ fn concurrent_edit_same_entity_lww_displaces_loser_text_postings() {
             .search_text(loser_term, 10)
             .unwrap()
             .is_empty(),
-        "{}: loser's text postings must be displaced after idle publication",
+        "{}: idle publication must not restore loser postings",
         loser_node.name
     );
 }
