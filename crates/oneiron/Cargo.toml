@@ -30,6 +30,8 @@ uuid = { workspace = true }
 # paths, including the non-sync build (ONE-1140, OD-1/OD-2).
 ed25519-dalek = { workspace = true }
 rand_core = { workspace = true }
+rand = "0.8"
+rand_distr = "0.4"
 thiserror = { workspace = true }
 rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
@@ -211,7 +213,6 @@ p256 = { workspace = true, features = ["pkcs8"] }
 # nextest / CI / verify.sh flag-free — no --features needed.
 oneiron = { path = ".", features = ["test-support"] }
 tempfile = "3"
-rand = "0.8"
 proptest = "1"
 # ONE-1572 (B11-2b): compile-fail proof that the sealed relay-attestation
 # witness cannot be constructed outside the boundary. Dev-only; no runtime
