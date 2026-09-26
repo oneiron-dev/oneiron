@@ -14439,9 +14439,9 @@
       "CompilationTarget"
      ],
      "path": "src/edit_distance/miner/target.rs",
-     "purpose": "Host-classified compilation proposals",
+     "purpose": "Bounded compilation proposals from principal-bound corrected deltas",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1
      }
     },

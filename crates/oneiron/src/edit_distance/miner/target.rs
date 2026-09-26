@@ -1,4 +1,4 @@
-//! Host-classified compilation proposals. No language heuristics decide policy.
+//! Bounded compilation proposals from principal-bound corrected deltas.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,40 @@ pub enum CompilationTarget {
     CharterLine(String),
     /// Propose a brief update. Does not mutate a brief.
     BriefUpdate(String),
+}
+
+/// Infer a proposal family only when the corrected run carries an unambiguous
+/// signal under OF-379's bounded compilation grammar. Never infer from the
+/// generator's original text alone, and never install the result as policy.
+pub(super) fn infer_target(scope: &str, from: &str, to: &str) -> CompilationTarget {
+    if from.is_empty() || to.is_empty() || to.len() > 4096 {
+        return CompilationTarget::Fallback;
+    }
+    if typed_scope(scope, "expression.style") {
+        let target = CompilationTarget::StyleRule(to.to_owned());
+        return if target.validate().is_ok() {
+            target
+        } else {
+            CompilationTarget::Fallback
+        };
+    }
+    if typed_scope(scope, "charter") {
+        return CompilationTarget::CharterLine(to.to_owned());
+    }
+    if typed_scope(scope, "brief") {
+        return CompilationTarget::BriefUpdate(to.to_owned());
+    }
+    if to.starts_with("never ") && !from.starts_with("never ") {
+        return CompilationTarget::Ban(to.to_owned());
+    }
+    CompilationTarget::Fallback
+}
+
+fn typed_scope(scope: &str, kind: &str) -> bool {
+    scope
+        .strip_prefix(kind)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|subject| !subject.trim().is_empty())
 }
 
 impl CompilationTarget {

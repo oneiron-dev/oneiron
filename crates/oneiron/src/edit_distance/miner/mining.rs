@@ -265,12 +265,12 @@ fn clusters_from(
             continue;
         }
         for substitution in substitutions(source.delta_source, source.artifact) {
+            let target = binding.as_ref().map_or_else(Default::default, |_| {
+                super::target::infer_target(&judgment.scope, &substitution.from, &substitution.to)
+            });
             let key = ClusterKey {
                 principal: binding.as_ref().map(|row| row.principal),
-                target: binding
-                    .as_ref()
-                    .map(|row| row.target.clone())
-                    .unwrap_or_default(),
+                target,
                 scope: judgment.scope.clone(),
                 actor: source.actor,
                 from: substitution.from,
@@ -310,9 +310,14 @@ fn clusters_from(
             };
             pair
         };
+        let target = if row.target == super::target::CompilationTarget::Fallback {
+            super::target::infer_target(&row.scope, &pair.0, &pair.1)
+        } else {
+            row.target
+        };
         let key = ClusterKey {
             principal: Some(row.principal),
-            target: row.target,
+            target,
             scope: row.scope,
             actor: row.actor,
             from: pair.0,

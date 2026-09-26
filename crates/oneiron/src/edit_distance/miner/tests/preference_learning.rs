@@ -153,6 +153,184 @@ fn explicit_targets_route_rejections_without_inventing_language_rules() -> Resul
     Ok(())
 }
 
+/// Each route starts with an actual corrected ED-00 text and ends as a
+/// Proposed claim at the ordinary write gate. The caller binds a principal,
+/// but supplies Fallback rather than the desired family or its text.
+#[test]
+fn measured_deltas_compile_four_reviewable_target_families() -> Result<()> {
+    for (scope, before, after, target, predicate) in [
+        (
+            "outbound",
+            "allow greetings",
+            "never use salutations",
+            CompilationTarget::Ban("never use salutations".into()),
+            "preference.ban",
+        ),
+        (
+            "expression.style:outbound",
+            "formal",
+            "terse",
+            CompilationTarget::StyleRule("terse".into()),
+            "preference.style_rule",
+        ),
+        (
+            "charter:agent",
+            "copy outdated policy",
+            "cite primary sources",
+            CompilationTarget::CharterLine("cite primary sources".into()),
+            "charter.line",
+        ),
+        (
+            "brief:campaign",
+            "omit exact dates",
+            "include the deadline",
+            CompilationTarget::BriefUpdate("include the deadline".into()),
+            "brief.preference",
+        ),
+    ] {
+        let (_dir, vault) = temp_vault();
+        let owner = fixture_owner(&vault);
+        let run = miner_run(&vault);
+        let actor = put_actor(&vault);
+        set_miner_k(&vault, 2)?;
+        for index in 0..2 {
+            let amendment = Amendment {
+                receipt_id: format!("gate:compiled-{index}"),
+                scope: scope.into(),
+                actor,
+                skill: None,
+                cause: AmendmentCause::DeciderPreference,
+                proposed: before.into(),
+                finalized: after.into(),
+                at: 100 + index,
+            };
+            amendment.land(&vault)?;
+        }
+        let clusters = mine_substitution_clusters(&vault)?;
+        let [cluster] = clusters.as_slice() else {
+            panic!("one compiled cluster expected: {clusters:?}");
+        };
+        assert_eq!(cluster.target, target, "{scope}: evidence chose target");
+        assert_eq!(cluster.principal, Some(owner.entity_ref()));
+        let outcomes = super::super::run_substitution_miner_at(&vault, &run, 300)?;
+        let [MinedOutcome::PreferenceClaim(id)] = outcomes.as_slice() else {
+            panic!("{scope}: expected gated claim, got {outcomes:?}");
+        };
+        let body = vault.get_claim(id)?.expect("compiled claim");
+        assert_eq!(body.predicate, predicate);
+        assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        assert_eq!(body.source, Some(ClaimSource::Generated));
+        assert_eq!(body.subject, ClaimSubject::Entity(actor));
+        assert_eq!(
+            crate::claim::claim_principal_id(&body)?,
+            Some(owner.entity_ref())
+        );
+        assert_eq!(value_field(&body, "text").as_deref(), target.text());
+        let evidence = body.evidence.as_ref().expect("gate-stamped evidence");
+        let provenance = evidence_key(
+            evidence,
+            crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY,
+        );
+        assert_eq!(
+            evidence_key(provenance, PROVENANCE_KEY_RUN).as_str(),
+            Some(run.run_id.as_str())
+        );
+        assert_eq!(
+            evidence_key(provenance, PROVENANCE_KEY_SESSION).as_str(),
+            Some(run.session.to_hex().as_str()),
+        );
+        let decoded =
+            crate::dreamer_consolidation::decode_consolidation_evidence(candidate_evidence(&body))?
+                .expect("gate candidate envelope");
+        assert_eq!(decoded.source_meet, ClaimSource::Inferred);
+        let record_id = mined_evidence_record_id(&cluster_handle(cluster))?;
+        assert_eq!(decoded.refs, [record_id]);
+        let record: StoredMinedEvidence = decode_row(
+            &vault.get(&record_id)?.expect("resolved evidence record"),
+            MINED_EVIDENCE_ROW_LABEL,
+        )?;
+        assert_eq!(record.target, target);
+        assert_eq!(record.receipt_refs, cluster.receipt_refs);
+        assert_eq!(record.count, 2);
+        assert!(super::super::run_substitution_miner_at(&vault, &run, 301)?.is_empty());
+        assert_eq!(
+            vault
+                .expression_preferences(&owner.entity_ref(), 302)?
+                .style,
+            None
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn ambiguous_and_unscoped_deltas_preserve_the_existing_chooser() {
+    use super::super::target::infer_target;
+    assert_eq!(
+        infer_target("outbound", "regards", "cheers"),
+        CompilationTarget::Fallback
+    );
+    assert_eq!(
+        infer_target("outbound", "fri", "mon"),
+        CompilationTarget::Fallback
+    );
+    assert_eq!(
+        infer_target("charter:", "old", "cite primary sources"),
+        CompilationTarget::Fallback
+    );
+    assert_eq!(
+        infer_target("expression.style:outbound", "formal", "two words"),
+        CompilationTarget::Fallback
+    );
+    assert_eq!(
+        infer_target("outbound", "never guess", "never invent"),
+        CompilationTarget::Fallback
+    );
+}
+
+#[test]
+fn inbox_amendment_infers_ban_without_a_host_target() -> Result<()> {
+    let (_dir, vault) = temp_vault();
+    let owner = fixture_owner(&vault);
+    let run = miner_run(&vault);
+    let actor = put_actor(&vault);
+    set_miner_k(&vault, 2)?;
+    for index in 0..2 {
+        let id = proposal(&vault, &run, actor, "allow greetings", 100 + index)?;
+        let mut changed = vault.get_claim(&id)?.expect("proposed claim");
+        changed.value = Value::from("never use salutations");
+        vault.approve_inbox_member_with_edit_as_at(
+            owner,
+            &id,
+            &crate::claim::encode_claim_body(&changed)?,
+            &CompilationTarget::Fallback,
+            200 + index,
+        )?;
+    }
+    let outcomes = super::super::run_substitution_miner_at(&vault, &run, 300)?;
+    let [MinedOutcome::PreferenceClaim(id)] = outcomes.as_slice() else {
+        panic!("inbox delta did not compile into a reviewable claim: {outcomes:?}");
+    };
+    let body = vault.get_claim(id)?.expect("mined claim");
+    assert_eq!(body.predicate, "preference.ban");
+    assert_eq!(
+        value_field(&body, "text").as_deref(),
+        Some("never use salutations")
+    );
+    assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(
+        crate::claim::claim_principal_id(&body)?,
+        Some(owner.entity_ref())
+    );
+    assert_eq!(
+        crate::dreamer_consolidation::decode_consolidation_evidence(candidate_evidence(&body))?
+            .expect("gate evidence")
+            .source_meet,
+        ClaimSource::Inferred,
+    );
+    Ok(())
+}
+
 #[test]
 fn inbox_fallback_amendments_still_mine_lexical_phrasing() -> Result<()> {
     let (_dir, vault) = temp_vault();
