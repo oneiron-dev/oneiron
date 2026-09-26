@@ -1438,3 +1438,82 @@ fn telemetry_config() -> VaultConfig {
         ..VaultConfig::default()
     }
 }
+
+// The public self.memory.search route must obey capture policy independently
+// of the pipeline and ordinary Vault search registration doors.
+fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
+    use crate::code_run::{
+        HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfMemorySearchCall,
+    };
+
+    let dir = tempfile::tempdir()?;
+    let config = VaultConfig {
+        retrieval_telemetry_capture: capture,
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config)?;
+    let id = EntityId::from_bytes([0xB8; 16])?;
+    vault
+        .batch()
+        .put(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"entity")
+        .text(&id, &[("name", "amberlantern")])
+        .commit()?;
+    let session = vault
+        .off_record_session_vault()
+        .enter("capture-room", OffRecordBackendClass::Local)?;
+    if on_record {
+        session.flip_on_record()?;
+    }
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        crate::WriteActor::new(id, EdgeActorClass::Human),
+        "capture-run",
+    )?;
+    let result = dispatcher.dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(
+        "amberlantern",
+        5,
+    )))?;
+    let SelfDispatchOutcome::MemorySearch(found) = result else {
+        panic!("expected memory search");
+    };
+    assert!(found.results.iter().any(|row| row.id == id));
+    let room_runs = {
+        let view = session.read_view()?;
+        let rtxn = vault.store.env.read_txn()?;
+        view.retrieval_runs_in_txn(&rtxn, 10)?
+    };
+    assert_eq!(room_runs.len(), usize::from(capture));
+    assert_eq!(
+        vault.retrieval_runs(10)?.len(),
+        usize::from(capture && on_record)
+    );
+    drop(dispatcher);
+    drop(session);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(
+        reopened.retrieval_runs(10)?.len(),
+        usize::from(capture && on_record)
+    );
+    Ok(())
+}
+
+#[test]
+fn default_on_record_session_search_does_not_persist_telemetry() -> Result<()> {
+    assert_session_search_capture(false, true)
+}
+
+#[test]
+fn default_off_record_session_search_does_not_stage_telemetry() -> Result<()> {
+    assert_session_search_capture(false, false)
+}
+
+#[test]
+fn opted_in_on_record_session_search_persists_telemetry() -> Result<()> {
+    assert_session_search_capture(true, true)
+}
+
+#[test]
+fn opted_in_off_record_session_search_stages_only_in_room() -> Result<()> {
+    assert_session_search_capture(true, false)
+}

@@ -1,6 +1,7 @@
 //! Regressions for request policy freshness, wire identity, opaque bodies and
 //! post-filter durable trace publication.
 
+use super::support::telemetry_config;
 use super::*;
 
 fn error_variants(method: VaultReadMethod) -> [VaultReadError; 6] {

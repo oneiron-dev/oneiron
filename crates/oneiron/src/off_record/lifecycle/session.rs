@@ -345,6 +345,11 @@ impl OffRecordSession<'_> {
         )?;
         drop(view);
 
+        let telemetry = self.retrieval_telemetry(route)?;
+        if !self.vault.store.retrieval_telemetry_capture_enabled() {
+            telemetry.revalidate_without_capture()?;
+            return Ok(search.scores);
+        }
         let record = Vault::vault_search_retrieval_run_record(
             crate::store::RetrievalRunId::from_bytes(self.vault.store.clock.ulid()?),
             crate::store::RetrievalSignal::Text,
@@ -359,8 +364,7 @@ impl OffRecordSession<'_> {
         // on record and telemetry routes to base ordinarily (K10) — publishes
         // under the same route rather than through the routeless canonical
         // door.
-        self.retrieval_telemetry(route)?
-            .register_run(&record, false)?;
+        telemetry.register_run(&record, false)?;
 
         Ok(search.scores)
     }

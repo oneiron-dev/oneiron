@@ -49,6 +49,9 @@ impl SessionRetrievalTelemetry<'_> {
         record: &crate::store::RetrievalRunRecord,
         provisional: bool,
     ) -> Result<()> {
+        if !self.vault.store.retrieval_telemetry_capture_enabled() {
+            return self.revalidate_without_capture();
+        }
         match self.route.target() {
             RouteTarget::Discard => self.route.revalidate(),
             RouteTarget::Overlay => self.staged(|view, wtxn| {

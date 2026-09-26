@@ -388,7 +388,7 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
     assert!(actual_ids.contains(&matching_claim));
     assert!(!actual_ids.contains(&other_claim));
     let telemetry = vault
-        .retrieval_run(output.telemetry_run_id())?
+        .retrieval_run(output.telemetry_run_id().expect("capture enabled"))?
         .expect("coreutils telemetry row is written");
     assert_eq!(
         telemetry.action,
@@ -453,7 +453,7 @@ fn find_newer_uses_scoped_temporal_pushdown() -> Result<()> {
     assert!(rendered.contains(&format!("/claims/{}", new_claim.to_hex())));
     assert!(!rendered.contains(&old_claim.to_hex()));
     let telemetry = vault
-        .retrieval_run(output.telemetry_run_id())?
+        .retrieval_run(output.telemetry_run_id().expect("capture enabled"))?
         .expect("coreutils telemetry row is written");
     assert_eq!(
         telemetry.action,
@@ -680,4 +680,54 @@ fn telemetry_config() -> VaultConfig {
         retrieval_telemetry_capture: true,
         ..VaultConfig::default()
     }
+}
+
+fn assert_graph_fs_capture(capture: bool) -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let config = VaultConfig {
+        retrieval_telemetry_capture: capture,
+        ..VaultConfig::default()
+    };
+    let vault = crate::Vault::open(dir.path(), config)?;
+    let reader = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("valid actor key"));
+    let output =
+        reader
+            .graph_fs(GraphFsOptions::default())
+            .grep("amberlantern", "/claims", true, None)?;
+    assert_eq!(output.telemetry_run_id().is_some(), capture);
+    if let Some(run_id) = output.telemetry_run_id() {
+        let run = vault
+            .retrieval_run(run_id)?
+            .expect("returned id must resolve");
+        assert_eq!(run.action, crate::store::RetrievalAction::GraphFsCoreutils);
+    }
+    assert_eq!(vault.retrieval_runs(10)?.len(), usize::from(capture));
+    Ok(())
+}
+
+#[test]
+fn graph_fs_default_output_has_no_telemetry_identity() -> Result<()> {
+    assert_graph_fs_capture(false)
+}
+
+#[test]
+fn graph_fs_opted_in_output_has_persisted_telemetry_identity() -> Result<()> {
+    assert_graph_fs_capture(true)
+}
+
+#[test]
+fn graph_fs_failed_telemetry_write_has_no_identity() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), telemetry_config())?;
+    crate::store::test_hooks::fail_next_retrieval_run_write_for(dir.path().canonicalize()?);
+    let reader = vault
+        .scoped_read(crate::claim::ScopedReadActorKey::new("reader").expect("valid actor key"));
+    let output =
+        reader
+            .graph_fs(GraphFsOptions::default())
+            .grep("amberlantern", "/claims", true, None)?;
+    assert_eq!(output.telemetry_run_id(), None);
+    assert!(vault.retrieval_runs(10)?.is_empty());
+    Ok(())
 }

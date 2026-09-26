@@ -1,7 +1,9 @@
 //! Contract, validation, projection and adapter tests for the vault-read module.
 
 mod regressions;
+mod support;
 
+use self::support::telemetry_config;
 use super::*;
 
 use std::sync::Mutex;
@@ -11,13 +13,10 @@ use serde_json::json;
 
 use crate::claim::ClaimSubject;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
-use crate::config::VaultConfig;
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{RetrievalAction, RetrievalRunRecord};
 use crate::temporal::TimeRange;
-use crate::test_util::{
-    embedding_test_config, entity, open_test_vault_with, put_policy_manifest_bytes,
-};
+use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
 // ── Test doubles ────────────────────────────────────────────────────────
 
@@ -1686,10 +1685,4 @@ fn timeline_receipts_survive_success_absence_and_wire_transport() {
         remote.memory_timeline(request(hidden)),
         Err(VaultReadError::ProtocolMismatch { .. })
     ));
-}
-
-fn telemetry_config() -> VaultConfig {
-    let mut config = embedding_test_config();
-    config.retrieval_telemetry_capture = true;
-    config
 }
