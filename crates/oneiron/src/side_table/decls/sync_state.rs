@@ -11,8 +11,6 @@ side_tables! {
     /// A control-plane API key record (HMAC-SHA256 digest, scopes, expiry, revoked flag) keyed by its
     /// own digest. Key: hex64.
     AUTH_CONTROL_KEY: SyncState b"auth:control-key:v1:" Named;
-    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
-    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// Marker row (empty value) recording that a legacy 32-hex bearer-token identifier has been
     /// revoked. Key: hex32.
     AUTH_REVOKED_TOKEN_JTI: SyncState b"auth:revoked-token-jti:" Raw;
@@ -37,6 +35,8 @@ side_tables! {
     /// Cached minted host-root capability-slip token ("v2.slip."+hex(JSON)) for one host signing key.
     /// Key: `:` + hex.
     AUTHORITY_HOST_ROOT_SLIP_CACHE: SyncState b"authority:host-root-slip:v2" Raw;
+    /// Host-signed mesh binding projection keyed by hex32 MACHINE id.
+    AUTHORITY_MESH_MACHINE: SyncState b"authority:mesh-machine:v1:" Named;
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson;
