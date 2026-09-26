@@ -1,5 +1,6 @@
 """Pin scoped CI: PRs and main pushes test what their diff touched; the full gate runs nightly."""
 
+import ast
 import importlib.util
 import unittest
 from pathlib import Path
@@ -63,9 +64,33 @@ class CiWorkflowTests(unittest.TestCase):
     def test_atom_fuzz_runs_on_lens_changes_and_the_nightly_gate(self):
         job = "\n".join(self.job_lines("test-linux"))
         self.assertIn("Fuzz atom codec and render (golden corpus)", job)
-        self.assertIn("needs.changes.outputs.full == 'true'", job)
-        self.assertIn("contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')", job)
         self.assertIn("timeout 1200s cargo test -j 8 -p oneiron --lib --all-features lens::tests::atom_fuzz::sustained_atom_codec_render_fuzz -- --ignored --exact", job)
+        guard = job.split("Fuzz atom codec and render (golden corpus)", 1)[1].split("        run:", 1)[0]
+        expression = guard.split("${{", 1)[1].split("}}", 1)[0]
+
+        def runs(*, cancelled=False, scope_result="success", full="false", oneiron="false", modules=""):
+            # Evaluate only the small boolean grammar of this GitHub Actions guard.
+            substitutions = {
+                "contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')": "lens" in modules.split(),
+                "needs.changes.outputs.modules == 'ALL'": modules == "ALL",
+                "needs.changes.outputs.oneiron == 'true'": oneiron == "true",
+                "needs.changes.outputs.full == 'true'": full == "true",
+                "needs.changes.result != 'success'": scope_result != "success",
+                "!cancelled()": not cancelled,
+            }
+            value = expression
+            for term, result in substitutions.items():
+                value = value.replace(term, str(result))
+            tree = ast.parse(value.replace("&&", " and ").replace("||", " or ").strip(), mode="eval")
+            self.assertTrue(all(isinstance(node, (ast.Expression, ast.BoolOp, ast.And, ast.Or, ast.Constant)) for node in ast.walk(tree)))
+            return eval(compile(tree, "<fuzz-guard>", "eval"), {"__builtins__": {}})
+
+        self.assertTrue(runs(scope_result="failure"))  # Failed scope; all outputs empty.
+        self.assertTrue(runs(scope_result="cancelled"))  # Same fail-safe as the Test job.
+        self.assertTrue(runs(modules="lens", oneiron="true"))
+        self.assertTrue(runs(full="true"))
+        self.assertFalse(runs(modules="gate", oneiron="true"))  # Unrelated scoped change.
+        self.assertFalse(runs(cancelled=True, scope_result="failure"))
 
     def test_macos_recipe_and_mutation_audit_are_dispatch_only(self):
         for job in ("test", "mutation-audit"):

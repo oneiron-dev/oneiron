@@ -203,7 +203,8 @@ jobs:
         run: scripts/ci/run_scoped.sh test
       - name: Fuzz atom codec and render (golden corpus)
         if: >-
-          ${{ !cancelled() && (needs.changes.outputs.full == 'true'
+          ${{ !cancelled() && (needs.changes.result != 'success'
+              || needs.changes.outputs.full == 'true'
               || (needs.changes.outputs.oneiron == 'true'
                   && (needs.changes.outputs.modules == 'ALL'
                       || contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')))) }}
