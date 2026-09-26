@@ -1,0 +1,456 @@
+[
+  {
+    "model": "openai/gpt-image-2@2026-09",
+    "wire_model": "openai/gpt-image-2",
+    "shim": {
+      "generate": "{instruction}",
+      "reference_edit": "Edit the supplied {reference_count} reference images: {instruction}"
+    },
+    "max_references": 16,
+    "allowed_params": [
+      "quality"
+    ],
+    "mode": "generate",
+    "instruction": "A red kite",
+    "params": {
+      "quality": "high"
+    },
+    "references": [],
+    "expected_request": {
+      "quality": "high",
+      "model": "openai/gpt-image-2",
+      "prompt": "A red kite",
+      "size": "512x768",
+      "n": 1
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  },
+  {
+    "model": "openai/gpt-image-2@2026-09",
+    "wire_model": "openai/gpt-image-2",
+    "shim": {
+      "generate": "{instruction}",
+      "reference_edit": "Edit the supplied {reference_count} reference images: {instruction}"
+    },
+    "max_references": 16,
+    "allowed_params": [
+      "quality"
+    ],
+    "mode": "edit",
+    "instruction": "Change the sky",
+    "params": {
+      "quality": "high"
+    },
+    "references": [
+      {
+        "bytes": [
+          255,
+          216,
+          255,
+          114,
+          101,
+          102
+        ],
+        "media_type": "image/jpeg"
+      }
+    ],
+    "expected_request": {
+      "quality": "high",
+      "model": "openai/gpt-image-2",
+      "prompt": "Edit the supplied 1 reference images: Change the sky",
+      "size": "512x768",
+      "n": 1,
+      "input_references": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/jpeg;base64,/9j/cmVm"
+          }
+        }
+      ]
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  },
+  {
+    "model": "google/gemini-2.5-flash-image@2026-09",
+    "wire_model": "google/gemini-2.5-flash-image",
+    "shim": {
+      "generate": "Scene: {instruction}",
+      "reference_edit": "Using {reference_count} reference images, {instruction}"
+    },
+    "max_references": 14,
+    "allowed_params": [
+      "provider"
+    ],
+    "mode": "generate",
+    "instruction": "A red kite",
+    "params": {
+      "provider": {
+        "only": [
+          "google-ai-studio"
+        ]
+      }
+    },
+    "references": [],
+    "expected_request": {
+      "provider": {
+        "only": [
+          "google-ai-studio"
+        ]
+      },
+      "model": "google/gemini-2.5-flash-image",
+      "prompt": "Scene: A red kite",
+      "size": "512x768",
+      "n": 1
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  },
+  {
+    "model": "google/gemini-2.5-flash-image@2026-09",
+    "wire_model": "google/gemini-2.5-flash-image",
+    "shim": {
+      "generate": "Scene: {instruction}",
+      "reference_edit": "Using {reference_count} reference images, {instruction}"
+    },
+    "max_references": 14,
+    "allowed_params": [
+      "provider"
+    ],
+    "mode": "edit",
+    "instruction": "Change the sky",
+    "params": {
+      "provider": {
+        "only": [
+          "google-ai-studio"
+        ]
+      }
+    },
+    "references": [
+      {
+        "bytes": [
+          255,
+          216,
+          255,
+          114,
+          101,
+          102
+        ],
+        "media_type": "image/jpeg"
+      }
+    ],
+    "expected_request": {
+      "provider": {
+        "only": [
+          "google-ai-studio"
+        ]
+      },
+      "model": "google/gemini-2.5-flash-image",
+      "prompt": "Using 1 reference images, Change the sky",
+      "size": "512x768",
+      "n": 1,
+      "input_references": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/jpeg;base64,/9j/cmVm"
+          }
+        }
+      ]
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  },
+  {
+    "model": "black-forest-labs/flux.2-pro@2026-09",
+    "wire_model": "black-forest-labs/flux.2-pro",
+    "shim": {
+      "generate": "{instruction}; high fidelity",
+      "reference_edit": "{instruction}; preserve subjects from {reference_count} references"
+    },
+    "max_references": 8,
+    "allowed_params": [
+      "seed"
+    ],
+    "mode": "generate",
+    "instruction": "A red kite",
+    "params": {
+      "seed": 42
+    },
+    "references": [],
+    "expected_request": {
+      "seed": 42,
+      "model": "black-forest-labs/flux.2-pro",
+      "prompt": "A red kite; high fidelity",
+      "size": "512x768",
+      "n": 1
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  },
+  {
+    "model": "black-forest-labs/flux.2-pro@2026-09",
+    "wire_model": "black-forest-labs/flux.2-pro",
+    "shim": {
+      "generate": "{instruction}; high fidelity",
+      "reference_edit": "{instruction}; preserve subjects from {reference_count} references"
+    },
+    "max_references": 8,
+    "allowed_params": [
+      "seed"
+    ],
+    "mode": "edit",
+    "instruction": "Change the sky",
+    "params": {
+      "seed": 42
+    },
+    "references": [
+      {
+        "bytes": [
+          255,
+          216,
+          255,
+          114,
+          101,
+          102
+        ],
+        "media_type": "image/jpeg"
+      }
+    ],
+    "expected_request": {
+      "seed": 42,
+      "model": "black-forest-labs/flux.2-pro",
+      "prompt": "Change the sky; preserve subjects from 1 references",
+      "size": "512x768",
+      "n": 1,
+      "input_references": [
+        {
+          "type": "image_url",
+          "image_url": {
+            "url": "data:image/jpeg;base64,/9j/cmVm"
+          }
+        }
+      ]
+    },
+    "response": {
+      "created": 123,
+      "data": [
+        {
+          "b64_json": "iVBORw0KGgpmaXh0dXJl",
+          "media_type": "image/png"
+        }
+      ],
+      "usage": {
+        "cost": 0.02
+      }
+    },
+    "expected_image": {
+      "bytes": [
+        137,
+        80,
+        78,
+        71,
+        13,
+        10,
+        26,
+        10,
+        102,
+        105,
+        120,
+        116,
+        117,
+        114,
+        101
+      ],
+      "media_type": "image/png"
+    },
+    "expected_metadata": {
+      "created": 123,
+      "usage": {
+        "cost": 0.02
+      }
+    }
+  }
+]

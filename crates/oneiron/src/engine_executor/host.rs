@@ -183,6 +183,7 @@ pub(super) const EXECUTOR_REQUIRED_HOST_IMPORTS: &[&str] = &[
     "self.memory.put_claim",
     "self.memory.supersede_claim",
     "self.memory.put_edge",
+    "self.report_blocked",
     "self.ask_human",
     "self.askHuman",
     "self.speak",

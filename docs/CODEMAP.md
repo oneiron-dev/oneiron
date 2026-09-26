@@ -13,18 +13,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2063 | 705 | 9 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2069 | 710 | 9 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
-| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 96 | 18 | 0 |
+| [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 97 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 8 | 1 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 7 | 2 | 0 |
+| [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 1 | 0 |
+| [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 1 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 6 | 1 | 0 |
 | [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 4 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 1 | 0 |
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 6 | 1 | 0 |
 | [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 1 | 2 | 0 |
-| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 2 | 2 | 0 |
+| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 3 | 2 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | — | 19 | 1 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 2 | 0 | 0 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 8 | 9 | 1 |
@@ -48,9 +50,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 7 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | file+dir | 2 | m | yes | Local artifact hosting over pinned CODE_ARTIFACT snapshots |
 | `attempt_queue` | dir | 36 | m | — | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 67 | m | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 68 | m | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 7 | m | — | Engine-side AR-3 autoreason campaign configuration and report join |
-| `batch` | dir | 83 | L | yes | — |
+| `batch` | dir | 84 | L | yes | — |
 | `blob_artifact` | dir | 38 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | m | — | — |
@@ -105,7 +107,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `disclosure` | dir | 5 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 10 | m | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `distance` | file+dir | 3 | m | — | — |
-| `dreamer_consolidation` | dir | 32 | m | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `dreamer_consolidation` | dir | 35 | m | yes | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `dreamer_plugin_suggest` | dir | 2 | m | — | Dreamer proactive-help × pack catalog (ONE-1707) |
 | `dreamer_prefilter` | dir | 8 | m | yes | ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth… |
 | `dreamer_promotion` | file+dir | 3 | m | — | Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7) |
@@ -141,7 +143,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `inbox` | dir | 5 | m | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `ingest` | dir | 39 | m | yes | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | m | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
-| `lens` | dir | 37 | m | — | Closed generated-lens atom vocabulary |
+| `lens` | dir | 39 | m | yes | Closed generated-lens atom vocabulary |
 | `limits` | file | 1 | s | — | — |
 | `linear_sync` | dir | 6 | m | — | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `linkedin_connector` | dir | 5 | m | — | LinkedIn connector adapter surface (ONE-1563 / LNKD-1) |
@@ -164,6 +166,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `pipeline` | dir | 50 | L | — | — |
 | `policy_model` | dir | 32 | m | yes | Policy classification over two planes |
 | `ports` | dir | 32 | m | — | Transaction-composable storage ports |
+| `posterior` | file | 1 | s | — | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `ppr` | dir | 9 | m | — | — |
 | `ppr_community` | dir | 8 | m | — | Deterministic community projection, cache, and bounded retrieval prior |
 | `prompt` | file | 1 | m | — | — |
@@ -173,7 +176,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `query_expansion` | file+dir | 2 | s | — | Host-injected HyDE query-expansion seam |
 | `receipt` | dir | 17 | m | yes | Unified receipt-family query surface over existing receipt emitters |
 | `recovery` | file+dir | 17 | m | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
-| `registry` | dir | 15 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
+| `registry` | dir | 16 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 18 | m | yes | — |
 | `rerank` | file+dir | 5 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
 | `retrieval_depth` | file+dir | 9 | m | — | ONE-207: the retrieval half of the effort dial |
@@ -195,7 +198,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill` | dir | 9 | m | yes | SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors |
 | `skill_attribution` | dir | 9 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
-| `skill_hub` | dir | 47 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `skill_hub` | dir | 49 | m | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `skill_optimize` | dir | 13 | m | — | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Dreamer maintenance job that keeps skill… |
 | `skill_reliability` | dir | 10 | m | yes | ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load… |
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |
@@ -241,6 +244,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `interface_bench` | dir | 9 | m | Campaign #5 interface bench task generation and smoke harness |
 | `perf` | dir | 37 | m | `perf` subcommand — ONE-1579 performance bench harness |
 | `retrieval_trace_export` | file | 1 | m | — |
+| `retrieval_turn_corpus` | file | 1 | m | Offline replay of finalized, turn-indexed retrieval runs |
 | `swarm` | file | 1 | m | Seeded single-vault, in-process agent-swarm baseline |
 | `vector` | dir | 5 | m | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
 
@@ -268,6 +272,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `protocol` | file | 1 | s | Strict, bounded host/guest JSON framing and admission state machine |
 | `runtime` | file | 1 | m | Canonical typed Component Model execution with four read-only imports |
 | `tests` | file | 1 | — | — |
+
+## oneiron-image-comfyui
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `lib` | file | 1 | m | Self-hosted ComfyUI image adapter |
+
+## oneiron-image-openrouter
+
+| module | layout | files | largest src bucket | purpose |
+|---|---|---|---|---|
+| `backend` | file | 1 | s | Model-local prompt configuration and host-owned HTTP transport |
+| `wire` | file | 1 | s | Buffered `/api/v1/images` request and response mapping |
 
 ## oneiron-llm-anthropic
 
@@ -306,7 +323,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `iroh_transport` | file | 1 | s | Private iroh data plane |
+| `iroh_transport` | file | 1 | m | Private iroh data plane |
+| `transport_key` | file | 1 | s | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 
 ## oneiron-napi
 

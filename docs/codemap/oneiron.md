@@ -165,7 +165,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/history_transfer.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | VaultRecoveryRequest | Signed-history migration and independently authorized per-vault re-root doors |
 | `src/authority/ingest_observation.rs` | src | s | 1 struct · 2 fn · 1 const · 1 crate-vis | AuthorityIngestCheck | Non-refusing authority replay observation with one typed check per peer/window |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 8 fn · 5 crate-vis | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
-| `src/authority/mod.rs` | src | s | 20 re-export · 4 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
+| `src/authority/mod.rs` | src | s | 21 re-export · 4 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 3 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 6 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/readonly_fold.rs` | src | s | 2 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
@@ -178,7 +179,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/slip_replay/tests.rs` | test | s | — | — | Replay-window boundaries, persistence, and eviction by timestamp |
 | `src/authority/slip_state.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | FoldedSlip, SlipAuthorityState | Log-derived capability mint ancestry and monotone subtree tombstones |
 | `src/authority/slip_tests.rs` | test | L | — | — | Caller-observable slip, pairing and residue regressions |
-| `src/authority/slip_vault.rs` | src | m | 1 struct · 15 fn · 6 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
+| `src/authority/slip_vault.rs` | src | m | 1 struct · 15 fn · 7 crate-vis | HostSlipIssuer | Host-root bootstrap and atomic authority-log capability issuance |
 | `src/authority/slip_wire.rs` | src | s | 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
 | `src/authority/stale_roster.rs` | src | s | 1 crate-vis | — | Clock-free expiry of approvals resting on a subsequently revoked roster |
 | `src/authority/tests/actor_binding.rs` | test | L | — | — | Actor bind, rebind and revoke fold, qualification and DAG merge |
@@ -292,6 +293,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/lexical_hints_policy.rs` | test | m | — | — | Lexical-hint policy gates, replication deferral and BM25 indexing |
 | `src/batch/tests/mod.rs` | test | s | — | — | White-box tests for the batch apply pipeline, split by topic across child files |
 | `src/batch/tests/provenance_edges.rs` | test | m | — | — | Provenanced and timestamped edge builders, replay and delete-edge guards |
+| `src/batch/tests/replicated_text.rs` | test | s | — | — | Replicated body overwrites must not expose loser search postings |
 | `src/batch/tests/secret_policy_claim.rs` | test | m | — | — | Secret scan, policy consent and claim write-envelope gates |
 | `src/batch/tests/seeded_actors.rs` | test | s | — | — | Seeded and pinned actors, agent ceilings and fork gating |
 | `src/batch/tests/support.rs` | test | s | 13 crate-vis | — | Shared helpers for the batch white-box tests |
@@ -339,7 +341,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/provenance.rs` | src | s | 1 enum · 2 fn · 7 crate-vis | BlobVersionProvenance | Blob version provenance: producer enum and claim-envelope value constructors |
 | `src/blob_artifact/store_keys.rs` | src | s | 2 const · 12 crate-vis | — | Blob vault_meta key builders and shared MessagePack scalar helpers |
 | `src/blob_artifact/tests.rs` | test | m | — | — | — |
-| `src/blob_artifact/versions.rs` | src | m | 1 struct · 7 fn · 1 const · 10 crate-vis | BlobArtifactVersion | Blob version chain: version record codec and the Vault version-chain API |
+| `src/blob_artifact/versions.rs` | src | m | 1 struct · 8 fn · 1 const · 12 crate-vis | BlobArtifactVersion | Blob version chain: version record codec and the Vault version-chain API |
 | `src/bm25/codec.rs` | src | m | 17 crate-vis | — | Binary codecs, stat/total-docs accessors, corruption constructors, key validation |
 | `src/bm25/config.rs` | src | s | 1 enum · 9 crate-vis | Bm25Formula | Rank-profile config: field/channel params, formula, recency, defaults |
 | `src/bm25/diagnostics.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | Bm25DiagnosticCounter, Bm25DiagnosticKind, Bm25DiagnosticsSnapshot | Per-vault BM25 integrity diagnostics (counters, snapshot, record) |
@@ -547,7 +549,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity/auth_mode.rs` | src | s | 1 enum · 1 fn | ChannelAuthMode | Credential mechanism labels |
 | `src/channel_identity/binding.rs` | src | s | 2 enum · 9 fn · 2 crate-vis | ChannelIdentityBinding, ChannelIdentityFulfillment | ChannelIdentity binding and fulfillment values with scope strings |
 | `src/channel_identity/codec.rs` | src | m | 3 fn · 18 crate-vis | — | Canonical MessagePack body and claim-structure codec for ChannelIdentity |
-| `src/channel_identity/custody.rs` | src | m | 2 struct · 1 enum · 12 fn · 1 crate-vis | DelegatedCustodyProof, DelegatedGrant, DelegatedGrantScope | Delegated-grant custody: the grant handle, the txn-bound proof, and the one verification door |
+| `src/channel_identity/custody.rs` | src | m | 1 struct · 1 enum · 7 fn · 3 crate-vis | DelegatedGrant, DelegatedGrantScope | Delegated-grant custody: the grant handle, the txn-bound proof, and the one verification door |
 | `src/channel_identity/keys.rs` | src | s | 19 const · 17 crate-vis | — | Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds |
 | `src/channel_identity/lifecycle.rs` | src | s | 1 enum · 5 fn | ChannelIdentityState | ChannelIdentity lifecycle states and transition edge tables |
 | `src/channel_identity/mod.rs` | src | s | 11 re-export · 2 crate-vis | — | ChannelIdentity record substrate (OF-347 CID-1) |
@@ -824,7 +826,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/txn.rs` | src | m | 1 struct · 2 const · 16 crate-vis | ConnectorKeyGeneration | — |
 | `src/consent/adapters.rs` | src | s | 4 fn · 2 crate-vis | — | — |
 | `src/consent/ask_holders.rs` | src | s | 1 crate-vis | — | Scope ask recipients resolved from live, owner-stamped action grants |
-| `src/consent/bound.rs` | src | m | 7 struct · 4 enum · 33 fn · 3 const · 4 crate-vis | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDomain +3 | — |
+| `src/consent/bound.rs` | src | m | 7 struct · 4 enum · 33 fn · 3 const · 6 crate-vis | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDomain +3 | — |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 13 crate-vis | — | — |
 | `src/consent/doors.rs` | src | m | 2 struct · 16 fn · 8 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/effect.rs` | src | m | 3 struct · 4 enum · 22 fn · 3 const · 3 crate-vis | CatastropheClass, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, ReversibilityClass, UndoFidelity | — |
@@ -1008,7 +1010,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/delivery_window/validate.rs` | src | s | 1 fn · 8 crate-vis | — | Claim-body structural validation and map-extraction helpers |
 | `src/delivery_window/window.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | DeliveryWindowTimeWindow | Quiet-window time arithmetic and time-window decoding |
 | `src/disclosure/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
-| `src/disclosure/scope_codec.rs` | src | m | 1 struct · 1 enum · 8 fn · 4 const · 7 crate-vis | DisclosureScope, DisclosureScopeStatus | DisclosureScope type with canonical msgpack codec and key validation |
+| `src/disclosure/scope_codec.rs` | src | s | 1 struct · 1 enum · 6 fn · 2 const · 7 crate-vis | DisclosureScope, DisclosureScopeStatus | Contact clearance envelope and canonical six-axis Scope codec |
 | `src/disclosure/tests.rs` | test | L | — | — | — |
 | `src/disclosure/tier_classification.rs` | src | s | 2 enum · 3 fn · 6 const · 4 crate-vis | DisclosureMode, DisclosureTier | Mode/tier classification and disclosure-claim structural validation |
 | `src/disclosure/vault_context.rs` | src | m | 2 struct · 11 fn · 7 crate-vis | DisclosureAssembly, DisclosureContext | vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block |
@@ -1047,13 +1049,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/routing/tests.rs` | test | s | — | — | — |
 | `src/dreamer_consolidation/selection.rs` | src | s | 5 struct · 1 enum · 6 fn | SelectionCandidate, SelectionConfig, SelectionHold, SelectionPlan, StrengthSignals, StrengthWeights | Mechanical candidate selection |
 | `src/dreamer_consolidation/selection/tests.rs` | test | s | — | — | — |
+| `src/dreamer_consolidation/step_charge.rs` | src | s | 4 crate-vis | — | Attempt-local step spend due to the shared wake ledger after memo replay |
 | `src/dreamer_consolidation/support.rs` | src | s | 10 const · 32 crate-vis | — | — |
 | `src/dreamer_consolidation/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/dreamer_consolidation/tests/contradictions.rs` | test | s | — | — | — |
+| `src/dreamer_consolidation/tests/late_budget.rs` | test | m | — | — | Real wake-driver accounting across late step checkpoint and resume |
 | `src/dreamer_consolidation/tests/persistent_conflicts.rs` | test | s | — | — | Persistence, rerun idempotence, prior-head and topic partition laws |
 | `src/dreamer_consolidation/tests/person_extraction.rs` | test | s | — | — | — |
 | `src/dreamer_consolidation/tests/prior_heads.rs` | test | m | — | — | Real executor -> sealed sink -> durable evidence/provenance fixture |
 | `src/dreamer_consolidation/tests/scope_enforcement.rs` | test | L | — | — | — |
+| `src/dreamer_consolidation/tests/support.rs` | test | s | 1 crate-vis | — | Shared backend fixture for deadline-driven consolidation tests |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/watermark.rs` | src | m | 2 struct · 5 fn · 14 crate-vis | ConsolidationWatermark, WorkingSetTurn | — |
 | `src/dreamer_consolidation/watermark/rescan_tests.rs` | test | s | — | — | — |
@@ -1071,13 +1076,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion/scoped.rs` | src | s | 1 fn | — | Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors |
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
 | `src/dreamer_runner/admission.rs` | src | m | 13 fn · 2 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
-| `src/dreamer_runner/admission/settlement.rs` | src | s | 1 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
+| `src/dreamer_runner/admission/settlement.rs` | src | s | 4 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
 | `src/dreamer_runner/authority.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | DreamerAuthorityStamp | One vault-owned Dreamer principal; job kinds are facets, not new authorities |
 | `src/dreamer_runner/authority/tests.rs` | test | s | — | — | — |
 | `src/dreamer_runner/claim_authoring.rs` | src | s | 6 struct · 6 enum · 11 fn | DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision, DreamerClaimAuthoringSchedule, DreamerClaimAuthoringSinglePassReason, DreamerClaimAuthoringStrategy, DreamerClaimEvidenceState +4 | OF-366/OF-267 claim-authoring admission gate: single-pass vs tournament |
-| `src/dreamer_runner/codec.rs` | src | m | 2 fn · 34 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
+| `src/dreamer_runner/codec.rs` | src | m | 2 fn · 36 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
 | `src/dreamer_runner/connector_event.rs` | src | s | 1 struct · 3 fn · 2 const · 1 crate-vis | ConnectorEventWake | Connector wake delivery retains its typed event; it is not a partition job |
-| `src/dreamer_runner/constants.rs` | src | s | 16 const · 43 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
+| `src/dreamer_runner/constants.rs` | src | s | 16 const · 44 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
 | `src/dreamer_runner/maintenance/curator.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 crate-vis | CuratorRubric, CuratorTrigger | Curator grading data and minimum-force proposals; never applies or deletes |
 | `src/dreamer_runner/maintenance/digest.rs` | src | s | 4 struct · 3 fn | DigestProposal, ProactivityCadence, ProactivityDigest, UrgentDigestWake | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/tests.rs` | test | s | — | — | — |
@@ -1108,7 +1113,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Dreamer wake-pass driver (ONE-1288, DREAM-001 residual) |
 | `src/dreamer_wake/scheduling.rs` | src | s | 2 fn · 1 crate-vis | — | The host-facing enqueue doors; the engine owns no timer |
 | `src/dreamer_wake/settlement.rs` | src | s | 6 crate-vis | — | What the driver does with an attempt once the executor returns: milestones, landing, complete, park, publish |
-| `src/dreamer_wake/tests.rs` | test | L | 1 crate-vis | — | — |
+| `src/dreamer_wake/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/dreamer_wake/tests/cleanup_lane.rs` | test | s | — | — | — |
 | `src/dreamer_wake/types.rs` | src | s | 6 struct · 3 enum · 1 trait · 2 fn · 2 crate-vis | DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequestNotice, RunWakePass, WakeAttemptContext, WakeMilestoneAuthor, WakePassReport, WakePassStop +2 | Wake request and outcome vocabulary plus the executor contract |
 | `src/edge.rs` | src | m | 3 struct · 4 enum · 4 fn · 17 crate-vis | DecodedEdgeValue, EdgeActorClass, EdgeConfirmationStatus, EdgeInfo, EdgeKind, EdgeProvenanceFlags, EdgeValueLayout | Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo` |
@@ -1504,11 +1509,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/generated_ui/genui_catalog.rs` | src | s | 2 struct · 3 enum · 7 fn · 1 const | GeneratedUiCatalog, GeneratedUiPrebuilt, GeneratedUiPrimitive, GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities | Closed primitive catalog, surface capability negotiation, and prebuilt card expansion |
 | `src/lens/generated_ui/genui_envelope.rs` | src | s | 2 struct · 1 enum · 11 fn · 3 const · 1 crate-vis | GeneratedLens, LensLoadAction, LensVersionStamp | Versioned [`GeneratedLens`] envelope: wire pair, load-action decision, allocation-guarded wire validation |
 | `src/lens/generated_ui/genui_fingerprint.rs` | src | m | 5 struct · 24 fn | LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle, LensHandleRoleChange | Golden-corpus behavior fingerprint and structured behavior diff |
-| `src/lens/generated_ui/genui_regen.rs` | src | s | 3 struct · 2 enum · 1 trait · 13 fn | LensEvaluatedRevision, LensRegenFailure, LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator | Regen request and outcome decision path over behavior fingerprints |
+| `src/lens/generated_ui/genui_regen.rs` | src | s | 3 struct · 2 enum · 1 trait · 14 fn | LensEvaluatedRevision, LensRegenFailure, LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator | Regen request and outcome decision path over behavior fingerprints |
 | `src/lens/generated_ui/genui_render.rs` | src | m | 6 struct · 1 enum · 6 fn · 3 crate-vis | GeneratedUiCardElement, GeneratedUiCardStart, GeneratedUiCardStateUpdate, GeneratedUiDataModel, GeneratedUiNode, GeneratedUiRender, GeneratedUiSegment | Flat render validation, segment framing and reassembly, and segment wire validators |
 | `src/lens/generated_ui/genui_state.rs` | src | m | 5 struct · 6 enum · 7 fn · 8 crate-vis | GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiActionTier, GeneratedUiArchiveReason, GeneratedUiCardLifecycle, GeneratedUiCardPhase, GeneratedUiStatePatch, GeneratedUiStateSnapshot +3 | Action manifest, typed `$state` schema and patch rules, card lifecycle, and the interactivity gate |
 | `src/lens/generated_ui/mod.rs` | src | s | 7 re-export · 1 crate-vis | — | The Generated-UI protocol: the [`GeneratedLens`] envelope, catalog/primitive negotiation, the… |
 | `src/lens/instrument.rs` | src | s | 3 struct · 6 fn | InstrumentAtoms, InstrumentView, LensExecutionRuntime | The single escaped Instrument renderer and read-only lens interpreter |
+| `src/lens/intent.rs` | src | s | 1 struct · 5 fn · 1 const | LensIntentRecord | Vault-scoped lens intent records and the upgrade regeneration door |
 | `src/lens/mediation/mediation_backing.rs` | src | s | 6 struct · 3 enum · 21 fn | GeneratedUiResultSetScope, GeneratedUiResultSetWritePlan, LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind, LensHostBackingRef, LensReadHandle +1 | Backing refs, selection requests, and engine-issued read handles |
 | `src/lens/mediation/mediation_frame_read.rs` | src | m | 1 struct · 9 fn · 3 crate-vis | LensRenderFrame | Read phase of the render frame: backing refs and read handles |
 | `src/lens/mediation/mediation_frame_write.rs` | src | m | 3 struct · 3 enum · 12 fn | LensApprovedAction, LensApprovedActionArg, LensExecutionBoundary, LensGateWriteChokepoint, LensHostImport, LensHostMediatedWrite | Write phase of the render frame: action validation and result-set dispatch |
@@ -1516,11 +1522,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation/mediation_scope.rs` | src | s | 4 fn | — | Ordinary world-id and repository membership clamps on every frame-bound read |
 | `src/lens/mediation/mod.rs` | src | s | 4 re-export | — | Host mediation — the lens security chokepoint |
 | `src/lens/mediation/surface_dispatch.rs` | src | s | 1 fn | — | Native SurfaceEvent adapter into the existing frame-validated write plan |
-| `src/lens/mod.rs` | src | s | 6 re-export | — | Closed generated-lens atom vocabulary |
+| `src/lens/mod.rs` | src | s | 7 re-export | — | Closed generated-lens atom vocabulary |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
 | `src/lens/tests/genui_render.rs` | test | m | — | — | Generated-UI render-protocol tests: cards, segments, prebuilt shorthand, and tree construction |
 | `src/lens/tests/genui_validation.rs` | test | L | — | — | Generated-lens validation tests: closed enums, URL bans, unsafe atoms, budgets, and size caps |
 | `src/lens/tests/instrument.rs` | test | s | — | — | End-to-end Instrument safety and WorldSet read confinement |
+| `src/lens/tests/intent.rs` | test | s | — | — | Vault intent survives reload and drives the upgrade behavior-diff gate |
 | `src/lens/tests/mediation.rs` | test | m | — | — | Atom-kit catalog and mediation-auth tests: principal-held keys, backing-ref tokens, and host-bound action… |
 | `src/lens/tests/mod.rs` | test | s | — | — | — |
 | `src/lens/tests/result_set.rs` | test | L | — | — | Result-set atom tests: catalog negotiation, selection, render validation, and gated dispatch |
@@ -1532,7 +1539,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 14 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | L | 167 mod · 71 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | L | 168 mod · 71 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limits.rs` | src | s | 3 crate-vis | — | — |
 | `src/linear_sync/codec.rs` | src | s | 3 fn · 1 crate-vis | — | Stable link keys, operation/event digests, field hashes |
 | `src/linear_sync/engine.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | LinearSyncAdapter | LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic |
@@ -1753,9 +1760,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/document_ingress.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | ReceivedFileOperation | Crash-idempotent push-to-document lowering under the origin single-writer lock |
 | `src/origin/export.rs` | src | m | 1 struct · 2 fn · 2 crate-vis | EngineCommitExport | Export finalized engine commits through GitWire objects and the origin CAS protocol |
 | `src/origin/lfs/chunk_tests.rs` | test | m | — | — | Chunked storage acceptance through public IO and stored ASSET rows |
-| `src/origin/lfs/chunks.rs` | src | s | 3 struct · 7 fn · 3 const · 12 crate-vis | LfsChunkParameters, LfsChunkRef, LfsManifest | Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters |
+| `src/origin/lfs/chunks.rs` | src | s | 3 struct · 7 fn · 3 const · 14 crate-vis | LfsChunkParameters, LfsChunkRef, LfsManifest | Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters |
 | `src/origin/lfs/lifecycle.rs` | src | m | 4 fn · 9 crate-vis | — | Last-reference byte reclamation and permanent object deletion markers |
-| `src/origin/lfs/mod.rs` | src | s | 5 re-export · 2 crate-vis | — | Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage |
+| `src/origin/lfs/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage |
 | `src/origin/lfs/oid.rs` | src | s | 1 struct · 5 fn · 2 const | LfsOid | Object-id type with hex parse/spelling codec and OID length consts |
 | `src/origin/lfs/pointer.rs` | src | s | 2 struct · 2 fn | LfsPointerIntent, LfsPushedPointer | Pointer grammar: pushed-pointer parsing, per-repo intents, pointer field consts |
 | `src/origin/lfs/policy.rs` | src | s | 1 struct · 2 enum · 1 trait · 2 fn | DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsAssetClass, LfsPathPolicy | Policy-only admission seam: path classes, admission verdicts, classifier trait and default |
@@ -1986,6 +1993,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
 | `src/ports/time.rs` | src | s | 1 struct · 2 trait · 6 fn · 6 crate-vis | Clock, IdGen, StoreClock | Per-store clock and id source |
+| `src/posterior.rs` | src | s | 1 trait · 2 crate-vis | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/ppr/cache_store.rs` | src | m | 29 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
 | `src/ppr/community.rs` | src | s | 7 crate-vis | — | Community-boost bridge adapter over ppr_community |
 | `src/ppr/mod.rs` | src | s | 7 crate-vis | — | — |
@@ -2066,9 +2074,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/soft_shell.rs` | src | s | 2 crate-vis | — | Retained soft-delete headers on the standard forward recovery path |
 | `src/recovery/tests.rs` | test | s | — | — | — |
 | `src/recovery/validation.rs` | src | s | 3 crate-vis | — | Fail-closed whole-payload validation before a recovery mutation |
+| `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |
 | `src/registry/families.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const · 3 crate-vis | TypeByteFamily, TypeByteFamilyEntry | Byte-space v3.1 family allocation, independent of kind behavior |
 | `src/registry/families/tests.rs` | test | s | — | — | — |
-| `src/registry/mod.rs` | src | s | 1 mod · 6 re-export · 4 crate-vis | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
+| `src/registry/mod.rs` | src | s | 1 mod · 7 re-export · 4 crate-vis | — | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `src/registry/namespaces.rs` | src | s | 2 struct · 1 enum · 1 fn · 2 const | IdNamespaceRegistryEntry, IdNamespaceTarget, StructuralKindRegistration | Presentation-id namespaces for entity kinds and vaults |
 | `src/registry/pack_byte_map/doors.rs` | src | m | 6 fn · 9 crate-vis | — | Local installation commands and name-based instance admission |
 | `src/registry/pack_byte_map/hex_bytes.rs` | src | s | 2 crate-vis | — | Canonical hex identities, never opaque byte-array credential containers |
@@ -2261,6 +2270,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/archive.rs` | src | s | 1 crate-vis | — | Offline archive import is another Candidate birth, never an activation ticket |
 | `src/skill_hub/bootstrap.rs` | src | s | 6 crate-vis | — | Build-embedded bootstrap skills; import and activation commit together on first open |
 | `src/skill_hub/bootstrap/tests.rs` | test | m | — | — | — |
+| `src/skill_hub/default_hub.rs` | src | s | 4 fn · 1 crate-vis | — | First-party library source: offline seeding, immutable Git ref, explicit import |
+| `src/skill_hub/default_hub/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/doors.rs` | src | m | 2 enum · 8 fn · 1 const · 4 crate-vis | HubDependencyResolution, HubSyncDisposition | — |
 | `src/skill_hub/folder.rs` | src | s | 4 crate-vis | — | Strict portable SKILL.md frontmatter subset used by real hub transports |
 | `src/skill_hub/fork_source.rs` | src | s | 1 crate-vis | — | A fork copies real files and edits source identity before hashing the new tree |
@@ -2269,11 +2280,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/http_fetch.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | HttpEndpointSkillHubAdapter | Generic bounded static HTTP index |
 | `src/skill_hub/import_receipt.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | HubImportReceipt | Source receipts and admitted-publisher ingress beside content dedup, never in place of it |
 | `src/skill_hub/index.rs` | src | m | 1 const · 19 crate-vis | — | — |
-| `src/skill_hub/mod.rs` | src | s | 2 mod · 15 re-export · 13 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
+| `src/skill_hub/mod.rs` | src | s | 2 mod · 16 re-export · 14 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 2 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
 | `src/skill_hub/pack_catalog/admission.rs` | src | s | 5 fn | — | Human-gated installation of exact pack source; requested powers stay inert |
-| `src/skill_hub/pack_catalog/admission_tests.rs` | test | s | — | — | Caller-visible pack admission, re-consent, runtime and transaction laws |
+| `src/skill_hub/pack_catalog/admission_tests.rs` | test | m | — | — | Caller-visible pack admission, re-consent, runtime and transaction laws |
 | `src/skill_hub/pack_catalog/admission_types.rs` | src | s | 4 struct · 1 enum · 1 trait · 5 fn | PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier, PackRuntimeRecipe | Source-bound qualification, owner asks, and inert installation receipts |
 | `src/skill_hub/pack_catalog/bundled_skills.rs` | src | s | 1 crate-vis | — | Pack skills pass the existing archive scanner/Candidate door in the install transaction |
 | `src/skill_hub/pack_catalog/codec.rs` | src | s | 4 crate-vis | — | Canonical source-bearing ASSET envelopes: immutable content, not authority |
