@@ -28454,14 +28454,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JudgeAsk",
+      "JudgeAskReason",
+      "JudgeLabel"
+     ],
+     "path": "src/skill_optimize/labels.rs",
+     "purpose": "Human-calibrated judge asks and the append-only label anchor",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 3,
+      "re-export": 7
      }
     },
     {
@@ -34722,7 +34739,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,7 +34937,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {

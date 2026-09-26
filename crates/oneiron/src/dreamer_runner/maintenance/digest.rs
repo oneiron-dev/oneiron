@@ -35,6 +35,7 @@ pub struct ProactivityDigest {
     pub created_at: u64,
     pub urgent: bool,
     pub groups: BTreeMap<String, Vec<DigestProposal>>,
+    pub judge_asks: Vec<crate::skill_optimize::JudgeAsk>,
     pub rendered: String,
 }
 #[derive(Default, Serialize, Deserialize)]
@@ -159,7 +160,9 @@ impl Vault {
                     summary: format!("{}: {}", body.predicate, body.value),
                 });
             }
-            if groups.is_empty() {
+            let judge_asks =
+                crate::skill_optimize::take_digest_asks_in_txn(self, txn, owner.actor(), now)?;
+            if groups.is_empty() && judge_asks.is_empty() {
                 return Ok(None);
             }
             let mut rendered = String::new();
@@ -177,14 +180,21 @@ impl Vault {
                         .insert(proposal.claim_ref.to_hex(), proposal.revision);
                 }
             }
+            for ask in &judge_asks {
+                rendered.push_str(&format!(
+                    "- judge calibration [{}]\n",
+                    crate::entity_id::bytes_to_hex_lower(&ask.id)
+                ));
+            }
             let is_urgent = !due && breakthrough;
-            let identity =
-                serde_json::to_vec(&(now, &groups, is_urgent, &rendered)).map_err(|_| invalid())?;
+            let identity = serde_json::to_vec(&(now, &groups, &judge_asks, is_urgent, &rendered))
+                .map_err(|_| invalid())?;
             let digest = ProactivityDigest {
                 id: *blake3::hash(&identity).as_bytes(),
                 created_at: now,
                 urgent: is_urgent,
                 groups,
+                judge_asks,
                 rendered,
             };
             let bytes = serde_json::to_vec(&digest).map_err(|_| invalid())?;
@@ -211,6 +221,7 @@ impl Vault {
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
                     &digest.groups,
+                    &digest.judge_asks,
                     digest.urgent,
                     &digest.rendered,
                 ))
