@@ -222,3 +222,91 @@ fn capability_channel_keeps_memory_budget_and_revalidates_lifecycle() -> Result<
     assert_eq!(agents.rows[0].lane, crate::context_board::AgentLane::Cand);
     Ok(())
 }
+
+/// The pack's skill channel ranks after semantic filtering, not by entity id or
+/// the rebuildable confidence cache. The projected claim supplies the posterior.
+#[test]
+fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> {
+    use crate::claim::{ClaimBody, ClaimSubject};
+    use crate::skill_reliability::PREDICATE_SKILL_RELIABILITY;
+
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let mut skills = Vec::new();
+    // All six have the same indexed text and therefore equal semantic relevance.
+    // Skill 6 must enter the five-slot turn budget from outside the old semantic
+    // top five; skills 2 and 6 have exactly equal posterior means.
+    for (index, alpha, beta) in [
+        (1, 1.0_f32, 3.0_f32),
+        (2, 80.0, 80.0),
+        (3, 1.0, 5.0),
+        (4, 3.0, 1.0),
+        (5, 1.0, 9.0),
+        (6, 2.0, 2.0),
+    ] {
+        let id = crate::test_util::entity(index);
+        let mut skill = SkillRecord::new(
+            format!("skill.ucb.{index}"),
+            "retrieval probe",
+            "v1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            0.01, // deliberately stale cache; it must not govern selection
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("ranking-fixture"),
+            )]),
+        );
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_skill_record(&skill)?,
+            )
+            .text(&id, &[("body", "channel")])
+            .commit()?;
+        skill.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&id, &skill, TimeRange { start: 2, end: 2 }, 2)?;
+        vault.batch().text(&id, &[("body", "channel")]).commit()?;
+        let claim_id = crate::test_util::entity(index + 100);
+        let mut posterior = ClaimBody::new(
+            PREDICATE_SKILL_RELIABILITY,
+            ClaimSubject::Entity(id),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("alpha"), rmpv::Value::F32(alpha)),
+                (rmpv::Value::from("beta"), rmpv::Value::F32(beta)),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        );
+        posterior.source = Some(ClaimSource::Observed);
+        vault.with_write_txn(|txn| {
+            vault.put_reserved_claim_in_txn(
+                txn,
+                &claim_id,
+                &posterior,
+                TimeRange { start: 3, end: 3 },
+                3,
+            )
+        })?;
+        skills.push(id);
+    }
+    let pack = vault.context_pack().search_text("channel", 20).run()?;
+    assert_eq!(
+        pack.capabilities
+            .iter()
+            .map(|hit| hit.id)
+            .collect::<Vec<_>>(),
+        vec![skills[3], skills[5], skills[1], skills[0], skills[2]],
+        "posterior mean first, then UCB exploration for equal-mean arms"
+    );
+    Ok(())
+}

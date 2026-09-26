@@ -12,7 +12,7 @@ use crate::temporal::TimeRange;
 use super::codec::invalid;
 use super::posterior::SkillReliabilityPosterior;
 use super::projector::PREDICATE_SKILL_RELIABILITY;
-use super::provenance::skill_reliability_prior;
+use super::provenance::{skill_reliability_prior, skill_reliability_prior_in_txn};
 
 /// Reads the active `skill.reliability` posterior, or `None` when the skill has
 /// never been projected.
@@ -135,11 +135,29 @@ pub fn rebuild_skill_confidence_cache(vault: &Vault, skill: &EntityId, at: u64) 
 /// ranking (sum of [`SkillReliabilityPosterior::observations`]); it is an
 /// argument rather than a hidden scan so ranking N skills costs N reads, not N².
 pub fn skill_selection_score(vault: &Vault, skill: &EntityId, total_pulls: u32) -> Result<f32> {
-    let posterior = match skill_reliability_posterior(vault, skill)? {
-        Some(posterior) => posterior,
-        None => skill_reliability_prior(vault, skill)?,
-    };
-    Ok(posterior.ucb(total_pulls))
+    let rtxn = vault.store.env.read_txn()?;
+    skill_selection_score_in_txn(vault, &rtxn, skill, total_pulls)
+}
+
+/// Same score as the public door, on the retrieval candidate's read snapshot.
+pub(crate) fn skill_selection_score_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+    total_pulls: u32,
+) -> Result<f32> {
+    Ok(selection_posterior_in_txn(vault, rtxn, skill)?.ucb(total_pulls))
+}
+
+pub(crate) fn selection_posterior_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<SkillReliabilityPosterior> {
+    match resolved_reliability_posterior_in_txn(vault, rtxn, skill)? {
+        Some(posterior) => Ok(posterior),
+        None => skill_reliability_prior_in_txn(vault, rtxn, skill),
+    }
 }
 
 pub(super) fn read_skill(vault: &Vault, skill: &EntityId) -> Result<SkillRecord> {

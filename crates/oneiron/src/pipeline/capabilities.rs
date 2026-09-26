@@ -1,5 +1,6 @@
 //! Capability candidates have a separate turn budget, never the memory budget.
 
+use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::CapabilityHit;
 use crate::entity_id::EntityId;
@@ -7,10 +8,14 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
 use crate::store::Store;
 use heed::RoTxn;
+use std::collections::HashSet;
 
 use super::types::ScoredEntity;
 
 pub(super) const PER_KIND_CAPABILITY_LIMIT: usize = 5;
+/// Bounded semantic shortlist for the skill bandit, not a limit on Active skills.
+/// The turn's five discoveries are selected only AFTER this pool is scored.
+pub(super) const SKILL_RANK_CANDIDATE_LIMIT: usize = 256;
 
 pub(super) fn is_capability(kind: u8) -> bool {
     matches!(kind, ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF)
@@ -60,13 +65,13 @@ pub(crate) fn capability_hit(
 
 pub(super) fn partition_capabilities(
     scores: &mut Vec<ScoredEntity>,
-    store: &Store,
+    vault: &Vault,
     txn: &RoTxn<'_>,
 ) -> Result<Vec<ScoredEntity>> {
+    let store = &vault.store;
     let mut memory = Vec::with_capacity(scores.len());
-    let mut capabilities = Vec::new();
-    let mut skills = 0;
-    let mut agents = 0;
+    let mut eligible = Vec::new();
+    let mut skill_ids = HashSet::new();
     for scored in std::mem::take(scores) {
         let Some(raw) = store.entities.get(txn, scored.id.as_bytes())? else {
             continue;
@@ -79,18 +84,56 @@ pub(super) fn partition_capabilities(
             continue;
         }
         if let Some(hit) = capability_hit(store, txn, scored.id)? {
-            let count = if hit.entity_type == ENTITY_TYPE_SKILL {
-                &mut skills
-            } else {
-                &mut agents
-            };
-            if *count < PER_KIND_CAPABILITY_LIMIT {
-                *count += 1;
-                capabilities.push(scored);
+            if hit.entity_type == ENTITY_TYPE_SKILL {
+                skill_ids.insert(scored.id);
             }
+            eligible.push(scored);
         }
     }
     *scores = memory;
+
+    // Sum pulls over every eligible skill BEFORE the turn's top-k. Ranking only
+    // the old semantic top-k would keep under-tried skills permanently hidden.
+    let mut total_pulls = 0_u32;
+    for id in &skill_ids {
+        let posterior = crate::skill_reliability::selection_posterior_in_txn(vault, txn, id)?;
+        // Observations are positive integer-valued Beta weights. Saturation
+        // keeps an extremely large candidate set from wrapping the horizon.
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "positive posterior observation counts saturate at the u32 UCB horizon"
+        )]
+        let pulls = posterior.observations() as u32;
+        total_pulls = total_pulls.saturating_add(pulls);
+    }
+    for scored in &mut eligible {
+        if skill_ids.contains(&scored.id) {
+            // Multiply, rather than replace, semantic relevance with the
+            // posterior mean + UCB bonus. The cache is not reliability truth.
+            scored.score *= crate::skill_reliability::skill_selection_score_in_txn(
+                vault,
+                txn,
+                &scored.id,
+                total_pulls,
+            )?;
+        }
+    }
+    crate::fusion::sort_scored_entities_desc(&mut eligible);
+    let mut capabilities = Vec::new();
+    let mut skills = 0;
+    let mut agents = 0;
+    for scored in eligible {
+        let count = if skill_ids.contains(&scored.id) {
+            &mut skills
+        } else {
+            &mut agents
+        };
+        if *count < PER_KIND_CAPABILITY_LIMIT {
+            *count += 1;
+            capabilities.push(scored);
+        }
+    }
     Ok(capabilities)
 }
 
