@@ -1,4 +1,4 @@
-"""Pin scoped CI: PRs and main pushes test what their diff touched; the full gate runs nightly."""
+"""Pin scoped CI, incremental build helpers, and the nightly full gate."""
 
 import importlib.util
 import unittest
@@ -49,9 +49,9 @@ class CiWorkflowTests(unittest.TestCase):
             self.assertIn(GUARD, lines)
 
     def test_jobs_run_the_scoped_runner(self):
-        self.assertIn("        run: scripts/ci/run_scoped.sh clippy", self.job_lines("checks"))
-        self.assertIn("        run: scripts/ci/run_scoped.sh test", self.job_lines("test-linux"))
-        self.assertIn("        run: scripts/ci/run_scoped.sh featureless", self.job_lines("test-linux-featureless"))
+        self.assertIn("        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh clippy", self.job_lines("checks"))
+        self.assertIn("        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh test", self.job_lines("test-linux"))
+        self.assertIn("        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh featureless", self.job_lines("test-linux-featureless"))
 
     def test_only_clippy_receives_reverse_dependents(self):
         self.assertIn("      dependents: ${{ steps.scope.outputs.dependents }}", self.job_lines("changes"))
@@ -95,7 +95,7 @@ class CiWorkflowTests(unittest.TestCase):
             self.assertIn("        run: sccache --show-stats", lines, job)
         # Tool installers stay unwrapped. Check the owning step, not a global line count.
         expected = {
-            "checks": {"Clippy (touched packages; the full gate nightly)"},
+            "checks": {"Clippy (touched packages and dependents; the full gate nightly)"},
             "test": {"Workspace tests (nextest, full tier, macOS recipe)",
                      "Featureless oneiron library tests",
                      "Featureless oneiron library tests (nextest, no retries)"},
@@ -135,12 +135,31 @@ class CiWorkflowTests(unittest.TestCase):
         for job in ("changes", "checks", "test", "test-linux", "test-linux-featureless", "mutation-audit"):
             self.assertTrue(any("!inputs.cache_proof" in line for line in self.job_lines(job)), job)
 
+    def test_pr_incremental_keeps_the_existing_shared_sccache_action(self):
+        selector = "${{ github.event_name == 'pull_request' && 'true' || 'false' }}"
+        for job in ("checks", "test-linux", "test-linux-featureless"):
+            lines = self.job_lines(job)
+            for profile in ("DEV", "TEST"):
+                self.assertIn(f"      CARGO_PROFILE_{profile}_INCREMENTAL: {selector}", lines)
+            self.assertIn("          RUSTC_WRAPPER: sccache", lines)
+            self.assertIn("      - name: sccache 0.15.0 (GitHub Actions shared cache)", lines)
+        self.assertNotIn("CARGO_INCREMENTAL: '1'", self.text)
+        self.assertNotIn("CARGO_INCREMENTAL=1", self.runner)
+
+    def test_scoped_runner_wraps_test_builds_and_rustdoc_not_clippy(self):
+        self.assertIn('if [ "$mode" = test ] || [ "$mode" = featureless ]; then', self.runner)
+        self.assertIn('RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" scripts/ci/with-test-tmpdir.sh "$@"', self.runner)
+        self.assertIn('RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" RUSTDOCFLAGS="-D warnings" cargo doc', self.runner)
+        self.assertNotIn("RUSTC_WORKSPACE_WRAPPER: ", "\n".join(self.job_lines("checks")))
+        self.assertTrue((ROOT / "scripts/ci/rustc-threads.sh").stat().st_mode & 0o111)
+        self.assertTrue((ROOT / "scripts/ci/with-test-tmpdir.sh").stat().st_mode & 0o111)
+
     def test_workflow_guard_is_executed_by_python_check(self):
         self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", self.text)
 
     def test_build_guide_describes_scoped_ci_and_process_models(self):
         guide = (ROOT / "docs/ops/build-performance.md").read_text()
-        for phrase in ("shared-process", "per-test-process", "`Test (featureless)`", "scripts/ci/ci_scope.py"):
+        for phrase in ("shared-process", "per-test-process", "`Test (featureless)`", "scripts/ci/ci_scope.py", "RUSTC_WORKSPACE_WRAPPER", "CARGO_PROFILE_DEV_INCREMENTAL"):
             self.assertIn(phrase, guide)
         self.assertNotIn("Both CI test jobs run", guide)
 
