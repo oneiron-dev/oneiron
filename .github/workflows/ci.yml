@@ -24,8 +24,11 @@ name: CI
 # Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on Linux; the Macs
 # take the dispatch-only macOS recipe, cache proof and mutation audit. Each runner keeps its
 # persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache also stores compiler results in
-# GitHub's cross-run cache. Never set CARGO_TARGET_DIR here. The toolchain is host rustup via
-# rust-toolchain.toml. `clean: true` on every checkout because `_work` persists between runs.
+# GitHub's cross-run cache. PR scoped Cargo steps unset CARGO_INCREMENTAL and select
+# incremental dev/test profiles; main, nightly, and dispatch remain non-incremental.
+# The core-only workspace wrapper speeds build/test; Linux test temp uses executable tmpfs
+# only when at least 12 GiB is free, otherwise the runner disk TMPDIR. Never set CARGO_TARGET_DIR
+# here. The toolchain is host rustup via rust-toolchain.toml. `clean: true` on every checkout because `_work` persists between runs.
 on:
   workflow_dispatch:
     inputs:
@@ -93,6 +96,8 @@ jobs:
       always()
       && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
       SCOPE_DEPENDENTS: ${{ needs.changes.outputs.dependents }}
@@ -124,7 +129,7 @@ jobs:
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         env:
           RUSTC_WRAPPER: sccache
-        run: scripts/ci/run_scoped.sh clippy
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh clippy
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
         run: |
@@ -165,6 +170,8 @@ jobs:
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
     if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
+    env:
+      RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -215,6 +222,8 @@ jobs:
       always()
       && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
@@ -250,7 +259,7 @@ jobs:
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         env:
           RUSTC_WRAPPER: sccache
-        run: scripts/ci/run_scoped.sh test
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh test
 
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
@@ -264,6 +273,8 @@ jobs:
       always()
       && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
       SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
@@ -297,7 +308,7 @@ jobs:
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         env:
           RUSTC_WRAPPER: sccache
-        run: scripts/ci/run_scoped.sh featureless
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh featureless
 
       - name: Compiler cache stats
         if: always() && steps.sccache.outcome == 'success'
