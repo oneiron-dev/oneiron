@@ -268,11 +268,11 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "e64d3620db4a6edc34f98b13ac7cc93aab123097f171100810bdab0cc234e5fc",
+        "117cbc0a2caae203fa72c9a46f0ca138b1b6e1be863b751bcdf0a34f52926486",
     ),
     (
         "put_habit_checkin",
-        "8c63eb8fda6db12757918c471c59ad7ae72bfbcb740308716ef8fb38a808f082",
+        "0de5bf55baf8db6b91c14f139b07e4b9b283c18427de9d376f3fecd285eb1de0",
     ),
     (
         "edges",
@@ -292,30 +292,30 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "893c1e677c44ea5ac23bb9dc48542703bd0e4c37b1f0955af1ff6f9404f8a703",
+        "b80dac17f8ae9c800030698b90b167750b410d71b672f3a4c2024c22de818383",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "99a54adf45680931a6709eb0686bdf3499438a8554057222f9e126ce25518730",
+        "3e13d1ee669373eec6ecfca4ed82522d4c8f55fb2c38c2d28c24774424550885",
     ),
     (
         "put_task_fact",
-        "0b722961380e76ac796f70bc737a82f3b3c00a22379ec6f0b90587bcdcdfea92",
+        "5c00475b47011981ab81e2808bd31497e9e7b0cc6b91c6f2ce79f6de904e281e",
     ),
     (
         "put_authored_note",
-        "1548ea94abad9200e9c8717162f1fb4a276fd7fcec56b106001b2935af86cc65",
+        "66336025fc3665bb69b750e84fefe4b3df408def8dc0c8e90a668a7d362e5603",
     ),
 ];
 
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "179b0563b08c12ed0669fbdcb9a9f2e56bb9067cca45b8b2591fa7d71ef1c517";
+    "d32289a1a7532fce8706b9ad5a50d263bca2b4bb44d7109c6e1e720e826e79f6";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "8e0e55e4472245ecf1e8cc6d38aad31ca3d3ef141f7bfa0e354f10bfb1e1aa7b";
+    "94a729b304db6fb6d2b4a2377b1e5376a860001c9a40e26f6b17186848bc1eed";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
