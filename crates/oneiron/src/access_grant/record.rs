@@ -329,7 +329,8 @@ impl AccessGrant {
             | AccessGrantScope::RelationshipClaims { space_ref } => space_ref == space,
             _ => false,
         };
-        self.validate().is_ok()
+        crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            && self.validate().is_ok()
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal
             && self.capability == capability

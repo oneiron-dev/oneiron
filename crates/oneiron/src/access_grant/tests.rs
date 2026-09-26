@@ -798,6 +798,11 @@ fn relationship_scopes_and_expiry_fail_closed() -> Result<()> {
             grant
         );
         assert!(grant.allows_relationship_read(principal, space, grant.capability, 43));
+        // A matching legacy resource selector must not grant beyond the
+        // stored Scope, even when the principal, space, and capability match.
+        grant.authority_scope = crate::federation::Scope::default();
+        assert!(!grant.allows_relationship_read(principal, space, grant.capability, 43));
+        grant.authority_scope = crate::federation::scope_codec::read_preset();
         assert!(!grant.allows_relationship_read(principal, entity(0xB2), grant.capability, 43));
         if grant.capability == AccessGrantCapability::MessagesRead {
             assert!(!grant.allows_relationship_read(
