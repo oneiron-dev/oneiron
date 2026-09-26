@@ -136,7 +136,14 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         return Ok(EdgeRematOutcome::Deferred);
                     }
                 }
-                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                    && !matches!(
+                        kind,
+                        crate::edge::EdgeKind::Parent
+                            | crate::edge::EdgeKind::SpawnedBy
+                            | crate::edge::EdgeKind::RepliesTo
+                    )
+                {
                     let mandated_at = vault
                         .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?;
                     let door_echo = mandated_at.is_some_and(|at| {
@@ -159,6 +166,32 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 let src_exists = vault.store.entities.get(&*wtxn, src.as_bytes())?.is_some();
                 let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
                 if !src_exists || !tgt_exists {
+                    return Ok(EdgeRematOutcome::Deferred);
+                }
+                if matches!(
+                    kind,
+                    crate::edge::EdgeKind::Parent
+                        | crate::edge::EdgeKind::SpawnedBy
+                        | crate::edge::EdgeKind::RepliesTo
+                ) && crate::conversation_dag::validate_received_edge(
+                    &vault.store,
+                    &*wtxn,
+                    src,
+                    kind,
+                    tgt,
+                    decoded,
+                )? == crate::conversation_dag::ReceivedEdgeAdmission::Deferred
+                {
+                    if kind == crate::edge::EdgeKind::Parent {
+                        bridge::defer_parent_retry(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &src,
+                            &tgt,
+                            buf,
+                        )?;
+                    }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
 
@@ -236,6 +269,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         EdgeValueFields::from_decoded(decoded),
                     )
                     .apply(wtxn)?;
+                if kind == crate::edge::EdgeKind::Parent {
+                    bridge::settle_parent_retry(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                }
                 Ok(EdgeRematOutcome::Written)
             });
             match result {
@@ -250,6 +286,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
                 Ok(EdgeRematOutcome::Unchanged) => {}
                 Ok(EdgeRematOutcome::Deferred) => {
+                    if kind == crate::edge::EdgeKind::Parent {
+                        ledger.pending_dag_parent_sources.insert(src);
+                    }
                     // Deferral, not a rejection: cross-window endpoints
                     // arrive later; the edge stays in the CRDT and
                     // re-materializes when its endpoints do.

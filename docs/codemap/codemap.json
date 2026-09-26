@@ -11750,13 +11750,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 13
      }
     },
     {
@@ -11786,7 +11786,7 @@
      "path": "src/conversation_dag/membership.rs",
      "purpose": "Replicated TURN session membership: body carrier and local index reconstruction",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -11807,7 +11807,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 2
      }
@@ -11866,7 +11866,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/replay.rs",
@@ -29578,7 +29578,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -29601,6 +29601,16 @@
       "fn": 13,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/parent_retry.rs",
+     "purpose": "Exact, durable received-Parent obligations and dependency-triggered replay",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30540,7 +30550,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
@@ -30561,7 +30571,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/edge_pass.rs",
@@ -34763,7 +34773,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",

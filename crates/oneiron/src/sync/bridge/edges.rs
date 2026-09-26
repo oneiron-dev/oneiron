@@ -75,6 +75,11 @@ pub(super) fn materialize_edges_from_delta(
             .map(|(key, value)| (key.as_ref(), value))
             .chain(replay.iter().map(|(key, value)| (key.as_str(), value)))
         {
+            // A fresh value or removal supersedes an older deferred payload
+            // for this exact Parent key. A new deferral re-registers it below.
+            if let Some((src, EdgeKind::Parent, tgt)) = parse_edge_key(key) {
+                super::parent_retry::settle(vault, wtxn, window_key, &src, &tgt)?;
+            }
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
                     let Some((src, kind, tgt)) = parse_edge_key(key) else {
@@ -164,7 +169,12 @@ pub(super) fn materialize_edges_from_delta(
                     // missing mandate or peer-chosen bytes remain a
                     // quarantine-and-continue rejection; no reserved edge
                     // lands merely because hydration ran first.
-                    if let Some(reserved) = &reserved_rejection {
+                    if let Some(reserved) = &reserved_rejection
+                        && !matches!(
+                            kind,
+                            EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
+                        )
+                    {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
                         )?;
@@ -263,6 +273,43 @@ pub(super) fn materialize_edges_from_delta(
                         }
                     }
 
+                    // A received DAG door's structural edge is not a raw local
+                    // edge write. Check its value and live endpoint types only
+                    // after hydration; adoption checks the whole graph.
+                    if matches!(
+                        kind,
+                        EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
+                    ) {
+                        let verdict = if kind == EdgeKind::Parent {
+                            // ChildOf from this delta is not stored yet. Check
+                            // shape now; topology is rechecked after ChildOf
+                            // applies, against every earlier Parent write.
+                            crate::conversation_dag::validate_received_edge_shape(
+                                &vault.store, &*wtxn, src, kind, tgt, decoded,
+                            )
+                            .map(|()| crate::conversation_dag::ReceivedEdgeAdmission::Admit)
+                        } else {
+                            crate::conversation_dag::validate_received_edge(
+                                &vault.store, &*wtxn, src, kind, tgt, decoded,
+                            )
+                        };
+                        match verdict {
+                            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Admit) => {}
+                            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Deferred) => {
+                                // Other DAG kinds have no membership dependency.
+                                continue;
+                            }
+                            Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
+                                quarantine_rejected_op_in_txn(
+                                    vault, wtxn, window_key, QuarantineContainer::Edges,
+                                    key, &rejected, buf,
+                                )?;
+                                continue;
+                            }
+                            Err(local) => return Err(local),
+                        }
+                    }
+
                     // ONE-1645 `FacetOf` type table, Observer-B door.
                     //
                     // This is the SYNCHRONOUS path a member/guest import takes
@@ -353,6 +400,32 @@ pub(super) fn materialize_edges_from_delta(
                         )?;
                         continue;
                     };
+                    // A bare peer removal is not proof that the DAG door
+                    // retired an immutable structural edge. A soft-deleted
+                    // shell retains its ancestry; only an already-absent
+                    // edge after validated destructive deletion is a no-op
+                    // echo. Do not equate DeletedShell with hard purge.
+                    if matches!(
+                        kind,
+                        EdgeKind::Parent
+                            | EdgeKind::SpawnedBy
+                            | EdgeKind::RepliesTo
+                            | EdgeKind::AddressedTo
+                    ) && (matches!(
+                        crate::vault::live_entity_row_in_txn(&vault.store, &*wtxn, &src)?,
+                        crate::vault::LiveEntityRow::Live { .. }
+                    ) || vault.store.edges_out.get(
+                        &*wtxn,
+                        &Store::encode_edge_key(&src, kind, &tgt),
+                    )?.is_some()) {
+                        let reserved = crate::edge::validate_public_edge_kind(kind)
+                            .expect_err("DAG structural edge is reserved");
+                        quarantine_rejected_op_in_txn(
+                            vault, wtxn, window_key, QuarantineContainer::Edges,
+                            key, &reserved, &[],
+                        )?;
+                        continue;
+                    }
                     // ARCH-0055 reserved-kind gate, removal side: a raw
                     // edges-map removal must not tear a shell edge the
                     // validated ledger still mandates (an unledgered
@@ -413,6 +486,18 @@ pub(super) fn materialize_edges_from_delta(
             }
         }
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        // Only a membership or spawning-anchor change can wake a deferred
+        // Parent. Do not scan every pending obligation on unrelated edge
+        // traffic chosen by a peer.
+        if delta.updated.iter().any(|(key, value)| {
+            matches!(value, Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))))
+                && matches!(
+                    parse_edge_key(key.as_ref()),
+                    Some((_, EdgeKind::ChildOf | EdgeKind::SpawnedBy, _))
+                )
+        }) {
+            super::parent_retry::retry_in_txn(vault, wtxn)?;
+        }
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(

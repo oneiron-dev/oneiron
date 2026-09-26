@@ -4,7 +4,7 @@ use super::graph::{self, MIGRATED, edge_ids, key, require_type};
 use super::writes::{set_head_in_txn, value};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
-use crate::error::{Error, RecordError, Result};
+use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
@@ -43,6 +43,8 @@ pub(crate) fn migrate_in_txn(
         super::membership::restore(vault, txn, *id)?;
     }
     let mut turns = Vec::new();
+    let mut all_parents = HashMap::new();
+    let mut non_trunk = HashSet::new();
     let mut already_dag = false;
     for id in candidates {
         match live_entity_row_in_txn(&vault.store, txn, &id)? {
@@ -62,12 +64,24 @@ pub(crate) fn migrate_in_txn(
                 Some(session),
             )?;
         }
-        if graph::is_thread_record(&vault.store, txn, &id)?
-            || graph::is_sub_session_record(&vault.store, txn, &id)?
-        {
+        let parent = graph::parent(&vault.store, txn, &id)?;
+        all_parents.insert(id, parent);
+        let thread = graph::is_thread_record(&vault.store, txn, &id)?;
+        let sub_session =
+            graph::is_sub_session_record(&vault.store, txn, &id).map_err(|error| {
+                // This is a received conversation's topology, not a storage
+                // failure. Maintenance may skip this room and keep scanning.
+                if matches!(error, Error::Registry(RegistryError::CycleDetected)) {
+                    graph::invalid("received sub-session contains a Parent cycle")
+                } else {
+                    error
+                }
+            })?;
+        if thread || sub_session {
+            non_trunk.insert(id);
             continue;
         }
-        already_dag |= graph::parent(&vault.store, txn, &id)?.is_some();
+        already_dag |= parent.is_some();
         let raw = vault
             .store
             .port_entity_record(txn, &id)?
@@ -81,11 +95,43 @@ pub(crate) fn migrate_in_txn(
         turns.push((metadata.occurred_start, id));
     }
     turns.sort_unstable();
+    // Check every live TURN before writing the migration marker. Thread and
+    // sub-session records stay outside HEAD selection, not outside the DAG:
+    // a cycle confined to either class must not be silently adopted. This
+    // Kahn pass examines each record and Parent once, not every ancestor path.
+    let mut all_children: HashMap<EntityId, Vec<EntityId>> = HashMap::new();
+    let mut all_ready = VecDeque::new();
+    for (&id, &parent) in &all_parents {
+        if let Some(parent) = parent {
+            if !all_parents.contains_key(&parent) {
+                return Err(graph::invalid(
+                    "received Parent is outside the live conversation",
+                ));
+            }
+            all_children.entry(parent).or_default().push(id);
+        } else if non_trunk.contains(&id) {
+            return Err(graph::invalid(
+                "received thread or sub-session has no Parent",
+            ));
+        } else {
+            all_ready.push_back(id);
+        }
+    }
+    let mut visited = 0;
+    while let Some(id) = all_ready.pop_front() {
+        visited += 1;
+        if let Some(children) = all_children.remove(&id) {
+            all_ready.extend(children);
+        }
+    }
+    if visited != all_parents.len() {
+        return Err(graph::invalid("received DAG contains a Parent cycle"));
+    }
     if already_dag {
         // Received DAG edges predate local HEAD state. Never overwrite their
         // parentage with a legacy chain. Validate and choose a deterministic
         // local initial branch; HEAD remains local after this first adoption.
-        // Each live record and Parent is examined once. Rewalking every
+        // This additional trunk-only pass stays linear. Rewalking every
         // ancestor path would reject a valid 142-record chain under a 10k
         // work budget even though the shared depth cap admits it.
         let members: HashSet<_> = turns.iter().map(|(_, id)| *id).collect();

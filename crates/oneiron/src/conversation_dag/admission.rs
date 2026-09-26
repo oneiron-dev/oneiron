@@ -269,3 +269,251 @@ pub(crate) fn pin_typed_record(
     }
     Ok(())
 }
+
+/// Unlike a raw local batch write, a received structural edge may be a
+/// replicated side effect of a DAG door. Admit only the defined DAG kinds
+/// with live, correctly typed endpoints and the door's structural value.
+/// Parent topology is checked here on every replay, including after adoption.
+/// Missing cross-window membership defers the edge, not a false peer rejection.
+#[cfg(feature = "sync")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceivedEdgeAdmission {
+    Admit,
+    Deferred,
+}
+
+#[cfg(feature = "sync")]
+fn received_parent_conversation(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+) -> Result<Option<EntityId>> {
+    let owners = super::graph::edge_ids(store, txn, &turn, EdgeKind::ChildOf, false, 2)?;
+    let Some(&owner) = owners.first() else {
+        return Ok(None);
+    };
+    if owners.len() != 1 {
+        return Err(invalid("received Parent has multiple conversations"));
+    }
+    match crate::vault::live_entity_row_in_txn(store, txn, &owner)? {
+        crate::vault::LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_CONVERSATION,
+            ..
+        } => Ok(Some(owner)),
+        crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => Ok(None),
+        _ => Err(invalid("received Parent has a non-conversation owner")),
+    }
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_parent(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    target: EntityId,
+) -> Result<ReceivedEdgeAdmission> {
+    use super::graph::{self, HEAD};
+    use crate::limits::MAX_ANCESTOR_DEPTH;
+    use std::collections::HashSet;
+
+    // Parity is an echo, not a new topology mutation. Never replace an
+    // already-stored Parent or add a second one for an immutable record.
+    if let Some(existing) = graph::parent(store, txn, &source)? {
+        return if existing == target {
+            Ok(ReceivedEdgeAdmission::Admit)
+        } else {
+            Err(invalid("received record has a different Parent"))
+        };
+    }
+    let Some(conversation) = received_parent_conversation(store, txn, source)? else {
+        return Ok(ReceivedEdgeAdmission::Deferred);
+    };
+    let target_conversation = received_parent_conversation(store, txn, target)?;
+    if target_conversation != Some(conversation) {
+        return if target_conversation.is_none() {
+            Ok(ReceivedEdgeAdmission::Deferred)
+        } else {
+            Err(invalid("received Parent crosses conversations"))
+        };
+    }
+
+    // A worker can continue its spawning TURN or another record of its
+    // own session, never a different worker's session. Read the immutable
+    // body carrier rather than trusting a local membership index that may
+    // not yet have been reconstructed from an out-of-order received TURN.
+    let source_body = graph::require_type(store, txn, &source, crate::registry::ENTITY_TYPE_TURN)?;
+    let target_body = graph::require_type(store, txn, &target, crate::registry::ENTITY_TYPE_TURN)?;
+    let source_session = super::membership::carrier(&source_body)?;
+    let target_session = super::membership::carrier(&target_body)?;
+    let spawning_turn = if let Some(session) = source_session {
+        match crate::vault::live_entity_row_in_txn(store, txn, &session)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_SESSION,
+                ..
+            } => {}
+            crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
+                return Ok(ReceivedEdgeAdmission::Deferred);
+            }
+            _ => return Err(invalid("received Parent names a non-session")),
+        }
+        let anchors = graph::edge_ids(store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+        let Some(&anchor) = anchors.first() else {
+            return Ok(ReceivedEdgeAdmission::Deferred);
+        };
+        if anchors.len() != 1 {
+            return Err(invalid("received session has multiple spawning turns"));
+        }
+        let anchor_conversation = received_parent_conversation(store, txn, anchor)?;
+        if anchor_conversation.is_none() {
+            return Ok(ReceivedEdgeAdmission::Deferred);
+        }
+        if anchor_conversation != Some(conversation) {
+            return Err(invalid("received session anchor is outside conversation"));
+        }
+        if target != anchor && target_session != Some(session) {
+            return Err(invalid("received Parent crosses sub-session boundary"));
+        }
+        Some(anchor)
+    } else {
+        if target_session.is_some() {
+            return Err(invalid("received trunk Parent enters a sub-session"));
+        }
+        None
+    };
+
+    // Walk target's existing ancestors. The proposed source -> target edge
+    // forms a cycle exactly when target already descends from source. Also
+    // refuse an existing cyclic/cardinality fault instead of extending it.
+    let mut seen = HashSet::new();
+    let mut cursor = Some(target);
+    while let Some(id) = cursor {
+        if !seen.insert(id) || id == source {
+            return Err(invalid("received Parent contains a cycle"));
+        }
+        // The proposed source adds one more record to target's path.
+        if seen.len() >= MAX_ANCESTOR_DEPTH {
+            return Err(invalid("received Parent exceeds ancestor depth"));
+        }
+        if received_parent_conversation(store, txn, id)? != Some(conversation) {
+            return Ok(ReceivedEdgeAdmission::Deferred);
+        }
+        cursor = graph::parent(store, txn, &id)?;
+    }
+    // A session worker's target path must eventually reach its spawning
+    // TURN. A missing intermediary Parent may arrive in a later window;
+    // leave that dependency pending rather than admitting a broken scope.
+    if let Some(anchor) = spawning_turn
+        && !seen.contains(&anchor)
+    {
+        return Ok(ReceivedEdgeAdmission::Deferred);
+    }
+    if let Some(marker) = store.vault_meta.get(txn, &key(MIGRATED, &conversation))? {
+        if marker.as_ref() != [1] {
+            return Err(Error::CorruptedIndex("conversation DAG migration marker"));
+        }
+        if let Some(head) = graph::read_id(store, txn, HEAD, &conversation)?
+            && graph::chain(store, txn, &conversation, head)?.contains(&source)
+        {
+            return Err(invalid("received Parent changes the adopted main line"));
+        }
+    }
+    Ok(ReceivedEdgeAdmission::Admit)
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_edge_shape(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+    use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+    let (source_type, target_type) = match kind {
+        EdgeKind::Parent | EdgeKind::RepliesTo => (ENTITY_TYPE_TURN, ENTITY_TYPE_TURN),
+        EdgeKind::SpawnedBy => (ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN),
+        _ => return Err(super::graph::invalid("not a received DAG edge")),
+    };
+    if source == target || value.weight != 1.0 || value.vad.is_some() || value.provenance.is_some()
+    {
+        return Err(super::graph::invalid("invalid received DAG edge value"));
+    }
+    let source_body = match live_entity_row_in_txn(store, txn, &source)? {
+        LiveEntityRow::Live { entity_type, body } if entity_type == source_type => body,
+        _ => return Err(super::graph::invalid("invalid received DAG edge source")),
+    };
+    if !matches!(
+        live_entity_row_in_txn(store, txn, &target)?,
+        LiveEntityRow::Live { entity_type, .. } if entity_type == target_type
+    ) {
+        return Err(super::graph::invalid("invalid received DAG edge target"));
+    }
+    if kind == EdgeKind::RepliesTo {
+        let mut input = source_body.as_slice();
+        let reply_target = rmpv::decode::read_value(&mut input).ok().and_then(|value| {
+            let fields = value.as_map()?;
+            let mut pointers = fields
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("reply_to"));
+            let (_, pointer) = pointers.next()?;
+            if pointers.next().is_some() {
+                return None;
+            }
+            let mut records = pointer
+                .as_map()?
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("record"));
+            let (_, record) = records.next()?;
+            if records.next().is_some() {
+                return None;
+            }
+            EntityId::from_hex(record.as_str()?).ok()
+        });
+        if !input.is_empty() || reply_target != Some(target) {
+            return Err(super::graph::invalid(
+                "received reply pointer disagrees with RepliesTo",
+            ));
+        }
+    }
+    if kind == EdgeKind::SpawnedBy {
+        let mut input = source_body.as_slice();
+        let anchor = rmpv::decode::read_value(&mut input).ok().and_then(|value| {
+            value.as_map().and_then(|fields| {
+                let mut anchors = fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("dag_spawning_turn"));
+                let (_, value) = anchors.next()?;
+                (anchors.next().is_none())
+                    .then(|| value.as_str())
+                    .flatten()
+                    .and_then(|text| EntityId::from_hex(text).ok())
+            })
+        });
+        if !input.is_empty() || anchor != Some(target) {
+            return Err(super::graph::invalid(
+                "received session anchor disagrees with SpawnedBy",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_edge(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<ReceivedEdgeAdmission> {
+    validate_received_edge_shape(store, txn, source, kind, target, value)?;
+    if kind == EdgeKind::Parent {
+        validate_received_parent(store, txn, source, target)
+    } else {
+        Ok(ReceivedEdgeAdmission::Admit)
+    }
+}

@@ -22,6 +22,11 @@ mod companion_identity;
 mod edges;
 mod entities;
 mod observers;
+mod parent_retry;
+pub(in crate::sync) use parent_retry::{
+    defer as defer_parent_retry, has_pending_source_in_txn, retry_in_txn,
+    settle as settle_parent_retry,
+};
 mod recovery;
 pub(crate) use recovery::preflight_canonical_recovery;
 mod tombstones;
