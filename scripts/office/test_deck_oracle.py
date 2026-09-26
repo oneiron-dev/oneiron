@@ -113,6 +113,30 @@ class OfflineContracts(unittest.TestCase):
             close.assert_called_once()
             self.assertFalse(list((root / 'sandbox').iterdir()))
 
+    def test_invalid_package_repair_alert_still_fails(self):
+        self.assertFalse(oracle.invalid_presentation_package(ROOT / 'fixtures/clean.pptx'))
+        self.assertFalse(oracle.invalid_presentation_package(ROOT / 'fixtures/repair.pptx'))
+        self.assertTrue(oracle.invalid_presentation_package(ROOT / 'fixtures/failed.pptx'))
+        self.assertTrue(oracle.invalid_presentation_package(ROOT / 'fixtures/damaged.pptx'))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'env_pin', return_value={'test': True}), \
+                 mock.patch.object(oracle, 'app_pid', return_value=123), \
+                 mock.patch.object(oracle, 'presentations', return_value=[]), \
+                 mock.patch.object(oracle, 'launch_hidden'), \
+                 mock.patch.object(oracle, 'hide_powerpoint'), \
+                 mock.patch.object(oracle, 'run_script', return_value=('repaired', 'repair alert')), \
+                 mock.patch.object(oracle, 'cancel_owned_repair') as cancel, \
+                 mock.patch.object(oracle, 'close_owned', return_value=None):
+                result = oracle.oracle(ROOT / 'fixtures/failed.pptx', root / 'result')
+            self.assertEqual(result['status'], 'failed')
+            self.assertIn('repair alert on invalid package', result['detail'])
+            cancel.assert_called_once()
+
     def test_empty_inventory_is_not_missing_value(self):
         with mock.patch.object(oracle, 'command', return_value='') as command:
             self.assertEqual(oracle.presentations(), [])

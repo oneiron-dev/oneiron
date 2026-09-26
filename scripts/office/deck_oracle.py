@@ -20,6 +20,7 @@ import uuid
 import urllib.parse
 import urllib.request
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent
 APP = Path('/Applications/Microsoft PowerPoint.app')
@@ -33,6 +34,18 @@ STAGING = Path.home() / 'Library/Containers/com.microsoft.Powerpoint/Data/tmp/w8
 def has_header(path: Path, header: bytes) -> bool:
     with path.open('rb') as file:
         return file.read(len(header)) == header
+
+
+def invalid_presentation_package(candidate: Path) -> bool:
+    """Irrecoverable package/XML damage is a failed open even if Office offers Repair."""
+    try:
+        with zipfile.ZipFile(candidate) as archive:
+            if archive.testzip():
+                return True
+            ET.fromstring(archive.read('ppt/presentation.xml'))
+        return False
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, OSError):
+        return True
 
 
 def digest(path: Path) -> str:
@@ -92,7 +105,7 @@ def windows(observer: str, pid: int) -> list[str]:
     if observer == 'cua':
         data = json.loads(command(['cua-driver', 'call', 'list_windows', json.dumps({'pid': pid})], 6))
         return [w['title'] for w in data['windows'] if w.get('title')]
-    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowTitle as text\n            if subrole of w is "AXDialog" then\n                repeat with textEntry in (value of every static text of w)\n                    if textEntry is not missing value then set end of labels to textEntry as text\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 10)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
+    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowTitle as text\n            if subrole of w is "AXDialog" then\n                repeat with textEntry in (value of every static text of w)\n                    set actualText to contents of textEntry\n                    if actualText is not missing value then set end of labels to actualText as text\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 10)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
     return [x.strip() for x in command(['osascript', '-e', script], 5).splitlines() if x.strip()]
 
 
@@ -184,7 +197,7 @@ def launch_hidden() -> None:
 
 def cancel_owned_repair(staged: Path) -> None:
     """Cancel only the observed repair alert naming our staged deck; never repair or grant access."""
-    script = 'on run argv\n    tell application "System Events"\n        tell process "Microsoft PowerPoint"\n            repeat with w in every window\n                if subrole of w is "AXDialog" then\n                    set lines to value of every static text of w\n                    set AppleScript\'s text item delimiters to " "\n                    set messageText to lines as text\n                    set AppleScript\'s text item delimiters to ""\n                    if messageText contains (item 1 of argv) and messageText contains "PowerPoint can attempt to repair" then\n                        click button "Cancel" of w\n                        return "cancelled owned repair alert"\n                    end if\n                end if\n            end repeat\n        end tell\n    end tell\n    error "owned repair alert not found; no UI action taken"\nend run'
+    script = 'on run argv\n    tell application "System Events"\n        tell process "Microsoft PowerPoint"\n            repeat with w in every window\n                if subrole of w is "AXDialog" then\n                    set messageText to ""\n                    repeat with textEntry in (value of every static text of w)\n                        set actualText to contents of textEntry\n                        if actualText is not missing value then set messageText to messageText & " " & (actualText as text)\n                    end repeat\n                    if messageText contains (item 1 of argv) and messageText contains "PowerPoint can attempt to repair" then\n                        click button "Cancel" of w\n                        return "cancelled owned repair alert"\n                    end if\n                end if\n            end repeat\n        end tell\n    end tell\n    error "owned repair alert not found; no UI action taken"\nend run'
     command(['osascript', '-e', script, str(staged)], 8)
     hide_powerpoint()
 
@@ -226,6 +239,7 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
     stage = None
     allowed: set[str] = set()
     opened = False
+    repair_alert_seen = False
 
     def record() -> dict:
         (output / 'receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
@@ -287,7 +301,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
             finally:
                 hide_powerpoint()
             if status:
-                receipt.update(status=status, detail=f'{action}: {detail}')
+                repair_alert_seen = status == 'repaired'
+                if repair_alert_seen and invalid_presentation_package(candidate):
+                    receipt.update(status='failed', detail=f'{action}: repair alert on invalid package/XML; refused')
+                else:
+                    receipt.update(status=status, detail=f'{action}: {detail}')
                 break
             names = presentations()
             problem = custody(names, allowed)
@@ -328,7 +346,7 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
     finally:
         if opened:
             warning = None
-            if receipt['status'] == 'repaired':
+            if repair_alert_seen:
                 try:
                     cancel_owned_repair(staged)
                 except (RuntimeError, subprocess.TimeoutExpired) as exc:
