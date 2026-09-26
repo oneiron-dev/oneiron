@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 use super::body::validate_text_field;
 use super::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 use super::versions::{
-    CalcEngineStamp, KEY_CALC_ENGINE, KEY_CALC_ENGINE_VERSION, KEY_CONTENT_HASH, KEY_PROVENANCE,
-    KEY_RUN_REF, KEY_VERSION,
+    CalcEngineStamp, KEY_CALC_ENGINE, KEY_CALC_ENGINE_VERSION, KEY_CONTENT_HASH,
+    KEY_FORK_OF_VERSION, KEY_PARENT_VERSION, KEY_PROVENANCE, KEY_RUN_REF, KEY_VERSION,
 };
 use crate::error::ArtifactError;
 
@@ -102,6 +102,8 @@ pub(super) fn blob_version_claim_value(
     version: u64,
     content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
     provenance: &BlobVersionProvenance,
+    parent_version: Option<u64>,
+    fork_of_version: Option<u64>,
     calc_engine: Option<&CalcEngineStamp>,
 ) -> Value {
     let mut entries = vec![
@@ -114,17 +116,29 @@ pub(super) fn blob_version_claim_value(
             Value::from(KEY_PROVENANCE),
             Value::from(provenance.as_str()),
         ),
-        (
-            Value::from(KEY_CALC_ENGINE),
-            calc_engine.map_or(Value::Nil, |s| Value::from(s.engine())),
-        ),
-        (
-            Value::from(KEY_CALC_ENGINE_VERSION),
-            calc_engine.map_or(Value::Nil, |s| Value::from(s.version())),
-        ),
     ];
+    entries.push((
+        Value::from(KEY_CALC_ENGINE),
+        calc_engine.map_or(Value::Nil, |s| Value::from(s.engine())),
+    ));
+    entries.push((
+        Value::from(KEY_CALC_ENGINE_VERSION),
+        calc_engine.map_or(Value::Nil, |s| Value::from(s.version())),
+    ));
     if let Some(run_ref) = provenance.run_ref() {
         entries.push((Value::from(KEY_RUN_REF), Value::from(run_ref)));
+    }
+    if let Some(parent) = parent_version {
+        entries.push((
+            Value::from(KEY_PARENT_VERSION),
+            Value::Integer(parent.into()),
+        ));
+    }
+    if let Some(fork) = fork_of_version {
+        entries.push((
+            Value::from(KEY_FORK_OF_VERSION),
+            Value::Integer(fork.into()),
+        ));
     }
     Value::Map(entries)
 }

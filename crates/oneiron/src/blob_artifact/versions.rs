@@ -68,7 +68,7 @@ impl CalcEngineStamp {
     }
 }
 
-/// One record of the append-only version chain: content hash + provenance +
+/// One record of the append-only version tree: content hash + provenance +
 /// the `blob.version` claim id (the LEDGER event for this version).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -80,15 +80,21 @@ pub struct BlobArtifactVersion {
     pub calc_engine: Option<CalcEngineStamp>,
     pub claim_id: EntityId,
     pub created_at: u64,
+    /// The version this record descends from. Absent for roots and legacy rows.
+    pub parent_version: Option<u64>,
+    /// The selected base of an explicit fork; absent on ordinary head appends.
+    pub fork_of_version: Option<u64>,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 8] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 10] = [
     "version",
     "content_hash",
     "provenance",
     "run_ref",
     "claim_id",
     "created_at",
+    "parent_version",
+    "fork_of_version",
     "calc_engine",
     "calc_engine_version",
 ];
@@ -105,9 +111,13 @@ const KEY_CLAIM_ID: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[4];
 
 const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
 
-pub(super) const KEY_CALC_ENGINE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
+pub(super) const KEY_PARENT_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
 
-pub(super) const KEY_CALC_ENGINE_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[7];
+pub(super) const KEY_FORK_OF_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[7];
+
+pub(super) const KEY_CALC_ENGINE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[8];
+
+pub(super) const KEY_CALC_ENGINE_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[9];
 
 impl Vault {
     pub fn put_blob_artifact(
@@ -178,6 +188,35 @@ impl Vault {
         })
     }
 
+    /// Appends a new version descending from any existing version of this artifact.
+    /// The scalar version number still advances at head+1; only the ancestry
+    /// pointer branches. Unlike an ordinary append, identical bytes do not
+    /// suppress the explicit fork event.
+    #[expect(clippy::too_many_arguments)]
+    pub fn fork_blob_artifact_version(
+        &self,
+        artifact_id: &EntityId,
+        parent_version: u64,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        self.with_write_txn(|wtxn| {
+            self.append_blob_artifact_version_with_parent_in_txn(
+                wtxn,
+                artifact_id,
+                bytes,
+                provenance,
+                actor,
+                occurred,
+                learned_at,
+                Some(parent_version),
+            )
+        })
+    }
+
     /// Transaction-composable body of [`Vault::append_blob_artifact_version`].
     ///
     /// ARTL-4 settle-select needs the version append, its re-anchor sweep, and
@@ -195,15 +234,15 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<BlobArtifactVersion> {
-        self.append_blob_artifact_version_with_engine_in_txn(
+        self.append_blob_artifact_version_with_parent_in_txn(
             wtxn,
             artifact_id,
             bytes,
             provenance,
-            None,
             actor,
             occurred,
             learned_at,
+            None,
         )
     }
 
@@ -219,6 +258,57 @@ impl Vault {
         actor: WriteActor,
         occurred: TimeRange,
         learned_at: u64,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_with_parent_and_engine_in_txn(
+            wtxn,
+            artifact_id,
+            bytes,
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            None,
+            calc_engine,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn append_blob_artifact_version_with_parent_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        fork_parent: Option<u64>,
+    ) -> Result<BlobArtifactVersion> {
+        self.append_blob_artifact_version_with_parent_and_engine_in_txn(
+            wtxn,
+            artifact_id,
+            bytes,
+            provenance,
+            actor,
+            occurred,
+            learned_at,
+            fork_parent,
+            None,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn append_blob_artifact_version_with_parent_and_engine_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact_id: &EntityId,
+        bytes: &[u8],
+        provenance: &BlobVersionProvenance,
+        actor: WriteActor,
+        occurred: TimeRange,
+        learned_at: u64,
+        fork_parent: Option<u64>,
+        calc_engine: Option<&CalcEngineStamp>,
     ) -> Result<BlobArtifactVersion> {
         validate_provenance(provenance)?;
         if let Some(stamp) = calc_engine {
@@ -241,17 +331,39 @@ impl Vault {
         )?;
         let fingerprint =
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
-        let next_version = match read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)? {
-            Some(head) if head.content_hash == content_hash => {
-                fingerprint.persist(&self.store, wtxn, artifact_id)?;
-                return Ok(head);
+        let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
+        let parent_version = match (fork_parent, &head) {
+            (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
+                let key = blob_artifact_version_key(artifact_id, parent);
+                let raw = self
+                    .store
+                    .vault_meta
+                    .get(wtxn, &key)?
+                    .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                        "fork parent version does not exist",
+                    )))?;
+                if decode_blob_artifact_version_record(&raw)?.version != parent {
+                    return Err(Error::CorruptedIndex("blob artifact fork parent"));
+                }
+                Some(parent)
             }
-            Some(head) => head
-                .version
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?,
-            None => 1,
+            (Some(_), _) => {
+                return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                    "fork parent version does not exist",
+                )));
+            }
+            (None, Some(head)) if head.content_hash == content_hash => {
+                fingerprint.persist(&self.store, wtxn, artifact_id)?;
+                return Ok(head.clone());
+            }
+            (None, Some(head)) => Some(head.version),
+            (None, None) => None,
         };
+        let next_version = head.map_or(Ok(1), |head| {
+            head.version
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
+        })?;
         let version_key = blob_artifact_version_key(artifact_id, next_version);
         if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -262,7 +374,14 @@ impl Vault {
         let candidate = ClaimCandidate::new(
             BLOB_VERSION_CLAIM_PREDICATE,
             ClaimSubject::Entity(*artifact_id),
-            blob_version_claim_value(next_version, &content_hash, provenance, calc_engine),
+            blob_version_claim_value(
+                next_version,
+                &content_hash,
+                provenance,
+                parent_version,
+                fork_parent,
+                calc_engine,
+            ),
             1.0,
         );
         let envelope = WriteEnvelope::new(
@@ -290,6 +409,8 @@ impl Vault {
             calc_engine: calc_engine.cloned(),
             claim_id,
             created_at: learned_at,
+            parent_version,
+            fork_of_version: fork_parent,
         };
         let recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
         crate::ports::ChangeLogStore::port_changelog_append(
@@ -325,8 +446,8 @@ impl Vault {
         read_blob_artifact_head_in_txn(&self.store, &rtxn, artifact_id)
     }
 
-    /// Returns the full version chain, oldest first, verifying it is a
-    /// contiguous append-only sequence starting at version 1.
+    /// Returns the full version tree in append order. Verifies contiguous
+    /// scalar versions, earlier existing parents, and the current head.
     pub fn blob_artifact_versions(
         &self,
         artifact_id: &EntityId,
@@ -342,6 +463,11 @@ impl Vault {
                 + 1;
             if record.version != expected || !key.ends_with(&record.version.to_be_bytes()) {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
+            }
+            if let Some(parent) = record.parent_version
+                && (parent >= record.version || versions.get((parent - 1) as usize).is_none())
+            {
+                return Err(Error::CorruptedIndex("blob artifact version parent"));
             }
             versions.push(record);
         }
@@ -389,6 +515,8 @@ impl Vault {
                     version,
                     &record.content_hash,
                     &record.provenance,
+                    record.parent_version,
+                    record.fork_of_version,
                     record.calc_engine.as_ref(),
                 )
         {
@@ -427,7 +555,7 @@ impl Vault {
 }
 
 fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<Vec<u8>> {
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_VERSION),
             Value::Integer(record.version.into()),
@@ -466,8 +594,23 @@ fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<V
                 .as_ref()
                 .map_or(Value::Nil, |s| Value::from(s.version())),
         ),
-    ]);
-    encode_value(&value, "blob artifact version MessagePack encode failed")
+    ];
+    if let Some(parent) = record.parent_version {
+        entries.push((
+            Value::from(KEY_PARENT_VERSION),
+            Value::Integer(parent.into()),
+        ));
+    }
+    if let Some(fork) = record.fork_of_version {
+        entries.push((
+            Value::from(KEY_FORK_OF_VERSION),
+            Value::Integer(fork.into()),
+        ));
+    }
+    encode_value(
+        &Value::Map(entries),
+        "blob artifact version MessagePack encode failed",
+    )
 }
 
 pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobArtifactVersion> {
@@ -484,6 +627,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut run_ref: Option<Option<String>> = None;
     let mut claim_id = None;
     let mut created_at = None;
+    let mut parent_version = None;
+    let mut fork_of_version = None;
     let mut calc_engine: Option<Option<String>> = None;
     let mut calc_engine_version: Option<Option<String>> = None;
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
@@ -533,6 +678,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             }
             KEY_CLAIM_ID => claim_id = Some(entity_value(value, "claim_id")?),
             KEY_CREATED_AT => created_at = Some(u64_value(value, "created_at")?),
+            KEY_PARENT_VERSION => parent_version = Some(u64_value(value, "parent_version")?),
+            KEY_FORK_OF_VERSION => fork_of_version = Some(u64_value(value, "fork_of_version")?),
             KEY_CALC_ENGINE | KEY_CALC_ENGINE_VERSION => {
                 let text = match value {
                     Value::Nil => None,
@@ -561,6 +708,13 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     if version == 0 {
         return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "version record version must be at least 1",
+        )));
+    }
+    if parent_version.is_some_and(|parent| parent == 0 || parent >= version)
+        || fork_of_version.is_some_and(|fork| Some(fork) != parent_version)
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+            "invalid blob artifact version parent/fork pointer",
         )));
     }
     let provenance = BlobVersionProvenance::from_parts(
@@ -603,6 +757,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         created_at: created_at.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
             "missing required version record key created_at",
         )))?,
+        parent_version,
+        fork_of_version,
     })
 }
 

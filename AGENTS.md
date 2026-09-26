@@ -189,27 +189,18 @@ build to work around an occupied target directory.
 Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
-- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
-  repo variable pauses every job (wave affordance); drafts do not run. No `paths` filter
-  (2026-09-11): every non-draft PR and every `main` push starts a run, because the `main` ruleset
-  requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
-  docs-only PR reported neither and was blocked forever (#921 needed `--admin`). The `changes` job
-  still detects a rust diff; it now gates STEPS, not the run. Jobs: `changes` (path detector) /
-  `checks` (fmt, workspace + featureless + server-production clippy, strict rustdoc,
-  code-map pin, tooling fixture tests, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
-  `test-linux` (Linux reference) / `package` (`oneiron-server`, Linux);
-  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and `test` both run on every non-draft
-  `pull_request`, on every `push` to `main` and on `workflow_dispatch`, so both required contexts
-  always report; each gates its cargo steps on a rust diff (always on dispatch and tags, fail-open
-  if the detector broke), so a docs-only run still checks the code-map pin, tooling fixtures, typos, and
-  `cargo-deny` policy. `.cargo/**` changes count as Rust-relevant. `test` runs the macOS recipe
-  (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS
-  filtered out by name — ONE-1996 — then the featureless lib tests and doctests); on `push` that
-  job keeps the rust-diff gate at job level; `test-linux` runs the `--profile full` suite with
-  only the napi exclusion, plus the same two stages, on `push` to `main` and `workflow_dispatch`
-  only — never on PRs, Arch is the Wave host; `package` waits for a `v*` tag push that no
-  trigger sends, so that gate is unreachable as written. The PR run enforces fmt, clippy,
-  strict rustdoc and tests pre-merge; `scripts/verify.sh` on the branch stays the local gate.
+- `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
+  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints only the touched packages (plus the
+  featureless build when `oneiron` changed), `Test` runs nextest for the touched packages and only the touched
+  top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
+  `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
+  when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
+  The full gate (workspace clippy in three feature graphs, strict rustdoc, the whole nextest suite, doctests,
+  both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
+  build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
+  config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
+  are required contexts and always report; a PR stays a draft until its review passes, so it gets one CI run.
+  `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
@@ -232,7 +223,7 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
 - Hosts and labels: MacBook `self-hosted,macos,arm64,mbp` (16 cores, the first and strongest);
   the Mac mini joins with the same macOS labels; Arch box `self-hosted,linux,x64,arch` (16 cores,
-  the Wave host — only `test-linux`, `package` and dispatch runs touch it). Workflows target
+  the Wave host — both Linux test jobs and `package` can run on it). Workflows target
   `[self-hosted, macos, arm64]` or `[self-hosted, linux, x64]`, never a host name.
 - Cache contract: each runner's `~/actions-runner/.env` exports `CARGO_TARGET_DIR=~/ci/target`
   (persistent, outside the checkout, so `clean: true` checkouts never wipe it; on macOS it must
@@ -246,8 +237,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
   artifacts itself. Cache maintenance is opt-in per workflow: the macOS Checks/Test jobs and
-  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; `test-linux` currently has
-  no cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
+  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
+  has a cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
   commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
   Never share a runner's target directory with concurrent developer jobs.
 - Host contract: rustup with the 1.96 channel + rustfmt + clippy, `cargo-nextest`, `rg`, git,
@@ -255,8 +246,9 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   full Xcode, not Command Line Tools alone, so it targets the capability label `xcode`; add that
   label to a runner only after Xcode is installed there (today: both Macs). Pinned CI-only tools (cargo-deny 0.19.4, typos-cli 1.45.1, nextest if a host
   lacks it) go under `~/ci/tools`, installed by the job on first use and reused after.
-- One runner runs one job at a time; a PR takes a `checks` slot and a `test` slot, so with one
-  macOS runner they serialise. Every job has `timeout-minutes` so a hang cannot hold the slot.
+- One runner runs one job at a time; a PR takes a `checks` slot and two Linux test slots.
+  With enough Linux runners the test jobs run in parallel. Every job has `timeout-minutes`
+  so a hang cannot hold the slot.
 - Waves: set the repository variable `CI_PAUSED=true` while a wave lands commits and every job
   in every workflow skips; flip it back when the wave closes.
 - Adding a runner: mint a registration token (repo Settings → Actions → Runners → New

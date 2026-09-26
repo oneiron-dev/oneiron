@@ -432,3 +432,254 @@ fn blob_birth_four_rungs_only_normalize_transport_and_are_purged() -> Result<()>
     assert!(vault.blob_fingerprint(&artifact)?.is_none());
     Ok(())
 }
+
+#[test]
+fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let artifact = put_artifact(&vault, 10)?; // an xlsx body
+    let actor = put_actor(&vault, 10)?;
+    let upload = vault.append_blob_artifact_version(
+        &artifact,
+        b"uploaded xlsx",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(11),
+        11,
+    )?;
+    let machine = vault.append_blob_artifact_version(
+        &artifact,
+        b"machine xlsx",
+        &BlobVersionProvenance::AgentRun {
+            run_ref: "run:edit".into(),
+        },
+        actor,
+        test_time(12),
+        12,
+    )?;
+    let original = {
+        let txn = vault.store.env.read_txn()?;
+        vault
+            .store
+            .vault_meta
+            .get(
+                &txn,
+                &super::store_keys::blob_artifact_version_key(&artifact, machine.version),
+            )?
+            .unwrap()
+            .to_vec()
+    };
+    let child = vault.fork_blob_artifact_version(
+        &artifact,
+        machine.version,
+        b"person xlsx",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(13),
+        13,
+    )?;
+    assert_eq!(child.version, 3);
+    assert_eq!(child.parent_version, Some(machine.version));
+    assert_eq!(child.fork_of_version, Some(machine.version));
+    let linear = vault.append_blob_artifact_version(
+        &artifact,
+        b"next xlsx",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(14),
+        14,
+    )?;
+    assert_eq!(linear.version, 4);
+    assert_eq!(linear.parent_version, Some(child.version));
+    assert_eq!(linear.fork_of_version, None);
+    assert_eq!(vault.blob_artifact_head(&artifact)?, Some(linear.clone()));
+    assert_eq!(upload.parent_version, None);
+    assert_eq!(upload.fork_of_version, None);
+    let txn = vault.store.env.read_txn()?;
+    let legacy_raw = vault
+        .store
+        .vault_meta
+        .get(
+            &txn,
+            &super::store_keys::blob_artifact_version_key(&artifact, upload.version),
+        )?
+        .unwrap();
+    assert_eq!(
+        rmpv::decode::read_value(&mut std::io::Cursor::new(legacy_raw))
+            .unwrap()
+            .as_map()
+            .unwrap()
+            .len(),
+        8 // the root also records both nil calculator fields
+    );
+    drop(txn);
+    assert_eq!(
+        vault.blob_artifact_versions(&artifact)?,
+        vec![upload, machine.clone(), child.clone(), linear]
+    );
+    assert_eq!(
+        vault.blob_artifact_version_metadata(&artifact, child.version)?,
+        Some(child.clone())
+    );
+    let claim = vault.get_claim(&child.claim_id)?.expect("fork claim");
+    assert!(
+        claim
+            .value
+            .as_map()
+            .expect("map")
+            .iter()
+            .any(|(key, val)| key.as_str() == Some("parent_version")
+                && val.as_u64() == Some(machine.version))
+    );
+    let txn = vault.store.env.read_txn()?;
+    let unchanged = vault.store.vault_meta.get(
+        &txn,
+        &super::store_keys::blob_artifact_version_key(&artifact, machine.version),
+    )?;
+    assert_eq!(unchanged.as_deref(), Some(original.as_slice()));
+    Ok(())
+}
+
+#[test]
+fn blob_artifact_fork_rejects_missing_parent_without_advancing_head() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let artifact = put_artifact(&vault, 10)?;
+    let other = put_artifact(&vault, 10)?;
+    let actor = put_actor(&vault, 10)?;
+    let initial = vault.append_blob_artifact_version(
+        &artifact,
+        b"xlsx v1",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(11),
+        11,
+    )?;
+    vault.append_blob_artifact_version(
+        &other,
+        b"other xlsx",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(11),
+        11,
+    )?;
+    for missing in [0, 2, u64::MAX] {
+        assert_eq!(
+            vault
+                .fork_blob_artifact_version(
+                    &artifact,
+                    missing,
+                    b"fork",
+                    &BlobVersionProvenance::UserUpload,
+                    actor,
+                    test_time(12),
+                    12,
+                )
+                .expect_err("parent must exist on this artifact")
+                .kind(),
+            ErrorKind::InvalidBlobArtifactBody,
+        );
+    }
+    assert_eq!(
+        vault.blob_artifact_versions(&artifact)?,
+        vec![initial.clone()]
+    );
+    assert_eq!(vault.blob_artifact_head(&artifact)?, Some(initial.clone()));
+    // The explicit fork remains an event even when its bytes equal the head's.
+    let identical = vault.fork_blob_artifact_version(
+        &artifact,
+        1,
+        b"xlsx v1",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(13),
+        13,
+    )?;
+    assert_eq!(identical.version, 2);
+    assert_eq!(identical.content_hash, initial.content_hash);
+    assert_eq!(identical.parent_version, Some(1));
+    assert_eq!(vault.blob_artifact_head(&artifact)?, Some(identical));
+    Ok(())
+}
+
+#[test]
+fn blob_artifact_tree_reader_refuses_bad_parent_and_head() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let artifact = put_artifact(&vault, 10)?;
+    let actor = put_actor(&vault, 10)?;
+    let first = vault.append_blob_artifact_version(
+        &artifact,
+        b"xlsx v1",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(11),
+        11,
+    )?;
+    vault.append_blob_artifact_version(
+        &artifact,
+        b"machine xlsx",
+        &BlobVersionProvenance::AgentRun {
+            run_ref: "run:1".into(),
+        },
+        actor,
+        test_time(12),
+        12,
+    )?;
+    let child = vault.fork_blob_artifact_version(
+        &artifact,
+        first.version,
+        b"forked xlsx",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(13),
+        13,
+    )?;
+    let key = super::store_keys::blob_artifact_version_key(&artifact, child.version);
+    let head_key = super::store_keys::blob_artifact_head_key(&artifact);
+    let first_key = super::store_keys::blob_artifact_version_key(&artifact, first.version);
+    let (original, root) = {
+        let txn = vault.store.env.read_txn()?;
+        (
+            vault.store.vault_meta.get(&txn, &key)?.unwrap().to_vec(),
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &first_key)?
+                .unwrap()
+                .to_vec(),
+        )
+    };
+    let mut forged = rmpv::decode::read_value(&mut std::io::Cursor::new(&original))
+        .expect("decode stored version");
+    let Value::Map(ref mut fields) = forged else {
+        panic!("stored version must be a map");
+    };
+    for (name, value) in fields {
+        if name.as_str() == Some("parent_version") {
+            *value = Value::from(child.version); // cannot be its own parent
+        }
+    }
+    let mut invalid = Vec::new();
+    rmpv::encode::write_value(&mut invalid, &forged).expect("encode invalid pointer");
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(&mut txn, &key, &invalid)?;
+    txn.commit()?;
+    assert_eq!(
+        vault
+            .blob_artifact_versions(&artifact)
+            .expect_err("reject a cycle")
+            .kind(),
+        ErrorKind::InvalidBlobArtifactBody
+    );
+
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.put(&mut txn, &key, &original)?;
+    vault.store.vault_meta.put(&mut txn, &head_key, &root)?;
+    txn.commit()?;
+    assert_eq!(
+        vault
+            .blob_artifact_versions(&artifact)
+            .expect_err("reject stale head")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
