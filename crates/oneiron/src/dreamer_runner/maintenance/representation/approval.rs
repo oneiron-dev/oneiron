@@ -272,7 +272,7 @@ pub fn schedule_approved_representation(
     let current = facade.vault().approved_representation(&approved.id)?;
     if current != approved
         || facade.actor() != approved.actor
-        || facade.actor_class() != EdgeActorClass::Agent
+        || facade.actor_class() != EdgeActorClass::System
     {
         return Err(MemoryError::from(invalid()));
     }
@@ -312,7 +312,7 @@ pub(crate) fn validate_dispatch(vault: &Vault, request: &OutboundDispatchRequest
     if request.intent != expected_intent(&approved)?
         || request.actor.actor_entity_ref != Some(approved.actor)
         || request.actor.actor_ref.as_deref() != Some(approved.actor.to_hex().as_str())
-        || request.actor.actor_class != "agent"
+        || request.actor.actor_class != "system"
     {
         return Err(invalid());
     }

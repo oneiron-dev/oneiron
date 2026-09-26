@@ -19,7 +19,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 }
 
 /// A vault whose policy manifest GRANTS the Dreamer's Auto request: an
-/// `agent` actor ceiling, an explicit auto permit for every provenance
+/// `system` actor ceiling, an explicit auto permit for every provenance
 /// source, and a manifest signature (the Dreamer auto-grant requires one).
 ///
 /// ONE-1710 made `Auto` the universal promotion request — there is no
@@ -69,7 +69,7 @@ fn auto_permitting_manifest() -> Vec<u8> {
                 // `first_party` carries the envelope-less supersede/retract
                 // lifecycle Puts; `human` carries the owner-authored heads
                 // the supersession tests seed.
-                ["agent", "human", "first_party"]
+                ["system", "human", "first_party"]
                     .into_iter()
                     .map(|actor_class| {
                         Mp::Map(vec![
@@ -143,7 +143,6 @@ struct PromotionFixture {
 }
 
 fn fixture(vault: &Vault) -> Result<PromotionFixture> {
-    let actor = vault.dreamer_authority()?.entity_ref();
     let subject = EntityId::now();
     let conversation = EntityId::now();
     let turn = EntityId::now();
@@ -187,7 +186,7 @@ fn fixture(vault: &Vault) -> Result<PromotionFixture> {
         run: DreamerRunContext {
             run_id: "run-promo".to_owned(),
             attempt_id: status.attempt.id,
-            agent_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+            agent_actor: vault.dreamer_authority()?,
             now_ms: 10_000,
         },
         subject,
@@ -297,6 +296,15 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
     assert!(keys.contains(&"actor_class"));
     assert!(keys.contains(&"provenance"));
     assert!(keys.contains(&"candidate_evidence"));
+    let stamped = vault.dreamer_authority()?;
+    assert!(evidence.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_entity_ref")
+            && value.as_slice() == Some(stamped.entity_ref().as_bytes().as_slice())
+    }));
+    assert!(evidence.iter().any(|(key, value)| {
+        key.as_str() == Some("actor_class")
+            && value.as_u64() == Some(u64::from(EdgeActorClass::System as u8))
+    }));
     let envelope = consolidation_evidence(&body);
     assert_eq!(
         envelope.refs,
@@ -320,6 +328,7 @@ fn promotion_lands_auto_with_the_computed_source_through_gate() -> Result<()> {
         1,
         "one promotion must append exactly one gate decision"
     );
+    assert_eq!(claim_decisions[0].actor_class, "system");
     assert_eq!(
         claim_decisions[0].outcome,
         GateOutcome::Allow.as_str(),
@@ -1312,7 +1321,7 @@ fn assert_checker_rejection_receipt(
         .map(String::as_str)
         .collect();
     assert_eq!(checker_reasons, receipt_reasons);
-    assert_eq!(record.actor_class, "agent");
+    assert_eq!(record.actor_class, "system");
     assert!(vault.get_claim(claim_id)?.is_none());
     assert!(vault.pending_gate_consents(10)?.is_empty());
     Ok(record)

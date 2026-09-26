@@ -33,6 +33,7 @@ struct SourcePin {
 }
 
 pub(super) struct BranchResources<'a> {
+    actor: WriteActor,
     read: ScopedRead<'a>,
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
@@ -112,6 +113,7 @@ impl<'a> BranchResources<'a> {
         // A supplied scope is authority, not a request to infer more authority.
         let scope = requested.cloned().unwrap_or(granted);
         let mut resources = Self {
+            actor,
             read,
             partition,
             sources,

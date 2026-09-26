@@ -141,7 +141,7 @@ impl PolicyManifestResolution {
 
     fn dreamer_auto_grant_requires_manifest_signature(&self, input: &GateEvaluatorInput) -> bool {
         input.content_kind == GateContentKind::Claim
-            && input.actor.actor_class.trim() == "agent"
+            && matches!(input.actor.actor_class.trim(), "agent" | "system")
             && input.provenance.dreamer_run_id.is_some()
             && self.actor_ceiling(
                 input.actor.actor_class.trim(),

@@ -585,6 +585,7 @@ impl Vault {
             #[cfg(feature = "sync")]
             live_window_manager_attached: std::sync::atomic::AtomicBool::new(false),
         };
+        vault.with_write_txn(|txn| vault.dreamer_authority_in_txn(txn, 0))?;
         // Rebuilds the content-hash → holder index (import/sync dedup) when it
         // is missing or stale; completes before any caller receives a usable
         // handle. ONE-1741 dropped the verdict-dedup half — scan verdicts now

@@ -49,7 +49,7 @@ impl Vault {
             .map_err(|_| invalid())?;
         let actor = self.dreamer_authority()?.entity_ref();
         let reader = self.scoped_read(
-            ScopedReadActorKey::with_actor_class(actor.to_hex(), "agent").ok_or_else(invalid)?,
+            ScopedReadActorKey::with_actor_class(actor.to_hex(), "system").ok_or_else(invalid)?,
         );
         let mut seen = BTreeSet::new();
         let evidence = request

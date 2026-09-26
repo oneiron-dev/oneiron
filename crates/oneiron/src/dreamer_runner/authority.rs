@@ -22,38 +22,43 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid Dreamer authority binding".into())
 }
 impl Vault {
-    /// Resolves the single principal. First use creates an ordinary actor,
-    /// granting it NO ceiling, consent grant, or privilege.
+    /// Resolves the vault-owned system principal. Open seeds it without granting
+    /// a ceiling, consent grant, or privilege.
     pub fn dreamer_authority(&self) -> Result<WriteActor> {
         self.with_write_txn(|txn| self.dreamer_authority_in_txn(txn, crate::unix_seconds_now()))
     }
-    pub(super) fn dreamer_authority_in_txn(
+    pub(crate) fn dreamer_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         now: u64,
     ) -> Result<WriteActor> {
+        // The id is shared across replicas of one vault, but the local binding
+        // cannot be redirected to another MACHINE or a deleted shell.
+        let actor =
+            crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
         if let Some(raw) = self.store.vault_meta.get(&*txn, ACTOR_KEY)? {
             let raw_id: &[u8] = &raw;
             let id = EntityId::from_bytes(raw_id.try_into().map_err(|_| invalid())?)?;
+            if id != actor {
+                return Err(invalid());
+            }
             let entity = self
                 .store
                 .entities
                 .get(&*txn, id.as_bytes())?
                 .ok_or_else(invalid)?;
             if EntityMetadataHeader::parse(&entity)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
+                || entity.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                    != Some(b"Dreamer authority".as_slice())
             {
                 return Err(invalid());
             }
-            return Ok(WriteActor::new(id, EdgeActorClass::Agent));
+            return Ok(WriteActor::new(id, EdgeActorClass::System));
         }
-        // Like the embedded owner bootstrap, the engine principal has one
-        // namespace identity across nodes. Queue-local caches do not mint peers.
-        let actor =
-            crate::codebase::entity_id_from_hash_material(b"oneiron.dreamer.authority.v1", &[])?;
         if let Some(raw) = self.store.entities.get(&*txn, actor.as_bytes())? {
             if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_MACHINE)
                 || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                     != Some(b"Dreamer authority".as_slice())
             {
@@ -62,7 +67,7 @@ impl Vault {
             self.store
                 .vault_meta
                 .put(txn, ACTOR_KEY, actor.as_bytes())?;
-            return Ok(WriteActor::new(actor, EdgeActorClass::Agent));
+            return Ok(WriteActor::new(actor, EdgeActorClass::System));
         }
         apply_ops(
             &self.store,
@@ -71,7 +76,7 @@ impl Vault {
             txn,
             vec![BatchOp::Put {
                 id: actor,
-                entity_type: crate::registry::ENTITY_TYPE_PERSON,
+                entity_type: crate::registry::ENTITY_TYPE_MACHINE,
                 occurred: TimeRange {
                     start: now,
                     end: now,
@@ -90,7 +95,7 @@ impl Vault {
         self.store
             .vault_meta
             .put(txn, ACTOR_KEY, actor.as_bytes())?;
-        Ok(WriteActor::new(actor, EdgeActorClass::Agent))
+        Ok(WriteActor::new(actor, EdgeActorClass::System))
     }
     /// Proposal envelope shared by maintenance facets. Approval is never Auto.
     pub fn dreamer_proposal_envelope(
@@ -131,7 +136,7 @@ impl Vault {
         id: crate::attempt_queue::AttemptId,
     ) -> Result<WriteActor> {
         let stamp = self.dreamer_attempt_authority(id)?.ok_or_else(invalid)?;
-        Ok(WriteActor::new(stamp.actor, EdgeActorClass::Agent))
+        Ok(WriteActor::new(stamp.actor, EdgeActorClass::System))
     }
     pub fn dreamer_attempt_authority(
         &self,
@@ -153,8 +158,12 @@ impl Vault {
                         .store
                         .entities
                         .get(&txn, stamp.actor.as_bytes())?
-                        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-                        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+                        .is_none_or(|raw| {
+                            EntityMetadataHeader::parse(&raw).is_none_or(|h| {
+                                h.entity_type != crate::registry::ENTITY_TYPE_MACHINE
+                            }) || raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                                != Some(b"Dreamer authority".as_slice())
+                        })
                 {
                     return Err(invalid());
                 }
@@ -198,7 +207,7 @@ pub(super) fn stamp_attempt(
         reason_codes: vec!["gate.dreamer.facet_admitted".into()],
         receipt_reasons: Vec::new(),
         system_notices: Vec::new(),
-        actor_class: "agent".into(),
+        actor_class: actor.actor_class().gate_actor_class().into(),
         actor_ref: Some(actor.entity_ref().to_hex()),
         content_kind: "dreamer_authority".into(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),

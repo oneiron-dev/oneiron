@@ -76,10 +76,7 @@ impl BranchResources<'_> {
 
     pub(in crate::dreamer_consolidation) fn write_fence(&self) -> ConsolidationFence {
         ConsolidationFence {
-            actor: WriteActor::new(
-                EntityId::from_hex(self.read.actor_key().actor_ref()).expect("admitted actor"),
-                crate::edge::EdgeActorClass::Agent,
-            ),
+            actor: self.actor,
             attempt: self.attempt,
             sources: self.sources.clone(),
             turns: self.turns.clone(),
