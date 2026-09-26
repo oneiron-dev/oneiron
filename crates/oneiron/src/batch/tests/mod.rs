@@ -46,6 +46,7 @@ mod habit_streak;
 mod lexical_hints_lifecycle;
 mod lexical_hints_policy;
 mod provenance_edges;
+mod replicated_text;
 mod secret_policy_claim;
 mod seeded_actors;
 mod support;
