@@ -493,7 +493,7 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
     assert_eq!(upload.parent_version, None);
     assert_eq!(upload.fork_of_version, None);
     let txn = vault.store.env.read_txn()?;
-    let legacy_raw = vault
+    let root_raw = vault
         .store
         .vault_meta
         .get(
@@ -502,12 +502,12 @@ fn blob_artifact_forks_machine_version_without_rewriting_history() -> Result<()>
         )?
         .unwrap();
     assert_eq!(
-        rmpv::decode::read_value(&mut std::io::Cursor::new(legacy_raw))
+        rmpv::decode::read_value(&mut std::io::Cursor::new(root_raw))
             .unwrap()
             .as_map()
             .unwrap()
             .len(),
-        6
+        BLOB_ARTIFACT_VERSION_RECORD_KEYS.len() - 2
     );
     drop(txn);
     assert_eq!(

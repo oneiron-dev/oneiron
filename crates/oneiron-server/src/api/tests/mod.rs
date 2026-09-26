@@ -856,8 +856,16 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
-        .expect("disclosure scope");
+    // The six-axis clearance cannot express a per-entity allowlist. Do not
+    // widen this old fixture silently; its caller tests must be rewritten
+    // under the owning disclosure change to assert six-axis outcomes.
+    let _ = entities;
+    let scope = oneiron::disclosure::DisclosureScope::new(
+        oneiron::federation::Scope::default(),
+        "party planning",
+        100,
+    )
+    .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)

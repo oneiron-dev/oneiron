@@ -238,15 +238,27 @@ impl Vault {
         channel: ArtifactPointerChannel,
         export: ArtifactExportRef,
     ) -> Result<ArtifactPointer> {
-        let entity_id = self
-            .resolve_export_owner(artifact, export)?
-            .ok_or(Error::EntityNotFound)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let refs = exhaust_taint_refs_in_txn(&self.store, &wtxn, &entity_id)?;
-        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, &wtxn, &refs)? {
+        let pointer = self.publish_export_pointer_in_txn(&mut wtxn, artifact, channel, export)?;
+        wtxn.commit()?;
+        Ok(pointer)
+    }
+
+    fn publish_export_pointer_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &str,
+        channel: ArtifactPointerChannel,
+        export: ArtifactExportRef,
+    ) -> Result<ArtifactPointer> {
+        let entity_id = self
+            .resolve_export_owner_in_txn(wtxn, artifact, export)?
+            .ok_or(Error::EntityNotFound)?;
+        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, &entity_id)?;
+        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
             ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
             ArtifactTaintState::TaintedStale => {
-                if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
+                if !allow_stale_publish_in_txn(&self.store, wtxn)? {
                     return Err(Error::Secret(SecretError::TaintedArtifactStale {
                         artifact: artifact.to_owned(),
                     }));
@@ -256,13 +268,12 @@ impl Vault {
         };
         put_artifact_pointer_in_txn(
             &self.store,
-            &mut wtxn,
+            wtxn,
             artifact,
             channel,
             export,
             stale_taint_override,
         )?;
-        wtxn.commit()?;
         Ok(ArtifactPointer {
             artifact: artifact.to_owned(),
             channel,
@@ -293,6 +304,34 @@ impl Vault {
                 }
                 Ok(self
                     .blob_artifact_version_metadata(&artifact_id, version)?
+                    .map(|_| artifact_id))
+            }
+        }
+    }
+
+    /// Publish admission runs behind the writer. No concurrent delete may
+    /// remove a blob between validating its version and inserting its pointer.
+    fn resolve_export_owner_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact: &str,
+        export: ArtifactExportRef,
+    ) -> Result<Option<EntityId>> {
+        validate_artifact_id(artifact)?;
+        match export {
+            ArtifactExportRef::ForkHash(_) => self.resolve_export_owner(artifact, export),
+            ArtifactExportRef::BlobVersion {
+                artifact_id,
+                version,
+            } => {
+                if artifact != artifact_id.to_hex()
+                    || version == 0
+                    || self.get_blob_artifact_in_txn(rtxn, &artifact_id)?.is_none()
+                {
+                    return Ok(None);
+                }
+                Ok(self
+                    .blob_artifact_version_metadata_in_txn(rtxn, &artifact_id, version)?
                     .map(|_| artifact_id))
             }
         }
@@ -432,22 +471,28 @@ impl Vault {
                 artifact_id,
                 version,
             } => {
-                if self.resolve_export_owner(artifact, export)?.is_none() {
+                if artifact != artifact_id.to_hex() || version == 0 {
                     return Ok(None);
                 }
-                let body = self
-                    .get_blob_artifact(&artifact_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                // A stable route also serves exports whose original filename is
-                // not a normalized URL path (for example, an absolute path).
-                if path != "export" && path != "index.html" && path != body.name {
+                let rtxn = self.store.env.read_txn()?;
+                if self
+                    .get_blob_artifact_in_txn(&rtxn, &artifact_id)?
+                    .is_none()
+                {
                     return Ok(None);
                 }
-                let record = self
-                    .blob_artifact_version_metadata(&artifact_id, version)?
-                    .ok_or(Error::EntityNotFound)?;
+                let Some(record) =
+                    self.blob_artifact_version_metadata_in_txn(&rtxn, &artifact_id, version)?
+                else {
+                    return Ok(None);
+                };
+                // Pin the export presentation with the version. Later body
+                // edits cannot rename or retype an already-published route.
+                if path != "export" && path != "index.html" && path != record.export_name {
+                    return Ok(None);
+                }
                 let bytes = self
-                    .read_blob_artifact_version(&artifact_id, version)?
+                    .read_blob_artifact_version_in_txn(&rtxn, &artifact_id, version)?
                     .ok_or(Error::EntityNotFound)?;
                 if *blake3::hash(&bytes).as_bytes() != record.content_hash {
                     return Err(Error::CorruptedIndex("blob export content hash"));
@@ -459,7 +504,7 @@ impl Vault {
                     selector,
                     export,
                     path: path.to_owned(),
-                    media_type: Some(body.media_type),
+                    media_type: Some(record.export_media_type),
                     content_hash: record.content_hash,
                     size_bytes,
                     bytes,

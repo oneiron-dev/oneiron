@@ -438,6 +438,194 @@ fn deleting_blob_export_removes_both_channel_pointers() -> Result<()> {
 }
 
 #[test]
+fn blob_publish_after_delete_in_the_writer_cannot_revive_on_id_reuse() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"old bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    let artifact = id.to_hex();
+    let mut wtxn = vault.store.env.write_txn()?;
+    vault.batch_in().delete(&id).apply(&mut wtxn)?;
+    // The delete and attempted publish share the writer. This is the
+    // dangerous order if publish validated before taking that writer.
+    let error = vault
+        .publish_export_pointer_in_txn(
+            &mut wtxn,
+            &artifact,
+            ArtifactPointerChannel::Published,
+            ArtifactExportRef::BlobVersion {
+                artifact_id: id,
+                version: first.version,
+            },
+        )
+        .expect_err("deleted export cannot be published");
+    assert!(matches!(error, Error::EntityNotFound));
+    wtxn.commit()?;
+
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let replacement = vault.append_blob_artifact_version(
+        &id,
+        b"replacement bytes",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_ne!(replacement.version, first.version);
+    assert!(
+        vault
+            .artifact_pointer(&artifact, ArtifactPointerChannel::Published)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+                "export"
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &artifact,
+                ArtifactSnapshotSelector::BlobVersion(replacement.version),
+                "export"
+            )?
+            .expect("replacement has only its new version URL")
+            .bytes,
+        b"replacement bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_blob_id_never_reuses_a_direct_version_url() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"first",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    assert!(vault.delete_entity(&id)?);
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("report.pdf", "application/pdf"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let second = vault.append_blob_artifact_version(
+        &id,
+        b"second",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_eq!(second.version, first.version + 1);
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .is_none()
+    );
+    assert_eq!(vault.blob_artifact_versions(&id)?, vec![second]);
+    Ok(())
+}
+
+#[test]
+fn pinned_blob_export_keeps_name_and_media_type_after_body_reput() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
+    let (id, actor) = blob_fixture(&vault)?;
+    let first = vault.append_blob_artifact_version(
+        &id,
+        b"original",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    vault.publish_blob_artifact_pointer(&id, ArtifactPointerChannel::Published, first.version)?;
+    vault.put_blob_artifact(
+        &id,
+        &BlobArtifactBody::new("renamed.txt", "text/plain"),
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    let pinned = vault
+        .resolve_artifact_file(
+            &id.to_hex(),
+            ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Published),
+            "report.pdf",
+        )?
+        .expect("old export name is pinned");
+    assert_eq!(pinned.bytes, b"original");
+    assert_eq!(pinned.media_type.as_deref(), Some("application/pdf"));
+    assert!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "renamed.txt"
+            )?
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .resolve_artifact_file(
+                &id.to_hex(),
+                ArtifactSnapshotSelector::BlobVersion(first.version),
+                "export"
+            )?
+            .expect("stable export path")
+            .media_type
+            .as_deref(),
+        Some("application/pdf")
+    );
+    let next = vault.append_blob_artifact_version(
+        &id,
+        b"new content",
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        TimeRange { start: 4, end: 4 },
+        4,
+    )?;
+    assert_eq!(next.export_name, "renamed.txt");
+    assert_eq!(next.export_media_type, "text/plain");
+    assert_eq!(first.export_name, "report.pdf");
+    assert_eq!(first.export_media_type, "application/pdf");
+    Ok(())
+}
+
+#[test]
 fn blob_publish_verb_needs_grant_and_feature() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(test_config());
     let (id, actor) = blob_fixture(&vault)?;

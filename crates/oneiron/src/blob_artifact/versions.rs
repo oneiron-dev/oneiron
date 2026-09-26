@@ -14,15 +14,18 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
-use super::body::{BlobArtifactBody, decode_blob_artifact_body, encode_blob_artifact_body};
+use super::body::{
+    BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES, BLOB_ARTIFACT_NAME_MAX_BYTES, BlobArtifactBody,
+    decode_blob_artifact_body, encode_blob_artifact_body, validate_text_field,
+};
 use super::provenance::{
     BLOB_VERSION_CLAIM_PREDICATE, BlobVersionProvenance, blob_version_claim_value,
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
     BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_head_key,
-    blob_artifact_version_key, blob_artifact_version_prefix, encode_value, entity_value,
-    hash_from_value, read_value, require_entity_type, u64_value,
+    blob_artifact_highwater_key, blob_artifact_version_key, blob_artifact_version_prefix,
+    encode_value, entity_value, hash_from_value, read_value, require_entity_type, u64_value,
 };
 use crate::error::ArtifactError;
 
@@ -36,13 +39,17 @@ pub struct BlobArtifactVersion {
     pub provenance: BlobVersionProvenance,
     pub claim_id: EntityId,
     pub created_at: u64,
+    /// Export presentation pinned when this version was appended, not read
+    /// from the mutable artifact body at serve time.
+    pub export_name: String,
+    pub export_media_type: String,
     /// The version this record descends from. Absent for roots and legacy rows.
     pub parent_version: Option<u64>,
     /// The selected base of an explicit fork; absent on ordinary head appends.
     pub fork_of_version: Option<u64>,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 8] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 10] = [
     "version",
     "content_hash",
     "provenance",
@@ -51,6 +58,8 @@ pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 8] = [
     "created_at",
     "parent_version",
     "fork_of_version",
+    "export_name",
+    "export_media_type",
 ];
 
 pub(super) const KEY_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[0];
@@ -68,6 +77,9 @@ const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
 pub(super) const KEY_PARENT_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
 
 pub(super) const KEY_FORK_OF_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[7];
+
+const KEY_EXPORT_NAME: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[8];
+const KEY_EXPORT_MEDIA_TYPE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[9];
 
 impl Vault {
     pub fn put_blob_artifact(
@@ -224,9 +236,19 @@ impl Vault {
             ENTITY_TYPE_BLOB_ARTIFACT,
             "append target must be a BLOB_ARTIFACT entity",
         )?;
+        let body = self
+            .get_blob_artifact_in_txn(wtxn, artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
         let fingerprint =
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
+        let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
+        if head
+            .as_ref()
+            .is_some_and(|head| highwater != Some(head.version))
+        {
+            return Err(Error::CorruptedIndex("blob artifact version highwater"));
+        }
         let parent_version = match (fork_parent, &head) {
             (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
                 let key = blob_artifact_version_key(artifact_id, parent);
@@ -254,11 +276,14 @@ impl Vault {
             (None, Some(head)) => Some(head.version),
             (None, None) => None,
         };
-        let next_version = head.map_or(Ok(1), |head| {
-            head.version
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
-        })?;
+        // Deletion removes the current chain but never its high-water mark:
+        // an old immutable URL must not identify a new incarnation's bytes.
+        let previous_version = head
+            .as_ref()
+            .map_or(highwater.unwrap_or(0), |head| head.version);
+        let next_version = previous_version
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?;
         let version_key = blob_artifact_version_key(artifact_id, next_version);
         if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
@@ -302,6 +327,8 @@ impl Vault {
             provenance: provenance.clone(),
             claim_id,
             created_at: learned_at,
+            export_name: body.name,
+            export_media_type: body.media_type,
             parent_version,
             fork_of_version: fork_parent,
         };
@@ -327,6 +354,11 @@ impl Vault {
         self.store
             .vault_meta
             .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
+        self.store.vault_meta.put(
+            wtxn,
+            &blob_artifact_highwater_key(artifact_id),
+            &next_version.to_be_bytes(),
+        )?;
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
         Ok(record)
     }
@@ -351,14 +383,25 @@ impl Vault {
         for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
             let (key, raw) = entry?;
             let record = decode_blob_artifact_version_record(&raw)?;
-            let expected = u64::try_from(versions.len())
-                .map_err(|_| Error::ArithmeticOverflow("blob artifact version overflow"))?
-                + 1;
+            let first_version = versions
+                .first()
+                .map_or(record.version, |first: &BlobArtifactVersion| first.version);
+            let expected =
+                versions
+                    .last()
+                    .map_or(Ok(record.version), |previous: &BlobArtifactVersion| {
+                        previous
+                            .version
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
+                    })?;
             if record.version != expected || !key.ends_with(&record.version.to_be_bytes()) {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
             }
             if let Some(parent) = record.parent_version
-                && (parent >= record.version || versions.get((parent - 1) as usize).is_none())
+                && (parent < first_version
+                    || parent >= record.version
+                    || versions.get((parent - first_version) as usize).is_none())
             {
                 return Err(Error::CorruptedIndex("blob artifact version parent"));
             }
@@ -387,10 +430,19 @@ impl Vault {
         version: u64,
     ) -> Result<Option<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
+        self.blob_artifact_version_metadata_in_txn(&rtxn, artifact_id, version)
+    }
+
+    pub(crate) fn blob_artifact_version_metadata_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<BlobArtifactVersion>> {
         let Some(raw) = self
             .store
             .vault_meta
-            .get(&rtxn, &blob_artifact_version_key(artifact_id, version))?
+            .get(rtxn, &blob_artifact_version_key(artifact_id, version))?
         else {
             return Ok(None);
         };
@@ -399,7 +451,7 @@ impl Vault {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
         let claim = self
-            .get_claim_in_txn(&rtxn, &record.claim_id)?
+            .get_claim_in_txn(rtxn, &record.claim_id)?
             .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
         if claim.predicate != BLOB_VERSION_CLAIM_PREDICATE
             || claim.subject != ClaimSubject::Entity(*artifact_id)
@@ -472,6 +524,14 @@ fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<V
             Value::from(KEY_CREATED_AT),
             Value::Integer(record.created_at.into()),
         ),
+        (
+            Value::from(KEY_EXPORT_NAME),
+            Value::from(record.export_name.as_str()),
+        ),
+        (
+            Value::from(KEY_EXPORT_MEDIA_TYPE),
+            Value::from(record.export_media_type.as_str()),
+        ),
     ];
     if let Some(parent) = record.parent_version {
         entries.push((
@@ -505,6 +565,8 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
     let mut run_ref: Option<Option<String>> = None;
     let mut claim_id = None;
     let mut created_at = None;
+    let mut export_name = None;
+    let mut export_media_type = None;
     let mut parent_version = None;
     let mut fork_of_version = None;
     let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
@@ -554,6 +616,26 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
             }
             KEY_CLAIM_ID => claim_id = Some(entity_value(value, "claim_id")?),
             KEY_CREATED_AT => created_at = Some(u64_value(value, "created_at")?),
+            KEY_EXPORT_NAME => {
+                export_name = Some(
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                            "export_name must be a UTF-8 string",
+                        )))?
+                        .to_owned(),
+                );
+            }
+            KEY_EXPORT_MEDIA_TYPE => {
+                export_media_type = Some(
+                    value
+                        .as_str()
+                        .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
+                            "export_media_type must be a UTF-8 string",
+                        )))?
+                        .to_owned(),
+                );
+            }
             KEY_PARENT_VERSION => parent_version = Some(u64_value(value, "parent_version")?),
             KEY_FORK_OF_VERSION => fork_of_version = Some(u64_value(value, "fork_of_version")?),
             _ => unreachable!("index resolved from BLOB_ARTIFACT_VERSION_RECORD_KEYS"),
@@ -584,6 +666,22 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         )))?,
     )?;
     validate_provenance(&provenance)?;
+    let export_name = export_name.ok_or(Error::Artifact(
+        ArtifactError::InvalidBlobArtifactBody("missing required export_name"),
+    ))?;
+    let export_media_type = export_media_type.ok_or(Error::Artifact(
+        ArtifactError::InvalidBlobArtifactBody("missing required export_media_type"),
+    ))?;
+    validate_text_field(
+        &export_name,
+        BLOB_ARTIFACT_NAME_MAX_BYTES,
+        "invalid export_name",
+    )?;
+    validate_text_field(
+        &export_media_type,
+        BLOB_ARTIFACT_MEDIA_TYPE_MAX_BYTES,
+        "invalid export_media_type",
+    )?;
     Ok(BlobArtifactVersion {
         version,
         content_hash: content_hash.ok_or(Error::Artifact(
@@ -600,7 +698,31 @@ pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobAr
         )))?,
         parent_version,
         fork_of_version,
+        export_name,
+        export_media_type,
     })
+}
+
+fn read_blob_artifact_highwater_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<Option<u64>> {
+    let Some(raw) = store
+        .vault_meta
+        .get(rtxn, &blob_artifact_highwater_key(artifact_id))?
+    else {
+        return Ok(None);
+    };
+    let bytes: [u8; 8] = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| Error::CorruptedIndex("blob artifact version highwater"))?;
+    let version = u64::from_be_bytes(bytes);
+    if version == 0 {
+        return Err(Error::CorruptedIndex("blob artifact version highwater"));
+    }
+    Ok(Some(version))
 }
 
 pub(crate) fn read_blob_artifact_head_in_txn(

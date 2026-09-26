@@ -874,6 +874,50 @@ async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
     assert_eq!(headers[CONTENT_DISPOSITION], "attachment");
     assert_eq!(headers[X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(headers[CACHE_CONTROL], BLOB_POINTER_CACHE_CONTROL);
+
+    // The blob body is mutable, but this URL and its response headers are not.
+    server
+        .vault
+        .put_blob_artifact(
+            &artifact_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("renamed.txt", "text/plain"),
+            oneiron::TimeRange { start: 30, end: 30 },
+            30,
+        )
+        .expect("re-put mutable artifact body");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&direct_route)
+            .body(Body::empty())
+            .expect("pinned version after body re-put"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(headers[CONTENT_TYPE], "application/pdf");
+    assert_eq!(headers[CACHE_CONTROL], BLOB_IMMUTABLE_CACHE_CONTROL);
+    assert_eq!(
+        headers[ETAG],
+        format!(
+            "\"{}\"",
+            oneiron::artifact_hex(blake3::hash(b"%PDF-1.7\nfirst version").as_bytes())
+        )
+    );
+    let renamed_direct = format!(
+        "/a/{}/renamed.txt?blobVersion={}",
+        artifact_id.to_hex(),
+        first.version
+    );
+    let (status, _, _) = route_bytes(
+        server,
+        Request::builder()
+            .uri(renamed_direct)
+            .body(Body::empty())
+            .expect("new name must not replace pinned name"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

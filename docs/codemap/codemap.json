@@ -3781,7 +3781,7 @@
      "purpose": "Blob vault_meta key builders and shared MessagePack scalar helpers",
      "surface": {
       "const": 2,
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -3802,7 +3802,7 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 8,
       "struct": 1
      }
