@@ -118,6 +118,8 @@ jobs:
       - name: Test build and navigation tools (only when scripts or CI changed)
         if: ${{ !cancelled() && (needs.changes.outputs.pytools == 'true' || needs.changes.outputs.full == 'true' || needs.changes.result != 'success') }}
         run: |
+          # The deny-policy tests call the pinned cargo-deny.
+          cargo install --locked cargo-deny@0.19.4 --root "$HOME/ci/tools"
           python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_codemap.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_verify.py' -v
