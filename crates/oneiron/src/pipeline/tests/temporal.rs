@@ -690,3 +690,25 @@ fn inverted_ranges_are_rejected_on_put() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn temporal_type_scope_does_not_spend_limit_on_excluded_hit() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let anchor = crate::unix_seconds_now();
+    let eligible = entity_id(0xB1);
+    let excluded = entity_id(0xB2);
+    put_entity(&vault, eligible, 1, anchor, anchor, anchor - 60 * 86_400)?;
+    put_entity(&vault, excluded, 2, anchor, anchor, anchor)?;
+
+    let hits = vault
+        .query()
+        .search_temporal_with_sigma(anchor, anchor, 86_400, TemporalAnchorMode::Occurred, 1)
+        .filter_types(&[1])
+        .limit(1)
+        .run()?;
+    assert_eq!(
+        hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        [eligible]
+    );
+    Ok(())
+}
