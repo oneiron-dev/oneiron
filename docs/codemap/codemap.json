@@ -16316,7 +16316,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16642,7 +16642,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
@@ -16659,7 +16659,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -16841,6 +16841,14 @@
      "notable": [],
      "path": "src/gate/tests/external_effect_grants.rs",
      "purpose": "External-effect grants: scoped, standing, and outbound MCP grants plus counterparty contacts",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/failure_policy.rs",
+     "purpose": "Failure-class rows are vault policy, not JSON fallback payload rules",
      "surface": {}
     },
     {
@@ -19884,6 +19892,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DreamerFailureClass",
+      "DreamerFailureDecision",
+      "DreamerFailureRoute"
+     ],
+     "path": "src/llm/failure_policy.rs",
+     "purpose": "Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DeterministicRunner",
       "FallbackError",
       "FallbackRegistry"
@@ -19964,9 +19989,9 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 7,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -34366,7 +34391,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34499,7 +34524,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35054,8 +35079,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2070,
-   "test_files": 710
+   "source_files": 2071,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [

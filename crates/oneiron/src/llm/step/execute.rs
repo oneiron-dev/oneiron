@@ -71,10 +71,12 @@ pub async fn call_as_step_with_fallbacks(
         let decoded = decode_step_claim_value(&body.value)?;
         if step_claim_matches_request(&decoded, &request)? {
             let response = load_step_response(ctx.vault, &decoded)?;
+            let failure_policy = failure_policy(ctx.vault, &response)?;
             return Ok(StepOutcome::Finished {
                 response,
                 memoized: true,
                 legibility: step_legibility(ctx, guard),
+                failure_policy,
             });
         }
     }
@@ -89,10 +91,12 @@ pub async fn call_as_step_with_fallbacks(
         let response: LlmResponse = serde_json::from_slice(payload)?;
         log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
         step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
+        let failure_policy = failure_policy(ctx.vault, &response)?;
         return Ok(StepOutcome::Finished {
             response,
             memoized: true,
             legibility: step_legibility(ctx, guard),
+            failure_policy,
         });
     }
 
@@ -185,6 +189,7 @@ pub async fn call_as_step_with_fallbacks(
     // is idempotent on an already-settled lease, so the happy-path settle stays
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
+    let failure_policy = failure_policy(ctx.vault, &response)?;
     ctx.vault.resume_from_slim_on_inbound()?;
 
     let payload = serde_json::to_vec(&response)?;
@@ -206,7 +211,20 @@ pub async fn call_as_step_with_fallbacks(
         response,
         memoized: false,
         legibility: step_legibility(ctx, guard),
+        failure_policy,
     })
+}
+
+fn failure_policy(
+    vault: &crate::Vault,
+    response: &LlmResponse,
+) -> DurableStepResult<Option<super::super::DreamerFailureDecision>> {
+    let Some(class) = super::super::fallback_failure_class(response) else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    Ok(Some(policy.dreamer_failure_decision(class)))
 }
 
 fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {

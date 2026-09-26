@@ -350,6 +350,8 @@ pub enum StepOutcome {
         /// Budget legibility (ONE-1305): Some inside wake passes (when
         /// [`DurableStepContext::deadline`] is set), None outside.
         legibility: Option<BudgetLegibilityEnvelope>,
+        /// Restrictive policy for a deterministic failure result; never an authority grant.
+        failure_policy: Option<super::super::DreamerFailureDecision>,
     },
     Trapped(TrapRef),
 }

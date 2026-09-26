@@ -26,6 +26,11 @@ pub(crate) mod entity_refs;
 mod error;
 mod fallback;
 pub use fallback::{DeterministicRunner, FallbackError, FallbackRegistry};
+mod failure_policy;
+pub use failure_policy::{DreamerFailureClass, DreamerFailureDecision, DreamerFailureRoute};
+pub(crate) use failure_policy::{
+    DreamerFailureRule, decide_failure, fallback_failure_class, parse_failure_rules,
+};
 pub mod image;
 pub mod manifest;
 mod model_id;

@@ -111,10 +111,14 @@ impl ConsolidationExecutor<'_> {
         )?;
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
-        let response = match outcome {
-            Ok(StepOutcome::Finished { response, .. }) => {
+        let (response, failure_policy) = match outcome {
+            Ok(StepOutcome::Finished {
+                response,
+                failure_policy,
+                ..
+            }) => {
                 charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
-                response
+                (response, failure_policy)
             }
             Ok(StepOutcome::Trapped(_)) => return Ok(PartitionRun::Trapped),
             Err(crate::llm::DurableStepError::SpentFinalizeRefused { usage }) => {
@@ -131,6 +135,14 @@ impl ConsolidationExecutor<'_> {
         };
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
+        }
+        // A fallback answer is deterministic data, not permission to promote
+        // claims. A trusted resident rule may enable this branch, still subject
+        // to all normal candidate and write gates.
+        if failure_policy.is_some_and(|decision| !decision.consolidation_eligible) {
+            return Ok(PartitionRun::Completed {
+                candidates: Vec::new(),
+            });
         }
         let candidates = self.decode_candidates(
             &partition,

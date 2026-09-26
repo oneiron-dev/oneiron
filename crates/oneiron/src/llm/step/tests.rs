@@ -1168,6 +1168,7 @@ fn admitted_call_finishes_after_deadline_and_refuses_next_step() -> Result<()> {
         response,
         memoized,
         legibility,
+        ..
     } = outcome
     else {
         panic!("expected finished step");
@@ -2031,6 +2032,7 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     let StepOutcome::Finished {
         response,
         memoized: false,
+        failure_policy: Some(policy),
         ..
     } = first
     else {
@@ -2045,12 +2047,79 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     assert!(
         matches!(response.finish_reason, FinishReason::Other { name } if name.starts_with("fallback:json_rules_v1:"))
     );
+    assert_eq!(policy.class, crate::llm::DreamerFailureClass::Fatal);
+    assert_eq!(policy.route, crate::llm::DreamerFailureRoute::Fallback);
+    assert!(!policy.consolidation_eligible && !policy.effector_eligible);
     assert_eq!(guard.read().reserved_units, 0);
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request)).expect("memo"),
-        StepOutcome::Finished { memoized: true, .. }
+        StepOutcome::Finished { memoized: true, failure_policy: Some(replayed), .. }
+            if replayed == policy
     ));
     assert_eq!(backend.calls(), 1);
+    Ok(())
+}
+
+#[test]
+fn fatal_fallback_carries_resident_policy_on_first_run_and_replay() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let mut manifest =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            .expect("default manifest");
+    let rmpv::Value::Map(entries) = &mut manifest else {
+        panic!("manifest map")
+    };
+    entries.push((
+        rmpv::Value::from("dreamer_failure_rules"),
+        rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+            (rmpv::Value::from("failure"), rmpv::Value::from("fatal")),
+            (rmpv::Value::from("route"), rmpv::Value::from("fallback")),
+            (
+                rmpv::Value::from("consolidation_eligible"),
+                rmpv::Value::Boolean(true),
+            ),
+            (
+                rmpv::Value::from("effector_eligible"),
+                rmpv::Value::Boolean(false),
+            ),
+        ])]),
+    ));
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &manifest).expect("encode policy");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &data,
+    )?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
+    let guard = guard_with_limit(10_000);
+    let mut request = request_fixture();
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"fatal","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    for (memoized, expected_calls) in [(false, 1), (true, 1)] {
+        let result = block_on(call_as_step(&ctx, &backend, &guard, request.clone()))
+            .expect("durable fallback");
+        let StepOutcome::Finished {
+            memoized: replay,
+            failure_policy: Some(policy),
+            ..
+        } = result
+        else {
+            panic!("fallback result")
+        };
+        assert_eq!(replay, memoized);
+        assert_eq!(backend.calls(), expected_calls);
+        assert!(policy.consolidation_eligible);
+        assert!(!policy.effector_eligible);
+    }
     Ok(())
 }
 

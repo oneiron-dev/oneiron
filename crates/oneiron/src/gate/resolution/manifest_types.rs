@@ -1,6 +1,9 @@
 //! Resolved-view types plus the `PolicyManifestResolution` struct definition.
 
-use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::llm::{
+    BudgetExhaustionPolicy, BudgetPolicyTable, DreamerFailureClass, DreamerFailureDecision,
+    DreamerFailureRule, decide_failure,
+};
 
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -98,4 +101,19 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
+}
+
+impl PolicyManifestResolution {
+    /// A malformed policy cannot authorize use of failed model output.
+    pub(crate) fn dreamer_failure_decision(
+        &self,
+        class: DreamerFailureClass,
+    ) -> DreamerFailureDecision {
+        if self.diagnostics.is_fail_closed() {
+            decide_failure(&[], class)
+        } else {
+            decide_failure(&self.dreamer_failure_rules, class)
+        }
+    }
 }
