@@ -278,7 +278,11 @@ pub(super) fn materialize_edges_from_delta(
                         match crate::conversation_dag::validate_received_edge(
                             &vault.store, &*wtxn, src, kind, tgt, decoded,
                         ) {
-                            Ok(()) => {}
+                            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Admit) => {}
+                            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Deferred) => {
+                                tracing::debug!(edge = %key, "observer-b: DAG edge deferred — membership absent");
+                                continue;
+                            }
                             Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
                                 quarantine_rejected_op_in_txn(
                                     vault, wtxn, window_key, QuarantineContainer::Edges,

@@ -498,3 +498,195 @@ fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
     .unwrap();
     assert!(peer.migrate_conversation_dag(&delayed).unwrap());
 }
+
+#[cfg(feature = "sync")]
+fn received_cycle_fixture(kind: &str) -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
+    let (_source_dir, source, _unused, actor) = fixture();
+    let bad = EntityId::from_bytes([1; 16]).unwrap();
+    let good = EntityId::from_bytes([254; 16]).unwrap();
+    source
+        .create_conversation(
+            bad,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let root = source
+        .append_dag_record(&input(bad, None, true, actor))
+        .unwrap()
+        .id;
+    let session = (kind == "session").then(|| source.spawn_dag_sub_session(&root, actor).unwrap());
+    let (first, second) = if kind == "thread" {
+        let first = source
+            .reply_in_thread(root, &input(bad, Some(root), false, actor))
+            .unwrap()
+            .id;
+        let second = source
+            .reply_in_thread(root, &input(bad, Some(first), false, actor))
+            .unwrap()
+            .id;
+        (first, second)
+    } else {
+        let mut first_input = input(bad, Some(root), session.is_none(), actor);
+        first_input.session = session;
+        let first = source.append_dag_record(&first_input).unwrap().id;
+        let mut second_input = input(bad, Some(first), session.is_none(), actor);
+        second_input.session = session;
+        let second = source.append_dag_record(&second_input).unwrap().id;
+        (first, second)
+    };
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("received-cycle", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edges = doc.get_map("edges");
+    let original = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &root);
+    assert!(edges.get(&original).is_some());
+    edges.delete(&original).unwrap();
+    let forged = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &second);
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(&edges, &forged, &value).unwrap();
+    doc.commit();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    if let Some(session) = session {
+        let raw = source.get_raw_unsealed(&session).unwrap().unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        let later_key = crate::sync::types::WindowKey::from_timestamp(header.learned_at);
+        let later_doc = crate::sync::schema::create_window_doc("received-session", &later_key);
+        crate::sync::window::reverse_rematerialize(&source, &later_doc, &later_key).unwrap();
+        crate::sync::window::forward_rematerialize(
+            &peer,
+            &later_doc,
+            &crate::sync::bridge::Materializer::new(),
+            &later_key,
+        )
+        .unwrap();
+        assert!(
+            peer.edge_exists(&session, EdgeKind::SpawnedBy, &root)
+                .unwrap()
+        );
+    }
+    let healthy_root = EntityId::now();
+    peer.batch()
+        .put(
+            &good,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&healthy_root, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .edge_checked(&healthy_root, &good, 1.0)
+        .commit()
+        .unwrap();
+    (dir, peer, bad, good, first)
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_sub_session_cycle_skips_only_its_conversation() {
+    let (_dir, peer, bad, good, _) = received_cycle_fixture("session");
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, [bad]);
+    assert!(!peer.migrate_conversation_dag(&good).unwrap());
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_thread_cycle_is_not_marked_migrated() {
+    let (_dir, peer, bad, good, first) = received_cycle_fixture("thread");
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, [bad]);
+    assert!(!peer.migrate_conversation_dag(&good).unwrap());
+    assert!(peer.migrate_conversation_dag(&bad).is_err());
+    assert!(
+        peer.resolve_dag_scope(&scope(bad, ScopePath::Branch(first), false))
+            .is_err()
+    );
+}
+
+#[cfg(feature = "sync")]
+fn late_parent_cycle_is_rejected(live_delta: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("late-parent", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _observer = live_delta.then(|| {
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str())
+    });
+    let back_edge = crate::sync::bridge::format_edge_key(&first, EdgeKind::Parent, &second);
+    let value =
+        crate::sync::bridge::encode_edge_value_for_crdt(EdgeKind::Parent, 1.0, 20, None, None)
+            .unwrap();
+    crate::sync::loro_support::map_insert_bytes(&doc.get_map("edges"), &back_edge, &value).unwrap();
+    doc.commit();
+    if !live_delta {
+        crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
+    }
+    assert!(!peer.edge_exists(&first, EdgeKind::Parent, &second).unwrap());
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(!report.conversation_dags_skipped_invalid.contains(&room));
+    assert_eq!(
+        peer.main_line(&room, super::DagPageRequest::default())
+            .unwrap()
+            .main_line,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn late_parent_cycle_cannot_poison_adopted_main_line_via_observer() {
+    late_parent_cycle_is_rejected(true);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn late_parent_cycle_cannot_poison_adopted_main_line_via_forward_remat() {
+    late_parent_cycle_is_rejected(false);
+}

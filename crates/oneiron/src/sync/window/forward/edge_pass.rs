@@ -173,15 +173,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     crate::edge::EdgeKind::Parent
                         | crate::edge::EdgeKind::SpawnedBy
                         | crate::edge::EdgeKind::RepliesTo
-                ) {
-                    crate::conversation_dag::validate_received_edge(
-                        &vault.store,
-                        &*wtxn,
-                        src,
-                        kind,
-                        tgt,
-                        decoded,
-                    )?;
+                ) && crate::conversation_dag::validate_received_edge(
+                    &vault.store,
+                    &*wtxn,
+                    src,
+                    kind,
+                    tgt,
+                    decoded,
+                )? == crate::conversation_dag::ReceivedEdgeAdmission::Deferred
+                {
+                    return Ok(EdgeRematOutcome::Deferred);
                 }
 
                 // ONE-1645 replay door for the FacetOf type table. The batch
