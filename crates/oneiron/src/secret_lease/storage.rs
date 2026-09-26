@@ -277,6 +277,12 @@ pub(super) fn stamp_secret_lease_in_txn(
     let (id, rec) = read_record_for_ref_in_txn(&vault.store, wtxn, secret_ref)?;
     let floor = SecretCustodyFloor::resolve(&vault.store, wtxn)?;
     admit_record_use(&rec, effector, CustodyTier::T1Leased, &floor)?;
+    crate::credential_door::admit_materialization_in_txn(
+        &vault.store,
+        wtxn,
+        effector,
+        Some(ttl_secs),
+    )?;
     let value = read_value_for_ref_in_txn(vault, wtxn, &id, effector)?;
     // ONE instant stamps `granted_at`, dates the receipt, and answers the
     // bound. Nothing between authorization and here can move them apart.

@@ -971,10 +971,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/credential_door/door_authority.rs` | src | s | 2 crate-vis | — | Checkout witnesses and consent admission under the committing writer |
 | `src/credential_door/door_consent.rs` | src | s | 2 crate-vis | — | Consent joins only the missing verb axis, never identity, scope, or floors |
 | `src/credential_door/door_credential.rs` | src | s | 10 crate-vis | — | DoorCredential attenuation, lifetime math, and floor-naming evaluation |
-| `src/credential_door/door_policy.rs` | src | m | 17 crate-vis | — | Policy model: effectors, dials, floors, merge rules, and map helpers |
+| `src/credential_door/door_policy.rs` | src | m | 18 crate-vis | — | Policy model: effectors, dials, floors, merge rules, and map helpers |
 | `src/credential_door/door_service.rs` | src | s | 11 crate-vis | — | CredentialDoorService: checkout admission and pre-receive scanning |
-| `src/credential_door/door_types.rs` | src | m | 24 crate-vis | — | Door constants, floor names and prefixes, error type, and small naming helpers |
-| `src/credential_door/mod.rs` | src | s | 5 crate-vis | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
+| `src/credential_door/door_types.rs` | src | m | 25 crate-vis | — | Door constants, floor names and prefixes, error type, and small naming helpers |
+| `src/credential_door/mod.rs` | src | s | 6 crate-vis | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `src/credential_door/tests.rs` | test | L | — | — | Checkout receive-pack, catastrophe policy, closed scope, and pre-receive scan laws |
 | `src/credential_door/tests/authority.rs` | test | s | — | — | — |
 | `src/credential_door/verb_class.rs` | src | s | 2 crate-vis | — | Scope presets for the credential door's operations |
@@ -2159,7 +2159,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease/files.rs` | src | s | 7 crate-vis | — | T2 file policy, owner-only write, and the armed cleanup guard |
 | `src/secret_lease/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | ARCH-0069 secret custody — SECRET-02 (ONE-1920): the T0/T1/T2 materialization rungs behind a single… |
 | `src/secret_lease/storage.rs` | src | m | 16 crate-vis | — | Txn row reads/writes, teardown, lazy expiry, and the one stamping body |
-| `src/secret_lease/tests.rs` | test | L | — | — | SECRET-02 (ONE-1920) unit tests: the tier-admission truth table (cap-only; SOL-1920-01), the T0 door (value… |
+| `src/secret_lease/tests.rs` | test | XL | — | — | SECRET-02 (ONE-1920) unit tests: the tier-admission truth table (cap-only; SOL-1920-01), the T0 door (value… |
 | `src/secret_lease/types.rs` | src | s | 6 struct · 1 enum · 2 fn · 4 const · 4 crate-vis | DoorInjectionReceipt, LocalRegistration, SecretLease, SecretLeaseMaterialization, SecretLeaseStatus, SecretMaterializationReceipt, SecretTaintRef | Lease/registration/receipt row types, VaultInstant clock, key prefixes |
 | `src/secret_manifest.rs` | src | s | 2 struct · 2 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_manifest/tests.rs` | test | s | — | — | SECRET-01 (ONE-1919) manifest tests: parse, narrow-only validation, the widening-reject fixture |
