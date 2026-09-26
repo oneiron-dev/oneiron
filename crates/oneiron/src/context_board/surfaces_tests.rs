@@ -107,6 +107,140 @@ fn changed_line_survives_epoch_and_rides_without_pushing() {
 }
 
 #[test]
+fn own_proposal_change_keeps_the_answer_reference_and_next_wake_diagnostic() {
+    let mut session = SessionReadSet::default();
+    session.own_proposal("pr1");
+    assert!(!session.proposal_changed(
+        "foreign",
+        "rejected",
+        ProposalReason::RuleRow("rl2".into()),
+        Some("denied".into()),
+    ));
+    assert!(session.proposal_changed(
+        "pr1",
+        "rejected",
+        ProposalReason::PersonWord("msg7".into()),
+        Some("Scope is too wide\ntry w1".into()),
+    ));
+    let mut reopened: SessionReadSet =
+        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+    let changes = reopened.changed(2, |_| None);
+    assert_eq!(
+        changes.render(),
+        [
+            "changed[1:]{id,to}:",
+            "pr1: rejected why=word:msg7 diagnostic=Scope is too wide try w1",
+        ]
+    );
+    assert!(changes.ride(None).is_none());
+    let frame = changes
+        .ride(Some(BoardStreamFrame {
+            epoch: 1,
+            kind: FrameKind::Delta(vec![DeltaRow {
+                key: "task".into(),
+                line: "open".into(),
+            }]),
+        }))
+        .unwrap();
+    let FrameKind::Delta(rows) = frame.kind else {
+        panic!("delta")
+    };
+    assert_eq!(rows[0].key, "changed");
+    assert!(rows[0].line.contains("diagnostic=Scope is too wide try w1"));
+    assert!(reopened.proposal_changed(
+        "pr1",
+        "approved",
+        ProposalReason::RuleRow("rl9".into()),
+        None
+    ));
+    assert_eq!(
+        reopened.changed(2, |_| None).render()[1],
+        "pr1: approved why=rule:rl9"
+    );
+}
+
+#[test]
+fn connector_changes_stay_in_epoch_tail_then_join_the_next_prefix() {
+    let mut session = SessionReadSet::default();
+    session.connector_changed("mt1", ConnectorChange::Installed, "write=w1");
+    assert!(session.changed(4, |_| None).render().is_empty()); // no active epoch
+    session.keyframe_committed(3);
+    session.connector_changed("mt1", ConnectorChange::Installed, "write=w1");
+    session.connector_changed("mt2", ConnectorChange::Narrowed, "write=w2 read=w2");
+    session.connector_changed("mt1", ConnectorChange::Narrowed, "write=w1 read=w1");
+    let changes = session.changed(1, |_| None);
+    assert_eq!(
+        changes.render(),
+        [
+            "changed[1:]{id,to}:",
+            "mt1: narrowed state=write=w1 read=w1",
+            "changed: +1",
+        ]
+    );
+    assert!(changes.ride(None).is_none());
+    let reopened: SessionReadSet =
+        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+    assert_eq!(reopened.changed(3, |_| None).render().len(), 3);
+    session.keyframe_committed(3); // re-rendering the same epoch must not drop its tail
+    assert_eq!(session.changed(3, |_| None).render().len(), 3);
+    session.keyframe_committed(4); // caller has now assembled a prefix from the current state
+    assert!(session.changed(3, |_| None).render().is_empty());
+    session.keyframe_committed(2); // stale keyframes cannot clear a newer epoch
+    assert!(session.changed(3, |_| None).render().is_empty());
+}
+
+#[test]
+fn change_cap_is_shared_between_proposals_connectors_and_lifecycle() {
+    let mut session = SessionReadSet::default();
+    session.served("cl1", ServedLifecycle::Active);
+    session.own_proposal("pr1");
+    session.proposal_changed(
+        "pr1",
+        "approved",
+        ProposalReason::RuleRow("rl1".into()),
+        None,
+    );
+    session.keyframe_committed(1);
+    session.connector_changed("mt1", ConnectorChange::Installed, "write=w1");
+    let changes = session.changed(2, |_| Some(ServedLifecycle::Retracted));
+    assert_eq!(
+        changes.render(),
+        [
+            "changed[2:]{id,to}:",
+            "pr1: approved why=rule:rl1",
+            "mt1: installed state=write=w1",
+            "changed: +1",
+        ]
+    );
+    let header = BoardBlockHeader {
+        epoch: 1,
+        scope: "base".into(),
+    };
+    let rendered = render_board_block(
+        &BoardFrame {
+            header: &header,
+            legend: &BoardLegend::canonical(),
+            sections: &[],
+            changes: Some(&changes),
+        },
+        BoardBudgetRequest {
+            harness_default_tok: 0,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        rendered
+            .text
+            .lines()
+            .nth(2)
+            .unwrap()
+            .starts_with("changed[2:]")
+    );
+}
+
+#[test]
 fn skills_found_and_agent_candidates_shed_before_memory_snippets() {
     let mut session = SessionReadSet::default();
     session.loaded_skill("sk-old", "1");
@@ -184,6 +318,7 @@ fn skills_found_and_agent_candidates_shed_before_memory_snippets() {
 fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
     let changes = ChangedLine {
         rows: vec![("cl1".into(), ServedLifecycle::Retracted)],
+        events: vec![],
         overflow: 0,
     };
     let keyframe = changes
