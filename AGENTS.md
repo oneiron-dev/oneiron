@@ -189,33 +189,18 @@ build to work around an occupied target directory.
 Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
-- `ci.yml` — `pull_request` (non-draft) + `push` to `main` + `workflow_dispatch`; `CI_PAUSED=true`
-  repo variable pauses every job (wave affordance); drafts do not run. No `paths` filter
-  (2026-09-11): every non-draft PR and every `main` push starts a run, because the `main` ruleset
-  requires the `Checks` and `Test` contexts and a filtered trigger starts no run at all, so a
-  docs-only PR reported neither and was blocked forever (#921 needed `--admin`). The `changes` job
-  still detects a rust diff; it now gates STEPS, not the run. Jobs: `changes` (path detector) /
-  `checks` (fmt, workspace + featureless + server-production clippy, strict rustdoc,
-  code-map pin, tooling fixture tests, typos, `cargo-deny` policy — one job, one runner slot) / `test` (macOS) /
-  `test-linux` (`Test`: Linux workspace nextest and doctests) /
-  `test-linux-featureless` (`Test (featureless)`: shared-process libtest then
-  per-test-process nextest) / `package` (`oneiron-server`, Linux);
-  no `RUSTFLAGS` (see *Self-hosted runners*). `checks` and both Linux test jobs
-  run on every non-draft `pull_request`, every `push` to `main` and
-  `workflow_dispatch`. The `Checks` and `Test` contexts are required; add
-  `Test (featureless)` to the main ruleset's required checks after merge.
-  Their cargo steps gate on a rust diff (always on dispatch and tags, fail-open
-  if the detector broke), so a docs-only run still reports all three contexts
-  and checks the code-map pin, tooling fixtures, typos, and `cargo-deny` policy.
-  `.cargo/**` changes count as Rust-relevant. `test` runs the macOS recipe
-  (the 7 `oneiron-bench` `eval::tests::*` cases that fail on macOS are filtered
-  out by name — ONE-1996 — then both featureless lanes and doctests); it runs
-  only on main pushes and dispatch, with the rust-diff gate at job level on
-  pushes. The Linux test jobs run in parallel on PRs and main pushes; the
-  workspace suite has only the napi exclusion. `package` waits for a `v*` tag
-  push that no trigger sends, so that gate is unreachable as written. The PR
-  run enforces fmt, clippy, strict rustdoc and tests pre-merge;
-  `scripts/verify.sh` on the branch stays the local gate.
+- `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
+  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints only the touched packages (plus the
+  featureless build when `oneiron` changed), `Test` runs nextest for the touched packages and only the touched
+  top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
+  `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
+  when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
+  The full gate (workspace clippy in three feature graphs, strict rustdoc, the whole nextest suite, doctests,
+  both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
+  build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
+  config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
+  are required contexts and always report; a PR stays a draft until its review passes, so it gets one CI run.
+  `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
   header used to promise was removed by the 2026-08-24 amendment; header and `on:` block now
