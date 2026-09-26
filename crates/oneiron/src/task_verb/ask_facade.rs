@@ -34,7 +34,7 @@ impl Memory<'_> {
                     vec![assignee.entity_ref().unwrap_or(self.actor())]
                 }
                 Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
-                None => vec![self.actor()],
+                None => vec![self.short_ask_principal_in_txn(txn)?],
             };
             let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
             let effective = input.effective(
@@ -176,6 +176,80 @@ impl Memory<'_> {
             receipt.idempotent_replay = false;
             Ok(receipt)
         })
+    }
+
+    /// A human can ask themselves. For an agent, an omitted target is the
+    /// unique verified human owner of its live assigned TASK, not the agent's
+    /// own actor id. The Owner fact is the binding; a caller-writable TASK
+    /// body by itself cannot nominate the principal.
+    fn short_ask_principal_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
+        if self.actor_class() == crate::EdgeActorClass::Human {
+            crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
+            return Ok(self.actor());
+        }
+        let scan = super::presence_scan::scan_task_entity_pages(
+            super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
+            super::presence_scan::TASK_PRESENCE_SCAN_CAP,
+            |after, limit| {
+                crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                    &self.vault().store,
+                    txn,
+                    crate::registry::ENTITY_TYPE_TASK,
+                    after.copied(),
+                )?
+                .take(limit)
+                .collect()
+            },
+        )?;
+        if !scan.source_exhausted {
+            return Err(MemoryError::bad_request(
+                "agent principal cannot be resolved from a truncated task scan",
+            ));
+        }
+        // Before an authority root exists, only the seeded vault owner has
+        // an independently established human identity. A free-form PERSON
+        // owner fact cannot classify its writer as human rather than agent.
+        let rooted = self
+            .vault()
+            .authority_fold_readonly_in_txn(txn)?
+            .vault_id
+            .is_some();
+        let mut principal = None;
+        for task in scan.pages.into_iter().flatten() {
+            let Some(body) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)? else {
+                continue;
+            };
+            if body.task_kind() != TaskKind::Standard
+                || body.terminal().is_some()
+                || body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
+            {
+                continue;
+            }
+            let Some(proof) = self.vault().task_authority_state_in(txn, task)? else {
+                continue;
+            };
+            if proof.cancelled || proof.owner_ref.to_hex() != body.owner_ref {
+                continue;
+            }
+            let owner = proof.owner_ref;
+            if !rooted && owner != crate::vault::embedded_owner_actor_id()? {
+                continue;
+            }
+            if self.vault().get_entity_type_in_txn(txn, &owner)?
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+                || crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, owner)
+                    .is_err()
+            {
+                continue;
+            }
+            if principal.is_some_and(|found| found != owner) {
+                return Err(MemoryError::bad_request(
+                    "agent has more than one human principal",
+                ));
+            }
+            principal = Some(owner);
+        }
+        principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
     }
 
     fn ask_class_in_txn(

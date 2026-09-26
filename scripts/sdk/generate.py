@@ -404,6 +404,8 @@ export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: Task
 export type TaskAskDefault = "proceed" | "hold" | "ask_me";
 export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
 export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
+export type TaskAskWho = TaskAskTarget | string | string[] | null;
+export interface TaskAskShort {who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault}
 export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
 export interface TaskAskHandle { group_ref: string }
 export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
@@ -414,7 +416,8 @@ export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: Ta
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
 export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"}
 export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
-export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
+export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
+export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
@@ -428,7 +431,13 @@ export function agentVerbs(invoke: AgentInvoke) {
             fam, _, verb = r['name'].partition('.')
             if fam != family: continue
             method=fam+verb.title()
-            if verb=='ask': decl='spec: TaskAskSpec'; value='spec'; result='TaskAskReceipt'
+            if verb=='ask':
+                ts += ('ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, '
+                       'until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt {\n'
+                       '  const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : '
+                       '{who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]};\n'
+                       '  return invoke("tasksAsk", input) as TaskAskReceipt\n},\n')
+                continue
             elif verb=='wait': decl='handle: TaskAskHandle, stepKey = "sdk.wait"';value='{handle, step_key: stepKey}';result='TaskAskWait'
             elif verb=='answer':decl='handle: TaskAskHandle, word: TaskAskWord';value='{handle, word}';result='TaskAskAnswer'
             elif verb=='outcomes':decl='handle: TaskAskHandle';value='handle';result='CalibrationPair[]'
@@ -446,6 +455,15 @@ export function agentVerbs(invoke: AgentInvoke) {
         for r in facade_rows:
             fam, _, verb=r['name'].partition('.')
             if fam!=family:continue
+            if verb=='ask':
+                python += ('    def ask(self, spec_or_who, what=None, until=None, default="ask_me"):\n'
+                           '        if what is None:\n'
+                           '            input = spec_or_who\n'
+                           '        else:\n'
+                           '            who = {"people": [spec_or_who]} if isinstance(spec_or_who, str) else {"people": list(spec_or_who)} if isinstance(spec_or_who, (set, list, tuple)) else spec_or_who\n'
+                           '            input = {"who": who, "what": what, "until": until, "default": default}\n'
+                           '        return self._call("tasks_ask", input)\n')
+                continue
             if verb=='wait':params='handle, step_key="sdk.wait"';value='{"handle": handle, "step_key": step_key}'
             elif verb=='answer':params='handle, word';value='{"handle": handle, "word": word}'
             elif verb=='outcomes':params='handle';value='handle'
@@ -480,12 +498,20 @@ export function agentVerbs(invoke: AgentInvoke) {
             catalog += 'Self::' + variants[r['name']] + ' => Some(&' + json.dumps(list(r.get(field, r['mcp_fields']))) + '),\n'
         catalog += '_ => None, } }\n'
     catalog += '}\n'
-    python_stub = '# Generated by scripts/sdk/generate.py.\nfrom typing import Any\n'
+    python_stub = '# Generated by scripts/sdk/generate.py.\nfrom typing import Any, overload\n'
     for family in dict.fromkeys(r['name'].split('.')[0] for r in facade_rows if '.' in r['name']):
         python_stub += f'class {family.title()}Verbs:\n'
         for row in ROWS:
             fam, _, verb=row['name'].partition('.')
             if fam!=family:continue
+            if verb=='ask':
+                python_stub += ('    @overload\n'
+                                '    def ask(self, spec_or_who: dict[str, Any]) -> Any: ...\n'
+                                '    @overload\n'
+                                '    def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, '
+                                'what: dict[str, Any], until: int | None = None, '
+                                'default: str = "ask_me") -> Any: ...\n')
+                continue
             if verb=='wait': args='handle: dict[str, Any], step_key: str = "sdk.wait"'
             elif verb=='answer':args='handle: dict[str, Any], word: dict[str, Any]'
             elif verb=='messages':args='room_ref: str, after: str | None = None, limit: int | None = None'

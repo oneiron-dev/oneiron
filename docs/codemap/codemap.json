@@ -30755,6 +30755,7 @@
       "TaskAskDecision",
       "TaskAskDefault",
       "TaskAskDisagree",
+      "TaskAskEffectAuthorization",
       "TaskAskElectorate",
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
@@ -30781,7 +30782,7 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 14,
+      "enum": 15,
       "fn": 5,
       "struct": 16
      }
@@ -31130,7 +31131,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardExpandRequest",
@@ -31144,6 +31145,8 @@
       "RoomEntry",
       "RoomRequest",
       "TaskAnswerRequest",
+      "TaskAskRequest",
+      "TaskAskShort",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -31151,7 +31154,8 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 14
+      "enum": 1,
+      "struct": 15
      }
     },
     {

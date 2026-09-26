@@ -126,6 +126,7 @@ pub(super) fn settle_in(
     let reference = settlement_id(id)?;
     let cutoff_order = evidence.iter().map(|entry| entry.order).max().unwrap_or(0);
     let mut result = TaskAskResult {
+        effect_authorization: TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage,
         decision,
         fallback,

@@ -493,7 +493,7 @@ async fn execute_mcp_agent_verb(
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.ask" => {
-            let input: oneiron::task_verb::TaskAskSpec =
+            let input: oneiron::task_verb::sdk::TaskAskRequest =
                 serde_json::from_value(a.spec.clone().ok_or_else(invalid)?)
                     .map_err(|_| invalid())?;
 
