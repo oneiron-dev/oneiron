@@ -22,8 +22,8 @@ use crate::outbound::dispatch_types::{
     OutboundDispatchResult, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
 use crate::outbound::receipt_fields::{
-    append_dispatch_outcome_receipt_fields, append_execution_receipt_fields,
-    append_optional_receipt_field, append_window_receipt_fields,
+    append_dedupe_suppression_receipt_fields, append_dispatch_outcome_receipt_fields,
+    append_execution_receipt_fields, append_optional_receipt_field, append_window_receipt_fields,
     append_window_resolution_receipt_fields,
 };
 use crate::outbound::window_door::{
@@ -272,6 +272,7 @@ impl OutboundDispatchPipeline {
             effect_state,
             outcome,
             execution,
+            dedupe_suppressed,
         ) = if admit_for_execution {
             let prepared = crate::outbound_chokepoint::PreparedEffect {
                 attempt_id,
@@ -287,6 +288,7 @@ impl OutboundDispatchPipeline {
                 budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
                 authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
                 verified_actor,
+                dedupe_key: request.intent.dedupe_key.clone(),
             };
             let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
             let mut transport =
@@ -351,6 +353,7 @@ impl OutboundDispatchPipeline {
                 effect_result.dispatch.state,
                 outcome,
                 transport.execution,
+                effect_result.dedupe_suppressed,
             )
         } else {
             let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
@@ -427,6 +430,7 @@ impl OutboundDispatchPipeline {
                 None,
                 outcome,
                 None,
+                false,
             )
         };
 
@@ -580,6 +584,7 @@ impl OutboundDispatchPipeline {
             );
             append_execution_receipt_fields(&mut receipt, &execution.receipt_fields);
         }
+        append_dedupe_suppression_receipt_fields(&mut receipt, dedupe_suppressed);
         append_dispatch_outcome_receipt_fields(
             &mut receipt,
             outcome,

@@ -283,6 +283,29 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                    if result.receipt.fields.get("suppression").map(String::as_str)
+                        == Some("dedupe")
+                    {
+                        append_connector_task_window_receipt(&mut result.receipt, &task);
+                        result
+                            .receipt
+                            .fields
+                            .insert("dispatch_outcome".to_owned(), "suppressed".to_owned());
+                        result.receipt.outcome = "failed".to_owned();
+                        persist_send_receipt(
+                            self,
+                            task_ref,
+                            result.receipt,
+                            SendReceiptOutcome::Failed,
+                            false,
+                            None,
+                        )?;
+                        super::connector_task::project_connector_send_task_suppression(
+                            self, task_ref, now,
+                        )?;
+                        fail_connector_task_attempt(&queue, &attempt, now, "dedupe_suppressed")?;
+                        continue;
+                    }
                     fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
                     project_connector_send_task_outcome(
                         self,

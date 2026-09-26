@@ -381,6 +381,7 @@ fn prepared_effect(
             prepared: Box::new(prepared),
         },
         verified_actor: None,
+        dedupe_key: None,
     }
 }
 
