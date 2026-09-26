@@ -21,7 +21,8 @@ name: CI
 # diff with nothing Rust-relevant runs their cheap steps and goes green. Draft PRs skip every job (a PR stays a
 # draft until its review passes, then one CI run gates the merge). CI_PAUSED=true skips every job.
 #
-# Runners: our own machines. Caches are the host's: each runner's `.env` exports a persistent CARGO_TARGET_DIR,
+# Runners: our own machines. `changes` and `Checks` run on the Macs, so the Linux runners take only the two
+# Linux test jobs. Caches are the host's: each runner's `.env` exports a persistent CARGO_TARGET_DIR,
 # CARGO_INCREMENTAL=0 and a PATH with ~/.cargo/bin; the toolchain is host rustup via rust-toolchain.toml. Never
 # set CARGO_TARGET_DIR here. `clean: true` on every checkout because `_work` persists between runs.
 on:
@@ -44,7 +45,7 @@ concurrency:
 jobs:
   changes:
     name: Detect changed paths
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 10
     if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
@@ -76,7 +77,7 @@ jobs:
 
   checks:
     name: Checks
-    runs-on: [self-hosted]
+    runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 60
     needs: changes
     if: >-
