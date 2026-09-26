@@ -41,6 +41,60 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.submit_shared_skill_delta_inner(
+            base,
+            submitted,
+            lane,
+            submitted_by,
+            submitted_fork,
+            None,
+            occurred,
+            learned_at,
+        )
+    }
+
+    /// Offer an edited session-branch fork to its shared base. This copies only
+    /// the fork's source (with its name retargeted to the base); it does not
+    /// activate the fork or allow the improver to admit its own proposal.
+    pub fn submit_local_skill_refinement(
+        &self,
+        base: &EntityId,
+        fork: &EntityId,
+        resident: &EntityId,
+        submitted: &[u8],
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        if self.get_entity_type(resident)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
+            return Err(invalid("refinement resident must be an agent"));
+        }
+        self.submit_shared_skill_delta_inner(
+            base,
+            submitted,
+            SharedSkillLane::FederationMergeBack,
+            &resident.to_hex(),
+            fork,
+            Some(fork),
+            occurred,
+            learned_at,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the shared submission binds source bytes, origin, lane and time explicitly"
+    )]
+    fn submit_shared_skill_delta_inner(
+        &self,
+        base: &EntityId,
+        submitted: &[u8],
+        lane: SharedSkillLane,
+        submitted_by: &str,
+        submitted_fork: &EntityId,
+        local_fork: Option<&EntityId>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
         if submitted_by.trim().is_empty() || submitted_by.len() > 512 {
             return Err(invalid("invalid delta author reference"));
         }
@@ -50,6 +104,20 @@ impl Vault {
         let candidate = EntityId::now();
         self.with_write_txn(|txn| {
             let current = super::admission_view::read_skill(self, txn, base)?;
+            if let Some(fork) = local_fork {
+                let branch = super::admission_view::read_skill(self, txn, fork)?;
+                if branch.forked_from != Some(*base)
+                    || branch.lifecycle_status != SkillLifecycle::Candidate
+                    || branch.version != package.record.version
+                    || branch.desc != package.record.desc
+                    || !same_refinement_source(
+                        &self.stored_hub_package_in_txn(txn, fork)?,
+                        &package,
+                    )?
+                {
+                    return Err(invalid("offered source is not the local branch edit"));
+                }
+            }
             if current.lifecycle_status != SkillLifecycle::Active
                 || current.skill_id != package.record.skill_id
                 || current.version == package.record.version
@@ -173,4 +241,48 @@ fn delta_key(candidate: &EntityId) -> Vec<u8> {
     let mut key = b"skill_hub/shared-delta/v1\0".to_vec();
     key.extend_from_slice(candidate.as_bytes());
     key
+}
+
+/// Fork names differ from the upstream name by design. All other source bytes,
+/// capability declarations and companion files must be the actual branch edit.
+fn same_refinement_source(fork: &HubPackage, offered: &HubPackage) -> Result<bool> {
+    if fork.capabilities != offered.capabilities || fork.files.len() != offered.files.len() {
+        return Ok(false);
+    }
+    let strip_identity = |content: &[u8]| -> Result<String> {
+        let text =
+            std::str::from_utf8(content).map_err(|_| invalid("invalid fork instructions"))?;
+        let front = super::folder::source_frontmatter(text)?
+            .ok_or_else(|| invalid("fork needs source frontmatter"))?;
+        let body = &text[4 + front.len() + 5..];
+        Ok(format!(
+            "{}---\n{body}",
+            front
+                .lines()
+                .filter(|line| !line.starts_with("name:")
+                    && !line.starts_with("version:")
+                    && ![
+                        "requires-bins: []",
+                        "requires-env: []",
+                        "requires-mcp: []",
+                        "allowed-tools: []"
+                    ]
+                    .contains(line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+    };
+    for source in &fork.files {
+        let Some(target) = offered.files.iter().find(|f| f.path == source.path) else {
+            return Ok(false);
+        };
+        if source.path == "SKILL.md" {
+            if strip_identity(&source.content)? != strip_identity(&target.content)? {
+                return Ok(false);
+            }
+        } else if source.content != target.content {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
