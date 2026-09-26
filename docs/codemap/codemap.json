@@ -756,7 +756,7 @@
      "path": "src/agent_dispatch/workflow_host.rs",
      "purpose": "Typed headless host door for running the one ready workflow leaf",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -9659,7 +9659,7 @@
      "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
      "surface": {
       "enum": 2,
-      "fn": 4,
+      "fn": 7,
       "struct": 4
      }
     },
