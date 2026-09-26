@@ -1,16 +1,15 @@
 //! ONE-218 eval-side driver for the telemetry-v0 retrieval-outcome loop.
 //!
-//! * `eval outcome-ingest` applies evaluator-supplied rewards read from JSONL
-//!   to already-finalized retrieval runs via `Vault::record_retrieval_outcome`.
+//! * `eval outcome-ingest` applies explicitly gate-judged end outcomes from
+//!   JSONL to finalized retrieval runs via `Vault::record_retrieval_end_outcome`.
 //! * `eval tune` runs one explicit bounded retrieval-blend tuning step via
 //!   `Vault::tune_retrieval_blend_weights` and prints the weight table entry
 //!   it persisted for live scoring to read.
 //!
 //! Both subcommands are explicit CLI invocations: no timer, no cadence and no
-//! automatic trigger drives them. Rewards are never inferred — a row without
-//! an evaluator-supplied finite reward and `evaluator`/`source` provenance is
-//! refused before any vault call. Turn and session attribution rides the
-//! outcome metadata verbatim and is never fabricated here.
+//! automatic trigger drives them. A row without explicit gate, turn, surfaced
+//! memory and cost inputs plus `evaluator`/`source` provenance is refused.
+//! Neither the gate approval nor the confirmed-fact hit is fabricated here.
 //!
 //! Both subcommands operate on an already-existing vault and share one
 //! explicit vault-open contract ([`VaultOpenArgs`]): the caller names the
@@ -20,7 +19,7 @@
 //! discovered from the vault's own bytes. The engine's fail-closed
 //! `Vault::open_existing` door is the trust boundary — it never creates and
 //! compares every persisted identity before it writes — so an absent, empty,
-//! swapped, or disagreeing vault is refused before `record_retrieval_outcome`
+//! swapped, or disagreeing vault is refused before `record_retrieval_end_outcome`
 //! or `tune_retrieval_blend_weights` is reached.
 //!
 //! Both vault wrappers open their own write transaction and refuse to run
@@ -29,20 +28,17 @@
 
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use oneiron::error::VaultRootEntry;
-use oneiron::store::{RetrievalBlendTuningConfig, RetrievalOutcome};
-use oneiron::{RetrievalRunId, Vault, VaultConfig};
+use oneiron::store::RetrievalBlendTuningConfig;
+use oneiron::{Vault, VaultConfig};
 use serde::{Deserialize, Serialize};
 
-const EVAL_OUTCOME_INGEST_CONTRACT_VERSION: &str = "oneiron.eval_outcome_ingest.v1";
+const EVAL_OUTCOME_INGEST_CONTRACT_VERSION: &str = "oneiron.eval_outcome_ingest.v2";
 const EVAL_OUTCOME_INGEST_RECORD_TYPE: &str = "eval_outcome_ingest";
-const METADATA_EVALUATOR_KEY: &str = "evaluator";
-const METADATA_SOURCE_KEY: &str = "source";
-const RUN_ID_LEN: usize = 16;
 /// Explicit "the vault has no such value" token for the two nullable
 /// vault-open fields. It can never collide with a real value: an embedding
 /// model id must be `org/name@revision`, and a fast-lane prefix is an integer.
@@ -366,14 +362,18 @@ impl VaultOpenArgsBuilder {
     }
 }
 
-/// One evaluator-supplied reward row. `reward` and `accepted` are explicit:
-/// a row that omits either is refused rather than defaulted.
+/// One terminal, judged retrieval outcome. No raw reward or implicit gate
+/// approval is accepted; attribution and cost inputs must be explicit.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RewardRow {
+struct EndOutcomeRow {
     run_id: String,
-    reward: f32,
-    accepted: bool,
+    turn_id: String,
+    activated_memory_id: String,
+    gate_score: f32,
+    confirmed_fact_hit: bool,
+    latency_scale_us: u64,
+    cost_weight: f32,
     #[serde(default)]
     key: Option<String>,
     #[serde(default)]
@@ -467,123 +467,6 @@ fn run_tune(args: &[String]) -> EvalResult<()> {
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
     write_json_line(&entry, &mut lock)
-}
-
-/// Applies reward rows in file order, stopping at the first rejected row.
-///
-/// Rows already applied stay applied: they are honest, retryable state — the
-/// outcome write is idempotent per run id and key — and the returned error
-/// names the failing row plus how many rows preceded it.
-fn ingest_outcomes(
-    vault: &Vault,
-    reader: impl BufRead,
-    default_key: Option<&str>,
-) -> EvalResult<usize> {
-    let mut applied = 0_usize;
-    for (index, line) in reader.lines().enumerate() {
-        match apply_reward_line(vault, line, default_key) {
-            Ok(true) => applied += 1,
-            Ok(false) => {}
-            Err(reason) => {
-                return Err(EvalError::RewardRow {
-                    row: index + 1,
-                    applied,
-                    reason,
-                });
-            }
-        }
-    }
-    Ok(applied)
-}
-
-/// Applies one JSONL line, reporting `false` for a blank separator line.
-fn apply_reward_line(
-    vault: &Vault,
-    line: std::io::Result<String>,
-    default_key: Option<&str>,
-) -> Result<bool, String> {
-    let line = line.map_err(|error| error.to_string())?;
-    if line.trim().is_empty() {
-        return Ok(false);
-    }
-    #[rustfmt::skip]
-    let row: RewardRow = serde_json::from_str(&line).map_err(|error| { let reason = error.to_string(); if reason.contains("out of range") { format!("reward must be a finite evaluator scalar ({reason})") } else { reason } })?;
-    let outcome = outcome_from_row(&row, default_key)?;
-    vault
-        .record_retrieval_outcome(outcome)
-        .map_err(|error| error.to_string())?;
-    Ok(true)
-}
-
-/// Vets one row's evaluator-supplied reward and provenance before it can
-/// reach the vault.
-fn outcome_from_row(
-    row: &RewardRow,
-    default_key: Option<&str>,
-) -> Result<RetrievalOutcome, String> {
-    if !row.reward.is_finite() {
-        return Err("reward must be a finite evaluator scalar".to_owned());
-    }
-    require_provenance(&row.metadata, METADATA_EVALUATOR_KEY)?;
-    require_provenance(&row.metadata, METADATA_SOURCE_KEY)?;
-    let key = resolve_outcome_key(row.key.as_deref(), default_key)?;
-    let run_id = parse_run_id(&row.run_id)?;
-    Ok(RetrievalOutcome {
-        run_id,
-        key,
-        reward: Some(row.reward),
-        accepted: Some(row.accepted),
-        metadata: row.metadata.clone(),
-    })
-}
-
-fn require_provenance(metadata: &BTreeMap<String, String>, field: &str) -> Result<(), String> {
-    match metadata.get(field) {
-        Some(value) if !value.trim().is_empty() => Ok(()),
-        _ => Err(format!("metadata.{field} must be a non-empty string")),
-    }
-}
-
-/// A per-row `key` overrides `--key`; exactly one key source must resolve.
-fn resolve_outcome_key(row_key: Option<&str>, default_key: Option<&str>) -> Result<String, String> {
-    match row_key.or(default_key) {
-        Some(key) if !key.trim().is_empty() => Ok(key.to_owned()),
-        Some(_) => Err("outcome key must not be empty".to_owned()),
-        None => Err("no outcome key: supply a row `key` or --key".to_owned()),
-    }
-}
-
-/// `RetrievalRunId` publishes no byte constructor, so its derived
-/// `Deserialize` is the supported route from a hex run id back to the id.
-fn parse_run_id(value: &str) -> Result<RetrievalRunId, String> {
-    let bytes = parse_run_id_bytes(value)?;
-    serde_json::from_value(serde_json::json!({ "bytes": bytes }))
-        .map_err(|error| format!("run_id could not be decoded: {error}"))
-}
-
-fn parse_run_id_bytes(value: &str) -> Result<[u8; RUN_ID_LEN], String> {
-    let raw = value.as_bytes();
-    let expected = RUN_ID_LEN * 2;
-    if raw.len() != expected {
-        return Err(format!("run_id must be {expected} hex characters"));
-    }
-
-    let mut bytes = [0_u8; RUN_ID_LEN];
-    for (index, byte) in bytes.iter_mut().enumerate() {
-        let high = decode_hex_nibble(raw[index * 2])?;
-        let low = decode_hex_nibble(raw[index * 2 + 1])?;
-        *byte = (high << 4) | low;
-    }
-    Ok(bytes)
-}
-
-fn decode_hex_nibble(byte: u8) -> Result<u8, String> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err("run_id contains a non-hex character".to_owned()),
-    }
 }
 
 fn write_json_line<T: Serialize>(value: &T, writer: &mut impl Write) -> EvalResult<()> {
@@ -779,13 +662,13 @@ fn print_help() {
          \n\
          subcommands:\n\
            outcome-ingest <VAULT CONFIG> --rewards <PATH>|- [--key <KEY>]\n\
-             Applies evaluator-supplied rewards to already-finalized retrieval\n\
-             runs, one JSON object per line, in file order. A row carries\n\
-             run_id (hex), reward (a finite number), accepted (a bool), an\n\
-             optional key that overrides --key, and a metadata object whose\n\
-             evaluator and source entries are required; optional turn_id and\n\
-             session_id metadata is stored verbatim. Rewards are never\n\
-             inferred. Ingest stops at the first rejected row, naming that row\n\
+             Applies judged terminal outcomes to finalized retrieval runs,\n\
+             one JSON object per line, in file order. A row requires run_id,\n\
+             turn_id and activated_memory_id (32 hex chars each), gate_score\n\
+             (0,1], confirmed_fact_hit (bool), latency_scale_us (positive),\n\
+             cost_weight (non-negative), and metadata.evaluator and .source.\n\
+             The optional key overrides --key. No gate is inferred. Ingest\n\
+             stops at the first rejected row, naming that row\n\
              and the rows already applied, and exits nonzero; success prints\n\
              one JSON summary carrying the ingested count.\n\
            tune <VAULT CONFIG> [--max-runs N] [--learning-rate F] [--min-reward-count N]\n\
@@ -794,6 +677,12 @@ fn print_help() {
     )
     .expect("eval help writes to stdout");
 }
+
+mod outcome_ingest;
+use outcome_ingest::ingest_outcomes;
+
+#[cfg(test)]
+use oneiron::RetrievalRunId;
 
 #[cfg(test)]
 mod tests;

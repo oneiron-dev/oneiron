@@ -35443,6 +35443,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/eval/outcome_ingest.rs",
+     "purpose": "JSONL terminal retrieval outcome ingest for the explicit eval command",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -36064,7 +36074,7 @@
      "purpose": "BEAM scaffold and fixed scorer for EVAL-001/EVAL-002"
     },
     "eval": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36122,7 +36132,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 97,
+   "source_files": 98,
    "test_files": 18
   },
   "oneiron-driver": {

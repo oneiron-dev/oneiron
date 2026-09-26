@@ -234,6 +234,15 @@ impl Store {
                 "retrieval outcome references unpublished context-pack run id".to_owned(),
             ));
         }
+        if let Some(existing) = self.vault_meta.get(&wtxn, &key)?
+            && decode_retrieval_outcome(&existing)?
+                .reward_evidence
+                .is_some()
+        {
+            return Err(Error::InvalidConfig(
+                "raw retrieval outcome cannot replace a gated end outcome".to_owned(),
+            ));
+        }
         self.vault_meta.put(&mut wtxn, &key, &value)?;
         wtxn.commit()?;
         Ok(())

@@ -1663,7 +1663,7 @@ fn shaped_retrieval_end_outcome_gates_hit_and_charges_run_hops() -> Result<()> {
 }
 
 #[test]
-fn raw_reward_cannot_replace_terminal_label_for_tuning() -> Result<()> {
+fn raw_reward_collision_preserves_terminal_label_for_tuning() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let run_id = RetrievalRunId::now();
     let memory_id = *entity_id(0x4e).as_bytes();
@@ -1695,17 +1695,18 @@ fn raw_reward_cannot_replace_terminal_label_for_tuning() -> Result<()> {
     });
     vault.store.record_retrieval_run(&run)?;
     record_confirmed_retrieval_end_outcome(&vault, run_id, memory_id)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
+    let original = vault.retrieval_outcomes(run_id)?;
+    let collision = vault.record_retrieval_outcome(RetrievalOutcome {
         run_id,
         key: "beam.reward".to_owned(),
         reward: Some(100.0),
         accepted: Some(true),
         metadata: BTreeMap::new(),
-    })?;
-    assert!(matches!(
-        vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default()),
-        Err(Error::InvalidConfig(_))
-    ));
+    });
+    assert!(matches!(collision, Err(Error::InvalidConfig(_))));
+    assert_eq!(vault.retrieval_outcomes(run_id)?, original);
+    let tuned = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())?;
+    assert_eq!(tuned.data_window.outcome_count, 1);
     Ok(())
 }
 
