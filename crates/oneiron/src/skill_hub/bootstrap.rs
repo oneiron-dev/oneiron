@@ -165,6 +165,21 @@ pub(crate) fn seed_bootstrap_skills(vault: &Vault) -> Result<()> {
         let package = package(name, markdown)?;
         let seed_id = stable_id(name)?;
         let content_hash = package.content_hash()?;
+        // A caller-chosen record (or a deleted seed) owns this ID regardless
+        // of its files. Never offer it to the import/update door: doing so
+        // could rewrite the holder or make Vault::open fail on immutable fields.
+        let deletion =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &wtxn, &seed_id)?;
+        if vault
+            .store
+            .entities
+            .get(&wtxn, seed_id.as_bytes())?
+            .is_some()
+            || deletion.deleted
+            || deletion.stale
+        {
+            continue;
+        }
         // A prior import already holds these exact files. Its entity ID is
         // not bootstrap admission, even when it equals our deterministic ID.
         // Check before the import door can attach provenance, scans, receipts

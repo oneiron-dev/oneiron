@@ -333,3 +333,70 @@ fn foreign_import_at_seed_id_is_not_activated_or_rewritten_on_open() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_unseeded_for_test(dir.path(), crate::VaultConfig::default())?;
+    put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let id = stable_id("judge")?;
+    let other = package(
+        "different-skill",
+        "---\nname: different-skill\ndescription: earlier import\n---\nDifferent files.\n",
+    )?;
+    let hash = other.content_hash()?;
+    assert_ne!(hash, package("judge", FILES[1].1)?.content_hash()?);
+    let mut adapter = LocalDirSkillHubAdapter::new(EntityId::now());
+    let source = HubRef::new(
+        adapter.hub_id(),
+        "external/different",
+        HubPin::ContentHash(hash.to_hex()),
+    )?;
+    adapter.insert_package(&source.ref_string, source.pin.clone(), other.clone());
+    let entry = HubIndexEntry {
+        name: other.record.skill_id.clone(),
+        description: other.record.desc.clone(),
+        version: other.record.version,
+        content_hash: hash,
+        ref_string: source.ref_string.clone(),
+    };
+    assert_eq!(
+        vault.ingest_skill_from_adapter_checked(
+            &adapter,
+            &entry,
+            id,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?,
+        id,
+    );
+    let before = vault.get_raw(&id)?;
+    let provenance_before = vault.skill_hub_provenance_count(&id)?;
+    let receipt_before = vault.hub_import_receipt(&id, &source)?;
+    drop(vault);
+
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(vault.get_raw(&id)?, before);
+    assert_eq!(vault.skill_hub_provenance_count(&id)?, provenance_before);
+    assert_eq!(vault.hub_import_receipt(&id, &source)?, receipt_before);
+    assert_eq!(
+        vault.get_skill_record(&id)?.unwrap().skill_id,
+        "different-skill"
+    );
+    assert_eq!(
+        vault.count_entities_by_type(ENTITY_TYPE_SKILL)?,
+        FILES.len() as u64
+    );
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, SEED_KEY)?
+            .is_some()
+    );
+    Ok(())
+}

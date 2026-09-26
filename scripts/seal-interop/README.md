@@ -16,6 +16,12 @@ source "$ROOT/reader-env.sh"
 cargo test --locked -p oneiron-seal --features seal-oracle --test oracle
 ```
 
+The retained two-revision fixtures exercise the wrappers against a valid earlier
+signature and a corrupt later signature. After installation, run
+`SEAL_INTEROP_INTEGRATION=1 python3 -m unittest discover -s scripts/seal-interop -p test_readers.py -v`.
+To regenerate these fixtures with the pinned pyHanko environment, run
+`ROOT="${SEAL_INTEROP_HOME:-/mnt/wd16/w8-build/seal-interop}"; "$ROOT/venv/bin/python" scripts/seal-interop/make_multisig_fixture.py`.
+
 The full runner prints TSV with `reader`, `version`, `os_proxy`, `mode`, `status`, and `detail`.
 Each per-reader wrapper prints one JSON object with `reader`, `version`, `mode`, and `status`;
 optional `detail` and `os_proxy` fields add context. A single-reader run exits 0 for a completed check (including a reported qpdf warning), 1 for failure, or 77 when unavailable. The full matrix exits 77 if **no reader ran**, 1 if any reader failed, and 0 if the available readers passed; a partially available matrix prints `PARTIAL-MATRIX` to stderr and is **not full reader coverage**. Each unavailable row remains visible. qpdf warning rows retain `status=warning` and are not clean structural passes.
@@ -26,7 +32,7 @@ optional `detail` and `os_proxy` fields add context. A single-reader run exits 0
   cryptographic PDF signature. A certificate trust warning is reported separately and is not
   treated as cryptographic signature corruption. These tools do not establish a production trust
   policy, remote timestamp validity, or long-term validation.
-- **Parse only**: PDFium parses signature objects and checks each signature object's `/ByteRange` reaches EOF. pdf.js opens the document and finds signature fields. Its public field API does not expose the associated `/V` dictionary, so **pdf.js makes no ByteRange coverage claim**; scanning unrelated PDF text for `/ByteRange` would give false results. Neither engine check verifies CMS or certificate trust.
+- **Parse only**: PDFium parses signature objects and checks each signature object's `/ByteRange` reaches the end of its own signed PDF revision, excluding exactly that object's hex `/Contents` bytes. The pinned pyHanko parser supplies the signature object's xref location for this source-span check; PDFium still does the signature-object parse. An unsupported source encoding does not establish coverage. It separately reports final-document coverage; it does not assess whether later changes are permitted. pdf.js opens the document and finds signature fields. Its public field API does not expose the associated `/V` dictionary, so **pdf.js makes no ByteRange coverage claim**; scanning unrelated PDF text for `/ByteRange` would give false results. Neither engine check verifies CMS or certificate trust.
 - **Check**: qpdf runs `--check`; warnings are preserved in `detail`. It is a structural check, not
   signature verification.
 - **OS proxy** uses the detected host architecture, e.g. `linux-x86_64/<distro>` or `linux-aarch64/<distro>`: results use Linux builds or Linux wheels,

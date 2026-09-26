@@ -14,15 +14,23 @@ def main(path):
             if not sigs:
                 result = {"reader":"pyhanko", "version":version, "mode":"verify", "status":"fail", "detail":"no embedded signature"}
                 print(json.dumps(result)); return 1
-            sig = sigs[0]
-            cms_certs = list(sig.signed_data["certificates"])
-            roots = [c.chosen for c in cms_certs if c.name == "certificate"] or [sig.signer_cert]
-            vc = ValidationContext(trust_roots=roots, allow_fetching=False)
+            outcomes = []
             ku = KeyUsageConstraints(key_usage=set(), extd_key_usage=None)
-            status = validate_pdf_signature(sig, signer_validation_context=vc, key_usage_settings=ku)
-            valid = bool(status.bottom_line)
+            for index, sig in enumerate(sigs, 1):
+                try:
+                    cms_certs = list(sig.signed_data["certificates"])
+                    roots = [c.chosen for c in cms_certs if c.name == "certificate"] or [sig.signer_cert]
+                    vc = ValidationContext(trust_roots=roots, allow_fetching=False)
+                    status = validate_pdf_signature(sig, signer_validation_context=vc, key_usage_settings=ku)
+                    outcomes.append({"index": index, "valid": bool(status.bottom_line),
+                                     "cryptographic_valid": bool(status.valid), "intact": bool(status.intact)})
+                except Exception as exc:
+                    outcomes.append({"index": index, "valid": False,
+                                     "error": f"{type(exc).__name__}: {exc}"})
+            valid = all(item["valid"] for item in outcomes)
             result = {"reader":"pyhanko", "version":version, "mode":"verify", "status":"pass" if valid else "fail",
-                      "detail":f"signature_valid={valid}; trust override: embedded CMS signer certificate is treated as a local anchor; no production trust claim"}
+                      "signatures_checked": len(outcomes), "signature_results": outcomes,
+                      "detail":f"signatures_checked={len(outcomes)}; signature_valid={valid}; trust override: embedded CMS signer certificate is treated as a local anchor; no production trust claim"}
             print(json.dumps(result)); return 0 if valid else 1
     except ModuleNotFoundError as e:
         print(json.dumps({"reader":"pyhanko","version":"unavailable","mode":"verify","status":"unavailable","detail":str(e)})); return 77

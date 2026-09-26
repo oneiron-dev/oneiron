@@ -98,6 +98,42 @@ class DenyPolicyTests(unittest.TestCase):
             deny, lock, graph = self.fixture(root, advisory_id, "zerocopy", "0.2.1-alpha")
             self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
 
+    def test_mixed_safe_and_affected_versions_require_reviewed_version_to_be_affected(self):
+        # An ID-only check sees the advisory on 0.6.5 and the safe 0.7.35
+        # in the lock separately. The reviewed package@version must match.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            advisory_id = "RUSTSEC-2023-0074"
+            deny, lock, graph = self.fixture(root, advisory_id, "zerocopy", "0.7.35")
+            data = json.loads(graph.read_text())
+            safe = data["packages"][1]
+            affected = copy.deepcopy(safe)
+            affected["id"] = affected["id"].replace("@0.7.35", "@0.6.5")
+            affected["version"] = "0.6.5"
+            data["packages"].append(affected)
+            node = copy.deepcopy(data["resolve"]["nodes"][1])
+            node["id"] = affected["id"]
+            data["resolve"]["nodes"].append(node)
+            owner = data["packages"][0]
+            dependency = copy.deepcopy(owner["dependencies"][0])
+            dependency["req"] = "=0.6.5"
+            dependency["rename"] = "zerocopy_affected"
+            owner["dependencies"].append(dependency)
+            owner_node = data["resolve"]["nodes"][0]
+            owner_node["dependencies"].append(affected["id"])
+            owner_node["deps"].append({
+                "name": "zerocopy_affected", "pkg": affected["id"],
+                "dep_kinds": [{"kind": None, "target": None}],
+            })
+            graph.write_text(json.dumps(data))
+            lock.write_text(
+                '[[package]]\nname = "zerocopy"\nversion = "0.7.35"\n'
+                '[[package]]\nname = "zerocopy"\nversion = "0.6.5"\n'
+            )
+            self.assertEqual(find_stale_ignores(deny, lock, graph), [advisory_id])
+            deny.write_text(deny.read_text().replace("zerocopy@0.7.35", "zerocopy@0.6.5"))
+            self.assertEqual(find_stale_ignores(deny, lock, graph), [])
+
     def test_tokio_rustls_partial_bound_prerelease_is_unaffected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
