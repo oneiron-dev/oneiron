@@ -401,7 +401,7 @@ fn agent_skill_refs_require_pinned_hashes_and_match_policy_dependencies() -> Res
     }]))
     .unwrap();
     assert!(PackSource::from_files(bad).is_err());
-    let mut bad = files;
+    let mut bad = files.clone();
     bad.iter_mut()
         .find(|f| f.path == "skills.json")
         .unwrap()
@@ -414,5 +414,194 @@ fn agent_skill_refs_require_pinned_hashes_and_match_policy_dependencies() -> Res
     }]))
     .unwrap();
     assert!(PackSource::from_files(bad).is_err());
+    let mut bad = files;
+    let skill = bad.iter_mut().find(|f| f.path == "skills.json").unwrap();
+    let mut refs: serde_json::Value = serde_json::from_slice(&skill.content).unwrap();
+    refs[0]["version"] = "   ".into();
+    skill.content = serde_json::to_vec(&refs).unwrap();
+    assert!(matches!(
+        PackSource::from_files(bad),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    Ok(())
+}
+
+fn agent_knowledge_files() -> Result<(Vec<HubFile>, crate::batch::export::ExportEntity)> {
+    use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    let files = agent_files()?;
+    let policy: serde_json::Value = serde_json::from_slice(
+        &files
+            .iter()
+            .find(|f| f.path == "policy.md")
+            .unwrap()
+            .content,
+    )
+    .unwrap();
+    let agent = EntityId::from_hex(policy["entity_id"].as_str().unwrap())?;
+    let claim = ClaimBody::new(
+        "test.pack_knowledge",
+        ClaimSubject::Entity(agent),
+        rmpv::Value::from("safe"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    let body = crate::claim::encode_claim_body(&claim)?;
+    Ok((
+        files,
+        crate::batch::export::ExportEntity {
+            id: EntityId::now().to_hex(),
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred_start: 1,
+            occurred_end: 1,
+            learned_at: 1,
+            body: crate::serialize::ExportBody::from_bytes(
+                &body,
+                crate::registry::ENTITY_TYPE_CLAIM,
+            ),
+        },
+    ))
+}
+
+fn put_agent_knowledge(files: &mut [HubFile], row: &crate::batch::export::ExportEntity) {
+    files
+        .iter_mut()
+        .find(|f| f.path == "knowledge/selected.json")
+        .unwrap()
+        .content = serde_json::to_vec(&[row]).unwrap();
+}
+
+#[test]
+fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors() -> Result<()> {
+    use crate::serialize::{ExportBody, ExportValue};
+    let (mut files, mut row) = agent_knowledge_files()?;
+    put_agent_knowledge(&mut files, &row);
+    let source = PackSource::from_files(files.clone())?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let id = vault.stage_pack_source(&source, at(1), 1)?;
+    assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
+    let artifact = vault.export_whole_vault(PackFormat::Json)?;
+    assert_eq!(
+        vault
+            .read_whole_vault_json(artifact.bytes())?
+            .packs
+            .iter()
+            .filter(|pack| matches!(pack, ExportPack::Source(_)))
+            .count(),
+        1
+    );
+
+    let ExportBody::MessagePack(ExportValue::Map(entries)) = &mut row.body else {
+        panic!("claim body must be typed");
+    };
+    entries
+        .iter_mut()
+        .find(|(key, _)| key == &ExportValue::String("val".into()))
+        .unwrap()
+        .1 = ExportValue::Map(vec![(
+        ExportValue::String("password".into()),
+        ExportValue::String("review-only-fixture-password".into()),
+    )]);
+    assert!(
+        row.body
+            .validate(crate::registry::ENTITY_TYPE_CLAIM)
+            .is_err()
+    );
+    put_agent_knowledge(&mut files, &row);
+    assert!(matches!(
+        PackSource::from_files(files.clone()),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    // Even a forged PackSource with a recomputed tree hash cannot bypass the
+    // stage/replay decoder's native-body check.
+    let mut forged = source;
+    forged.hash = crate::skill::canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.content.as_slice())),
+    )?;
+    forged.files = files;
+    assert!(vault.stage_pack_source(&forged, at(1), 1).is_err());
+    assert!(vault.get_pack_source(&forged.entity_id()?)?.is_none());
+    let mut document: WholeVaultDocument = serde_json::from_slice(artifact.bytes()).unwrap();
+    let export = document
+        .packs
+        .iter_mut()
+        .find_map(|pack| match pack {
+            ExportPack::Source(source) => Some(source),
+            _ => None,
+        })
+        .unwrap();
+    export.source_tree = crate::serialize::export_source_tree(&forged.files)?;
+    assert!(export.source_tree.content_hash.is_some());
+    assert!(
+        vault
+            .read_whole_vault_json(&serde_json::to_vec(&document).unwrap())
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn agent_knowledge_requires_canonical_claim_row_metadata() -> Result<()> {
+    let (files, row) = agent_knowledge_files()?;
+    let mut bad_id = row.clone();
+    bad_id.id = "not-an-entity-id".into();
+    let mut bad_type = row.clone();
+    bad_type.entity_type = crate::registry::ENTITY_TYPE_ASSET;
+    let mut bad_time = row;
+    bad_time.occurred_start = 2;
+    for invalid_row in [bad_id, bad_type, bad_time] {
+        let mut files = files.clone();
+        put_agent_knowledge(&mut files, &invalid_row);
+        assert!(matches!(
+            PackSource::from_files(files),
+            Err(crate::Error::InvalidConfig(_))
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn native_agent_exports_with_simple_ids_and_multiline_descriptions_parse_unchanged() -> Result<()> {
+    use crate::serialize::ExportBody;
+    let files = agent_files()?;
+    let policy: serde_json::Value = serde_json::from_slice(
+        &files
+            .iter()
+            .find(|f| f.path == "policy.md")
+            .unwrap()
+            .content,
+    )
+    .unwrap();
+    let id = EntityId::from_hex(policy["entity_id"].as_str().unwrap())?;
+    let body: ExportBody = serde_json::from_value(policy["definition"].clone()).unwrap();
+    let definition = crate::agent_def::decode_agent_definition(&body.to_bytes()?)?;
+    let mut simple = definition.clone();
+    simple.agent_id = "worker".into();
+    let mut multiline = definition;
+    multiline.desc = "First line.\nSecond line.".into();
+    for definition in [simple, multiline] {
+        let native_bytes = crate::agent_def::encode_agent_definition(&definition)?;
+        let exported = crate::agent_def::agent_pack_files(&id, &definition, &[], &[])?;
+        let source = PackSource::from_files(exported.clone())?;
+        let mut sorted = exported.clone();
+        sorted.sort_by(|a, b| a.path.cmp(&b.path));
+        assert_eq!(source.files(), sorted.as_slice());
+        assert_eq!(source.manifest().name, definition.agent_id);
+        assert_eq!(source.manifest().description, definition.desc);
+        assert_eq!(
+            source.content_hash(),
+            crate::skill::canonical_skill_tree_hash(
+                exported
+                    .iter()
+                    .map(|f| (f.path.as_str(), f.content.as_slice()))
+            )?
+        );
+        assert_eq!(
+            crate::agent_def::decode_agent_definition(&native_bytes)?,
+            definition
+        );
+    }
     Ok(())
 }
