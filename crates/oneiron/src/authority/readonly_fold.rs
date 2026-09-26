@@ -53,13 +53,13 @@ pub(crate) struct AuthorityCacheKey {
 /// caller keeps its LMDB snapshot; this handle carries no transaction or
 /// mutable state, and its cheap clone shares the exact decision image.
 #[derive(Clone)]
-pub(crate) struct AuthorityView {
+pub(super) struct AuthorityView {
     fold: Arc<AuthorityFold>,
     generation: u64,
 }
 
 impl AuthorityView {
-    pub(crate) fn generation(&self) -> u64 {
+    pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 }
@@ -196,7 +196,7 @@ pub(crate) fn authority_fold_readonly_for_store_in_txn(
 
 /// Cheap, snapshot-bound view for hot authorization callers. Cloning it only
 /// increments an Arc; owned fold callers retain the compatible full value.
-pub(crate) fn authority_view_readonly_for_store_in_txn(
+pub(super) fn authority_view_readonly_for_store_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,

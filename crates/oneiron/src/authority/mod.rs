@@ -104,9 +104,10 @@ pub(crate) use claim_write::{
 pub(crate) use first_seen_clock::*;
 use readonly_fold::authority_log_rows_in_txn;
 pub(crate) use readonly_fold::{
-    AuthorityCachedFold, AuthorityView, advance_authority_cache_generation,
-    authority_fold_readonly_for_store_in_txn, authority_view_readonly_for_store_in_txn,
+    AuthorityCachedFold, advance_authority_cache_generation,
+    authority_fold_readonly_for_store_in_txn,
 };
+use readonly_fold::{AuthorityView, authority_view_readonly_for_store_in_txn};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
 
 // Module-internal only: nothing here leaves `authority`.
