@@ -41840,6 +41840,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/esign_public.rs",
+     "purpose": "Hosted public signing links must not inherit tenant device-lease admission",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/gpu_distribution.rs",
      "purpose": "—",
      "surface": {}
@@ -42128,7 +42136,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 230,
-   "test_files": 96
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [

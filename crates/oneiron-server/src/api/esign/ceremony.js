@@ -1,6 +1,6 @@
 "use strict";
-const token = location.hash.slice(1);
-history.replaceState(null, "", location.pathname);
+const token = location.pathname.startsWith("/sign/") ? location.pathname.slice(6) : location.hash.slice(1);
+history.replaceState(null, "", "/sign");
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
 async function post(path, value) {

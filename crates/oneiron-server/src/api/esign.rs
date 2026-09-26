@@ -2,7 +2,7 @@
 use crate::server::SyncServer;
 mod editor_budget;
 mod presentation;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -30,6 +30,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .merge(editor)
         .route("/sign", get(page))
+        .route("/sign/{token}", get(page_for_token))
         .route("/sign/action", post(action))
         .route("/sign/pdf", post(pdf))
         .route("/sign/image", post(image))
@@ -190,6 +191,13 @@ async fn image(
         Err(_) => refused(),
     }
 }
+async fn page_for_token(Path(raw): Path<String>) -> Response {
+    if EsignCapability::parse(&raw).is_err() {
+        return refused();
+    }
+    page().await
+}
+
 async fn page() -> Response {
     use base64::Engine;
     use sha2::{Digest, Sha256};
