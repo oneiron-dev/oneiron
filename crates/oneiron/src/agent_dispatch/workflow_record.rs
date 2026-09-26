@@ -50,6 +50,7 @@ pub(super) struct WorkflowIntent {
     pub context_spec: Option<ContextSpec>,
     pub context_from: Vec<String>,
     pub depth_remaining: Option<u8>,
+    pub project_ref: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]

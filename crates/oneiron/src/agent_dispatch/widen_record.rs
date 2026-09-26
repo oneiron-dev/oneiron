@@ -56,6 +56,7 @@ pub(super) struct WidenIntent {
     pub spec: ContextSpec,
     pub context_from: Vec<String>,
     pub depth: Option<u8>,
+    pub project_ref: Option<String>,
 }
 
 impl WidenIntent {
@@ -74,6 +75,7 @@ impl WidenIntent {
             spec: spawn.context_spec.clone().unwrap_or_default(),
             context_from: spawn.context_from.iter().map(EntityId::to_hex).collect(),
             depth: spawn.depth_remaining,
+            project_ref: spawn.project_ref.map(|id| id.to_hex()),
         })
     }
 
@@ -108,6 +110,11 @@ impl WidenIntent {
                     .map(|id| EntityId::from_hex(id))
                     .collect::<Result<_>>()?,
                 depth_remaining: self.depth,
+                project_ref: self
+                    .project_ref
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?,
                 scope: None,
             },
         ))

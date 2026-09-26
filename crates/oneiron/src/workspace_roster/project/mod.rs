@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
+pub(super) const DEFAULT_PROJECT_DEPTH: u8 = 10;
 const PACK: &str = "oneiron.project";
 const ROOT: &[u8] = b"project.root.v1";
 pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
@@ -26,6 +27,7 @@ const CHANGES: &[u8] = b"project.room_changes.v1/";
 #[serde(deny_unknown_fields)]
 pub struct ProjectRecord {
     pub schema_version: u8,
+    pub depth: u8,
     pub parent: Option<String>,
     pub claims_scope_ref: String,
     pub leader: String,
@@ -49,6 +51,7 @@ impl ProjectRecord {
     ) -> Self {
         Self {
             schema_version: 1,
+            depth: DEFAULT_PROJECT_DEPTH,
             parent: parent.map(|p| p.to_hex()),
             claims_scope_ref: claims_scope_ref.to_hex(),
             leader: leader.to_hex(),
@@ -153,6 +156,42 @@ impl Vault {
             &encode(record)?,
         )
     }
+    /// Changes a project's spawn ceiling through the existing owner write authority.
+    /// A host translates a person's request into a typed depth; this is not a prompt parser.
+    pub fn set_project_depth(
+        &self,
+        id: EntityId,
+        depth: u8,
+        authenticated_owner: &crate::write_envelope::WriteActor,
+        now: u64,
+    ) -> Result<()> {
+        if usize::from(depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS {
+            return Err(crate::error::RecordError::InvalidProjectBody(
+                "depth exceeds projection bound",
+            )
+            .into());
+        }
+        self.with_write_txn(|txn| {
+            self.verify_owner_write_actor_in_txn(txn, authenticated_owner)?;
+            let mut body: ProjectRecord = record(&self.store, txn, id, self.project_type_byte()?)?
+                .ok_or(Error::EntityNotFound)?;
+            body.depth = depth;
+            self.batch_in()
+                .put(
+                    &id,
+                    self.project_type_byte()?,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &encode(&body)?,
+                )
+                .apply(txn)?;
+            Ok(())
+        })
+    }
+
     pub fn project(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
         record(
             &self.store,
@@ -169,6 +208,24 @@ impl Vault {
             ENTITY_TYPE_CONVERSATION,
         )
     }
+    /// Resolve the root or a named project in the dispatch admission snapshot.
+    pub(crate) fn project_for_spawn_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        requested: Option<EntityId>,
+    ) -> Result<(EntityId, ProjectRecord)> {
+        let id = match requested {
+            Some(id) => id,
+            None => {
+                let raw = self.store.vault_meta.get(txn, ROOT)?.ok_or_else(invalid)?;
+                EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)?
+            }
+        };
+        let body = record(&self.store, txn, id, self.project_type_byte()?)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok((id, body))
+    }
+
     pub fn root_project(&self) -> Result<EntityId> {
         let txn = self.store.env.read_txn()?;
         let raw = self.store.vault_meta.get(&txn, ROOT)?.ok_or_else(invalid)?;

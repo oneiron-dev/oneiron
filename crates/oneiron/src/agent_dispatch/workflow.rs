@@ -30,6 +30,9 @@ impl AgentDispatcher<'_> {
                 .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
             self.child_depth_remaining(parent)?;
         }
+        let txn = self.vault.store.env.read_txn()?;
+        self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
+        drop(txn);
         if let Some(outcome) = self.propose_context_widen(&input, &spawn)? {
             return Ok(outcome);
         }
@@ -71,6 +74,7 @@ impl AgentDispatcher<'_> {
                 .map(crate::EntityId::to_hex)
                 .collect(),
             depth_remaining: spawn.depth_remaining,
+            project_ref: spawn.project_ref.map(|id| id.to_hex()),
         };
         // Validate all leaves while the writer serializes revocation. Resolution
         // opens read snapshots, so finish it before any fork or queue mutation.
@@ -217,12 +221,10 @@ impl AgentDispatcher<'_> {
         // Composition stays frozen, authority does not. Recheck a narrower or
         // revoked parent at every release, even after a host restart.
         frozen.definition.ceiling = live.ceiling;
+        let (_, ceiling) =
+            self.project_depth_limit_in_txn(txn, record.intent.parent, frozen.project_ref)?;
+        frozen.depth_remaining = Some(frozen.depth_remaining.unwrap_or(ceiling).min(ceiling));
         if let Some(parent) = record.intent.parent {
-            let parent_input = self
-                .parent_dispatch_input_in_txn(txn, parent)?
-                .ok_or_else(|| invalid("workflow live parent is missing"))?;
-            let bound = super::attenuation::child_depth_from(Some(parent_input))?;
-            frozen.depth_remaining = Some(frozen.depth_remaining.unwrap_or(bound).min(bound));
             let (target, definition) = self.attenuate_child_target(
                 txn,
                 parent,

@@ -42,6 +42,7 @@ fn dependency(
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
+        || usize::from(body.depth) > crate::context_projection::CONTEXT_PROJECTION_MAX_ANCESTORS
         || body.home_room != home_room_id(id).to_hex()
         || body.roster.is_empty()
     {

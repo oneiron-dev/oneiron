@@ -238,3 +238,74 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn project_depth_is_person_editable_and_round_trips_with_member_refs() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    assert_eq!(vault.project(root)?.unwrap().depth, DEFAULT_PROJECT_DEPTH);
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let child = EntityId::now();
+    let mut body = ProjectRecord::new(child, Some(root), root, leader);
+    body.sessions.push(EntityId::now().to_hex());
+    vault.put_project(child, &body, 1)?;
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xA3)?;
+    let agent = crate::write_envelope::WriteActor::new(leader, crate::edge::EdgeActorClass::Agent);
+    assert!(vault.set_project_depth(child, 2, &agent, 2).is_err());
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+    vault.set_project_depth(child, 2, &writer, 2)?;
+    body.depth = 2;
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+    vault.set_project_depth(child, 12, &writer, 3)?;
+    body.depth = 12;
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+    assert!(vault.set_project_depth(child, 17, &writer, 4).is_err());
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    assert_eq!(
+        vault
+            .set_project_depth(child, 1, &writer, 5)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::WriteConcurrentWithRevocation
+    );
+    assert_eq!(vault.project(child)?, Some(body.clone()));
+    drop(vault);
+    let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert_eq!(reopened.project(child)?, Some(body));
+    Ok(())
+}
+
+#[test]
+fn raw_project_depth_outside_projection_bound_is_rejected() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let mut body = vault.project(root)?.unwrap();
+    body.depth = 17;
+    assert_eq!(
+        vault.put_project(root, &body, 1).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(vault.project(root)?.unwrap().depth, DEFAULT_PROJECT_DEPTH);
+    Ok(())
+}

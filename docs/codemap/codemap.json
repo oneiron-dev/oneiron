@@ -604,7 +604,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 1
      }
@@ -709,9 +709,9 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 5,
-      "fn": 6,
+      "fn": 7,
       "struct": 7
      }
     },
@@ -32834,8 +32834,8 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 12,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -32850,7 +32850,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",

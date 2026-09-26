@@ -2201,10 +2201,9 @@ fn dedupe_existing_row_with_a_different_spawn_context_is_a_typed_error() -> Resu
     Ok(())
 }
 
-/// A root recursion budget above the ancestor-projection cap is clamped at
-/// admission, so no persisted lineage can exceed the projection walk.
+/// A root request above the project's ceiling cannot enlarge the live row.
 #[test]
-fn root_depth_budget_is_clamped_to_the_ancestor_projection_cap() -> Result<()> {
+fn root_depth_budget_is_clamped_to_the_live_project_ceiling() -> Result<()> {
     let (_dir, vault) = open_vault();
     let row = put_row(&vault, 0xE4, "clamp.row", AgentCeiling::Proposed)?;
     let dispatcher = AgentDispatcher::new(&vault);
@@ -2218,14 +2217,8 @@ fn root_depth_budget_is_clamped_to_the_ancestor_projection_cap() -> Result<()> {
         },
         AgentSpawnContext::default().with_depth_remaining(200),
     )?);
-    assert_eq!(
-        root.input.depth_remaining,
-        Some(CONTEXT_PROJECTION_MAX_ANCESTORS as u8)
-    );
-    assert_eq!(
-        dispatcher.child_depth_remaining(root.attempt.id)?,
-        CONTEXT_PROJECTION_MAX_ANCESTORS as u8 - 1
-    );
+    assert_eq!(root.input.depth_remaining, Some(10));
+    assert_eq!(dispatcher.child_depth_remaining(root.attempt.id)?, 9);
     Ok(())
 }
 
@@ -2526,6 +2519,7 @@ fn schema_v1_rows_decode_absent_spawn_fields() -> Result<()> {
         context_spec: Some(ContextSpec::excluded()),
         context_from: vec![test_id(0x96), test_id(0x97)],
         depth_remaining: Some(3),
+        project_ref: None,
         scope: None,
     };
     assert_eq!(
@@ -3092,3 +3086,114 @@ fn child_dispatch_inherits_scope_and_refuses_widening_before_enqueue() -> Result
 }
 
 mod widen;
+
+#[test]
+fn spawn_reads_live_project_depth_and_never_widens_a_frozen_parent() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_row(&vault, 0x4D, "project.depth", AgentCeiling::Proposed)?;
+    let root_project = vault.root_project()?;
+    let child_project = EntityId::now();
+    let leader = EntityId::from_hex(&vault.project(root_project)?.unwrap().leader)?;
+    vault.put_project(
+        child_project,
+        &crate::workspace_roster::ProjectRecord::new(
+            child_project,
+            Some(root_project),
+            root_project,
+            leader,
+        ),
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA4)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let root = dispatched(dispatcher.dispatch(DispatchAgent {
+        target: AgentDispatchTarget::Custom(agent),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 2,
+    })?);
+    assert_eq!(root.input.depth_remaining, Some(10));
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(agent),
+                    parent_attempt: None,
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 2,
+                },
+                AgentSpawnContext::default().with_project(child_project),
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    vault.set_project_depth(child_project, 2, &owner, 3)?;
+    let spawn = |parent: AttemptId, now: u64, project: Option<EntityId>| {
+        dispatcher.dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: Some(parent),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            },
+            project.map_or_else(AgentSpawnContext::default, |id| {
+                AgentSpawnContext::default().with_project(id)
+            }),
+        )
+    };
+    let child = dispatched(spawn(root.attempt.id, 4, Some(child_project))?);
+    assert_eq!(child.input.project_ref, Some(child_project));
+    assert_eq!(child.input.depth_remaining, Some(2));
+    let descendant = dispatched(spawn(child.attempt.id, 5, None)?);
+    assert_eq!(descendant.input.depth_remaining, Some(1));
+    assert_eq!(
+        spawn(child.attempt.id, 5, Some(root_project))
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    vault.set_project_depth(child_project, 0, &owner, 6)?;
+    let before = AttemptQueue::new(&vault).list()?.len();
+    assert_eq!(
+        spawn(descendant.attempt.id, 7, None).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(
+                DispatchAgent {
+                    target: AgentDispatchTarget::Custom(agent),
+                    parent_attempt: Some(descendant.attempt.id),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 7,
+                },
+                AgentSpawnContext::default().with_context_spec(ContextSpec {
+                    layers: vec!["identity".into()],
+                    ..ContextSpec::excluded()
+                }),
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput,
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    vault.set_project_depth(child_project, 12, &owner, 8)?;
+    let narrow = dispatched(spawn(descendant.attempt.id, 9, None)?);
+    assert_eq!(narrow.input.depth_remaining, Some(0));
+    Ok(())
+}

@@ -80,7 +80,7 @@ use crate::attempt_queue::{
 #[cfg(test)]
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 #[cfg(test)]
-use crate::context_projection::{CONTEXT_PROJECTION_MAX_ANCESTORS, ContextSpec};
+use crate::context_projection::ContextSpec;
 #[cfg(test)]
 use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore};
 #[cfg(test)]

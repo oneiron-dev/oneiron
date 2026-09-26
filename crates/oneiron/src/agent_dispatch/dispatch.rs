@@ -15,9 +15,8 @@ use crate::error::{Error, Result};
 use super::attenuation::child_depth_from;
 use super::codec::{agent_dispatch_status, encode_agent_dispatch_input, record_dispatch_input};
 use super::types::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_ROOT_DEPTH_REMAINING, AgentDispatchInput,
-    AgentDispatchOutcome, AgentDispatchTarget, AgentSpawnContext, DEFAULT_BASE_LOGICAL_ID,
-    DispatchAgent,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchOutcome, AgentDispatchTarget,
+    AgentSpawnContext, DEFAULT_BASE_LOGICAL_ID, DispatchAgent,
 };
 use crate::error::ArtifactError;
 
@@ -86,9 +85,9 @@ impl<'a> AgentDispatcher<'a> {
         // Zero rejects HERE, before the descriptor is resolved, before any fork
         // row is registered, and before anything is enqueued. The in-transaction
         // computation below is the authority; this is the ordering guarantee.
-        if let Some(parent_attempt) = input.parent_attempt {
-            self.child_depth_remaining(parent_attempt)?;
-        }
+        let txn = self.vault.store.env.read_txn()?;
+        self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
+        drop(txn);
         let target_definition = self.dispatchable_definition(&input.target)?;
         if let Some(outcome) = self.propose_context_widen(&input, &spawn)? {
             return Ok(outcome);
@@ -204,6 +203,7 @@ impl<'a> AgentDispatcher<'a> {
                     || status.input.context_spec != dispatch_input.context_spec
                     || status.input.context_from != dispatch_input.context_from
                     || status.input.depth_remaining != dispatch_input.depth_remaining
+                    || status.input.project_ref != dispatch_input.project_ref
                     || status.input.scope != dispatch_input.scope
                 {
                     return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
@@ -227,24 +227,14 @@ impl<'a> AgentDispatcher<'a> {
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
         //    lineage cannot leave a fork row behind as a side effect.
-        let depth_remaining = match requested_parent {
-            None => Some(
-                spawn
-                    .depth_remaining
-                    .unwrap_or(AGENT_DISPATCH_ROOT_DEPTH_REMAINING)
-                    .min(CONTEXT_PROJECTION_MAX_ANCESTORS as u8),
-            ),
-            Some(parent_attempt) => {
-                let bound = self.child_depth_remaining_in_txn(wtxn, parent_attempt)?;
-                // A recursive child can never supply a LARGER depth than its
-                // stored parent allows; a smaller self-limit is honoured.
-                Some(
-                    spawn
-                        .depth_remaining
-                        .map_or(bound, |asked| asked.min(bound)),
-                )
-            }
-        };
+        let (project_ref, project_limit) =
+            self.project_depth_limit_in_txn(wtxn, requested_parent, spawn.project_ref)?;
+        let depth_remaining = Some(
+            spawn
+                .depth_remaining
+                .unwrap_or(project_limit)
+                .min(project_limit),
+        );
 
         // Resolve resource lineage before any fork is registered. Missing or
         // non-dispatch parents carry deny-all, never an implicit global grant.
@@ -307,6 +297,7 @@ impl<'a> AgentDispatcher<'a> {
             context_spec: spawn.context_spec,
             context_from: spawn.context_from,
             depth_remaining,
+            project_ref: Some(project_ref),
             scope,
         })
     }
@@ -366,6 +357,60 @@ impl<'a> AgentDispatcher<'a> {
         Ok(definition)
     }
 
+    /// Read the live project in the same snapshot as the stored parent slice.
+    /// Root defaults to the vault project; an omitted child project inherits.
+    /// A project transition may only enter a direct child responsibility space.
+    pub(super) fn project_depth_limit_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_attempt: Option<AttemptId>,
+        requested_project: Option<EntityId>,
+    ) -> Result<(EntityId, u8)> {
+        let parent = parent_attempt
+            .map(|id| {
+                let row = AttemptQueue::new(self.vault).get_in_txn(txn, id)?;
+                if let Some(row) = &row {
+                    super::workflow_record::reject_wrapper_parent(row)?;
+                }
+                Ok::<_, Error>(row.and_then(|row| record_dispatch_input(&row)))
+            })
+            .transpose()?
+            .flatten();
+        let root = self.vault.project_for_spawn_in_txn(txn, None)?.0;
+        let parent_project = parent
+            .as_ref()
+            .and_then(|input| input.project_ref)
+            .unwrap_or(root);
+        let (id, project) = self.vault.project_for_spawn_in_txn(
+            txn,
+            requested_project.or_else(|| parent_attempt.map(|_| parent_project)),
+        )?;
+        if id != root && (parent_attempt.is_none() || parent.is_none()) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a project spawn requires a real parent in its ancestor project",
+            )));
+        }
+        let ceiling = match parent_attempt {
+            None => project.depth,
+            Some(_) if id == parent_project => {
+                project.depth.checked_sub(1).ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput("project depth is exhausted"),
+                ))?
+            }
+            Some(_) if project.parent.as_deref() == Some(&parent_project.to_hex()) => project.depth,
+            Some(_) => {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "project is not a child of the parent project",
+                )));
+            }
+        };
+        let bound = match parent_attempt {
+            None => CONTEXT_PROJECTION_MAX_ANCESTORS as u8,
+            Some(_) => child_depth_from(parent)?,
+        };
+        Ok((id, ceiling.min(bound)))
+    }
+
     /// The depth budget a child of `parent_attempt` must be persisted with.
     ///
     /// Reads the parent's persisted [`AgentDispatchInput`]. A stored `Some(0)`
@@ -378,14 +423,6 @@ impl<'a> AgentDispatcher<'a> {
     /// exhausted.
     pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u8> {
         child_depth_from(self.parent_dispatch_input(parent_attempt)?)
-    }
-
-    fn child_depth_remaining_in_txn(
-        &self,
-        wtxn: &heed::RwTxn<'_>,
-        parent_attempt: AttemptId,
-    ) -> Result<u8> {
-        child_depth_from(self.parent_dispatch_input_in_txn(wtxn, parent_attempt)?)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller
