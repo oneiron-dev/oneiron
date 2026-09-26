@@ -1151,3 +1151,192 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     other_read.filter_context_pack(&mut pack).unwrap();
     assert!(pack.results.is_empty());
 }
+
+#[test]
+fn cross_resident_diary_coreference_requires_both_exact_grants_on_every_read() {
+    use crate::claim::ScopedReadActorKey;
+    use crate::context_pack::ContextEntity;
+    use crate::note::{NoteScope, NoteWriteEnvelope};
+
+    let (_dir, vault) = open_vault();
+    let a = put_person(&vault, 0x41);
+    let b = put_person(&vault, 0x42);
+    let author_a = facade_for(&vault, a);
+    let author_b = facade_for(&vault, b);
+    let make_diary = |memory: &Memory<'_>, author, text: &str| {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: author },
+                markdown: text.into(),
+                source_revision_ref: [0x7a; 16],
+                mask: None,
+            })
+            .unwrap();
+        EntityId::from_hex(&receipt.id_hex).unwrap()
+    };
+    let note_a = make_diary(&author_a, a, "diaryalpha private");
+    let note_b = make_diary(&author_b, b, "diarycounterpart private");
+    let (left, right) = if note_a < note_b {
+        (note_a, note_b)
+    } else {
+        (note_b, note_a)
+    };
+    let outsider = put_person(&vault, 0x43);
+    assert!(
+        facade_for(&vault, outsider)
+            .link_diary_coreference(note_a, note_b)
+            .is_err()
+    );
+    assert!(author_a.link_diary_coreference(note_a, note_a).is_err());
+    assert!(!vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
+    assert!(author_a.link_diary_coreference(note_a, note_b).is_ok());
+    assert!(vault.edge_exists(&left, EdgeKind::SameAs, &right).unwrap());
+    let actor = crate::WriteActor::new(a, EdgeActorClass::Human);
+    assert!(
+        crate::federation::coreference_share_consent(
+            &vault,
+            &actor,
+            left,
+            right,
+            &[0x88; crate::claim::COREFERENCE_PACT_ID_LEN],
+            test_time(2),
+            2,
+        )
+        .is_err(),
+        "diary links cannot become cross-vault PERSON shares"
+    );
+    assert!(
+        facade_for(&vault, outsider)
+            .grant_diary_coreference(note_a, note_b)
+            .is_err()
+    );
+    // Generic grant writes cannot impersonate either resident's consent.
+    let forged = crate::access_grant::AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
+        principal_ref: b,
+        scope: crate::access_grant::AccessGrantScope::DiaryCoreference {
+            left_ref: left,
+            right_ref: right,
+        },
+        capability: crate::access_grant::AccessGrantCapability::DiaryCoreferenceRead,
+        status: crate::access_grant::AccessGrantStatus::Active,
+        created_at: 1,
+        revoked_at: None,
+        expires_at: None,
+    };
+    assert!(
+        vault
+            .create_access_grant(&EntityId::now(), &forged)
+            .is_err()
+    );
+    assert_ne!(note_a, note_b);
+    assert_eq!(note_body_of(&vault, &note_a).author_ref, a);
+    assert_eq!(note_body_of(&vault, &note_b).author_ref, b);
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"diary coreference read").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let read_key = |actor: EntityId| {
+        let mut claims = root.claims.clone();
+        claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
+        claims.holder_ref = actor.to_hex();
+        claims.actor_class = Some("human".into());
+        let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+        let sig = issuer.binding_proof(&slip, b"diary-coref").unwrap();
+        let proof = vault
+            .verify_capability_slip(&issuer, &slip, b"diary-coref", &sig)
+            .unwrap();
+        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+    };
+    let read_a = vault.scoped_read(read_key(a));
+    let read_b = vault.scoped_read(read_key(b));
+    vault
+        .batch()
+        .text(&note_a, &[("body", "diaryalpha private")])
+        .text(&note_b, &[("body", "diarycounterpart private")])
+        .commit()
+        .unwrap();
+    let private_rows = || {
+        let edge = vault
+            .edges_out(&left)
+            .unwrap()
+            .into_iter()
+            .find(|edge| edge.kind == EdgeKind::SameAs)
+            .unwrap();
+        let entity = |id: EntityId| ContextEntity {
+            critical: false,
+            id,
+            short_id: id.to_hex(),
+            content_hash: 0,
+            source_revision_ref: None,
+            entity_type: ENTITY_TYPE_NOTE,
+            score: 1.0,
+            fields: None,
+            edges: (id == left).then_some(vec![edge.clone()]),
+            vector: None,
+        };
+        let mut pack = vault
+            .context_pack()
+            .search_text("unmatched-content", 5)
+            .run()
+            .unwrap();
+        pack.results = vec![entity(note_a), entity(note_b)];
+        pack
+    };
+    let check = |shared: bool| {
+        for (read, own, foreign, query) in [
+            (&read_a, note_a, note_b, "diarycounterpart"),
+            (&read_b, note_b, note_a, "diaryalpha"),
+        ] {
+            assert!(read.get(&own).unwrap().is_some());
+            assert_eq!(read.get(&foreign).unwrap().is_some(), shared);
+            let search = read.search_text(query, 10, None).unwrap();
+            assert_eq!(search.value.iter().any(|hit| hit.id == foreign), shared);
+            if !shared {
+                assert_eq!(search.receipt.suppressed_count, 0);
+            }
+            let graph = read.edges_out(&left).unwrap();
+            if !shared && own == left {
+                assert_eq!(graph.receipt.suppressed_count, 0);
+            }
+            let edges = graph.value;
+            assert_eq!(
+                edges.as_ref().is_some_and(|rows| rows
+                    .iter()
+                    .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == right)),
+                shared
+            );
+            let mut pack = private_rows();
+            read.filter_context_pack(&mut pack).unwrap();
+            assert_eq!(
+                pack.results.iter().any(|entity| entity.id == foreign),
+                shared
+            );
+            assert_eq!(
+                pack.results
+                    .iter()
+                    .flat_map(|entity| entity.edges.iter().flatten())
+                    .any(|edge| edge.kind == EdgeKind::SameAs && edge.target == right),
+                shared
+            );
+        }
+        assert_eq!(
+            author_a.get_entity(&note_b.to_hex()).unwrap().is_some(),
+            shared
+        );
+        assert_eq!(
+            author_b.get_entity(&note_a.to_hex()).unwrap().is_some(),
+            shared
+        );
+    };
+    check(false); // Empty scope: no resident learns the other endpoint or link.
+    let grant_a = author_a.grant_diary_coreference(note_a, note_b).unwrap();
+    let persisted = vault.get_access_grant(&grant_a).unwrap().unwrap();
+    assert_eq!(persisted.principal_ref, a);
+    assert_eq!(persisted.scope, forged.scope);
+    assert!(author_b.revoke_diary_coreference_grant(grant_a).is_err());
+    check(false); // One signature is insufficient.
+    assert!(author_b.grant_diary_coreference(note_a, note_b).is_ok());
+    check(true); // Both authors now share exactly this pair.
+    author_a.revoke_diary_coreference_grant(grant_a).unwrap();
+    check(false); // Revocation takes effect at read time.
+}

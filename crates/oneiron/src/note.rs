@@ -371,6 +371,8 @@ pub use kind_contract::{
     BriefKindContract, NoteContextDefault, NoteExtractionDefault, NoteRetentionDefault,
 };
 mod birth;
+mod coreference;
+pub(crate) use coreference::{readable_through_link, shared_in as diary_coreference_shared_in};
 #[cfg(feature = "sync")]
 mod brief_view;
 mod document;

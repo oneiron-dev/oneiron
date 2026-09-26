@@ -413,6 +413,19 @@ impl Memory<'_> {
                 return Ok(None);
             }
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            && !crate::access_grant::decode_access_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .is_ok_and(|grant| {
+                !matches!(
+                    grant.scope,
+                    crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                )
+            })
+        {
+            return Ok(None);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
             verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
             if !crate::note::note_body_readable(
@@ -420,7 +433,8 @@ impl Memory<'_> {
                 &txn,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 Some(&self.actor),
-            )? {
+            )? && !crate::note::readable_through_link(self.vault, &txn, *id, self.actor)?
+            {
                 return Ok(None);
             }
         }

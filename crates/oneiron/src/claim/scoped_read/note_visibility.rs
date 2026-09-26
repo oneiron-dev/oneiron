@@ -11,6 +11,7 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         bytes: &[u8],
+        policy: &crate::gate::PolicyManifestResolution,
     ) -> Result<bool> {
         // A migrated NOTE retains author metadata but stores markdown on its
         // document plane. Apply the same privacy rule to that logical body.
@@ -32,9 +33,6 @@ impl ScopedRead<'_> {
         let Ok(actor) = EntityId::from_hex(self.actor_key.actor_ref()) else {
             return Ok(false);
         };
-        if actor != body.author_ref {
-            return Ok(false);
-        }
         let Some(class) = self.actor_key.actor_class().and_then(|class| match class {
             "human" => Some(crate::edge::EdgeActorClass::Human),
             "agent" => Some(crate::edge::EdgeActorClass::Agent),
@@ -48,6 +46,54 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
-        Ok(crate::provenance::validate_actor_class(entity_type, class).is_ok())
+        if crate::provenance::validate_actor_class(entity_type, class).is_err() {
+            return Ok(false);
+        }
+        if actor == body.author_ref {
+            return Ok(true);
+        }
+        if body.kind != crate::note::NoteKind::Diary
+            || !crate::note::readable_through_link(self.vault, txn, *id, actor)?
+        {
+            return Ok(false);
+        }
+        // Mutual consent grants the pair, not a bypass of the authenticated
+        // reader's WORLD/FACET/sensitivity floor.
+        let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode()) else {
+            return Ok(false);
+        };
+        let Some(scope) =
+            crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, &raw)?
+        else {
+            return Ok(false);
+        };
+        Ok(crate::gate::scoped_read_record_allowed(
+            policy,
+            &self.actor_key,
+            &scope,
+        ))
+    }
+}
+
+impl ScopedRead<'_> {
+    pub(super) fn diary_edge_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        source: EntityId,
+        edge: &crate::edge::EdgeInfo,
+    ) -> Result<bool> {
+        if edge.kind != crate::edge::EdgeKind::SameAs {
+            return Ok(true);
+        }
+        let source_note = self
+            .entity_record_in(txn, &source)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_NOTE);
+        let target_note = self
+            .entity_record_in(txn, &edge.target)?
+            .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_NOTE);
+        if source_note || target_note {
+            return crate::note::diary_coreference_shared_in(self.vault, txn, source, edge.target);
+        }
+        Ok(true)
     }
 }

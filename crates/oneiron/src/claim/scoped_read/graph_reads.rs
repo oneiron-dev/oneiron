@@ -15,6 +15,11 @@ impl ScopedRead<'_> {
         let value = if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, id)? {
             let mut kept = Vec::new();
             for edge in self.edges_out_in(&txn, id)? {
+                // Empty-scope diary links are not even counted in the receipt:
+                // a count would reveal a private cross-diary endpoint.
+                if !self.diary_edge_readable_in(&txn, *id, &edge)? {
+                    continue;
+                }
                 if self.is_entity_retrievable_with_policy_in(
                     &txn,
                     &policy,

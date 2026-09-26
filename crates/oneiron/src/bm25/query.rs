@@ -459,6 +459,47 @@ where
     Ok(scoring::scored_entities(ranked))
 }
 
+/// Candidate-only search for actor-scoped reads. The caller MUST recheck all
+/// results through the final scoped read gate before exposing any ids.
+pub(crate) fn search_text_private_candidates(
+    store: &impl ManifestDbs,
+    rtxn: &RoTxn<'_>,
+    analyzer: &MultilingualAnalyzer,
+    config: &Bm25Config,
+    query: &str,
+    limit: usize,
+    mut admits: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<Vec<ScoredEntity>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut tokens = Vec::new();
+    analyzer.analyze(query, &AnalyzerContext::for_query(), &mut tokens);
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut all = |_id: &EntityId| Ok(true);
+    let terms = collect_query_terms(store, rtxn, config, query, &tokens, &mut all)?;
+    let mut ranked = scoring::score_query_terms(store, rtxn, config, &terms, None, |id| {
+        if crate::vault_cleanup::is_archived_in_txn(store, rtxn, id)?
+            || store
+                .entities()
+                .get(rtxn, id.as_bytes())?
+                .and_then(|raw| EntityMetadataHeader::parse(&raw))
+                .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_NOTE)
+        {
+            return Ok(false);
+        }
+        admits(id)
+    })?;
+    ranked.sort_by(|a, b| {
+        b.1.total_cmp(&a.1)
+            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+    });
+    ranked.truncate(limit);
+    Ok(scoring::scored_entities(ranked))
+}
+
 pub(super) fn compute_avgdl(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,

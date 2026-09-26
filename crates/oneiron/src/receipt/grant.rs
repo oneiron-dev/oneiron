@@ -170,7 +170,12 @@ pub(super) fn access_grant_receipts(
         "access grant type index",
         |id, _header, body| {
             let grant = decode_access_grant_body(body)?;
-            if matches!(grant.scope, AccessGrantScope::SharedBrief { .. }) {
+            // A vault-wide receipt would disclose an Empty-scope diary pair.
+            // This exact-pair grant has no general receipt projection.
+            if matches!(
+                grant.scope,
+                AccessGrantScope::SharedBrief { .. } | AccessGrantScope::DiaryCoreference { .. }
+            ) {
                 return Ok(());
             }
             let created = access_grant_receipt(id, &grant, grant.created_at, "active", "created");
@@ -486,6 +491,9 @@ fn append_access_grant_scope_fields(
             fields.insert("scope".to_owned(), "calendar".to_owned());
             fields.insert("calendar_ref".to_owned(), calendar_ref.to_hex());
             fields.insert("rung".to_owned(), rung.as_str().to_owned());
+        }
+        AccessGrantScope::DiaryCoreference { .. } => {
+            unreachable!("private diary grants have no vault-wide receipt projection")
         }
     }
 }

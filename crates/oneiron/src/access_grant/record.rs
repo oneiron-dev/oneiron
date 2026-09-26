@@ -40,6 +40,12 @@ pub enum AccessGrantScope {
         /// Highest rung the audience may read, before any surface ceiling.
         rung: DisclosureRung,
     },
+    /// Consent by one diary owner to a coreference link between two private NOTEs.
+    /// Both owners must consent before either NOTE or the link crosses diaries.
+    DiaryCoreference {
+        left_ref: EntityId,
+        right_ref: EntityId,
+    },
     /// Read one identity through an immutable mailbox envelope.
     ChannelIdentity {
         identity_ref: EntityId,
@@ -90,7 +96,8 @@ impl AccessGrantScope {
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
             | Self::SharedBrief { .. }
-            | Self::ChannelIdentity { .. } => false,
+            | Self::ChannelIdentity { .. }
+            | Self::DiaryCoreference { .. } => false,
         }
     }
 
@@ -107,7 +114,8 @@ impl AccessGrantScope {
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
             | Self::SharedBrief { .. }
-            | Self::ChannelIdentity { .. } => None,
+            | Self::ChannelIdentity { .. }
+            | Self::DiaryCoreference { .. } => None,
         }
     }
 
@@ -128,6 +136,7 @@ impl AccessGrantScope {
             Self::Calendar { .. } => AccessGrantCapability::CalendarDisclosureRead,
             Self::SharedBrief { .. } => AccessGrantCapability::SharedBriefRead,
             Self::ChannelIdentity { .. } => AccessGrantCapability::ChannelIdentityScopedRead,
+            Self::DiaryCoreference { .. } => AccessGrantCapability::DiaryCoreferenceRead,
         }
     }
 
@@ -145,7 +154,8 @@ impl AccessGrantScope {
             | Self::Calendar { .. }
             | Self::CompanionProfile { .. }
             | Self::SharedBrief { .. }
-            | Self::ChannelIdentity { .. } => None,
+            | Self::ChannelIdentity { .. }
+            | Self::DiaryCoreference { .. } => None,
         }
     }
 }
@@ -166,6 +176,8 @@ pub enum AccessGrantCapability {
     CalendarDisclosureRead,
     /// Read a shared brief after live scope redaction.
     SharedBriefRead,
+    /// Read a cross-diary coreference only with both residents' consent.
+    DiaryCoreferenceRead,
     /// Read only the named ChannelIdentity mailbox envelope.
     ChannelIdentityScopedRead,
 }
@@ -180,6 +192,7 @@ impl AccessGrantCapability {
             Self::RelationshipClaimsRead => "relationshipClaims.read",
             Self::SharedBriefRead => "brief.share.read",
             Self::ChannelIdentityScopedRead => "channel_identity.scoped_read",
+            Self::DiaryCoreferenceRead => "diary_coreference.read",
             Self::CompanionProfileRead => "companion_profile.read",
             Self::CalendarDisclosureRead => "calendar.disclosure_read",
         }
@@ -194,6 +207,7 @@ impl AccessGrantCapability {
             "relationshipClaims.read" => Some(Self::RelationshipClaimsRead),
             "brief.share.read" => Some(Self::SharedBriefRead),
             "channel_identity.scoped_read" => Some(Self::ChannelIdentityScopedRead),
+            "diary_coreference.read" => Some(Self::DiaryCoreferenceRead),
             "companion_profile.read" => Some(Self::CompanionProfileRead),
             "calendar.disclosure_read" => Some(Self::CalendarDisclosureRead),
             _ => None,
@@ -356,6 +370,14 @@ impl AccessGrant {
     pub fn validate(&self) -> Result<()> {
         if matches!(self.scope, AccessGrantScope::SharedBrief { .. }) {
             crate::share::validate_shared_brief_grant(self)?;
+        }
+        if let AccessGrantScope::DiaryCoreference {
+            left_ref,
+            right_ref,
+        } = self.scope
+            && left_ref >= right_ref
+        {
+            return Err(super::codec::invalid_grant());
         }
         if self.capability != self.scope.required_capability() {
             return Err(Error::Record(RecordError::InvalidAccessGrantBody(

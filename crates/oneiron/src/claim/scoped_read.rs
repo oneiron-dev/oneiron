@@ -202,8 +202,13 @@ impl<'a> ScopedRead<'a> {
             .authority_filter(filter.clone())
             .search(query, vector, None, fetch_limit)
             .run_for_pack()?;
+        let mut candidates = results.scores;
+        candidates.extend(self.private_text_candidates(query, fetch_limit, requested)?);
+        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+        let mut seen = HashSet::new();
+        candidates.retain(|row| seen.insert(row.id));
         self.filter_search_results(
-            results.scores,
+            candidates,
             limit,
             requested,
             &filter,
@@ -314,7 +319,12 @@ impl<'a> ScopedRead<'a> {
                 if value.len() < limit {
                     value.push(result);
                 }
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
+            } else if self
+                .entity_record_in(&txn, &result.id)?
+                .is_some_and(|row| row.entity_type != crate::registry::ENTITY_TYPE_NOTE)
+            {
+                // A private NOTE nominated by an index is not evidence a
+                // reader may learn even as a suppression count.
                 suppressed += 1;
             }
         }
@@ -548,6 +558,19 @@ impl<'a> ScopedRead<'a> {
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
+        // Grant bodies contain both private diary ids. They are authority,
+        // never a readable graph/search result of their own.
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            && !crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .is_ok_and(|grant| {
+                    !matches!(
+                        grant.scope,
+                        crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                    )
+                })
+        {
+            return Ok(false);
+        }
         let deletion = match self.session_view {
             Some(view) => crate::ports::TombstoneStoreRead::port_deletion_state(view, rtxn, id)?,
             None => crate::ports::TombstoneStoreRead::port_deletion_state(self.vault, rtxn, id)?,
@@ -577,7 +600,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
+            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..], policy);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
@@ -787,7 +810,9 @@ impl<'a> ScopedRead<'a> {
         };
         let mut kept = Vec::with_capacity(edges.len());
         for edge in edges.drain(..) {
-            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)? {
+            if self.is_entity_retrievable_with_policy_in(rtxn, policy, filter, &edge.target)?
+                && self.diary_edge_readable_in(rtxn, entity.id, &edge)?
+            {
                 kept.push(edge);
             }
         }
