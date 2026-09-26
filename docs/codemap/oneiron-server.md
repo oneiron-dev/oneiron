@@ -331,7 +331,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
-| `tests/it/remote_pairing.rs` | test | s | — | — | A paired `oneiron_remote::OneironClient` against the real router |
+| `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |

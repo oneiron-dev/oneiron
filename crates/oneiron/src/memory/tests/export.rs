@@ -85,3 +85,76 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
         MEMORY_CODE_BAD_REQUEST
     );
 }
+
+#[test]
+fn export_uses_current_note_document_in_all_formats_without_rewriting_birth() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 33);
+    let memory = facade_for(&vault, actor);
+    let receipt = memory
+        .author_take(TakeTarget::Subject(actor), "old-only-string")
+        .unwrap();
+    let note = EntityId::from_hex(&receipt.id_hex).unwrap();
+    let birth = vault.get_raw(&note).unwrap().unwrap();
+    let initial = vault.note_document(note).unwrap().frontier;
+    memory
+        .apply_note_ops(
+            note,
+            &initial,
+            &[crate::note::NoteEdit {
+                start: 0,
+                delete: "old-only-string".chars().count(),
+                insert: "new-only-string".into(),
+            }],
+        )
+        .unwrap();
+    assert_eq!(vault.get_raw(&note).unwrap().unwrap(), birth);
+    for format in ["toon", "md", "json", "yaml", "txt"] {
+        let rendered = memory
+            .export(&ExportOptions {
+                format: Some(format.into()),
+            })
+            .unwrap()
+            .rendered;
+        assert!(
+            rendered.contains("new-only-string"),
+            "stale NOTE in {format}"
+        );
+        assert!(
+            !rendered.contains("old-only-string"),
+            "birth NOTE in {format}"
+        );
+        if format == "json" {
+            let raw: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+            let entries = raw["evidence_ledger"]["entities"].as_array().unwrap();
+            let note_raw = entries
+                .iter()
+                .find(|row| row["id"] == note.to_hex())
+                .unwrap();
+            let exported: crate::serialize::ExportBody =
+                serde_json::from_value(note_raw["body"].clone()).unwrap();
+            let roundtrip = crate::serialize::ExportBody::from_bytes(
+                &exported.to_bytes().unwrap(),
+                ENTITY_TYPE_NOTE,
+            );
+            assert_eq!(exported, roundtrip, "NOTE archive body roundtrip");
+            let archive = vault.read_whole_vault_json(rendered.as_bytes()).unwrap();
+            let row = archive
+                .evidence_ledger
+                .entities
+                .iter()
+                .find(|row| row.id == note.to_hex())
+                .unwrap();
+            let crate::serialize::ExportBody::MessagePack(body) = &row.body else {
+                panic!("NOTE must retain a typed MessagePack body");
+            };
+            let mut encoded = Vec::new();
+            rmpv::encode::write_value(&mut encoded, &body.to_msgpack().unwrap()).unwrap();
+            assert_eq!(
+                crate::note::decode_note_body(&encoded).unwrap().markdown,
+                "new-only-string"
+            );
+        }
+    }
+    assert_eq!(vault.get_raw(&note).unwrap().unwrap(), birth);
+}

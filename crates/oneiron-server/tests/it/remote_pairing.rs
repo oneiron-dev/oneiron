@@ -149,6 +149,42 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paired_client_exports_full_vault_in_five_formats() {
+    let fixture = Fixture::serve().await;
+    let person = fixture.person.clone();
+    let link = fixture.owner_link();
+    blocking(move || {
+        let client = paired(&link);
+        for format in ["toon", "md", "json", "yaml", "txt"] {
+            let value = client
+                .agent_verb("export", serde_json::json!({"format":format}))
+                .unwrap();
+            assert_eq!(value["format"], format);
+            assert!(
+                value["rendered"]
+                    .as_str()
+                    .unwrap()
+                    .contains("evidence_ledger")
+            );
+            if format == "json" {
+                let document: serde_json::Value =
+                    serde_json::from_str(value["rendered"].as_str().unwrap()).unwrap();
+                assert!(
+                    document["evidence_ledger"]["entities"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
+                );
+            }
+        }
+        assert_eq!(client.export(Some("json")).unwrap().format, "json");
+        assert_eq!(code(client.export(Some("gemini"))), "BAD_REQUEST");
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn back_to_back_calls_each_spend_a_fresh_nonce() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();

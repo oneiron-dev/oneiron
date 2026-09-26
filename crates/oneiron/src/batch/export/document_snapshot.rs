@@ -129,11 +129,31 @@ impl Vault {
             let short_ref =
                 crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &rtxn, &id)?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
+            // NOTE markdown lives in its document after birth. Export the same
+            // live frontier a vault read serves, in this snapshot, without
+            // rewriting the immutable birth row. Nulling still happens later.
+            let body = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && crate::note::decode_note_body_using(
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    crate::note::NoteKind::wire,
+                )
+                .is_ok()
+            {
+                crate::note::live_body_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &id,
+                    header.entity_type,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                )?
+            } else {
+                std::borrow::Cow::Borrowed(&raw[ENTITY_METADATA_HEADER_LEN..])
+            };
             entities.push(ExportSnapshotEntity {
                 id,
                 short_ref,
                 header,
-                body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                body: body.into_owned(),
                 tainted,
             });
         }

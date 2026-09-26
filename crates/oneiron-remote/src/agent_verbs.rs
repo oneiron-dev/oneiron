@@ -55,6 +55,9 @@ impl OneironClient {
                     "recall" => remote_agent_verb_output::<oneiron::memory::MemoryPack>(
                         client, verb, &input,
                     ),
+                    "export" => remote_agent_verb_output::<oneiron::memory::MemoryExport>(
+                        client, verb, &input,
+                    ),
                     "receipts" => remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
                         client, verb, &input,
                     ),
