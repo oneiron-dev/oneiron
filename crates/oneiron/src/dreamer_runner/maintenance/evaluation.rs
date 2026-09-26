@@ -40,7 +40,7 @@ impl RetuneThresholds {
 struct Baseline {
     version: u64,
     score: f64,
-    backbone: String,
+    config: DreamerTuningConfig,
     observed_at: u64,
 }
 fn config(vault: &Vault, evaluation: &HarnessEvaluation) -> Result<DreamerTuningConfig> {
@@ -122,16 +122,28 @@ pub(super) fn run(
             return Ok(None);
         }
         let proposal = if let Some(prior) = prior {
-            let backbone_changed = prior.backbone != current.backbone;
+            let backbone_changed = prior.config.backbone != current.backbone;
             let regressed = prior.score - evaluation.score > thresholds.score_regression;
             if backbone_changed || regressed {
-                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":["prompts","weights","manifest_thresholds"],"previous_score":prior.score,"score":evaluation.score});
+                // A changed backbone warrants inspecting every tuning surface. For a
+                // score regression, flag only changed surfaces; unchanged configs
+                // still need a full diagnosis rather than a silent no-op.
+                let all = backbone_changed || prior.config == current;
+                let targets: Vec<_> = [
+                    ("prompts", prior.config.prompts != current.prompts),
+                    ("weights", prior.config.weights != current.weights),
+                    ("manifest_thresholds", prior.config.manifest_thresholds != current.manifest_thresholds),
+                ]
+                .into_iter()
+                .filter_map(|(name, changed)| (all || changed).then_some(name))
+                .collect();
+                let value = serde_json::json!({"artifact":evaluation.artifact.to_hex(),"version":evaluation.version,"backbone_changed":backbone_changed,"score_regressed":regressed,"targets":targets,"previous_score":prior.score,"score":evaluation.score});
                 Some(proposals::emit_in_txn(vault, txn, evaluation.artifact,
                     "dreamer.harness.retune_proposal", &value, &envelope, now)?)
             } else { None }
         } else { None };
         let baseline = Baseline { version: evaluation.version, score: evaluation.score,
-            backbone: current.backbone, observed_at: now };
+            config: current, observed_at: now };
         vault.store.vault_meta.put(txn, &key, &serde_json::to_vec(&baseline).map_err(|_| invalid())?)?;
         Ok(proposal)
     })
