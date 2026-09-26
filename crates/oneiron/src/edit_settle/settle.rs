@@ -113,7 +113,11 @@ impl Vault {
                 artifact_id,
                 &proposal.new_bytes,
                 &proposal.agent_run_provenance(),
-                proposal.calc_engine.as_deref(),
+                if proposal.recalc == crate::edit_roundtrip::RecalcStatus::Performed {
+                    proposal.calc_engine.as_deref()
+                } else {
+                    base.calc_engine.as_ref()
+                },
                 actor,
                 occurred,
                 learned_at,
@@ -359,6 +363,13 @@ impl Vault {
         if proposal.new_bytes.is_empty() {
             return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "proposal has no bytes to settle",
+            )));
+        }
+        if proposal.recalc == crate::edit_roundtrip::RecalcStatus::Performed
+            && proposal.calc_engine.is_none()
+        {
+            return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "recalculated proposal must name its engine and version",
             )));
         }
         // The op vocabulary and re-anchor replay are spreadsheet-specific, the

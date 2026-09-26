@@ -32,39 +32,164 @@ fn serialize_value(value: &mut CellValue) {
 /// `FILTER` and `SORT` are worksheet-only functions in MS-XLSX's future
 /// function list and need the additional `_xlws.` qualifier.
 pub(super) fn prefix_functions(formula: &str) -> String {
-    const MODERN: &[&str] = &[
-        "XLOOKUP",
-        "XMATCH",
-        "LET",
-        "LAMBDA",
-        "FILTER",
-        "SORT",
-        "SORTBY",
-        "UNIQUE",
-        "SEQUENCE",
-        "TEXTSPLIT",
-        "TEXTBEFORE",
-        "TEXTAFTER",
+    // MS-XLSX "Functions" future-function table (2026-09-26):
+    // https://learn.microsoft.com/en-us/openspecs/office_standards/ms-xlsx/5d1b6d44-6fc1-4ecd-8fef-0b27406cc2bf
+    // XMATCH and ARRAYTOTEXT are also supported by current Excel's future
+    // function syntax; the published table omits them.
+    const FUTURE: &[&str] = &[
+        "ACOT",
+        "ACOTH",
+        "AGGREGATE",
+        "ARABIC",
         "ARRAYTOTEXT",
-        "VSTACK",
-        "HSTACK",
-        "TAKE",
-        "DROP",
+        "BASE",
+        "BETA.DIST",
+        "BETA.INV",
+        "BINOM.DIST",
+        "BINOM.DIST.RANGE",
+        "BINOM.INV",
+        "BITAND",
+        "BITLSHIFT",
+        "BITOR",
+        "BITRSHIFT",
+        "BITXOR",
+        "BYCOL",
+        "BYROW",
+        "CEILING.MATH",
+        "CEILING.PRECISE",
+        "CHISQ.DIST",
+        "CHISQ.DIST.RT",
+        "CHISQ.INV",
+        "CHISQ.INV.RT",
+        "CHISQ.TEST",
         "CHOOSECOLS",
         "CHOOSEROWS",
+        "COMBINA",
+        "CONCAT",
+        "CONFIDENCE.NORM",
+        "CONFIDENCE.T",
+        "COT",
+        "COTH",
+        "COVARIANCE.P",
+        "COVARIANCE.S",
+        "CSC",
+        "CSCH",
+        "DAYS",
+        "DECIMAL",
+        "DROP",
+        "ERF.PRECISE",
+        "ERFC.PRECISE",
+        "EXPAND",
+        "EXPON.DIST",
+        "F.DIST",
+        "F.DIST.RT",
+        "F.INV",
+        "F.INV.RT",
+        "F.TEST",
+        "FIELDVALUE",
+        "FILTERXML",
+        "FLOOR.MATH",
+        "FLOOR.PRECISE",
+        "FORECAST.ETS",
+        "FORECAST.ETS.CONFINT",
+        "FORECAST.ETS.SEASONALITY",
+        "FORECAST.ETS.STAT",
+        "FORECAST.LINEAR",
+        "FORMULATEXT",
+        "GAMMA",
+        "GAMMA.DIST",
+        "GAMMA.INV",
+        "GAMMALN.PRECISE",
+        "GAUSS",
+        "HSTACK",
+        "HYPGEOM.DIST",
+        "IFNA",
+        "IFS",
+        "IMCOSH",
+        "IMCOT",
+        "IMCSC",
+        "IMCSCH",
+        "IMSEC",
+        "IMSECH",
+        "IMSINH",
+        "IMTAN",
+        "ISFORMULA",
+        "ISOMITTED",
+        "ISOWEEKNUM",
+        "LAMBDA",
+        "LET",
+        "LOGNORM.DIST",
+        "LOGNORM.INV",
+        "MAKEARRAY",
+        "MAP",
+        "MAXIFS",
+        "MINIFS",
+        "MODE.MULT",
+        "MODE.SNGL",
+        "MUNIT",
+        "NEGBINOM.DIST",
+        "NORM.DIST",
+        "NORM.INV",
+        "NORM.S.DIST",
+        "NORM.S.INV",
+        "NUMBERVALUE",
+        "PDURATION",
+        "PERCENTILE.EXC",
+        "PERCENTILE.INC",
+        "PERCENTRANK.EXC",
+        "PERCENTRANK.INC",
+        "PERMUTATIONA",
+        "PHI",
+        "POISSON.DIST",
+        "PQSOURCE",
+        "QUARTILE.EXC",
+        "QUARTILE.INC",
+        "QUERYSTRING",
+        "RANDARRAY",
+        "RANK.AVG",
+        "RANK.EQ",
+        "REDUCE",
+        "RRI",
+        "SCAN",
+        "SEC",
+        "SECH",
+        "SEQUENCE",
+        "SHEET",
+        "SHEETS",
+        "SKEW.P",
+        "SORTBY",
+        "STDEV.P",
+        "STDEV.S",
+        "SWITCH",
+        "T.DIST",
+        "T.DIST.2T",
+        "T.DIST.RT",
+        "T.INV",
+        "T.INV.2T",
+        "T.TEST",
+        "TAKE",
+        "TEXTAFTER",
+        "TEXTBEFORE",
+        "TEXTJOIN",
+        "TEXTSPLIT",
         "TOCOL",
         "TOROW",
+        "UNICHAR",
+        "UNICODE",
+        "UNIQUE",
+        "VAR.P",
+        "VAR.S",
+        "VSTACK",
+        "WEBSERVICE",
+        "WEIBULL.DIST",
         "WRAPCOLS",
         "WRAPROWS",
-        "EXPAND",
-        "BYROW",
-        "BYCOL",
-        "MAP",
-        "REDUCE",
-        "SCAN",
-        "MAKEARRAY",
-        "ISOMITTED",
+        "XLOOKUP",
+        "XMATCH",
+        "XOR",
+        "Z.TEST",
     ];
+    const WORKSHEET_ONLY: &[&str] = &["FILTER", "PY", "SORT"];
     let bytes = formula.as_bytes();
     let mut out = String::with_capacity(formula.len());
     let mut i = 0;
@@ -87,6 +212,30 @@ pub(super) fn prefix_functions(formula: &str) -> String {
             }
             continue;
         }
+        // Structured references are data, not formula tokens. Preserve header
+        // text through nested brackets and Excel's single-quote escape for
+        // reserved characters (including literal '[' and ']').
+        if bytes[i] == b'[' {
+            let mut depth = 1;
+            i += 1;
+            while i < bytes.len() && depth > 0 {
+                if bytes[i] == b'\''
+                    && i + 1 < bytes.len()
+                    && matches!(bytes[i + 1], b'[' | b']' | b'#' | b'\'')
+                {
+                    i += 2;
+                } else {
+                    if bytes[i] == b'[' {
+                        depth += 1;
+                    }
+                    if bytes[i] == b']' {
+                        depth -= 1;
+                    }
+                    i += 1;
+                }
+            }
+            continue;
+        }
         if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
             let start = i;
             i += 1;
@@ -100,19 +249,27 @@ pub(super) fn prefix_functions(formula: &str) -> String {
             while next < bytes.len() && bytes[next].is_ascii_whitespace() {
                 next += 1;
             }
-            if next < bytes.len()
-                && bytes[next] == b'('
-                && MODERN.iter().any(|known| name.eq_ignore_ascii_case(known))
-            {
-                out.push_str(&formula[copy_from..start]);
-                out.push_str(
-                    if name.eq_ignore_ascii_case("FILTER") || name.eq_ignore_ascii_case("SORT") {
-                        "_xlfn._xlws."
-                    } else {
-                        "_xlfn."
-                    },
-                );
-                copy_from = start;
+            if next < bytes.len() && bytes[next] == b'(' {
+                let core = name.strip_prefix("_xlfn.").unwrap_or(name);
+                let core = core.strip_prefix("_xlws.").unwrap_or(core);
+                let qualifier = if WORKSHEET_ONLY
+                    .iter()
+                    .any(|known| core.eq_ignore_ascii_case(known))
+                {
+                    Some("_xlfn._xlws.")
+                } else if FUTURE.iter().any(|known| core.eq_ignore_ascii_case(known)) {
+                    Some("_xlfn.")
+                } else {
+                    None
+                };
+                if let Some(qualifier) = qualifier {
+                    let canonical = format!("{qualifier}{core}");
+                    if name != canonical {
+                        out.push_str(&formula[copy_from..start]);
+                        out.push_str(&canonical);
+                        copy_from = i;
+                    }
+                }
             }
         } else {
             i += 1;
@@ -125,6 +282,37 @@ pub(super) fn prefix_functions(formula: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::prefix_functions;
+
+    #[test]
+    fn structured_headers_are_not_functions_even_when_nested_or_escaped() {
+        for expr in [
+            "SUM(Table1[XLOOKUP(foo)])",
+            "SUM(Table1[[#All],[XLOOKUP(foo)]])",
+            "SUM(Table1['[XLOOKUP(foo)']])+IFNA(A1,0)",
+        ] {
+            let expected = expr.replace("IFNA(A1,0)", "_xlfn.IFNA(A1,0)");
+            assert_eq!(prefix_functions(expr), expected);
+        }
+    }
+
+    #[test]
+    fn future_functions_and_partial_qualifiers_follow_specification() {
+        for (source, expected) in [
+            ("RANDARRAY(2,2)", "_xlfn.RANDARRAY(2,2)"),
+            ("IFNA(A1,0)", "_xlfn.IFNA(A1,0)"),
+            ("IFS(A1>0,1,TRUE,0)", "_xlfn.IFS(A1>0,1,TRUE,0)"),
+            ("CONCAT(A1:A2)", "_xlfn.CONCAT(A1:A2)"),
+            (
+                r#"TEXTJOIN(",",TRUE,A1:A2)"#,
+                r#"_xlfn.TEXTJOIN(",",TRUE,A1:A2)"#,
+            ),
+            ("_xlfn.FILTER(A1:A2,TRUE)", "_xlfn._xlws.FILTER(A1:A2,TRUE)"),
+            ("_xlfn.SORT(A1:A2)", "_xlfn._xlws.SORT(A1:A2)"),
+        ] {
+            assert_eq!(prefix_functions(source), expected);
+            assert_eq!(prefix_functions(expected), expected);
+        }
+    }
 
     #[test]
     fn worksheet_only_functions_get_their_extra_qualifier() {

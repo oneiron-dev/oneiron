@@ -182,29 +182,33 @@ pub(super) fn validate(
         },
     });
 
-    let modern_formulas = after
-        .parts()
-        .iter()
-        .filter(|part| {
-            part.name.starts_with("xl/worksheets/")
-                && part.name.ends_with(".xml")
-                && before.part(&part.name) != Some(part.data.as_slice())
-        })
-        .flat_map(|part| {
-            let xml = String::from_utf8_lossy(&part.data);
-            super::inspect::extract_formulas(&xml)
-                .into_iter()
-                .filter(|formula| super::formula::prefix_functions(formula) != *formula)
-                .map(move |_| part.name.clone())
-        })
-        .collect::<Vec<_>>();
+    let mut modern_formulas = Vec::new();
+    for part in after.parts().iter().filter(|part| {
+        part.name.starts_with("xl/worksheets/")
+            && part.name.ends_with(".xml")
+            && before.part(&part.name) != Some(part.data.as_slice())
+    }) {
+        match std::str::from_utf8(&part.data)
+            .ok()
+            .and_then(|xml| super::xml::formulas(xml).ok())
+        {
+            Some(formulas) => {
+                for formula in formulas {
+                    if super::formula::prefix_functions(&formula) != formula {
+                        modern_formulas.push(part.name.clone());
+                    }
+                }
+            }
+            None => modern_formulas.push(part.name.clone()),
+        }
+    }
     checks.push(ValidationCheck {
         name: "modern_functions_prefixed",
         passed: modern_formulas.is_empty(),
         detail: if modern_formulas.is_empty() {
             "edited worksheet formulas use the OOXML function prefix".to_owned()
         } else {
-            format!("bare modern function in: {}", modern_formulas.join(", "))
+            format!("invalid modern formula in: {}", modern_formulas.join(", "))
         },
     });
 
@@ -228,45 +232,53 @@ pub(super) fn validate(
 /// retargets a relationship. Unknown link parts, including their URI `.rels`,
 /// must also survive byte-for-byte via the passthrough check.
 fn external_link_violations(before: &OpcPackage, after: &OpcPackage) -> Vec<String> {
-    let mut violations = Vec::new();
-    let workbook_refs = |pkg: &OpcPackage| -> Vec<String> {
-        pkg.part("xl/workbook.xml")
-            .map(|bytes| {
-                super::inspect::scan_tag_attr(
-                    &String::from_utf8_lossy(bytes),
-                    "<externalReference",
-                    "r:id",
-                )
-            })
-            .unwrap_or_default()
-    };
-    if workbook_refs(before) != workbook_refs(after) {
-        violations.push("workbook externalReferences".to_owned());
-    }
-    let link_rels = |pkg: &OpcPackage| -> Vec<(String, String)> {
-        let mut links = Vec::new();
-        if let Some(bytes) = pkg.part("xl/_rels/workbook.xml.rels") {
-            let xml = String::from_utf8_lossy(bytes);
-            let mut rest = xml.as_ref();
-            while let Some(idx) = rest.find("<Relationship") {
-                let tag = &rest[idx + "<Relationship".len()..];
-                let end = tag.find('>').unwrap_or(tag.len());
-                let body = &tag[..end];
-                if attr_value(body, "Type=\"").is_some_and(|t| t.ends_with("/externalLink"))
-                    && let (Some(id), Some(target)) =
-                        (attr_value(body, "Id=\""), attr_value(body, "Target=\""))
-                {
-                    links.push((id, target));
-                }
-                rest = &tag[end..];
+    const LINK_CONTENT_TYPE: &str =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml";
+    fn graph(
+        pkg: &OpcPackage,
+    ) -> std::result::Result<Vec<super::xml::ExternalRelationship>, &'static str> {
+        let refs = pkg
+            .part("xl/workbook.xml")
+            .map_or(Ok(Vec::new()), super::xml::external_refs)?;
+        let rels = pkg
+            .part("xl/_rels/workbook.xml.rels")
+            .map_or(Ok(Vec::new()), super::xml::external_relationships)?;
+        let mut by_id = std::collections::BTreeMap::new();
+        for mut rel in rels {
+            rel.target = resolve_part_path("xl/", &rel.target)
+                .ok_or("external link target escapes the package")?;
+            if by_id.insert(rel.id.clone(), rel).is_some() {
+                return Err("duplicate external link relationship id");
             }
         }
-        links.sort();
-        links
-    };
-    if link_rels(before) != link_rels(after) {
-        violations.push("workbook externalLink relationships".to_owned());
+        if refs.len() != by_id.len() {
+            return Err("external link reference/relationship count mismatch");
+        }
+        let mut joined = Vec::new();
+        for id in refs {
+            let rel = by_id
+                .remove(&id)
+                .ok_or("external reference has no link relationship")?;
+            if rel.mode.is_some() || !pkg.contains(&rel.target) {
+                return Err("external link must point to an internal package part");
+            }
+            let types = pkg
+                .part(opc::CONTENT_TYPES_PART)
+                .ok_or("missing content types")?;
+            if super::xml::content_type(types, &rel.target)?.as_deref() != Some(LINK_CONTENT_TYPE) {
+                return Err("external link has no correct content type");
+            }
+            joined.push(rel);
+        }
+        Ok(joined)
     }
+    let mut violations = Vec::new();
+    match (graph(before), graph(after)) {
+        (Ok(old), Ok(new)) if old == new => {}
+        (Err(reason), _) | (_, Err(reason)) => violations.push(reason.to_owned()),
+        _ => violations.push("workbook external link join changed".to_owned()),
+    }
+    // Unknown links and URI relationship files must remain byte-identical.
     for part in before.parts() {
         if part.name.starts_with("xl/externalLinks/")
             && after.part(&part.name) != Some(part.data.as_slice())

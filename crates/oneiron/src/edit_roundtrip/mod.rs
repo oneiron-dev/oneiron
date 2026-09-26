@@ -63,6 +63,7 @@ mod opc;
 mod ops;
 mod pipeline;
 mod session_validate;
+mod xml;
 
 pub use self::address::{Axis, CellRef, OfficeFormat, RangeRef};
 pub use self::inspect::{CrossSheetDep, SheetSummary, StructureSummary};

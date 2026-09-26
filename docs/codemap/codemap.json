@@ -14734,7 +14734,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_roundtrip/formula.rs",
@@ -14865,6 +14865,16 @@
      "path": "src/edit_roundtrip/tests.rs",
      "purpose": "ARTL-3 pipeline tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/xml.rs",
+     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "s",
@@ -34127,7 +34137,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,7 +34909,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

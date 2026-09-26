@@ -211,35 +211,7 @@ fn formula_references_sheet(formula: &str, sheet: &str) -> bool {
 /// A self-closing `<f .../>` (a shared-formula reference with no inline text)
 /// yields nothing.
 pub(super) fn extract_formulas(xml: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(idx) = rest.find("<f") {
-        let after = &rest[idx + 2..];
-        // The char after "<f" must end the tag name, so `<font>`/`<fill>` and
-        // similar are not mistaken for a formula element.
-        let is_f_element = after
-            .chars()
-            .next()
-            .is_none_or(|c| c == '>' || c == '/' || c.is_ascii_whitespace());
-        if !is_f_element {
-            rest = after;
-            continue;
-        }
-        let Some(open_end) = after.find('>') else {
-            break;
-        };
-        if after[..open_end].ends_with('/') {
-            rest = &after[open_end + 1..];
-            continue;
-        }
-        let content = &after[open_end + 1..];
-        let Some(close) = content.find("</f>") else {
-            break;
-        };
-        out.push(content[..close].to_owned());
-        rest = &content[close + "</f>".len()..];
-    }
-    out
+    super::xml::formulas(xml).unwrap_or_default()
 }
 
 pub(super) fn scan_tag_attr(xml: &str, tag: &str, attr: &str) -> Vec<String> {
