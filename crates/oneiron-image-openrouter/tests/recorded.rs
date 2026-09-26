@@ -270,3 +270,50 @@ fn status_errors_are_typed() {
         LlmError::Fatal(FatalLlmError::ContentFiltered)
     ));
 }
+
+// The catalog's nonempty/image-prefix check must not turn a mislabelled provider
+// response into a valid image; the adapter must check the decoded signature.
+fn render_declared_image(
+    encoded: &str,
+    media_type: &str,
+) -> oneiron::LlmResult<oneiron::llm::image::ImageResponse> {
+    let row = fixtures().remove(0);
+    let config = config(std::slice::from_ref(&row));
+    let transport = RecordedTransport {
+        seen: Mutex::new(vec![]),
+        response: OpenRouterImageHttpResponse {
+            status: 200,
+            headers: BTreeMap::new(),
+            body: json!({ "data": [{ "b64_json": encoded, "media_type": media_type }] }),
+        },
+    };
+    let catalog = ImageCatalog::new(
+        config.catalog_rows(),
+        BTreeMap::from([(
+            "openrouter".into(),
+            Arc::new(OpenRouterImageBackend::new(config, transport)) as Arc<dyn ImageBackend>,
+        )]),
+    )
+    .expect("fixture catalog is valid");
+    run(catalog.render(intent(&row), None, &BudgetLease::for_test("image")))
+}
+
+#[test]
+fn catalog_rejects_arbitrary_bytes_declared_png() {
+    assert!(matches!(
+        render_declared_image("eA==", "image/png"),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+}
+
+#[test]
+fn catalog_rejects_png_declared_jpeg() {
+    // A valid 1×1 PNG, falsely labelled JPEG by the provider.
+    assert!(matches!(
+        render_declared_image(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+            "image/jpeg"
+        ),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+}

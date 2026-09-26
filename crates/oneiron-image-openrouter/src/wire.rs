@@ -77,16 +77,14 @@ pub fn parse_image_response(body: &Value, model: ModelId) -> LlmResult<ImageResp
     if bytes.is_empty() {
         return Err(FatalLlmError::EmptyResponse.into());
     }
-    let media_type = match image.get("media_type") {
-        Some(value) => value
-            .as_str()
-            .filter(|s| valid_media_type(s))
-            .ok_or(FatalLlmError::InvalidRequest)?
-            .to_owned(),
-        None => sniff_media_type(&bytes)
-            .ok_or(FatalLlmError::InvalidRequest)?
-            .to_owned(),
-    };
+    let detected = sniff_media_type(&bytes).ok_or(FatalLlmError::InvalidRequest)?;
+    if image
+        .get("media_type")
+        .is_some_and(|declared| declared.as_str() != Some(detected))
+    {
+        return Err(FatalLlmError::InvalidRequest.into());
+    }
+    let media_type = detected.to_owned();
     let metadata = body
         .as_object()
         .ok_or(FatalLlmError::InvalidRequest)?

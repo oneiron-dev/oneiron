@@ -14,4 +14,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/backend.rs` | src | s | 6 struct · 1 trait · 5 fn · 1 type · 1 crate-vis | OpenRouterImageBackend, OpenRouterImageConfig, OpenRouterImageHttpRequest, OpenRouterImageHttpResponse, OpenRouterImageModel, OpenRouterImageTransport, PromptShim | Model-local prompt configuration and host-owned HTTP transport |
 | `src/lib.rs` | src | s | 2 re-export | — | OpenRouter Image API adapter |
 | `src/wire.rs` | src | s | 3 fn | — | Buffered `/api/v1/images` request and response mapping |
-| `tests/recorded.rs` | test | s | — | — | Recorded OpenRouter Image API envelopes; no live API key or network |
+| `tests/recorded.rs` | test | m | — | — | Recorded OpenRouter Image API envelopes; no live API key or network |
