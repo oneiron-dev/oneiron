@@ -35385,7 +35385,7 @@
      "path": "src/beam/infra.rs",
      "purpose": "Vector-database cost framing",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
