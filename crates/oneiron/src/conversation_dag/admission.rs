@@ -337,6 +337,50 @@ pub(crate) fn validate_received_parent(
         };
     }
 
+    // A worker can continue its spawning TURN or another record of its
+    // own session, never a different worker's session. Read the immutable
+    // body carrier rather than trusting a local membership index that may
+    // not yet have been reconstructed from an out-of-order received TURN.
+    let source_body = graph::require_type(store, txn, &source, crate::registry::ENTITY_TYPE_TURN)?;
+    let target_body = graph::require_type(store, txn, &target, crate::registry::ENTITY_TYPE_TURN)?;
+    let source_session = super::membership::carrier(&source_body)?;
+    let target_session = super::membership::carrier(&target_body)?;
+    let spawning_turn = if let Some(session) = source_session {
+        match crate::vault::live_entity_row_in_txn(store, txn, &session)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_SESSION,
+                ..
+            } => {}
+            crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
+                return Ok(ReceivedEdgeAdmission::Deferred);
+            }
+            _ => return Err(invalid("received Parent names a non-session")),
+        }
+        let anchors = graph::edge_ids(store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
+        let Some(&anchor) = anchors.first() else {
+            return Ok(ReceivedEdgeAdmission::Deferred);
+        };
+        if anchors.len() != 1 {
+            return Err(invalid("received session has multiple spawning turns"));
+        }
+        let anchor_conversation = received_parent_conversation(store, txn, anchor)?;
+        if anchor_conversation.is_none() {
+            return Ok(ReceivedEdgeAdmission::Deferred);
+        }
+        if anchor_conversation != Some(conversation) {
+            return Err(invalid("received session anchor is outside conversation"));
+        }
+        if target != anchor && target_session != Some(session) {
+            return Err(invalid("received Parent crosses sub-session boundary"));
+        }
+        Some(anchor)
+    } else {
+        if target_session.is_some() {
+            return Err(invalid("received trunk Parent enters a sub-session"));
+        }
+        None
+    };
+
     // Walk target's existing ancestors. The proposed source -> target edge
     // forms a cycle exactly when target already descends from source. Also
     // refuse an existing cyclic/cardinality fault instead of extending it.
@@ -346,13 +390,22 @@ pub(crate) fn validate_received_parent(
         if !seen.insert(id) || id == source {
             return Err(invalid("received Parent contains a cycle"));
         }
-        if seen.len() > MAX_ANCESTOR_DEPTH {
+        // The proposed source adds one more record to target's path.
+        if seen.len() >= MAX_ANCESTOR_DEPTH {
             return Err(invalid("received Parent exceeds ancestor depth"));
         }
         if received_parent_conversation(store, txn, id)? != Some(conversation) {
             return Ok(ReceivedEdgeAdmission::Deferred);
         }
         cursor = graph::parent(store, txn, &id)?;
+    }
+    // A session worker's target path must eventually reach its spawning
+    // TURN. A missing intermediary Parent may arrive in a later window;
+    // leave that dependency pending rather than admitting a broken scope.
+    if let Some(anchor) = spawning_turn
+        && !seen.contains(&anchor)
+    {
+        return Ok(ReceivedEdgeAdmission::Deferred);
     }
     if let Some(marker) = store.vault_meta.get(txn, &key(MIGRATED, &conversation))? {
         if marker.as_ref() != [1] {

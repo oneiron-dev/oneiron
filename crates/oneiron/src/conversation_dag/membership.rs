@@ -5,7 +5,7 @@ use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, error::Result, store::Store};
 use rmpv::Value;
 
-fn carrier(body: &[u8]) -> Result<Option<EntityId>> {
+pub(super) fn carrier(body: &[u8]) -> Result<Option<EntityId>> {
     let mut input = body;
     let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut input) else {
         return Ok(None); // Generic opaque TURNs are not DAG records.

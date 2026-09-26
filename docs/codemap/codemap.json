@@ -11786,7 +11786,7 @@
      "path": "src/conversation_dag/membership.rs",
      "purpose": "Replicated TURN session membership: body carrier and local index reconstruction",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -29578,7 +29578,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 3
      }
     },
@@ -29601,6 +29601,16 @@
       "fn": 13,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/parent_retry.rs",
+     "purpose": "Exact, durable received-Parent obligations and dependency-triggered replay",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30540,7 +30550,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward.rs",
@@ -34753,7 +34763,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34888,7 +34898,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2061,
+   "source_files": 2062,
    "test_files": 705
   },
   "oneiron-android": {

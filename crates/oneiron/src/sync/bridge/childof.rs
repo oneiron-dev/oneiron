@@ -366,13 +366,28 @@ pub(super) fn apply_materialized_edge_ops(
         ) {
             Ok(crate::conversation_dag::ReceivedEdgeAdmission::Admit) => {}
             Ok(crate::conversation_dag::ReceivedEdgeAdmission::Deferred) => {
-                // The dependency is genuinely in a later window. Keep a
-                // durable retry until forward remat can heal this source.
-                crate::sync::quarantine::set_replay_remat_marker_in_txn(
+                // Keep the exact bounded edge payload, not only a marker
+                // that a later unrelated ChildOf write could discharge.
+                let BatchOp::EdgeWithCreatedAt {
+                    weight, created_at, ..
+                } = &pending.op
+                else {
+                    return Err(crate::Error::CorruptedIndex("received Parent operation"));
+                };
+                let value = super::encode_edge_value_for_crdt(
+                    EdgeKind::Parent,
+                    *weight,
+                    *created_at,
+                    None,
+                    None,
+                )?;
+                super::parent_retry::defer(
                     vault,
                     wtxn,
                     window_key,
                     &pending.src,
+                    &pending.tgt,
+                    &value,
                 )?;
                 continue;
             }
@@ -384,6 +399,7 @@ pub(super) fn apply_materialized_edge_ops(
                     &metas[pending.index],
                     &rejected,
                 )?;
+                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
                 continue;
             }
             Err(local) => return Err(local),
@@ -404,17 +420,10 @@ pub(super) fn apply_materialized_edge_ops(
             Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
             Err(e) => {
                 quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[pending.index], &e)?;
+                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
             }
             Ok(()) => {
-                // A later replay can satisfy a Parent that left an rm: retry
-                // obligation. Consume only replay-origin markers; a stronger
-                // unproven delete-safety marker must survive this write.
-                crate::sync::quarantine::clear_replay_remat_marker_in_txn(
-                    vault,
-                    wtxn,
-                    window_key,
-                    &pending.src,
-                )?;
+                super::parent_retry::settle(vault, wtxn, window_key, &pending.src, &pending.tgt)?;
             }
         }
     }

@@ -75,6 +75,11 @@ pub(super) fn materialize_edges_from_delta(
             .map(|(key, value)| (key.as_ref(), value))
             .chain(replay.iter().map(|(key, value)| (key.as_str(), value)))
         {
+            // A fresh value or removal supersedes an older deferred payload
+            // for this exact Parent key. A new deferral re-registers it below.
+            if let Some((src, EdgeKind::Parent, tgt)) = parse_edge_key(key) {
+                super::parent_retry::settle(vault, wtxn, window_key, &src, &tgt)?;
+            }
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(buf))) => {
                     let Some((src, kind, tgt)) = parse_edge_key(key) else {
@@ -396,20 +401,23 @@ pub(super) fn materialize_edges_from_delta(
                         continue;
                     };
                     // A bare peer removal is not proof that the DAG door
-                    // retired an immutable structural edge. Entity deletion
-                    // removes its incident edges through the validated
-                    // tombstone door; once the source is a deleted shell or
-                    // absent, a later CRDT removal is only a no-op echo.
+                    // retired an immutable structural edge. A soft-deleted
+                    // shell retains its ancestry; only an already-absent
+                    // edge after validated destructive deletion is a no-op
+                    // echo. Do not equate DeletedShell with hard purge.
                     if matches!(
                         kind,
                         EdgeKind::Parent
                             | EdgeKind::SpawnedBy
                             | EdgeKind::RepliesTo
                             | EdgeKind::AddressedTo
-                    ) && matches!(
+                    ) && (matches!(
                         crate::vault::live_entity_row_in_txn(&vault.store, &*wtxn, &src)?,
                         crate::vault::LiveEntityRow::Live { .. }
-                    ) {
+                    ) || vault.store.edges_out.get(
+                        &*wtxn,
+                        &Store::encode_edge_key(&src, kind, &tgt),
+                    )?.is_some()) {
                         let reserved = crate::edge::validate_public_edge_kind(kind)
                             .expect_err("DAG structural edge is reserved");
                         quarantine_rejected_op_in_txn(
@@ -478,6 +486,18 @@ pub(super) fn materialize_edges_from_delta(
             }
         }
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        // Only a membership or spawning-anchor change can wake a deferred
+        // Parent. Do not scan every pending obligation on unrelated edge
+        // traffic chosen by a peer.
+        if delta.updated.iter().any(|(key, value)| {
+            matches!(value, Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_))))
+                && matches!(
+                    parse_edge_key(key.as_ref()),
+                    Some((_, EdgeKind::ChildOf | EdgeKind::SpawnedBy, _))
+                )
+        }) {
+            super::parent_retry::retry_in_txn(vault, wtxn)?;
+        }
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(

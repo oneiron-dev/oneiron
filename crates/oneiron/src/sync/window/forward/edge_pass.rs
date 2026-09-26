@@ -182,6 +182,16 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     decoded,
                 )? == crate::conversation_dag::ReceivedEdgeAdmission::Deferred
                 {
+                    if kind == crate::edge::EdgeKind::Parent {
+                        bridge::defer_parent_retry(
+                            vault,
+                            wtxn,
+                            window_key.as_str(),
+                            &src,
+                            &tgt,
+                            buf,
+                        )?;
+                    }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
 
@@ -259,6 +269,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         EdgeValueFields::from_decoded(decoded),
                     )
                     .apply(wtxn)?;
+                if kind == crate::edge::EdgeKind::Parent {
+                    bridge::settle_parent_retry(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                }
                 Ok(EdgeRematOutcome::Written)
             });
             match result {
@@ -273,6 +286,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
                 Ok(EdgeRematOutcome::Unchanged) => {}
                 Ok(EdgeRematOutcome::Deferred) => {
+                    if kind == crate::edge::EdgeKind::Parent {
+                        ledger.pending_dag_parent_sources.insert(src);
+                    }
                     // Deferral, not a rejection: cross-window endpoints
                     // arrive later; the edge stays in the CRDT and
                     // re-materializes when its endpoints do.
