@@ -1888,6 +1888,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshMachineAddress",
+      "MeshMachineAddressEnvelope"
+     ],
+     "path": "src/authority/mesh_machine.rs",
+     "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -1895,7 +1910,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -2052,7 +2067,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 15,
       "struct": 1
      }
@@ -3237,6 +3252,14 @@
      "notable": [],
      "path": "src/batch/tests/provenance_edges.rs",
      "purpose": "Provenanced and timestamped edge builders, replay and delete-edge guards",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/tests/replicated_text.rs",
+     "purpose": "Replicated body overwrites must not expose loser search postings",
      "surface": {}
     },
     {
@@ -10187,7 +10210,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 33,
       "struct": 7
@@ -12526,19 +12549,19 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DisclosureScope",
       "DisclosureScopeStatus"
      ],
      "path": "src/disclosure/scope_codec.rs",
-     "purpose": "DisclosureScope type with canonical msgpack codec and key validation",
+     "purpose": "Contact clearance envelope and canonical six-axis Scope codec",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 7,
       "enum": 1,
-      "fn": 8,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -13036,6 +13059,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/step_charge.rs",
+     "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
@@ -13059,6 +13092,14 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/contradictions.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/late_budget.rs",
+     "purpose": "Real wake-driver accounting across late step checkpoint and resume",
      "surface": {}
     },
     {
@@ -13092,6 +13133,16 @@
      "path": "src/dreamer_consolidation/tests/scope_enforcement.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/support.rs",
+     "purpose": "Shared backend fixture for deadline-driven consolidation tests",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -13303,7 +13354,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -13360,7 +13411,7 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "fn": 2
      }
     },
@@ -13387,7 +13438,7 @@
      "purpose": "Pinned wire vocabulary for the private Dreamer runner rows",
      "surface": {
       "const": 16,
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -13828,7 +13879,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_wake/tests.rs",
@@ -18760,7 +18811,7 @@
      "purpose": "Regen request and outcome decision path over behavior fingerprints",
      "surface": {
       "enum": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 3,
       "trait": 1
      }
@@ -18835,6 +18886,20 @@
      "surface": {
       "fn": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensIntentRecord"
+     ],
+     "path": "src/lens/intent.rs",
+     "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -18946,7 +19011,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -18995,6 +19060,14 @@
      "notable": [],
      "path": "src/lens/tests/instrument.rs",
      "purpose": "End-to-end Instrument safety and WorldSet read confinement",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/intent.rs",
+     "purpose": "Vault intent survives reload and drives the upgrade behavior-diff gate",
      "surface": {}
     },
     {
@@ -19107,7 +19180,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 167,
+      "mod": 168,
       "re-export": 71
      }
     },
@@ -21873,7 +21946,7 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 3
      }
@@ -21896,7 +21969,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -24510,6 +24583,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Posterior"
+     ],
+     "path": "src/posterior.rs",
+     "purpose": "Shared Beta posterior bandit seam; outcome admission stays with each estimator",
+     "surface": {
+      "crate-vis": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -25490,6 +25576,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactFamilyId",
+      "ArtifactFamilyKindId"
+     ],
+     "path": "src/registry/artifact_kinds.rs",
+     "purpose": "Semantic artifact kinds under the one artifact family (ARCH-0078)",
+     "surface": {
+      "enum": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "TypeByteFamily",
       "TypeByteFamilyEntry"
      ],
@@ -25520,7 +25620,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -27828,6 +27928,25 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/default_hub.rs",
+     "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/default_hub/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -27932,9 +28051,9 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -27977,7 +28096,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -33664,7 +33783,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -33678,7 +33797,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 83,
+     "files": 84,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34063,7 +34182,7 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 32,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34315,8 +34434,8 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 37,
-     "impl_vault": false,
+     "files": 39,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
@@ -34475,6 +34594,13 @@
      "layout": "dir",
      "purpose": "Transaction-composable storage ports"
     },
+    "posterior": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Shared Beta posterior bandit seam; outcome admission stays with each estimator"
+    },
     "ppr": {
      "files": 9,
      "impl_vault": false,
@@ -34539,7 +34665,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34693,7 +34819,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 47,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,8 +35024,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2068,
+   "test_files": 710
   },
   "oneiron-android": {
    "files": [
@@ -36678,6 +36804,122 @@
    "source_files": 7,
    "test_files": 2
   },
+  "oneiron-image-comfyui": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComfyModelShim",
+      "ComfyOptions",
+      "ComfyUiBackend",
+      "ComfyWorkflow",
+      "InputField"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Self-hosted ComfyUI image adapter",
+     "surface": {
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stub_server.rs",
+     "purpose": "Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Self-hosted ComfyUI image adapter"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Self-hosted ComfyUI image adapter",
+   "source_files": 1,
+   "test_files": 1
+  },
+  "oneiron-image-openrouter": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenRouterImageBackend",
+      "OpenRouterImageConfig",
+      "OpenRouterImageHttpRequest",
+      "OpenRouterImageHttpResponse",
+      "OpenRouterImageModel",
+      "OpenRouterImageTransport",
+      "PromptShim"
+     ],
+     "path": "src/backend.rs",
+     "purpose": "Model-local prompt configuration and host-owned HTTP transport",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 6,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib.rs",
+     "purpose": "OpenRouter Image API adapter",
+     "surface": {
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire.rs",
+     "purpose": "Buffered `/api/v1/images` request and response mapping",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recorded.rs",
+     "purpose": "Recorded OpenRouter Image API envelopes; no live API key or network",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "backend": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Model-local prompt configuration and host-owned HTTP transport"
+    },
+    "wire": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Buffered `/api/v1/images` request and response mapping"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "OpenRouter Image API adapter",
+   "source_files": 3,
+   "test_files": 1
+  },
   "oneiron-llm-anthropic": {
    "files": [
     {
@@ -37155,7 +37397,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -37163,7 +37405,7 @@
      "path": "src/iroh_transport.rs",
      "purpose": "Private iroh data plane",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -37172,26 +37414,39 @@
      "kind": "src",
      "notable": [
       "AcceptPolicy",
-      "MachineAddress",
-      "MachineAddressEnvelope",
       "MachineGrants",
       "MachineRoster",
       "MeshConnection",
       "MeshError",
       "MeshStream",
       "MeshTransport",
+      "VaultMachineGrants",
       "VaultMachineRoster"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 3,
-      "mod": 1,
-      "struct": 4,
+      "fn": 2,
+      "mod": 2,
+      "re-export": 1,
+      "struct": 3,
       "trait": 5,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TransportKey"
+     ],
+     "path": "src/transport_key.rs",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -37215,14 +37470,21 @@
     "iroh_transport": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Private iroh data plane"
+    },
+    "transport_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 2
   },
   "oneiron-napi": {

@@ -189,9 +189,16 @@ build to work around an occupied target directory.
 Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
+**Per-PR CI is off (owner ruling 2026-09-27).** The repository variable `CI_PAUSED` is `true`, so every PR
+check reports *skipped*, which counts as passing. Before you open or update a PR, run the touched tests (both
+tiers) and clippy yourself; never wait for CI or report it as a blocker. A PR merges when its review passes. The
+full gate runs on `main` after PRs merge (at most once an hour, and only when something new landed), and a red
+gate gets a fix PR. The workflows below describe what runs when the variable is `false`.
+
 - `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
-  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints only the touched packages (plus the
-  featureless build when `oneiron` changed), `Test` runs nextest for the touched packages and only the touched
+  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints the touched packages and their
+  transitive workspace reverse dependents with `--all-targets` (plus the featureless build when `oneiron`
+  changed), `Test` runs nextest for the touched packages and only the touched
   top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
   `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
   when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
@@ -199,7 +206,8 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   both featureless process models) runs nightly at 03:00 JST (`schedule`), on `workflow_dispatch`, and when a
   build file changes (root `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `.cargo/`, clippy/rustfmt/nextest
   config). `Test (macOS)` and the mutation audit are dispatch-only. `Checks`, `Test` and `Test (featureless)`
-  are required contexts and always report; a PR stays a draft until its review passes, so it gets one CI run.
+  are required contexts and always report. All three, and `Detect changed paths`, run on the self-hosted Linux
+  runners; the Macs take only the dispatch jobs.
   `CI_PAUSED=true` pauses every job. `package` waits for a `v*` tag.
 - `seal-oracle.yml` — `push` to `main` path-scoped to `crates/oneiron-seal/**` (plus the workflow
   file), and `workflow_dispatch`; never on PR, tags or schedule. The `v*`-tag trigger the A6
@@ -230,14 +238,16 @@ contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
   also stay outside `~/Desktop`, `~/Documents` and `~/Downloads` — the runner is a launchd agent
   without those TCC grants, and its first `open()` there blocks on a consent prompt nobody sees),
   `CARGO_INCREMENTAL=0`, a `PATH` with `~/.cargo/bin`, and on macOS the real-path
-  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR` and never add cache or
-  toolchain actions: the toolchain is the host rustup resolving `rust-toolchain.toml`, and no
-  workflow sets `RUSTFLAGS`: `-Dwarnings` there also reaches the vendored `crates/heed` path
+  `TMPDIR=/private/tmp/ci-t`. Workflows never set `CARGO_TARGET_DIR`. `ci.yml` compiler
+  steps use the pinned sccache action and GitHub Actions cache alongside the persistent host
+  target; other workflows do not use shared compilation caching. The toolchain is host rustup
+  resolving `rust-toolchain.toml`, not a toolchain action. No workflow sets `RUSTFLAGS`:
+  `-Dwarnings` there also reaches the vendored `crates/heed` path
   dependency, which cargo does not lint-cap (its 1.96 lifetime-elision warnings turned the first
   proving run red); warnings are gated by clippy's `-D warnings` as in `verify.sh`, and unset
   flags let the runner caches share fingerprints with developer builds. Cargo does not evict stale
-  artifacts itself. Cache maintenance is opt-in per workflow: the macOS Checks/Test jobs and
-  binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
+  artifacts itself. Cache maintenance is opt-in per workflow: the Checks job, the macOS Test job and
+  the binding/wire/seal workflows call `scripts/ci/cap-target-cache.sh`; neither Linux test job
   has a cap step. Do not assume every host has the same cache budget. Policy and safe maintenance
   commands live in `docs/ops/build-performance.md`; the script is the behavior source of truth.
   Never share a runner's target directory with concurrent developer jobs.

@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     AcceptPolicy, MachineId, MachineRoster, MeshConnection, MeshError, MeshFuture, MeshStream,
-    MeshTransport,
+    MeshTransport, transport_key::TransportKey,
 };
 
 const MAX_MESSAGE: usize = 1024 * 1024;
@@ -148,6 +148,23 @@ impl IrohTransport {
             alpns,
         })
     }
+    /// Production pairing door: the device key derives the transport signer.
+    pub async fn bind_paired(
+        key: TransportKey,
+        policy: AcceptPolicy,
+        alpns: Vec<Vec<u8>>,
+        bind_addr: SocketAddr,
+        private_relays: Option<RelayMap>,
+    ) -> Result<Self, MeshError> {
+        Self::bind(
+            key.into_iroh_secret(),
+            policy,
+            alpns,
+            bind_addr,
+            private_relays,
+        )
+        .await
+    }
     pub fn id(&self) -> [u8; 32] {
         *self.router.endpoint().id().as_bytes()
     }
@@ -252,7 +269,17 @@ impl MeshConnection for IrohConnection {
                 .await
                 .map_err(|e| MeshError::Io(e.to_string()))?;
             self.check()?;
-            Ok(Box::new(IrohStream { send, recv }) as Box<dyn MeshStream>)
+            Ok(Box::new(IrohStream {
+                send,
+                recv,
+                grant: StreamGrant {
+                    policy: self.policy.clone(),
+                    machine: self.machine,
+                    alpn: self.alpn.clone(),
+                    endpoint_key: *self.inner.remote_id().as_bytes(),
+                    incoming: self.incoming,
+                },
+            }) as Box<dyn MeshStream>)
         })
     }
     fn accept_stream(&self) -> MeshFuture<'_, Box<dyn MeshStream>> {
@@ -264,20 +291,53 @@ impl MeshConnection for IrohConnection {
                 .await
                 .map_err(|e| MeshError::Io(e.to_string()))?;
             self.check()?;
-            Ok(Box::new(IrohStream { send, recv }) as Box<dyn MeshStream>)
+            Ok(Box::new(IrohStream {
+                send,
+                recv,
+                grant: StreamGrant {
+                    policy: self.policy.clone(),
+                    machine: self.machine,
+                    alpn: self.alpn.clone(),
+                    endpoint_key: *self.inner.remote_id().as_bytes(),
+                    incoming: self.incoming,
+                },
+            }) as Box<dyn MeshStream>)
         })
     }
     fn close(&self) {
         self.inner.close(0u32.into(), b"closed");
     }
 }
+#[derive(Debug)]
+struct StreamGrant {
+    policy: AcceptPolicy,
+    machine: MachineId,
+    alpn: Vec<u8>,
+    endpoint_key: [u8; 32],
+    incoming: bool,
+}
+impl StreamGrant {
+    fn check(&self) -> Result<(), MeshError> {
+        if self.incoming {
+            if self.policy.inbound(self.endpoint_key, &self.alpn)? != self.machine {
+                return Err(MeshError::Refused);
+            }
+        } else if self.policy.outbound(self.machine, &self.alpn)?.endpoint_key != self.endpoint_key
+        {
+            return Err(MeshError::Refused);
+        }
+        Ok(())
+    }
+}
 struct IrohStream {
     send: iroh::endpoint::SendStream,
     recv: iroh::endpoint::RecvStream,
+    grant: StreamGrant,
 }
 impl MeshStream for IrohStream {
     fn send<'a>(&'a mut self, bytes: &'a [u8]) -> MeshFuture<'a, ()> {
         Box::pin(async move {
+            self.grant.check()?;
             if bytes.len() > MAX_MESSAGE {
                 return Err(MeshError::Unavailable);
             }
@@ -285,15 +345,22 @@ impl MeshStream for IrohStream {
                 .write_all(bytes)
                 .await
                 .map_err(|e| MeshError::Io(e.to_string()))?;
-            self.send.finish().map_err(|e| MeshError::Io(e.to_string()))
+            self.send
+                .finish()
+                .map_err(|e| MeshError::Io(e.to_string()))?;
+            self.grant.check()
         })
     }
     fn recv(&mut self) -> MeshFuture<'_, Vec<u8>> {
         Box::pin(async move {
-            self.recv
+            self.grant.check()?;
+            let bytes = self
+                .recv
                 .read_to_end(MAX_MESSAGE)
                 .await
-                .map_err(|e| MeshError::Io(e.to_string()))
+                .map_err(|e| MeshError::Io(e.to_string()))?;
+            self.grant.check()?;
+            Ok(bytes)
         })
     }
 }
