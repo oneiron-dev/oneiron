@@ -12146,9 +12146,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/credential_door/verb_class.rs",
-     "purpose": "Scope presets for the credential door's operations",
+     "purpose": "Registered verb classes for the credential door",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -18118,10 +18118,33 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ImportedClaimBatch",
+      "ImportedClaimBatchEntry",
+      "ImportedClaimBatchReceipt"
+     ],
+     "path": "src/ingest/bulk_review.rs",
+     "purpose": "One import-time human act for the exact set of imported claim candidates",
+     "surface": {
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/bulk_review_tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -18514,7 +18537,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 3,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -19361,7 +19384,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -19374,6 +19397,30 @@
      "surface": {
       "crate-vis": 18
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInContainerSandboxHost",
+      "LinkedInSeatHostServices",
+      "LinkedInSeatSandbox"
+     ],
+     "path": "src/linkedin_connector/sandbox_host.rs",
+     "purpose": "Container-backed, per-vault LinkedIn seat lifecycle",
+     "surface": {
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linkedin_connector/sandbox_host/tests.rs",
+     "purpose": "Lifecycle acceptance using a recording Docker-compatible executable",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34489,7 +34536,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
     "ingest": {
-     "files": 39,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34524,7 +34571,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35093,8 +35140,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2071,
-   "test_files": 712
+   "source_files": 2073,
+   "test_files": 714
   },
   "oneiron-android": {
    "files": [
@@ -35348,7 +35395,7 @@
      "path": "src/beam/infra.rs",
      "purpose": "Vector-database cost framing",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -37760,7 +37807,7 @@
      "path": "src/lib/boundary.rs",
      "purpose": "Shared caps, parse/validate helpers and napi error mapping for the legacy surface",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -37812,7 +37859,6 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "NapiBatchEntity",
       "NapiCodebaseFileEntry",
       "NapiCodebaseSnapshot",
       "NapiEdgeInfo",
@@ -37824,7 +37870,8 @@
      "path": "src/types.rs",
      "purpose": "—",
      "surface": {
-      "struct": 8
+      "crate-vis": 1,
+      "struct": 7
      }
     }
    ],

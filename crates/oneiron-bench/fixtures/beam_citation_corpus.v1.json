@@ -926,8 +926,8 @@
       }
     }
   ],
-  "vector_db_infra": [],
-  "vector_db_infra_walled_reason": "No citable vector-DB recall/latency/cost rows exist in evidence: docs mirror has zero Chroma/Milvus/Qdrant/Weaviate/Pinecone/FAISS recall/latency numbers; engine perf harness measures Oneiron only. V1 ships the measured-triple schema with zero carded rows. Cost-framing-only when rows arrive; never folded into accuracy.",
+  "vector_db_infra_fixture": "vector_db_infra.v1.json",
+  "vector_db_infra_status": "VDBBench May 2026 vendor-run infra cards live in vector_db_infra.v1.json; query costs are modeled from published hourly search cost and measured QPS. Cost-framing-only; not same-corpus Oneiron scores and never folded into accuracy.",
   "dropped_or_unverifiable": [
     {
       "claim": "Mem0 README LongMemEval 94.8",
