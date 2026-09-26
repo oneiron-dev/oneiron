@@ -6509,17 +6509,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "DelegatedCustodyProof",
       "DelegatedGrant",
       "DelegatedGrantScope"
      ],
      "path": "src/channel_identity/custody.rs",
      "purpose": "Delegated-grant custody: the grant handle, the txn-bound proof, and the one verification door",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 12,
-      "struct": 2
+      "fn": 7,
+      "struct": 1
      }
     },
     {
