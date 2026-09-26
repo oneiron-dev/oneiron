@@ -9,7 +9,7 @@ use super::runner::{print_help, run_builtin_smoke, run_manifest_path};
 use super::scorer::BeamArmAdapter;
 use super::util::arm_not_ready;
 use super::{BEAM_CONTEXT_PACK_FORMAT, BeamError, BeamResult, LOW_CONFIDENCE_RETRIEVAL_LIMIT};
-use crate::retrieval_trace_export;
+use crate::{retrieval_trace_export, retrieval_turn_corpus};
 use oneiron::{ContextPack, ContextPackBuilder, FieldProfile, PackStats, Vault};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -183,6 +183,12 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             }
         }
         [sub, rest @ ..] if sub == "trace-export" => retrieval_trace_export::run(rest),
+        [sub, rest @ ..] if sub == "corpus-export" || sub == "corpus-replay" => {
+            let args = std::iter::once(sub.clone())
+                .chain(rest.iter().cloned())
+                .collect::<Vec<_>>();
+            retrieval_turn_corpus::run(&args)
+        }
         [sub] => {
             eprintln!("unknown BEAM subcommand: {sub}");
             print_help();
