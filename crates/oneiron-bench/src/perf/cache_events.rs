@@ -26,6 +26,14 @@
 //! evidence. A signature over these bytes was considered and rejected: the same
 //! operator would hold the key, so it would authenticate the same declaration.
 //!
+//! Future re-gate path (not implemented): replace this operator-supplied stream
+//! with engine-produced, engine-signed cache telemetry from the measured run.
+//! An independent verifier must authenticate the engine's signer and bind the
+//! events to that run and its rungs before any cache check can become blocking.
+//! An operator-held signature on today's JSONL file, or its BLAKE3 hash in the
+//! report, cannot establish the origin of real traffic. Until that separate
+//! telemetry and verification path exists, the cache axis stays advisory.
+//!
 //! `sessions` counts DISTINCT session ids, not rows that happened to carry
 //! one. One session emitting four events is one session; counting the events
 //! instead would misdescribe the traffic scope the hit rate was measured over.
@@ -128,6 +136,9 @@ pub(crate) struct CacheAxis {
     /// check on a stream the operator chose, which is why the axis is advisory.
     pub(crate) evidence_trust_class: &'static str,
     pub(crate) publication_scope: &'static str,
+    /// Future evidence needed before this advisory axis can be considered for
+    /// re-gating; this is a design path, not evidence accepted by this run.
+    pub(crate) future_re_gate_path: &'static str,
     pub(crate) session_counting_rule: &'static str,
     pub(crate) evidence_kind: EvidenceKind,
     pub(crate) note: &'static str,
@@ -138,11 +149,15 @@ const CACHE_NOTE: &str = "cache events are BENCH-OWNED rows: they are read from 
      produce them; the stream is chosen by whoever runs the bench and its rows declare their own \
      source, so this axis is OPERATOR-DECLARED evidence and is ADVISORY — it is measured, emitted \
      and hashed, and it never withholds publication candidacy; a listed rung with no admissible \
-     event stays not_ready and never reads as a zero hit rate";
+     event stays not_ready and never reads as a zero hit rate. Future re-gate requires engine-signed \
+     cache telemetry produced by the engine during the measured run, with its signer, run binding \
+     and rung evidence independently verified; an operator-held signature on this JSONL stream \
+     or its report hash does not prove real-traffic origin, so this axis remains advisory";
 /// The ONE-1961 trust class of every cache row, stated on the axis.
 const CACHE_TRUST_CLASS: &str = "operator_declared";
 /// The ONE-1961 publication scope of this axis.
 const CACHE_PUBLICATION_SCOPE: &str = "advisory";
+const CACHE_FUTURE_RE_GATE_PATH: &str = "engine_signed_cache_telemetry";
 const SESSION_RULE: &str = "`sessions` is the number of DISTINCT non-empty session ids seen on the \
      rung, not the number of rows that carried one; `events_with_session` reports the latter \
      separately so neither can be mistaken for the other";
@@ -210,6 +225,7 @@ impl CacheAxis {
             rejects_synthetic_source_for_full_run: true,
             evidence_trust_class: CACHE_TRUST_CLASS,
             publication_scope: CACHE_PUBLICATION_SCOPE,
+            future_re_gate_path: CACHE_FUTURE_RE_GATE_PATH,
             session_counting_rule: SESSION_RULE,
             evidence_kind: if mode.is_full() {
                 EvidenceKind::IngestedRealTrafficEvents
@@ -398,6 +414,24 @@ mod tests {
         assert!(
             rendered.contains(r#""evidence_trust_class":"operator_declared""#),
             "{rendered}"
+        );
+    }
+
+    /// The axis exposes a future re-gate route without promoting today's
+    /// operator-provided cache stream to blocking evidence.
+    #[test]
+    fn cache_axis_names_the_future_engine_signed_telemetry_path() {
+        let listed = rungs(&["embedding"]);
+        let real = r#"{"rung":"embedding","outcome":"hit","source":"real_traffic"}"#;
+        let axis = CacheAxis::ingest(RunMode::Full, &listed, real).expect("stream is admitted");
+
+        assert_eq!(axis.future_re_gate_path, "engine_signed_cache_telemetry");
+        assert_eq!(axis.evidence_trust_class, "operator_declared");
+        assert_eq!(axis.publication_scope, "advisory");
+        let rendered = serde_json::to_value(&axis).expect("axis renders");
+        assert_eq!(
+            rendered["future_re_gate_path"],
+            "engine_signed_cache_telemetry"
         );
     }
 
