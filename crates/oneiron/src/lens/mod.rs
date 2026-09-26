@@ -16,7 +16,9 @@
 
 mod atom;
 mod instrument;
+mod intent;
 pub use instrument::{InstrumentAtoms, InstrumentView, LensExecutionRuntime, render_instrument};
+pub use intent::{LENS_INTENT_MAX_BYTES, LensIntentRecord};
 mod generated_ui;
 mod mediation;
 mod mount;

@@ -229,6 +229,106 @@ fn connector_requires_qualified_runtime_and_changed_hub_requires_reconsent() -> 
     Ok(())
 }
 #[test]
+fn predicate_collision_names_both_packs_in_either_install_order() -> Result<()> {
+    // A parent and nested pack may each declare the same valid global name.
+    let parent = PackSource::from_files(
+        source(false)?
+            .files()
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if file.path == "PACK.md" {
+                    file.content = String::from_utf8(file.content)
+                        .unwrap()
+                        .replace("alice.tools.topic", "alice.tools.sub.topic")
+                        .into_bytes();
+                }
+                file
+            })
+            .collect(),
+    )?;
+    let nested = PackSource::from_files(
+        source(false)?
+            .files()
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if file.path == "PACK.md" || file.path.starts_with("knowledge/") {
+                    file.path = file.path.replace("alice.tools", "alice.tools.sub");
+                    file.content = String::from_utf8(file.content)
+                        .unwrap()
+                        .replace("alice.tools", "alice.tools.sub")
+                        .into_bytes();
+                }
+                file
+            })
+            .collect(),
+    )?;
+    for (first, second) in [(&parent, &nested), (&nested, &parent)] {
+        let (_dir, vault, owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, first)?;
+        let mut asks = Vec::new();
+        for source in [first, second] {
+            let id = vault.stage_pack_source(source, TimeRange { start: 3, end: 3 }, 3)?;
+            let reference = HubRef::new(
+                hub.hub_id,
+                "pack",
+                HubPin::ContentHash(source.content_hash().to_hex()),
+            )?;
+            let ask = vault.prepare_pack_install(
+                id,
+                &reference,
+                &publisher,
+                &Qualification {
+                    runtime: false,
+                    passed: true,
+                },
+            )?;
+            vault.approve_pack_install(&ask, &owner)?;
+            asks.push(ask);
+        }
+        let PackInstallDisposition::Installed(receipt) = vault.install_pack(&asks[0])? else {
+            panic!("first pack installs");
+        };
+        let byte_map = vault.pack_byte_map_snapshot()?;
+        let err = vault.install_pack(&asks[1]).unwrap_err();
+        assert!(matches!(
+            &err,
+            crate::error::Error::Registry(
+                crate::error::RegistryError::PackPredicateNameCollision {
+                    predicate,
+                    installed_pack,
+                    installing_pack,
+                }
+            ) if predicate == "alice.tools.sub.topic"
+                && installed_pack == &first.manifest().name
+                && installing_pack == &second.manifest().name
+        ));
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::PackPredicateNameCollision
+        );
+        let message = err.to_string();
+        for name in [
+            "alice.tools.sub.topic",
+            &first.manifest().name,
+            &second.manifest().name,
+        ] {
+            assert!(message.contains(name), "missing {name} in {message}");
+        }
+        assert_eq!(
+            vault.installed_pack(&first.manifest().name)?,
+            Some(*receipt.clone())
+        );
+        assert!(vault.installed_pack(&second.manifest().name)?.is_none());
+        assert_eq!(
+            vault.pack_for_predicate("alice.tools.sub.topic")?,
+            Some(*receipt)
+        );
+        assert_eq!(vault.pack_byte_map_snapshot()?, byte_map);
+    }
+    Ok(())
+}
+#[test]
 fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()> {
     let mut files = source(false)?.files().to_vec();
     files
