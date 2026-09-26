@@ -20032,7 +20032,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
@@ -20081,9 +20081,37 @@
      "path": "src/llm/score_scraper.rs",
      "purpose": "Config-driven benchmark scraping",
      "surface": {
-      "fn": 4,
+      "fn": 5,
+      "re-export": 2,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HttpScoreFetch"
+     ],
+     "path": "src/llm/score_scraper/http.rs",
+     "purpose": "Bounded HTTPS JSON transport for configured score sources",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ScoreScraperWorker"
+     ],
+     "path": "src/llm/score_scraper/worker.rs",
+     "purpose": "Lifecycle-owned background score refresh: one immediate attempt, then the configured cadence",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -34499,7 +34527,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35054,7 +35082,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2070,
+   "source_files": 2072,
    "test_files": 710
   },
   "oneiron-android": {
