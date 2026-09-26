@@ -107,7 +107,7 @@ pub(crate) fn stamp_put(
         };
         default_stamp(kind, facet)
     } else {
-        default_stamp(kind, crate::claim::substrate_facet_id(id))
+        default_stamp(kind, crate::claim::substrate_facet_id(id)?)
     };
     if kind == crate::registry::ENTITY_TYPE_FACET
         && let Ok(rmpv::Value::Map(entries)) = rmpv::decode::read_value(&mut &data[..])

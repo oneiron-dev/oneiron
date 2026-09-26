@@ -127,7 +127,7 @@ fn put_raw_claim(
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim_id, &body, at(EVENT_START), EVENT_START)
 }
 

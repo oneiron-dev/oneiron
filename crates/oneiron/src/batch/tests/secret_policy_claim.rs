@@ -538,7 +538,7 @@ fn raw_public_batch_put_rejects_claim_without_write_envelope() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::UserStated);
     let data = crate::claim::encode_claim_body(&body)?;
 
@@ -594,7 +594,7 @@ fn raw_public_put_rejects_legacy_generated_code_revision_without_auto_permit() -
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     let data = crate::claim::encode_claim_body(&body)?;
 

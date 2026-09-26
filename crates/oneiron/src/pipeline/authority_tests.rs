@@ -46,7 +46,7 @@ fn install_grant(vault: &Vault, scope: Value) -> Result<()> {
 }
 
 fn install_grants(vault: &Vault, grants: Vec<Value>) -> Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap() else {
         panic!("manifest map");
     };
@@ -69,7 +69,8 @@ fn claim() -> ClaimBody {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.salience = Some(0.9);
     body.scope = Some(map(vec![("sensitivity", Value::from(1))]));
     body

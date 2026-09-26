@@ -41,7 +41,8 @@ fn claim_body(
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.salience = Some(salience);
     body.source = Some(ClaimSource::UserStated);
     if let Some(band) = band {
@@ -866,7 +867,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::UserStated);
         body.world = Some(at_world);
         body.scope = Some(Value::Map(vec![(

@@ -83,7 +83,7 @@ fn commitment_row(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(valid.start);
     body.valid_to = Some(valid.end);
     Ok(body)
@@ -451,7 +451,7 @@ fn commitment_ledger_skips_undecodable_rows_and_fails_closed_on_commitment_rows(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     broken.valid_from = Some(100);
     broken.valid_to = Some(200);
     inject_raw_claim(vault, 0xF2, &encode_claim_body(&broken)?)?;
@@ -695,7 +695,7 @@ fn commitment_ledger_receipt_link_maps_claim_lifecycle_to_view_time_resolution()
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     stranger_body.valid_from = Some(1);
     stranger_body.valid_to = Some(2);
     vault.put_claim(&stranger, &stranger_body, at(1), 1)?;

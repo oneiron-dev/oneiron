@@ -516,7 +516,8 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         0.9,
         oneiron::claim::ClaimApprovalStatus::Approved,
         oneiron::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)
         .unwrap();

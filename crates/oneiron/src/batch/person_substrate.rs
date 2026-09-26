@@ -24,7 +24,7 @@ pub(crate) fn ensure_person_substrate(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
-    let facet = crate::claim::substrate_facet_id(person);
+    let facet = crate::claim::substrate_facet_id(person)?;
     if let Some(raw) = store.entities.get(txn, facet.as_bytes())? {
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("substrate header"))?;

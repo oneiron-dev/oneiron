@@ -78,7 +78,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             for lapse in lapses {
                 let mut recorded_decision = None;
                 let lapse_id = lapse.id;
-                let body = lapse.candidate.into_claim_body(envelope, default_facet);
+                let body = lapse.candidate.into_claim_body(envelope, default_facet)?;
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,
@@ -161,7 +161,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
             } if !*internal_lexical_query_hint => {
                 let body = (**candidate)
                     .clone()
-                    .into_claim_body(envelope, default_facet);
+                    .into_claim_body(envelope, default_facet)?;
                 let result = crate::gate::check_claim_policy_for_write_with_record(
                     store,
                     wtxn,

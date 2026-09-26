@@ -340,7 +340,7 @@ fn scoped_read_claim_census_surfaces_an_undecodable_body() -> Result<()> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    ))?;
+    )?)?;
     plant_raw_claim_row(&vault, &EntityId::now(), &legal)?;
     assert_eq!(
         seam::base_scoped_read_visible_claim_count(&vault, &subject)?.value,
@@ -373,7 +373,7 @@ fn branch_oracle_scoped_reads_keep_their_receipts() -> Result<()> {
             0.9,
             approval,
             crate::claim::ClaimLifecycleStatus::Active,
-        ))
+        )?)
     };
     plant_raw_claim_row(
         &vault,

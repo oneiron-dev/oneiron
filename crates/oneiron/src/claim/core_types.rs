@@ -286,8 +286,9 @@ pub(crate) struct SessionClaimBundleMember {
 
 impl ClaimBody {
     /// Creates a claim body from the six required fields; all optional
-    /// fields start absent and `stale` starts `false`.
-    #[must_use]
+    /// fields start absent and `stale` starts `false`. The scope facet starts
+    /// as the subject's `substrate` FACET, a derived id, so construction
+    /// refuses with an error where that derivation does.
     pub fn new(
         predicate: impl Into<String>,
         subject: ClaimSubject,
@@ -295,8 +296,8 @@ impl ClaimBody {
         confidence: f32,
         approval: ClaimApprovalStatus,
         lifecycle: ClaimLifecycleStatus,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             predicate: predicate.into(),
             subject,
             value,
@@ -311,11 +312,11 @@ impl ClaimBody {
             world: None,
             rel: None,
             scope: None,
-            scope_facet: super::scope_stamp::subject_facet(subject),
+            scope_facet: super::scope_stamp::subject_facet(subject)?,
             scope_project: super::default_project_id(),
             session_tag: None,
             stale: false,
-        }
+        })
     }
 }
 
@@ -749,7 +750,7 @@ mod import_validation_tests {
                 0.8,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.source = Some(ClaimSource::Imported);
             admit(&body)?;
             assert_eq!(vault.get_claim(&id)?, Some(body.clone()));

@@ -143,7 +143,7 @@ fn claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = world;
     body.stale = stale;
     let bytes = encode_claim_body(&body)?;

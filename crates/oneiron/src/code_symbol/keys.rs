@@ -4,12 +4,13 @@ use heed::RwTxn;
 use sha2::{Digest, Sha256};
 
 use crate::codebase::RepoRef;
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CODE_SYMBOL_ENTITY;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
-use super::codec::{hash_len, hash_text_field};
+use super::codec::hash_text_field;
 use super::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_KIND_MAX_BYTES, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk,
     CodeSymbolManifest, CodeSymbolRevision,
@@ -18,8 +19,6 @@ use super::validate::{
     compare_chunks, validate_chunk, validate_manifest_path, validate_symbol_shape, validate_text,
 };
 use crate::error::CodeError;
-
-pub(super) const CODE_SYMBOL_ENTITY_ID_DOMAIN: &[u8] = b"oneiron:code-symbol-entity:v1";
 
 /// Per-code-artifact code-symbol manifest row. Key: id16.
 pub(super) const MANIFEST: SideTable<EntityId, CodeSymbolManifest, Raw> =
@@ -35,8 +34,8 @@ pub(super) const REVISION_INDEX: SideTable<Vec<u8>, (), Raw> =
 
 pub fn code_symbol_entity_id(repo_ref: &RepoRef, symbol: &CodeSymbolRevision) -> Result<EntityId> {
     validate_symbol_shape(symbol)?;
-    deterministic_entity_id(
-        CODE_SYMBOL_ENTITY_ID_DOMAIN,
+    EntityId::derive(
+        CODE_SYMBOL_ENTITY,
         &[
             repo_identity_key(repo_ref).as_bytes(),
             symbol.path.as_bytes(),
@@ -88,27 +87,6 @@ pub(super) fn repo_identity_key(repo_ref: &RepoRef) -> String {
         RepoRef::LocalFolder { path, .. } => format!("local:{path}"),
         RepoRef::GitHubAtCommit { owner, repo, .. } => format!("github:{owner}/{repo}"),
     }
-}
-
-pub(super) fn deterministic_entity_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0_u64..=u64::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(domain);
-        hasher.update(salt.to_le_bytes());
-        for part in parts {
-            hash_len(&mut hasher, part.len())?;
-            hasher.update(part);
-        }
-        let hash = hasher.finalize();
-        let mut id = [0_u8; ENTITY_ID_LEN];
-        id.copy_from_slice(&hash[..ENTITY_ID_LEN]);
-        if let Ok(id) = EntityId::from_bytes(id) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "code symbol deterministic entity id exhausted salt space",
-    ))
 }
 
 /// [`REVISION_INDEX`]'s key for one (repo_ref, path, name, fingerprint) group, without the

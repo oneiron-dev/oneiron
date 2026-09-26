@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use super::admission::{PollAdmission, VerdictFold};
 use super::fetch::{IcsFeedFetcher, IcsFetchResponse, archive_raw_feed};
-use super::{derive_entity_id, ingest};
+use super::ingest;
 use crate::attempt_queue::{
     AttemptInterventionKind, AttemptQueue, AttemptRecord, AttemptState, EnqueueAttempt,
     EnqueueOutcome, InterveneAttempt,
@@ -14,6 +14,7 @@ use crate::calendar::CalendarError;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::safeguard::CalendarBodyScreener;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_EXCEPTION;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::vault::Vault;
 
@@ -519,11 +520,8 @@ fn write_cursor(
 /// The stable exception ref for one feed, shared by the pause run-state and
 /// the inbox projection so hosts can correlate the two.
 fn ics_feed_exception_ref(system: &str, secret_ref: &str) -> Result<EntityId, CalendarError> {
-    Ok(derive_entity_id(
-        ICS_FEED_EXCEPTION_ID_DOMAIN,
-        ics_feed_identity(system, secret_ref).as_bytes(),
+    Ok(EntityId::derive(
+        CALENDAR_ICS_FEED_EXCEPTION,
+        &[ics_feed_identity(system, secret_ref).as_bytes()],
     )?)
 }
-
-/// Id-derivation domain for inbox-exception refs.
-const ICS_FEED_EXCEPTION_ID_DOMAIN: &[u8] = b"oneiron:calendar-ics-feed-exception:v1:";

@@ -237,7 +237,7 @@ fn session_scope_precedes_text_topk_and_deep_candidate_bodies() -> TestResult {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.world = Some(claim_world);
         vault
             .batch()
@@ -356,7 +356,7 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
             0.9,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         vault
             .batch()
             .put_replicated(
@@ -395,7 +395,7 @@ fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault
         .batch()
         .put_replicated(
@@ -499,7 +499,7 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        ))
+        )?)
     };
     let body = claim("ranked zebra")?;
     vault
@@ -545,7 +545,7 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world_a);
     vault
         .batch()

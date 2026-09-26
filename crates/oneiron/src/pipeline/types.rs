@@ -551,7 +551,7 @@ pub fn world_access_claim_body(
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(source);
     body.valid_from = valid_from;
     body.valid_to = valid_to;

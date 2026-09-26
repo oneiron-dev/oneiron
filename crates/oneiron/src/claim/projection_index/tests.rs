@@ -14,7 +14,7 @@ fn predicate_projection_tracks_overwrites_rollback_and_deletion() -> Result<()> 
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(
         &entity(0x76),

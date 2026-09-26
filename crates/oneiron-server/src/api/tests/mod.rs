@@ -393,7 +393,8 @@ pub(super) fn seed_active_claim(
         0.9,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     server
         .vault
         .put_claim(
@@ -1074,7 +1075,8 @@ pub(super) fn seed_world_claim(
         0.8,
         oneiron::ClaimApprovalStatus::Auto,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     server
         .vault

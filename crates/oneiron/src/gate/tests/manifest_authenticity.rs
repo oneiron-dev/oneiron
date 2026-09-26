@@ -194,7 +194,7 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
-            &crate::gate::default_policy_manifest(),
+            &crate::gate::default_policy_manifest()?,
         )
         .commit()?;
     assert!(

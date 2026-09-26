@@ -3,7 +3,7 @@
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::session_overlay::RouteTarget;
-use crate::store::Store;
+use crate::vault::VaultId;
 use crate::{EntityId, ModelId, Result, ScoredEntity, Vault, WriteActor};
 
 use super::super::codec::validate_raw_output;
@@ -180,13 +180,13 @@ impl SessionBinding<'_> {
 /// off-record session.
 ///
 /// EXHAUSTIVE by design, and deliberately narrow: neither arm hands out a
-/// [`Store`] or a base [`Vault`]. The session arm delegates every read and
-/// write to ONE-1728's session handle, whose own accessors route by mode —
-/// overlay while `OffRecord`, ordinary base after the room flips `OnRecord`.
-/// Adding a method here is adding a way for the executor to reach storage, so
-/// the set below is closed: identity, policy, search, and the four
-/// replay/raw-output accessors. The memory-write verbs are NOT here; they
-/// route inside their own dispatch bodies.
+/// [`Store`](crate::store::Store) or a base [`Vault`]. The session arm
+/// delegates every read and write to ONE-1728's session handle, whose own
+/// accessors route by mode — overlay while `OffRecord`, ordinary base after
+/// the room flips `OnRecord`. Adding a method here is adding a way for the
+/// executor to reach storage, so the set below is closed: identity, policy,
+/// search, and the four replay/raw-output accessors. The memory-write verbs
+/// are NOT here; they route inside their own dispatch bodies.
 pub(crate) enum ExecutorStorage<'a> {
     Canonical(&'a Vault),
     Session(SessionBinding<'a>),
@@ -234,12 +234,12 @@ impl<'a> ExecutorStorage<'a> {
         }
     }
 
-    /// Identity-only projection of the owning store. Nothing dereferenceable
-    /// escapes; the executor compares it and never reads through it.
-    pub(crate) fn store_identity(&self) -> *const Store {
+    /// Identity of the owning vault. Nothing dereferenceable escapes; the
+    /// executor compares it and never reads through it.
+    pub(crate) fn vault_id(&self) -> VaultId {
         match self {
-            Self::Canonical(vault) => std::ptr::from_ref(&vault.store),
-            Self::Session(binding) => binding.session.store_identity(),
+            Self::Canonical(vault) => vault.vault_id(),
+            Self::Session(binding) => binding.session.vault_id(),
         }
     }
 

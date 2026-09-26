@@ -381,7 +381,8 @@ fn standing_comm_state_vetoes_an_otherwise_live_route() {
                         channel_class: "email".to_owned(),
                         reachable: false,
                     }
-                    .claim_body(),
+                    .claim_body()
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )

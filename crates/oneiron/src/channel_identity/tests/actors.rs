@@ -13,7 +13,7 @@ fn mail_and_enrichment_are_distinct_scoped_actors_with_own_keys_and_priors() -> 
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
     vault.put_entity(&owner, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"owner")?;
-    let facet = crate::claim::substrate_facet_id(owner);
+    let facet = crate::claim::substrate_facet_id(owner)?;
     let issuer = HostSlipIssuer::from_secret(b"channel registration retained root")?;
     let mut actors = Vec::new();
     for (channel, address, seed) in [
@@ -79,7 +79,7 @@ fn mail_and_enrichment_are_distinct_scoped_actors_with_own_keys_and_priors() -> 
             0.8,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         enrichment.source = Some(ClaimSource::Observed);
         vault
             .batch()

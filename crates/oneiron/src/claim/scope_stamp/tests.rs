@@ -21,6 +21,7 @@ fn body() -> ClaimBody {
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 fn encode(value: &Value) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
@@ -112,7 +113,7 @@ fn four_scope_keys_are_required_at_raw_and_replay_write_doors() -> Result<()> {
 fn person_mints_one_substrate_facet_with_sensitivity_and_replay_is_idempotent() -> Result<()> {
     let (_dir, vault) = vault()?;
     let person = entity(33);
-    let facet = substrate_facet_id(person);
+    let facet = substrate_facet_id(person)?;
     vault.put_entity(&person, ENTITY_TYPE_PERSON, AT, 10, b"person")?;
     vault
         .batch()
@@ -215,7 +216,7 @@ fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit(
             .records_in_scope(&selector, &reader, &top, ScopeView::Debug)
             .is_err()
     );
-    selector.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(substrate_facet_id(local))]));
+    selector.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(substrate_facet_id(local)?)]));
     let deleted = vault.delete_records_in_scope(&selector, &top, &top)?;
     assert!(deleted.contains(&local));
     assert!(!deleted.contains(&remote));
@@ -310,7 +311,7 @@ fn default_facet_is_the_owner_substrate_facet_until_set() -> Result<()> {
     let (_dir, vault) = vault()?;
     let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
 
-    assert_eq!(vault.default_facet()?, substrate_facet_id(owner));
+    assert_eq!(vault.default_facet()?, substrate_facet_id(owner)?);
     Ok(())
 }
 
@@ -374,7 +375,7 @@ fn fork_to_facet_births_a_claim_under_the_new_facet() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     origin.scope_facet = vault.default_facet()?;
     vault.put_claim(&claim, &origin, AT, 10)?;
     let fork = vault

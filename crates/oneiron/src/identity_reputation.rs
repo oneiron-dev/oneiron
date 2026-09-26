@@ -223,15 +223,14 @@ impl IdentityReputation {
         }
     }
 
-    #[must_use]
-    pub fn claim_bodies(&self, identity_ref: EntityId) -> Vec<ClaimBody> {
+    pub fn claim_bodies(&self, identity_ref: EntityId) -> crate::Result<Vec<ClaimBody>> {
         IDENTITY_REPUTATION_CLAIM_PREDICATES
             .iter()
             .filter_map(|predicate| {
                 if *predicate == PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL {
-                    return self.rotation_proposal_claim(identity_ref);
+                    return self.rotation_proposal_claim(identity_ref).transpose();
                 }
-                let mut claim = ClaimBody::new(
+                let claim = ClaimBody::new(
                     *predicate,
                     ClaimSubject::Entity(identity_ref),
                     self.claim_value(predicate)
@@ -239,8 +238,11 @@ impl IdentityReputation {
                     1.0,
                     ClaimApprovalStatus::Auto,
                     ClaimLifecycleStatus::Active,
-                );
-                claim.source = Some(ClaimSource::Observed);
+                )
+                .map(|mut claim| {
+                    claim.source = Some(ClaimSource::Observed);
+                    claim
+                });
                 Some(claim)
             })
             .collect()
@@ -272,10 +274,12 @@ impl IdentityReputation {
         }
     }
 
-    #[must_use]
-    pub fn rotation_proposal_claim(&self, identity_ref: EntityId) -> Option<ClaimBody> {
+    pub fn rotation_proposal_claim(
+        &self,
+        identity_ref: EntityId,
+    ) -> crate::Result<Option<ClaimBody>> {
         if self.status() != IdentityReputationStatus::Degraded {
-            return None;
+            return Ok(None);
         }
         let mut claim = ClaimBody::new(
             PREDICATE_IDENTITY_REPUTATION_ROTATE_PROPOSAL,
@@ -284,9 +288,9 @@ impl IdentityReputation {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         claim.source = Some(ClaimSource::Generated);
-        Some(claim)
+        Ok(Some(claim))
     }
 
     fn claim_value(&self, predicate: &str) -> Option<Value> {

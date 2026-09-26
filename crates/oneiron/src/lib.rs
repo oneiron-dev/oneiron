@@ -775,7 +775,7 @@ pub(crate) mod test_util {
                 ])
             })
             .collect();
-        let bytes = crate::gate::default_policy_manifest();
+        let bytes = crate::gate::default_policy_manifest().unwrap();
         let rmpv::Value::Map(mut entries) =
             rmpv::decode::read_value(&mut bytes.as_slice()).expect("default manifest")
         else {

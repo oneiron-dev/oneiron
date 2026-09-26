@@ -873,7 +873,8 @@ fn put_enrolled_member(vault: &Vault, party: EntityId, member: &CampaignMemberVa
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             crate::temporal::TimeRange { start: 1, end: 1 },
             1,
         )

@@ -80,7 +80,8 @@ fn attendee(vault: &Vault, seed: u8, event_ref: EntityId, who: &str) {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: NOW,
                 end: NOW,
@@ -129,7 +130,8 @@ fn prior_thread(vault: &Vault, seed: u8, party: &str) {
         channel_class: "email".to_owned(),
         occurred_at: NOW,
     }
-    .claim_body();
+    .claim_body()
+    .unwrap();
     vault
         .put_claim(
             &crate::test_util::entity(seed),

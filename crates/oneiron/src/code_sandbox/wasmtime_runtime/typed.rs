@@ -1,6 +1,6 @@
 //! Canonical typed WIT imports over the bounded engine-host channel.
 
-use super::{HostEvent, State, bindings::*, failure, wire};
+use super::{HostEvent, State, bindings::*, failure};
 use crate::Result;
 use crate::code_sandbox::SandboxBoundaryContract;
 use serde_json::{Value, json};
@@ -167,7 +167,7 @@ pub(super) fn link_imports(
                     cx.data_mut().begin_call()?;
                     let reply: Reply<EdgeOutput> = (|| {
                         if input.weight.is_some_and(|v| !v.is_finite()) { return Err("non-finite edge weight".into()); }
-                        wire::edge_kind(&input.kind).map_err(|_| "invalid edge kind")?;
+                        crate::EdgeKind::from_name(&input.kind).ok_or("invalid edge kind")?;
                         let result = cx.data_mut().call("self.memory.put_edge",
                             json!({"src":input.src,"kind":input.kind,"tgt":input.tgt,"weight":input.weight}))?;
                         Ok(EdgeOutput { src: field(&result,"src")?, kind: input.kind, tgt: field(&result,"tgt")? })

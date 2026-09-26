@@ -363,7 +363,7 @@ fn owner_identity_and_scope_validation_fail_closed() -> Result<()> {
         0.5,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     for scope in [
         Value::Map(vec![(Value::from("principal"), Value::from("unknown"))]),
         Value::Map(vec![(Value::from("principal"), Value::Binary(vec![1; 15]))]),

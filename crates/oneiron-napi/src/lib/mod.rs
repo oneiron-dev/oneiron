@@ -114,4 +114,55 @@ mod tests {
             format!("dimensions must be <= {MAX_NAPI_DIMENSIONS}, got {dimensions}")
         );
     }
+
+    /// The N-API edge-kind number is the stored byte: 0..=30 keep the kinds
+    /// they named before `EdgeKind::from_wire`, and every other number,
+    /// including values above `u8::MAX`, is refused.
+    #[test]
+    fn parse_edge_kind_maps_the_stored_bytes_and_refuses_the_rest() {
+        use oneiron::EdgeKind;
+        let kinds = [
+            EdgeKind::AuthoredBy,
+            EdgeKind::ScopedTo,
+            EdgeKind::PartOf,
+            EdgeKind::Supersedes,
+            EdgeKind::BelongsTo,
+            EdgeKind::ClaimOf,
+            EdgeKind::ChildOf,
+            EdgeKind::AssignedTo,
+            EdgeKind::DerivedFrom,
+            EdgeKind::Mentions,
+            EdgeKind::About,
+            EdgeKind::Supports,
+            EdgeKind::Opposes,
+            EdgeKind::ParticipatesIn,
+            EdgeKind::Attached,
+            EdgeKind::EmployedBy,
+            EdgeKind::HasFacet,
+            EdgeKind::FacetOf,
+            EdgeKind::InWorld,
+            EdgeKind::SetIn,
+            EdgeKind::SameAs,
+            EdgeKind::MergedInto,
+            EdgeKind::SplitInto,
+            EdgeKind::BlockedBy,
+            EdgeKind::Blocks,
+            EdgeKind::Fulfills,
+            EdgeKind::DischargedBy,
+            EdgeKind::Parent,
+            EdgeKind::SpawnedBy,
+            EdgeKind::AddressedTo,
+            EdgeKind::RepliesTo,
+        ];
+        for (number, kind) in (0_u32..).zip(kinds) {
+            assert_eq!(
+                parse_edge_kind(number).ok(),
+                Some(kind),
+                "edge kind {number}"
+            );
+        }
+        for number in [31, 255, 256, u32::MAX] {
+            assert!(parse_edge_kind(number).is_err(), "edge kind {number}");
+        }
+    }
 }

@@ -313,7 +313,8 @@ fn claim(subject: EntityId, text: &str, approval: ClaimApprovalStatus) -> ClaimB
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     body.source = Some(ClaimSource::UserStated);
     body
 }

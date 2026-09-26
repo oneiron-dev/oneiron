@@ -624,14 +624,14 @@ pub fn critic_reliability_claim_body(
             Value::from(reliability.observations),
         ),
     ]);
-    Ok(ClaimBody::new(
+    ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
         value,
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    ))
+    )
 }
 
 fn soft_verdict(scores: CritiqueTriageScores) -> CritiqueVerdict {

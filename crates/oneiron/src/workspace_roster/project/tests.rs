@@ -12,7 +12,7 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
     );
     let child_id = EntityId::now();
     let leader = EntityId::from_hex(&root.leader)?;
-    let mut child = ProjectRecord::new(child_id, Some(root_id), root_id, leader);
+    let mut child = ProjectRecord::new(child_id, Some(root_id), root_id, leader)?;
     child.sessions = vec![EntityId::now().to_hex()];
     child.tasks = vec![EntityId::now().to_hex()];
     child.branches = vec![EntityId::now().to_hex()];
@@ -122,7 +122,7 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
             b"member",
         )?;
         let id = EntityId::now();
-        let project = ProjectRecord::new(id, Some(root), root, owner);
+        let project = ProjectRecord::new(id, Some(root), root, owner)?;
         vault.put_project(id, &project, 2)?;
         let room = EntityId::from_hex(&project.home_room)?;
         let memory = vault.memory(owner, crate::edge::EdgeActorClass::Human);
@@ -177,13 +177,13 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
         let parent = EntityId::now();
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader)?,
             1,
         )?;
         let child = EntityId::now();
         vault.put_project(
             child,
-            &ProjectRecord::new(child, Some(parent), root, leader),
+            &ProjectRecord::new(child, Some(parent), root, leader)?,
             2,
         )?;
         for id in [root, parent] {
@@ -221,7 +221,7 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
         let parent = EntityId::now();
         vault.put_project(
             parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
+            &ProjectRecord::new(parent, Some(root), root, leader)?,
             1,
         )?;
         if hard {
@@ -230,11 +230,45 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
             vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
         }
         let child = EntityId::now();
-        let body = ProjectRecord::new(child, Some(parent), root, leader);
+        let body = ProjectRecord::new(child, Some(parent), root, leader)?;
         let error = vault.put_project(child, &body, 2).unwrap_err();
         assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
         assert!(vault.get(&child)?.is_none());
         assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn a_project_whose_home_room_id_sorts_first_reimports() -> Result<()> {
+    // The home-room id is derived (T50), so it can sort before its project's
+    // id; the whole-vault import resolves the project first either way.
+    let (_source_dir, source) = crate::test_util::open_test_vault_with(Default::default());
+    let root_id = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root_id)?.expect("root").leader)?;
+    let (child_id, child) = (1u64..)
+        .map(|n| -> Result<_> {
+            let mut bytes = [0xF0; 16];
+            bytes[8..].copy_from_slice(&n.to_be_bytes());
+            let id = EntityId::from_bytes(bytes)?;
+            Ok((id, ProjectRecord::new(id, Some(root_id), root_id, leader)?))
+        })
+        .find(|candidate| {
+            candidate
+                .as_ref()
+                .map_or(true, |(id, record)| record.home_room < id.to_hex())
+        })
+        .expect("the search is unbounded")?;
+    source.put_project(child_id, &child, 10)?;
+    let artifact = source.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let (_destination_dir, destination) =
+        crate::test_util::open_test_vault_with(Default::default());
+    destination.import_whole_vault_json(artifact.bytes())?;
+    assert_eq!(destination.project(child_id)?, Some(child.clone()));
+    let room_id = EntityId::from_hex(&child.home_room)?;
+    assert_eq!(
+        destination.project_room(room_id)?.expect("room").project_id,
+        child_id.to_hex()
+    );
     Ok(())
 }

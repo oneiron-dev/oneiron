@@ -196,7 +196,8 @@ fn follow_up_request_gate_refusal_is_not_reported_as_pick_success() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &id(0x7c),

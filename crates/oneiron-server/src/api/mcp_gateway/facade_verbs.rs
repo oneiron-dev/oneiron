@@ -819,6 +819,7 @@ mod tests {
                 oneiron::ClaimApprovalStatus::Auto,
                 oneiron::ClaimLifecycleStatus::Active,
             )
+            .unwrap()
         };
         let at = |second| oneiron::TimeRange {
             start: second,

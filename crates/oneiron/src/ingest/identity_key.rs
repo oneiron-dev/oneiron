@@ -297,7 +297,7 @@ mod tests {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         vault.put_claim(&EntityId::now(), &distinct, time, 1)?;
         for subject in [a, b] {
             let evidence = EntityId::now();
@@ -311,7 +311,7 @@ mod tests {
                 0.99,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             vault.put_claim(&evidence, &evidence_body, time, 1)?;
             let (selected, decision) = vault.resolve_imported_mention(
                 ENTITY_TYPE_PERSON,

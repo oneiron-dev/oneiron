@@ -203,7 +203,7 @@ fn project_in_txn(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(evidence);
         body.source = Some(ClaimSource::Observed);
         vault.put_reserved_claim_in_txn(

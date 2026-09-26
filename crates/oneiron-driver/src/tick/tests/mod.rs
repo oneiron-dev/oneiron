@@ -143,7 +143,7 @@ fn seed_commitment_world(vault: &Vault) -> WriteEnvelope {
     }
     vault
         .put_entity(
-            &commitment_projection_actor().entity_ref(),
+            &commitment_projection_actor().unwrap().entity_ref(),
             ENTITY_TYPE_MACHINE,
             at,
             1,

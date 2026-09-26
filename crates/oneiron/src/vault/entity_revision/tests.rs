@@ -265,7 +265,8 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(ClaimSource::Observed);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)

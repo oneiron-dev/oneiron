@@ -115,6 +115,7 @@ fn booking_lifecycle_validator_is_exact_at_the_family_door() {
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     let status = encode_claim_value(&BookingStatusValue {
         status: BookingStatus::Confirmed,

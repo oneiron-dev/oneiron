@@ -633,7 +633,7 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
         vault
             .entities_by_type(oneiron::registry::ENTITY_TYPE_FACET)
             .unwrap(),
-        vec![oneiron::claim::substrate_facet_id(owner)]
+        vec![oneiron::claim::substrate_facet_id(owner).expect("fixture")]
     );
     let conversations = body["conversations"].as_array().unwrap();
     assert_eq!(conversations.len(), 1);
@@ -807,7 +807,8 @@ async fn discover_reports_seeded_counts_namespaces_and_health_capabilities() {
         0.99,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .expect("fixture");
     vault
         .put_claim(&claim, &claim_body, time_range(5, 5), 50)
         .unwrap();

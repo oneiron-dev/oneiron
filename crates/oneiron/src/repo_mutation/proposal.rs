@@ -337,7 +337,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Generated);
         body.evidence = Some(Value::Map(vec![(
             Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
@@ -361,7 +361,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         session_claim.source = Some(ClaimSource::Observed);
         session_claim.scope = Some(Value::Map(vec![(
             Value::from("sensitivity"),

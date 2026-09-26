@@ -11,7 +11,8 @@ use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_WORKFLOW,
 };
 use crate::serialize::ExportBody;
 use crate::store::Store;
@@ -450,6 +451,9 @@ fn dependencies(entity_type: u8, bytes: &[u8]) -> Result<Vec<EntityId>> {
             .collect(),
         ENTITY_TYPE_AGENT_DEF => crate::agent_def::decode_agent_definition(bytes)?
             .forked_from
+            .into_iter()
+            .collect(),
+        ENTITY_TYPE_CONVERSATION => crate::workspace_roster::project_room_dependency(bytes)
             .into_iter()
             .collect(),
         ENTITY_TYPE_WORKFLOW => {

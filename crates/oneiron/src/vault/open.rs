@@ -9,7 +9,8 @@ use crate::analyzer::MultilingualAnalyzer;
 #[cfg(feature = "test-support")]
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::config::{HostingPrivacyPosture, VaultConfig};
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR;
 use crate::error::{Error, Result};
 use crate::store::{DefaultPolicySeedMode, Store, VaultWriterLease};
 #[cfg(feature = "test-support")]
@@ -43,31 +44,19 @@ fn validate_open_config(config: &VaultConfig) -> Result<()> {
     Ok(())
 }
 
-/// Namespace the embedded default owner actor's id is derived from
-/// (ONE-1441 WIRE-P1).
-///
-/// Pinned: changing it changes the owner id every embedded vault already
-/// carries, which would strand every claim that names the old one.
-const EMBEDDED_OWNER_ACTOR_NAMESPACE: &[u8] = b"oneiron 2026-08 embedded-owner-actor v1";
-
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
 const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
-/// The pinned, namespace-derived id of the embedded default owner actor.
+/// The pinned id of the embedded default owner actor (ONE-1441 WIRE-P1).
 ///
-/// Derived rather than literal so the derivation is auditable from the
-/// namespace above, and stamped with the RFC 9562 version-8 (custom) and
-/// variant bits so the value is a well-formed UUID like every other
-/// [`EntityId`] — which also guarantees it can never collide with the
-/// all-zero/all-`0xFF` reserved sentinels [`EntityId::from_bytes`] rejects.
+/// Minted ids are opaque ULIDs; this one comes from the one derived-id rule
+/// ([`EntityId::derive`]) over its domain, so every embedded vault carries the
+/// same owner id and the derivation is auditable. The domain is pinned:
+/// changing it changes the owner id every embedded vault already carries,
+/// which would strand every claim that names the old one.
 pub(crate) fn embedded_owner_actor_id() -> Result<EntityId> {
-    let digest = blake3::hash(EMBEDDED_OWNER_ACTOR_NAMESPACE);
-    let mut bytes = [0u8; ENTITY_ID_LEN];
-    bytes.copy_from_slice(&digest.as_bytes()[..ENTITY_ID_LEN]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(EMBEDDED_OWNER_ACTOR, &[])
 }
 
 /// Encodes the minimal PERSON body the bootstrap writes.
@@ -227,7 +216,7 @@ impl Vault {
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest();
+        let default = crate::gate::default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -344,7 +333,7 @@ impl Vault {
         use rmpv::Value;
 
         let id = crate::gate::default_policy_manifest_id()?;
-        let default = crate::gate::default_policy_manifest();
+        let default = crate::gate::default_policy_manifest()?;
         let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(&default))
             .map_err(|_| Error::InvariantViolation("decode default test policy"))?;
         let Value::Map(entries) = &mut manifest else {
@@ -569,6 +558,7 @@ impl Vault {
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
         let vault = Self {
+            vault_id: super::VaultId::resolve_at_open(&store, privacy.posture)?,
             store,
             config,
             analyzer,

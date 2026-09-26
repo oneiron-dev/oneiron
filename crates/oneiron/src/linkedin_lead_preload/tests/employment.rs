@@ -6,7 +6,7 @@ use rmpv::Value;
 
 // Test-only, actor-bound Imported permit. Production must bring its own policy.
 pub(super) fn permit_imported(vault: &Vault, actor: EntityId) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let mut manifest =
         rmpv::decode::read_value(&mut std::io::Cursor::new(bytes)).expect("fixture manifest");
     let Value::Map(entries) = &mut manifest else {
@@ -41,9 +41,12 @@ pub(super) fn permit_imported(vault: &Vault, actor: EntityId) -> crate::Result<(
 }
 
 pub(super) fn employment_claim_id() -> EntityId {
-    derived_id(
-        b"oneiron.linkedin.claim.v1",
-        &[&key(true, 1).source_ref(), "linkedin.employed_by"],
+    EntityId::derive(
+        LINKEDIN_CLAIM,
+        &[
+            key(true, 1).source_ref().as_bytes(),
+            b"linkedin.employed_by",
+        ],
     )
     .expect("fixture")
 }
@@ -133,7 +136,7 @@ fn linkedin_employment_missing_or_other_actor_permit_rolls_back_absent_edge() ->
             crate::test_util::put_policy_manifest_bytes(
                 &vault,
                 crate::gate::default_policy_manifest_id()?,
-                &crate::gate::default_policy_manifest(),
+                &crate::gate::default_policy_manifest()?,
             )?;
         }
         let before = snapshot(&vault);
@@ -292,7 +295,7 @@ fn linkedin_employment_revoked_import_permit_blocks_rerun_without_mutation() -> 
     crate::test_util::put_policy_manifest_bytes(
         &vault,
         crate::gate::default_policy_manifest_id()?,
-        &crate::gate::default_policy_manifest(),
+        &crate::gate::default_policy_manifest()?,
     )?;
     let before = snapshot(&vault);
     assert!(matches!(

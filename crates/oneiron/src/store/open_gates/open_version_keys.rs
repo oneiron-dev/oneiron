@@ -10,6 +10,13 @@ use super::vault_root_bind::VaultRootIdentity;
 
 pub const MAX_DBS: u32 = 32;
 
+/// v21: every deterministic id is derived by one rule, `EntityId::derive`
+/// (BLAKE3 derive-key over the domain, length-prefixed parts, UUID version 8).
+/// Ids derived before it (the owner PERSON and its facets, bootstrap skills,
+/// projector claims, home rooms, ask records, calendar and connector actors)
+/// no longer match what this engine derives. ABI 20 vaults fail closed at the
+/// ABI gate — there is no migration pass; rebuild the vault.
+///
 /// v20: the pairing link row stores an 8-character code hashed at rest with
 /// the server origin and the intended holder in place of the 64-hex ticket,
 /// and the replay table holds one row per admitted proof, bounded by the
@@ -97,7 +104,7 @@ pub const MAX_DBS: u32 = 32;
 /// `PENDING_GATE_CONSENT_VERSION`,
 /// `PENDING_GATE_CONSENT_INDEX_STATE_VERSION`, or
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
-pub const STORAGE_ABI_VERSION: u16 = 20;
+pub const STORAGE_ABI_VERSION: u16 = 21;
 
 pub(crate) const STORAGE_ABI_VERSION_KEY: &[u8] = b"storage_abi_version";
 

@@ -137,6 +137,7 @@ impl Vault {
         }
         if preset.is_some() {
             let id = crate::gate::default_policy_manifest_id()?;
+            let default_manifest = crate::gate::default_policy_manifest()?;
             // Creation cannot overwrite policy the owner has already customized.
             if self
                 .store
@@ -144,7 +145,7 @@ impl Vault {
                 .get(&txn, id.as_bytes())?
                 .is_some_and(|raw| {
                     raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                        != Some(crate::gate::default_policy_manifest().as_slice())
+                        != Some(default_manifest.as_slice())
                 })
             {
                 return Err(invalid("shared preset must precede customized policy"));
@@ -158,7 +159,7 @@ impl Vault {
                     end: now,
                 },
                 learned_at: now,
-                data: crate::gate::default_policy_manifest(),
+                data: default_manifest,
                 allow_maintenance: true,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,

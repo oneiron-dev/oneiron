@@ -22,7 +22,8 @@ async fn mcp_memory_reads_use_native_clamps_and_keep_runtime_refusals_typed() {
             1.0,
             approval,
             oneiron::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         claim.source = Some(oneiron::ClaimSource::UserStated);
         server.vault.put_claim(&id, &claim, occurred, 10).unwrap();
         server

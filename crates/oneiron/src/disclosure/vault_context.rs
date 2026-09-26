@@ -104,7 +104,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, scope.updated_at)?;
         wtxn.commit()?;
         Ok(())
@@ -137,7 +137,7 @@ impl Vault {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         self.put_disclosure_claim_in_txn(&mut wtxn, &claim_id, &claim, marked_at)?;
         wtxn.commit()?;
         Ok(())

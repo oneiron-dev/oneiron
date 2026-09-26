@@ -283,7 +283,7 @@ fn waterfall_rejects_a_merged_claim_whose_canonical_head_is_missing() -> Result<
         0.95,
         crate::claim::ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)?;
     merge(&vault, shell, head)?;
@@ -383,7 +383,8 @@ mod one1891_ruling {
                 confidence,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .unwrap();
             body.valid_from = Some(200);
             body.source = Some(ClaimSource::Observed);
             body

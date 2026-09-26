@@ -183,7 +183,7 @@ impl Vault {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.source = Some(ClaimSource::Observed);
             body.valid_from = Some(at);
             body.evidence = Some(refs);

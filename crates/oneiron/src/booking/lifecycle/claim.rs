@@ -100,7 +100,8 @@ pub(super) fn write_booking_event(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .map_err(|error| engine_failure("booking origin claim body", error))?;
     origin.evidence = Some(rmpv::Value::Map(vec![
         (
             rmpv::Value::from("kind"),
@@ -193,7 +194,8 @@ pub(super) fn put_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .map_err(|error| engine_failure("booking claim body", error))?;
     body.source = Some(ClaimSource::Observed);
     body.valid_from = Some(now_utc);
     vault

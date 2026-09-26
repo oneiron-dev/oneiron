@@ -216,3 +216,21 @@ commits, so a row the loader rejects would be rejected against a vault already
 stamped at **17** — unopenable by this engine and by its predecessor alike.
 Proving the migrated registry loads before stamping turns that dead end into an
 ordinary abort with the old bytes and the old stamp intact.
+
+## T50: one rule for derived ids (storage ABI v20 → v21)
+
+`STORAGE_ABI_VERSION` advances from **20** to **21**.
+
+Every deterministic id now comes from `EntityId::derive(domain, parts)`: BLAKE3 in
+derive-key mode with the domain as the context string, each part prefixed by its
+u64 little-endian length, the first 16 bytes, UUID version 8 and variant bits. A
+result in the reserved range is refused with an error, never perturbed. The domain
+strings are unchanged and listed in `entity_id/derived_domains.rs`; the hash,
+framing and version bits are not, so every id derived before (the embedded owner
+PERSON, substrate facets, bootstrap skills, supersession companions, code-symbol
+entities, consolidation claims, home rooms, projected `comm.*` claims, connector,
+commitment and calendar actors, commitment instances, lead-source entities and
+claims, ask records) differs from what this engine derives.
+
+**There is no migration pass.** An ABI 20 vault fails closed at the ABI gate;
+Oneiron is pre-launch, so recreate affected development vaults.

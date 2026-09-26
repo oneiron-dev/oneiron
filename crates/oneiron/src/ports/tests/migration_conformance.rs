@@ -176,7 +176,9 @@ fn lazy_type_cursor_does_not_decode_rows_past_the_caller_budget() -> Result<()> 
         .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
         .take(2)
         .collect::<Result<Vec<_>>>()?;
-    assert_eq!(page, vec![crate::vault::embedded_owner_actor_id()?, good]);
+    let mut expected = vec![crate::vault::embedded_owner_actor_id()?, good];
+    expected.sort();
+    assert_eq!(page, expected);
     assert!(
         vault
             .port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
@@ -217,10 +219,12 @@ fn storage_port_queries_read_one_composed_session_snapshot() -> Result<()> {
         vault.port_entity_record(&txn, &entity)?.unwrap().body,
         b"base"
     );
+    let mut expected = vec![crate::vault::embedded_owner_actor_id()?, entity];
+    expected.sort();
     assert_eq!(
         view.port_entity_ids_by_type(&txn, ENTITY_TYPE_PERSON, None)?
             .collect::<Result<Vec<_>>>()?,
-        vec![crate::vault::embedded_owner_actor_id()?, entity]
+        expected
     );
     drop(view);
     drop(txn);

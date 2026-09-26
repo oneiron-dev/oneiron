@@ -263,15 +263,16 @@ fn batch_fixtures() -> Vec<BatchFixture> {
 }
 
 /// Per fixture: the blake3 digest of the rows its batch changed, pinned on
-/// the two-builder code before the fold (T48).
+/// the two-builder code before the fold (T48) and re-pinned at storage ABI 21,
+/// where the derived ids those rows carry moved onto `EntityId::derive` (T50).
 const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     (
         "put",
-        "e64d3620db4a6edc34f98b13ac7cc93aab123097f171100810bdab0cc234e5fc",
+        "7ead77bf6ddab70220cce8c59eb8352cdda48a5df9be686e1a03a76c99ea648c",
     ),
     (
         "put_habit_checkin",
-        "8c63eb8fda6db12757918c471c59ad7ae72bfbcb740308716ef8fb38a808f082",
+        "8b936130be9eb44d754196d954ddca88a49f93bb4a891a093939876c5d1fc8d2",
     ),
     (
         "edges",
@@ -291,16 +292,16 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "893c1e677c44ea5ac23bb9dc48542703bd0e4c37b1f0955af1ff6f9404f8a703",
+        "f57afee9939ad92b59b75b3c91890b9bba0c3cda2b28d334b19da422bf2f2cee",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
         "put_internal",
-        "99a54adf45680931a6709eb0686bdf3499438a8554057222f9e126ce25518730",
+        "e4d242c9b3e6483ce43a753acbe117ca97681a9e57ff203544350336eb7be66d",
     ),
     (
         "put_task_fact",
-        "0b722961380e76ac796f70bc737a82f3b3c00a22379ec6f0b90587bcdcdfea92",
+        "6fb47fae60c34fc0929c466e5d3656f6e19482ed39a1c341be4e6c5a63a9f5d8",
     ),
     (
         "put_authored_note",
@@ -311,10 +312,10 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
 /// A `sync` build also queues the claim's embed job in the same batch.
 #[cfg(feature = "sync")]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "179b0563b08c12ed0669fbdcb9a9f2e56bb9067cca45b8b2591fa7d71ef1c517";
+    "1fc461e743033c2b51add72fde31f8789b72e5b16fca44df69168de6dd17990f";
 #[cfg(not(feature = "sync"))]
 const CLAIM_CANDIDATE_DIGEST: &str =
-    "8e0e55e4472245ecf1e8cc6d38aad31ca3d3ef141f7bfa0e354f10bfb1e1aa7b";
+    "2ea5b9f3ef12c7a5bc16e456fadd2008a08c2433abce11f68ba0881e04306396";
 
 #[test]
 fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
@@ -548,7 +549,7 @@ fn agent_tool_output_claim(
     );
     let rtxn = vault.store.env.read_txn()?;
     let facet = crate::claim::default_facet_in(&vault.store, &rtxn)?;
-    let body = crate::claim::encode_claim_body(&candidate.into_claim_body(&envelope, facet))?;
+    let body = crate::claim::encode_claim_body(&candidate.into_claim_body(&envelope, facet)?)?;
     Ok((envelope, body))
 }
 
@@ -573,7 +574,7 @@ fn local_claim(
         0.9,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = source;
     crate::claim::encode_claim_body(&body)
 }
@@ -632,7 +633,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
             0.9,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(crate::provenance::encode_actor_class_evidence(
             EdgeActorClass::Human,
         ));
@@ -812,7 +813,7 @@ fn every_put_option_reaches_apply_put() -> Result<()> {
             1.0,
         )
         .with_stale(true)
-        .into_claim_body(&envelope, facet);
+        .into_claim_body(&envelope, facet)?;
         let bytes = crate::claim::encode_claim_body(&hint)?;
         let mut recorded = defaults;
         recorded.decision.record = true;

@@ -1,17 +1,16 @@
 //! Custody-door HTTP egress, raw archive, and registry normalize.
 
 use super::admission::ensure_ics_import_actor;
+use super::credential;
 use super::poll::{IcsFeedPollConfig, ics_feed_poll_dedupe_key};
-use super::{credential, derive_entity_id};
 use crate::calendar::CalendarError;
 use crate::calendar::ics::parse_ics_feed;
+use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CALENDAR_ICS_FEED_BLOB;
 use crate::ingest::ICS_FEED_SOURCE_ID;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
-
-/// Id-derivation domain for the per-feed raw archive BLOB_ARTIFACT.
-const ICS_FEED_BLOB_ID_DOMAIN: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
 
 /// What the door brought back from one conditional fetch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,7 +211,7 @@ pub(super) fn archive_raw_feed(
     now: u64,
 ) -> Result<String, CalendarError> {
     let feed_ref = ics_feed_poll_dedupe_key(config);
-    let artifact_id = derive_entity_id(ICS_FEED_BLOB_ID_DOMAIN, feed_ref.as_bytes())?;
+    let artifact_id = EntityId::derive(CALENDAR_ICS_FEED_BLOB, &[feed_ref.as_bytes()])?;
     if vault.get_blob_artifact(&artifact_id)?.is_none() {
         vault.put_blob_artifact(
             &artifact_id,

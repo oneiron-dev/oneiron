@@ -923,7 +923,7 @@ pub(in crate::task_verb) fn permit_outcome_fixture_predicates(
     vault: &Vault,
     principal: EntityId,
 ) -> crate::Result<()> {
-    let bytes = crate::gate::default_policy_manifest();
+    let bytes = crate::gate::default_policy_manifest()?;
     let mut manifest: serde_json::Value = rmp_serde::from_slice(&bytes).expect("default policy");
     manifest["scoped_grants"] = serde_json::json!([{
         "actor_ref": principal.to_hex(),

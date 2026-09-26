@@ -405,7 +405,7 @@ impl Memory<'_> {
             ));
         }
         let kind_filter = match opts.edge_kind.as_deref() {
-            Some(name) => Some(edge_kind_from_str(name).ok_or_else(|| {
+            Some(name) => Some(EdgeKind::from_name(name).ok_or_else(|| {
                 MemoryError::bad_request_with(
                     format!("unknown edge kind {name:?}"),
                     &["Use a snake_case EdgeKind name such as belongs_to or attached."],
@@ -453,7 +453,7 @@ impl Memory<'_> {
                 hits.push(NeighborHit {
                     short_id: self.short_ref_or_hex(&edge.target)?,
                     kind: kind_string_for_type(row.entity_type),
-                    edge_kind: edge_kind_name(edge.kind).to_owned(),
+                    edge_kind: edge.kind.name().to_owned(),
                     weight: edge.weight,
                     direction: direction.to_owned(),
                 });
@@ -491,42 +491,5 @@ impl Memory<'_> {
             id_hex: id.to_hex(),
             receipt_ref: format!("put:{}", id.to_hex()),
         })
-    }
-}
-
-/// snake_case name of an `EdgeKind` (inverse of `edge_kind_from_str`).
-pub(super) const fn edge_kind_name(kind: EdgeKind) -> &'static str {
-    match kind {
-        EdgeKind::AuthoredBy => "authored_by",
-        EdgeKind::ScopedTo => "scoped_to",
-        EdgeKind::PartOf => "part_of",
-        EdgeKind::Supersedes => "supersedes",
-        EdgeKind::BelongsTo => "belongs_to",
-        EdgeKind::ClaimOf => "claim_of",
-        EdgeKind::ChildOf => "child_of",
-        EdgeKind::AssignedTo => "assigned_to",
-        EdgeKind::DerivedFrom => "derived_from",
-        EdgeKind::Mentions => "mentions",
-        EdgeKind::About => "about",
-        EdgeKind::Supports => "supports",
-        EdgeKind::Opposes => "opposes",
-        EdgeKind::ParticipatesIn => "participates_in",
-        EdgeKind::Attached => "attached",
-        EdgeKind::EmployedBy => "employed_by",
-        EdgeKind::HasFacet => "has_facet",
-        EdgeKind::FacetOf => "facet_of",
-        EdgeKind::InWorld => "in_world",
-        EdgeKind::SetIn => "set_in",
-        EdgeKind::MergedInto => "merged_into",
-        EdgeKind::SplitInto => "split_into",
-        EdgeKind::BlockedBy => "blocked_by",
-        EdgeKind::Blocks => "blocks",
-        EdgeKind::Fulfills => "fulfills",
-        EdgeKind::DischargedBy => "discharged_by",
-        EdgeKind::SameAs => "same_as",
-        EdgeKind::Parent => "parent",
-        EdgeKind::SpawnedBy => "spawned_by",
-        EdgeKind::AddressedTo => "addressed_to",
-        EdgeKind::RepliesTo => "replies_to",
     }
 }

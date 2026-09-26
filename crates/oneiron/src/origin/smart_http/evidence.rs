@@ -217,7 +217,7 @@ pub(super) fn receive_pack_stats_value(stats: PackStats) -> Value {
     ])
 }
 
-fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> ClaimBody {
+fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         predicate,
         subject,
@@ -225,14 +225,14 @@ fn receive_pack_claim(subject: ClaimSubject, predicate: &str, value: Value) -> C
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     // Only public repository operation metadata, as in repo.publication. No
     // bearer, credential bytes, blob contents, or scanner matches are retained.
     body.scope = Some(receive_pack_fields(vec![(
         "sensitivity",
         Value::from("public"),
     )]));
-    body
+    Ok(body)
 }
 
 impl Vault {
@@ -321,7 +321,7 @@ impl Vault {
                     OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref()),
                 ),
             ]),
-        );
+        )?;
         self.put_receive_pack_evidence(stamp.operation_id, &body, stamp.admitted_at())
     }
 
@@ -467,7 +467,7 @@ impl Vault {
                 ),
                 ("observed_at", Value::from(now_secs())),
             ]),
-        );
+        )?;
         self.put_receive_pack_evidence(id, &body, now_secs())?;
         let attribution = ReceivePackAttribution {
             actor_id: actor,

@@ -43,7 +43,7 @@ pub(super) fn put_passport_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(passport.observed_at);
     // Observed: a passport records what a provider event did, not a belief the
     // engine inferred.
@@ -75,7 +75,7 @@ pub(super) fn put_alias_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(observed_at);
     body.source = Some(ClaimSource::Observed);
     vault.put_claim_in_txn(

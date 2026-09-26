@@ -49,10 +49,14 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
             Value::from("fact"),
             1.0,
         );
-        crate::claim::encode_claim_body(&candidate.into_claim_body(
-            &envelope,
-            crate::claim::substrate_facet_id(actor.entity_ref()),
-        ))
+        crate::claim::encode_claim_body(
+            &candidate
+                .into_claim_body(
+                    &envelope,
+                    crate::claim::substrate_facet_id(actor.entity_ref()).unwrap(),
+                )
+                .unwrap(),
+        )
         .unwrap()
     };
     let early = EntityId::now();

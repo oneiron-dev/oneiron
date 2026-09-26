@@ -435,8 +435,7 @@ impl CounterpartyContactRecord {
     }
 
     /// Builds typed `counterparty_contact.*` claim bodies for this record.
-    #[must_use]
-    pub fn claim_bodies(&self, contact_id: EntityId) -> Vec<ClaimBody> {
+    pub fn claim_bodies(&self, contact_id: EntityId) -> crate::Result<Vec<ClaimBody>> {
         COUNTERPARTY_CONTACT_CLAIM_PREDICATES
             .iter()
             .map(|predicate| {

@@ -1078,7 +1078,7 @@ fn governed_agent(fixture: &RuledAskFixture) -> Result<(EntityId, TaskAskClass)>
         b"agent",
     )?;
     let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&crate::gate::default_policy_manifest())?;
+        rmp_serde::from_slice(&crate::gate::default_policy_manifest()?)?;
     manifest["actor_ceilings"]
         .as_array_mut()
         .ok_or("default actor ceilings")?

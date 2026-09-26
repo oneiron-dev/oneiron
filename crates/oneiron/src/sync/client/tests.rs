@@ -184,7 +184,8 @@ fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     body
 }

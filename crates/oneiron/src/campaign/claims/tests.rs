@@ -48,6 +48,7 @@ fn body(predicate: &str, value: Value) -> ClaimBody {
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
     )
+    .unwrap()
 }
 
 /// Round-trips through the same codec storage uses, then through the
@@ -252,7 +253,7 @@ fn campaign_member_requires_argument_shape() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     assert_matches!(
         through_chokepoint(&edge_subject),
         Err(Error::InvalidClaimBody(
@@ -1130,7 +1131,7 @@ fn write_do_not_contact(
         1.0,
         approval,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     // A validity window that closed long ago: staleness must not un-suppress.
     claim.valid_from = Some(1);
     claim.valid_to = Some(2);

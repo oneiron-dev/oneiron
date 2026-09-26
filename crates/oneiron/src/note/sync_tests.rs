@@ -579,7 +579,8 @@ fn note_edit_and_replay_receipts_cannot_bypass_citation_selector() {
         0.9,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = Some(world);
     vault
         .put_claim(&claim, &body, TimeRange { start: 1, end: 1 }, 1)

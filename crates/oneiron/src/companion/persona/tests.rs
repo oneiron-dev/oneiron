@@ -48,7 +48,7 @@ fn change(
         1.0,
         ClaimApprovalStatus::Approved,
         lifecycle,
-    );
+    )?;
     replay_change(vault, &id, &body, at)?;
     Ok(id)
 }
@@ -198,7 +198,7 @@ fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     scoped_change.scope_facet = facet;
     replay_change(&vault, &EntityId::now(), &scoped_change, 4)?;
     assert_eq!(
@@ -230,7 +230,7 @@ fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     replay_change(&vault, &EntityId::now(), &bad, 4)?;
     assert!(read.compile_persona(&person, None).is_err());
     Ok(())

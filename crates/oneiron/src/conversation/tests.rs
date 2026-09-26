@@ -527,7 +527,8 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
         1.0,
         crate::ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::Observed);
     body.rel = Some(relationship);
     vault
@@ -708,7 +709,8 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
         1.0,
         crate::ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::Observed);
     vault
         .batch()
@@ -979,7 +981,8 @@ fn conversation_summary_claim_needs_every_covered_turn_readable() {
         1.0,
         crate::ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::Observed);
     vault
         .batch()

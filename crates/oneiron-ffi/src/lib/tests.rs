@@ -309,3 +309,57 @@ fn ffi_batch_put_entities_and_boundary_statuses() {
 
     assert_eq!(oneiron_vault_free(vault), OneironStatus::Ok);
 }
+
+/// The FFI edge-kind number is the stored byte: 0..=30 keep the kinds they
+/// named before `EdgeKind::from_wire`, and every other number, including
+/// values above `u8::MAX`, is `InvalidArg`.
+#[test]
+fn parse_edge_kind_maps_the_stored_bytes_and_refuses_the_rest() {
+    let kinds = [
+        EdgeKind::AuthoredBy,
+        EdgeKind::ScopedTo,
+        EdgeKind::PartOf,
+        EdgeKind::Supersedes,
+        EdgeKind::BelongsTo,
+        EdgeKind::ClaimOf,
+        EdgeKind::ChildOf,
+        EdgeKind::AssignedTo,
+        EdgeKind::DerivedFrom,
+        EdgeKind::Mentions,
+        EdgeKind::About,
+        EdgeKind::Supports,
+        EdgeKind::Opposes,
+        EdgeKind::ParticipatesIn,
+        EdgeKind::Attached,
+        EdgeKind::EmployedBy,
+        EdgeKind::HasFacet,
+        EdgeKind::FacetOf,
+        EdgeKind::InWorld,
+        EdgeKind::SetIn,
+        EdgeKind::SameAs,
+        EdgeKind::MergedInto,
+        EdgeKind::SplitInto,
+        EdgeKind::BlockedBy,
+        EdgeKind::Blocks,
+        EdgeKind::Fulfills,
+        EdgeKind::DischargedBy,
+        EdgeKind::Parent,
+        EdgeKind::SpawnedBy,
+        EdgeKind::AddressedTo,
+        EdgeKind::RepliesTo,
+    ];
+    for (number, kind) in (0_u32..).zip(kinds) {
+        assert_eq!(
+            super::parse::parse_edge_kind(number),
+            Ok(kind),
+            "edge kind {number}"
+        );
+    }
+    for number in [31, 255, 256, u32::MAX] {
+        assert_eq!(
+            super::parse::parse_edge_kind(number),
+            Err(OneironStatus::InvalidArg),
+            "edge kind {number}"
+        );
+    }
+}

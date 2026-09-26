@@ -341,7 +341,7 @@ pub fn register_peer_actor(vault: &Vault, peer_id: u64, actor: &WriteActor) -> R
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.valid_from = Some(now);
         // Observed: a binding is this vault's own device fact. The trust pin
         // also keeps a federated (Imported) binding from ever superseding a

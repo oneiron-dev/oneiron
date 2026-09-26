@@ -374,7 +374,7 @@ pub(super) fn publication_claim_body(record: &OriginPublicationRecord) -> Result
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
@@ -385,8 +385,7 @@ pub(super) fn publication_claim_body(record: &OriginPublicationRecord) -> Result
 /// Builds the exact source statement required by the generic publication door.
 /// The caller must durably write this claim before requesting publication.
 /// A generic active claim, or a statement about a different target, is not authority.
-#[must_use]
-pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> ClaimBody {
+pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> Result<ClaimBody> {
     let fields = vec![
         ("repo_id", Value::from(request.repo_id.to_hex())),
         ("actor_id", Value::from(request.actor_id.to_hex())),
@@ -438,12 +437,12 @@ pub fn origin_publication_intent_claim(request: &OriginPublicationRequest) -> Cl
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
     )]));
-    body
+    Ok(body)
 }
 
 fn publication_claim_value(record: &OriginPublicationRecord) -> Value {

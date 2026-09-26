@@ -287,7 +287,7 @@ impl<'a> BranchResources<'a> {
                         facts.facet,
                         facts.rel,
                         facts.topic.as_deref(),
-                    )
+                    )?
             {
                 return Err(invalid_consolidation("candidate crossed its branch scope"));
             }

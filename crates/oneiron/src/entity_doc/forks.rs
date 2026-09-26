@@ -159,7 +159,7 @@ pub(super) fn bind_actor(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.valid_from = Some(at);
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(

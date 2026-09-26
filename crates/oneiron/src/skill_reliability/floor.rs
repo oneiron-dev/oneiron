@@ -177,7 +177,7 @@ pub(super) fn floor_check_in_txn(
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     vault.put_reserved_claim_in_txn(
         wtxn,

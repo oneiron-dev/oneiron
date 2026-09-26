@@ -92,8 +92,8 @@ fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {
     // The request value carries the candidate's own scope, never a stamp.
     let body = (*candidate).clone().into_claim_body(
         &envelope,
-        crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
-    );
+        crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+    )?;
     Ok(Value::Map(vec![
         (
             Value::from("predicate"),

@@ -486,7 +486,8 @@ mod tests {
                     1.0,
                     crate::claim::ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 crate::temporal::TimeRange { start: 1, end: 1 },
                 1,
             )

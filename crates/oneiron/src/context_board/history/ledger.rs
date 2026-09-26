@@ -250,7 +250,7 @@ impl Vault {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             body.valid_from = Some(input.at);
             body.source = Some(ClaimSource::Observed);
             self.put_reserved_claim_in_txn(

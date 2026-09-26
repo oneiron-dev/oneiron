@@ -97,7 +97,8 @@ fn claim_blob(world: Option<EntityId>) -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.world = world;
     entity_blob(ENTITY_TYPE_CLAIM, &encode_claim_body(&claim).unwrap())
 }
@@ -117,7 +118,8 @@ fn public_claim_blob() -> Vec<u8> {
         0.8,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.scope = Some(Value::Map(vec![(
         Value::from("sensitivity"),
         Value::from("public"),
@@ -140,7 +142,8 @@ fn edge_provenance_claim_blob() -> Vec<u8> {
         confidence,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     claim.evidence = Some(encode_actor_class_evidence(EdgeActorClass::Human));
     claim.source = Some(ClaimSource::ToolOutput);
     // Explicit `sensitivity: public` (band 0). The ONE-1645 provenance floor
@@ -4934,7 +4937,8 @@ fn coreference_export(pacted: bool) -> CoreferenceExport {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )

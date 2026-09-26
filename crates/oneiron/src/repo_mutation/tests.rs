@@ -240,7 +240,8 @@ fn put_repo_provenance_claim_with_value(vault: &Vault, value: Value) -> EntityId
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let data = encode_claim_body(&body).expect("encode repo provenance claim");
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + data.len());
     payload.push(ENTITY_TYPE_CLAIM);
@@ -2184,7 +2185,7 @@ fn origin_epoch_cutover_refuses_stale_hosts_and_mirror_writes() {
     vault
         .put_claim(
             &request.provenance_claim_id,
-            &origin_publication_intent_claim(&request),
+            &origin_publication_intent_claim(&request).unwrap(),
             request.occurred,
             1,
         )

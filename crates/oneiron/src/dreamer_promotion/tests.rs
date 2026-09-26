@@ -959,7 +959,7 @@ fn the_lineage_guard_is_reached_from_every_claim_write_door() -> Result<()> {
         0.7,
         ClaimApprovalStatus::Proposed,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Generated);
     body.scope = Some(lineage_scope(ClaimSource::ToolOutput));
     let error = vault

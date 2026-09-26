@@ -218,7 +218,7 @@ fn write_rung0_fixture(vault: &Vault) -> Result<Rung0Fixture> {
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         // No vectors anywhere on this path: rung 0 writes claims, not embeddings.
         vault.put_claim(&id, &body, at(timestamp), timestamp)?;
     }

@@ -123,7 +123,7 @@ impl Fixture {
             1.0,
             ClaimApprovalStatus::Proposed,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::Observed);
         vault.put_claim(&ordinary, &body, occurred, now)?;
         let ordinary_raw = vault.get_raw(&ordinary)?.unwrap();

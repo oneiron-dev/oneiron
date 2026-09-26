@@ -11,10 +11,6 @@ use crate::error::{Error, Result};
 pub const DREAMER_BUCKET_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-bucket:v1";
 /// Domain for reflection gap hashes (pinned, design D6).
 pub const DREAMER_GAP_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-gap:v1";
-/// Domain for deterministic, write-once promotion-candidate claim ids. A
-/// candidate's id is a pure function of its identity + the owning attempt so an
-/// at-least-once re-run of the same durable step re-mints the SAME id.
-pub const DREAMER_CLAIM_ID_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// Domain for swarm evidence content hashes (pinned, design D10).
 pub const DREAMER_EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-evidence:v1";
 /// A gap not re-observed within this window decays and is never re-surfaced

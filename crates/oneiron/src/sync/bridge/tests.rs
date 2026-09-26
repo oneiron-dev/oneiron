@@ -1910,7 +1910,8 @@ fn observer_b_materializes_remote_edge_provenance_claim() {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(crate::provenance::encode_actor_class_evidence(
         crate::edge::EdgeActorClass::Human,
     ));
@@ -2591,7 +2592,8 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
     // This row is participant state for the sync-door test, not a local
     // claim-policy decision. Seed it through the replicated materialization
@@ -2689,7 +2691,8 @@ fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
         1.0,
         ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     let claim_body = crate::claim::encode_claim_body(&claim).unwrap();
 
     // Endpoint blobs exist in the CRDT before Observer B starts, so the
@@ -3947,7 +3950,8 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     let bad = EntityId::now();
     let good = EntityId::now();
     let target = EntityId::now();
-    let project = crate::workspace_roster::ProjectRecord::new(bad, Some(bad), root, leader);
+    let project =
+        crate::workspace_roster::ProjectRecord::new(bad, Some(bad), root, leader).unwrap();
     let room = EntityId::from_hex(&project.home_room).unwrap();
     let doc = LoroDoc::new();
     // Seed CRDT bodies before attaching Observer B. Only the edge delta below

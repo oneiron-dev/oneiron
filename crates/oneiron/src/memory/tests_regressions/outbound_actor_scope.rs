@@ -218,7 +218,8 @@ fn put_calendar_claim(
         1.0,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     vault
         .put_claim(&EntityId::now(), &body, test_time(1), 1)

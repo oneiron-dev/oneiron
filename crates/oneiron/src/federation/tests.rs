@@ -1161,7 +1161,8 @@ impl RelationshipClaimFixture {
                     1.0,
                     self.approval,
                     self.lifecycle,
-                ),
+                )
+                .unwrap(),
                 relationship_time(),
                 self.learned_at,
             )
@@ -2733,7 +2734,8 @@ fn confirmed_coreference_never_pools_claims_through_ppr() {
                     1.0,
                     ClaimApprovalStatus::Approved,
                     ClaimLifecycleStatus::Active,
-                ),
+                )
+                .unwrap(),
                 coreference_time(),
                 1,
             )
@@ -2958,7 +2960,8 @@ fn replicated_consent_never_shares_a_coreference_link() {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     planted.source = Some(ClaimSource::Imported);
     let planted_id = entity(0x5C);
     vault
@@ -3369,7 +3372,7 @@ fn stamping_adds_rows_only_and_never_purges_world_or_claim_entities() -> Result<
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = Some(world.entity_id());
     let claim_id = entity(0x37);
     vault.put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)?;

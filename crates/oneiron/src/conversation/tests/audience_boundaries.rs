@@ -141,7 +141,8 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
             1.0,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(crate::ClaimSource::Observed);
         body.rel = Some(rel);
         vault
@@ -350,7 +351,8 @@ fn scoped_read_for_room_narrows_to_the_members_with_a_receipt() {
         1.0,
         crate::ClaimApprovalStatus::Auto,
         crate::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(crate::ClaimSource::Observed);
     body.rel = Some(relationship);
     vault

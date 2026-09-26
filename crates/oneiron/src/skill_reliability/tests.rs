@@ -175,7 +175,8 @@ fn plant_synced_claim(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.evidence = Some(Value::Array(
         cited.iter().map(|id| Value::from(*id)).collect(),
     ));

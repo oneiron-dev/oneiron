@@ -26,14 +26,14 @@ pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
 }
 
-pub(crate) fn default_policy_manifest() -> Vec<u8> {
+pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
     let first_party_actor_ref = first_party_connector_actor_ref();
     // Per a provisional architectural ruling (owner batch pending): the
     // commitment projector's actor id is derived, not authored, so the row is
     // computed here rather than pinned as a hex literal. If the domain constant
     // behind the derivation ever moves, the row dangles and mints pend —
     // fail-closed, never silently re-aimed.
-    let commitment_projection_actor_ref = commitment_projection_actor().entity_ref().to_hex();
+    let commitment_projection_actor_ref = commitment_projection_actor()?.entity_ref().to_hex();
     let manifest = Value::Map(vec![
         (
             Value::from(POLICY_SCHEMA_VERSION_KEY),
@@ -352,6 +352,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         ),
     ]);
     let mut data = Vec::new();
-    rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
-    data
+    rmpv::encode::write_value(&mut data, &manifest)
+        .map_err(|_| Error::InvariantViolation("default policy manifest encoding"))?;
+    Ok(data)
 }

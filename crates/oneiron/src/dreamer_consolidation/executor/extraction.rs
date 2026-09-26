@@ -154,7 +154,7 @@ impl ConsolidationExecutor<'_> {
                 partition.facet_ref,
                 rel,
                 facts.topic.as_deref(),
-            );
+            )?;
             candidates.push(PromotionCandidate {
                 claim_id,
                 candidate,

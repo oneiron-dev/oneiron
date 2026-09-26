@@ -9,6 +9,7 @@ use crate::calendar::invite::CalendarInvitePayload;
 use crate::delivery_window::{DeliveryWindowApnsInterruptionLevel, DeliveryWindowResolvedLevel};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CONNECTOR_ACTOR;
 use crate::error::{Error, RecordError};
 use crate::habit::TaskRole;
 use crate::receipt::delivered_send_receipt_for_task;
@@ -145,14 +146,7 @@ pub fn connector_actor_id(connector_class: &str) -> Result<EntityId, Error> {
             "connector class must not be empty",
         ));
     }
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.connector_actor.v0\0");
-    hash.update(connector_class.as_bytes());
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x70;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(CONNECTOR_ACTOR, &[connector_class.as_bytes()])
 }
 
 pub(crate) fn connector_send_attempt_payload(task_ref: EntityId) -> Result<Vec<u8>, Error> {

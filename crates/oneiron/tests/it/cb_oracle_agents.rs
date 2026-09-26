@@ -1878,9 +1878,9 @@ mod peer_fixture {
             };
             let conflicts = detect_conflicts(std::slice::from_ref(candidate), &[prior])
                 .expect("conflict detection runs");
-            let marker = conflicts
-                .first()
-                .map(|conflict| conflict_open_marker_id(conflict, self.attempt));
+            let marker = conflicts.first().map(|conflict| {
+                conflict_open_marker_id(conflict, self.attempt).expect("marker id derives")
+            });
             (conflicts.len(), marker)
         }
 
@@ -2046,7 +2046,8 @@ mod peer_fixture {
                 0.9,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )
+            .expect("claim body");
             body.source = Some(ClaimSource::Generated);
             body.scope = Some(tool_output_lineage_scope());
             attempts.push(ForgeryAttempt {

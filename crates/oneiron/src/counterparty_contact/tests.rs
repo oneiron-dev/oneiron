@@ -20,7 +20,7 @@ fn counterparty_contact_codec_and_claim_family_round_trip() -> Result<()> {
     validate_counterparty_contact_body_bytes(&encoded)?;
     assert_eq!(decode_counterparty_contact_body(&encoded)?, record);
 
-    let claims = record.claim_bodies(entity(0xC1));
+    let claims = record.claim_bodies(entity(0xC1))?;
     assert_eq!(claims.len(), COUNTERPARTY_CONTACT_CLAIM_PREDICATES.len());
     for claim in &claims {
         validate_counterparty_contact_claim_structure(claim)?;
@@ -133,7 +133,7 @@ fn type_132_is_cache_not_truth() -> Result<()> {
         .expect("cache row");
     assert!(cached.is_opted_out());
     let mut projected = cached
-        .claim_bodies(contact_id)
+        .claim_bodies(contact_id)?
         .into_iter()
         .map(|body| (body.predicate, body.value))
         .collect::<Vec<_>>();

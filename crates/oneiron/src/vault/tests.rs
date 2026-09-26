@@ -1387,3 +1387,84 @@ fn actor_memory_search_returns_its_receipt() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn a_handle_of_another_vault_is_refused_by_identity() -> Result<()> {
+    use crate::code_run::HostSelfDispatcher;
+    use crate::edge::EdgeActorClass;
+    use crate::write_envelope::WriteActor;
+
+    let (tmp, other_tmp) = (tempfile::tempdir()?, tempfile::tempdir()?);
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let other = Vault::open(other_tmp.path(), test_config())?;
+    assert_ne!(vault.vault_id(), other.vault_id());
+    let actor = WriteActor::new(entity(0xA0), EdgeActorClass::Agent);
+
+    let foreign = HostSelfDispatcher::new(&other, actor, "foreign-run")?;
+    assert_eq!(foreign.vault_id(), other.vault_id());
+    let refused = vault
+        .query_for_execution(&foreign)
+        .err()
+        .expect("a dispatcher bound to another vault must be refused");
+    assert_matches!(
+        refused,
+        Error::InvalidConfig(message) if message.contains("different vault")
+    );
+
+    // The same identity check admits this vault's own dispatcher.
+    let own = HostSelfDispatcher::new(&vault, actor, "own-run")?;
+    assert!(vault.query_for_execution(&own).is_ok());
+    Ok(())
+}
+
+#[test]
+fn two_handles_on_one_vault_share_a_vault_id_and_two_vaults_do_not() -> Result<()> {
+    let (tmp, other_tmp) = (tempfile::tempdir()?, tempfile::tempdir()?);
+    let first = Vault::open(tmp.path(), test_config())?.vault_id();
+    let second = Vault::open(tmp.path(), test_config())?.vault_id();
+    assert_eq!(first, second);
+
+    let other = Vault::open(other_tmp.path(), test_config())?.vault_id();
+    assert_ne!(first, other);
+    Ok(())
+}
+
+#[test]
+fn a_fresh_vault_exposes_the_genesis_vault_id() -> Result<()> {
+    use crate::authority::{AuthorityOp, HostSlipIssuer, genesis_vault_id};
+    use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), test_config())?;
+    let unrooted = vault.vault_id();
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"vault identity root")?)?;
+    // A handle keeps the identity it opened with.
+    assert_eq!(vault.vault_id(), unrooted);
+    let mut genesis = Vec::new();
+    for id in vault.entities_by_type(ENTITY_TYPE_AUTHORITY_LOG)? {
+        let entry = vault.get_authority_log_entry(&id)?.expect("listed entry");
+        if matches!(entry.op, AuthorityOp::Genesis { .. }) {
+            genesis.push(entry);
+        }
+    }
+    let [genesis] = genesis.as_slice() else {
+        panic!("the host root slip roots the log with one genesis");
+    };
+    drop(vault);
+
+    let reopened = Vault::open(tmp.path(), test_config())?;
+    assert_eq!(
+        reopened.vault_id(),
+        VaultId::Genesis(genesis_vault_id(genesis)?)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fresh_vault_holds_a_local_vault_id() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let fresh = Vault::open(tmp.path(), test_config())?.vault_id();
+    assert_matches!(fresh, VaultId::Local(_));
+    assert_eq!(Vault::open(tmp.path(), test_config())?.vault_id(), fresh);
+    Ok(())
+}

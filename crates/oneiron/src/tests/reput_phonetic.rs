@@ -543,7 +543,7 @@ fn full_delete_deindexes_everything() -> Result<()> {
     assert_eq!(source_edges[0].kind, EdgeKind::HasFacet);
     assert_eq!(
         source_edges[0].target,
-        crate::claim::substrate_facet_id(in_source)
+        crate::claim::substrate_facet_id(in_source)?
     );
 
     let start_key = Store::encode_temporal_key(occurred.start, &id);

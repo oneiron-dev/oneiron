@@ -390,7 +390,7 @@ fn delete_hook_discriminates_by_type_byte_and_predicate() -> Result<()> {
         0.9,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&ordinary, &ordinary_body, test_time_range(5, 5), 5)?;
     let outcome = vault.delete_entity_with_reason(&ordinary, DeleteReason::UserHardDelete)?;
     assert!(outcome.existed);
@@ -951,7 +951,7 @@ fn legacy_evid_actor_class_claim_decodes_and_lifecycle_restamps() -> Result<()> 
         0.75,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
         EdgeActorClass::Human,
     ));
@@ -996,7 +996,7 @@ fn provenance_actor_class_in_both_body_and_evid_fails_closed() -> Result<()> {
         0.75,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     // Even an AGREEING duplicate is ambiguous — fail closed.
     wrapper.evidence = Some(crate::provenance::encode_actor_class_evidence(
         EdgeActorClass::Human,

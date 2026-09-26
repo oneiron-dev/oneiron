@@ -27,7 +27,8 @@ fn replace_config(vault: &Vault, config: EventTypeConfig) {
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     vault
         .put_claim(
             &next,

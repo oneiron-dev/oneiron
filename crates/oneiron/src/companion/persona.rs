@@ -413,6 +413,9 @@ impl ScopedRead<'_> {
                 continue;
             };
             let body = decode_claim_body(&data, true)?;
+            let producer_facet = crate::claim::session_claim_producer(&body)
+                .map(crate::claim::substrate_facet_id)
+                .transpose()?;
             if body.predicate != PERSONA_CHANGE_PREDICATE
                 || body.subject != ClaimSubject::Entity(*person)
                 || body.approval == ClaimApprovalStatus::Proposed
@@ -421,10 +424,8 @@ impl ScopedRead<'_> {
                 || body.world.is_some()
                 || body.rel.is_some()
                 || body.scope_project != crate::claim::default_project_id()
-                || (body.scope_facet != crate::claim::substrate_facet_id(*person)
-                    && !crate::claim::session_claim_producer(&body).is_some_and(|actor| {
-                        body.scope_facet == crate::claim::substrate_facet_id(actor)
-                    }))
+                || (body.scope_facet != crate::claim::substrate_facet_id(*person)?
+                    && producer_facet != Some(body.scope_facet))
             {
                 continue;
             }

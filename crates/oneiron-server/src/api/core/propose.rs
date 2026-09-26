@@ -58,7 +58,8 @@ pub(crate) async fn core_propose(
         1.0,
         oneiron::ClaimApprovalStatus::Proposed,
         oneiron::ClaimLifecycleStatus::Active,
-    );
+    )
+    .map_err(|error| core_engine_error("proposal rejected", error))?;
     body.source = Some(oneiron::ClaimSource::ToolOutput);
     body.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("proposal_principal"),

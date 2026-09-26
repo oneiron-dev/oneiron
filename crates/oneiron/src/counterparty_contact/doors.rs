@@ -185,7 +185,7 @@ impl Vault {
             }
         }
 
-        for body in record.claim_bodies(*contact_id) {
+        for body in record.claim_bodies(*contact_id)? {
             let existing = live
                 .iter()
                 .find(|(_, live_body)| live_body.predicate == body.predicate);

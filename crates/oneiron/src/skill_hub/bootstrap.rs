@@ -4,6 +4,7 @@ use rmpv::Value;
 
 use super::{HubFile, HubPackage, HubPin, HubRef, SkillCapabilitySurface};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
+use crate::entity_id::derived_domains::BOOTSTRAP_SKILL;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
@@ -83,12 +84,7 @@ const FILES: [(&str, &str); 4] = [
 ];
 
 fn stable_id(name: &str) -> Result<EntityId> {
-    let hash = blake3::hash(format!("oneiron/bootstrap/v1/{name}").as_bytes());
-    let mut bytes = [0; 16];
-    bytes.copy_from_slice(&hash.as_bytes()[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x80;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(BOOTSTRAP_SKILL, &[name.as_bytes()])
 }
 
 fn package(name: &str, markdown: &str) -> Result<HubPackage> {

@@ -427,8 +427,8 @@ impl ClaimStore for Memory {
     ) -> Result<()> {
         let body = candidate.into_claim_body(
             envelope,
-            crate::claim::substrate_facet_id(envelope.actor().entity_ref()),
-        );
+            crate::claim::substrate_facet_id(envelope.actor().entity_ref())?,
+        )?;
         let bytes = crate::claim::encode_claim_body(&body)?;
         crate::claim::validate_claim_body_bytes(&bytes, false)?;
         if let ClaimSubject::Entity(subject) = body.subject {

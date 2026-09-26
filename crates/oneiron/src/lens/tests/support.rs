@@ -189,7 +189,7 @@ pub(super) fn put_profile_claim(
         0.75,
         crate::claim::ClaimApprovalStatus::Approved,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(
         id,
         &body,

@@ -92,7 +92,10 @@ fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
         ),
     ])
 }
-pub(super) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotation) -> ClaimBody {
+pub(super) fn vad_annotation_claim_body(
+    id: &EntityId,
+    annotation: &VadAnnotation,
+) -> Result<ClaimBody> {
     let mut body = ClaimBody::new(
         VAD_ANNOTATION_CLAIM_PREDICATE,
         ClaimSubject::Entity(*id),
@@ -100,14 +103,14 @@ pub(super) fn vad_annotation_claim_body(id: &EntityId, annotation: &VadAnnotatio
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(match annotation.source {
         VadAnnotationSource::ModelInference => ClaimSource::Inferred,
         VadAnnotationSource::UserSelfReport => ClaimSource::UserStated,
     });
     body.valid_from = Some(annotation.annotated_at);
     body.valid_to = Some(annotation.annotated_at);
-    body
+    Ok(body)
 }
 pub(super) fn decode_vad_annotation_claim_body_if_present(raw: &[u8]) -> Result<Option<ClaimBody>> {
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];

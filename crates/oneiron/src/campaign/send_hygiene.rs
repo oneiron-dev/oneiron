@@ -270,7 +270,7 @@ fn replace_member_head_in_txn(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(evidence_value(replacement.evidence_ref));
     vault.put_claim_in_txn(
         wtxn,
@@ -305,7 +305,7 @@ fn put_hygiene_claim_in_txn(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::Observed);
     body.evidence = Some(evidence_value(input.evidence_ref));
     vault.put_claim_in_txn(

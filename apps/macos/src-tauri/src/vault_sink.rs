@@ -50,7 +50,7 @@ impl SegmentSink for VaultSegmentSink {
             .put_entity(&asset, ENTITY_TYPE_ASSET, span, meta.started_at, audio)?;
         self.vault.put_claim(
             &EntityId::now(),
-            &segment_claim(asset, &meta, span.end),
+            &segment_claim(asset, &meta, span.end)?,
             span,
             meta.started_at,
         )?;
@@ -58,7 +58,7 @@ impl SegmentSink for VaultSegmentSink {
     }
 }
 
-fn segment_claim(asset: EntityId, meta: &SegmentMeta, span_end: u64) -> ClaimBody {
+fn segment_claim(asset: EntityId, meta: &SegmentMeta, span_end: u64) -> oneiron::Result<ClaimBody> {
     ClaimBody::new(
         PREDICATE_VOICE_SEGMENT,
         ClaimSubject::Entity(asset),

@@ -59,7 +59,7 @@ fn document_and_claim_reviews_persist_and_learn_dismissals() -> Result<()> {
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     vault.put_claim(&claim, &body, time, 10)?;
     let catalog = catalog()?;
     for (round, (kind, target)) in [

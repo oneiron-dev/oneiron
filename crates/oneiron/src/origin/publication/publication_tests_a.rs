@@ -85,7 +85,7 @@ pub(crate) mod tests {
         request: &OriginPublicationRequest,
     ) -> EntityId {
         let id = EntityId::now();
-        let body = origin_publication_intent_claim(request);
+        let body = origin_publication_intent_claim(request).unwrap();
         vault
             .put_claim(&id, &body, occurred(), LEARNED_AT)
             .expect("durable target-bound fixture provenance");
@@ -148,7 +148,7 @@ pub(crate) mod tests {
         let repo = open_repo(&wire, &root, &base);
         let repo_id = repo_id_of(&vault, &repo);
         let ask = request(&vault, &repo, repo_id, Some(base.clone()), next.clone());
-        let mut unrelated = origin_publication_intent_claim(&ask);
+        let mut unrelated = origin_publication_intent_claim(&ask).unwrap();
         unrelated.predicate = "test.unrelated".to_owned();
         unrelated.value = Value::from("an active claim is not publication authority");
         let unrelated_id = EntityId::now();

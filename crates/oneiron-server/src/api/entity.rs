@@ -246,7 +246,7 @@ mod credential_tests {
                 assert_eq!(edges[0]["kind"], oneiron::EdgeKind::HasFacet as u8);
                 assert_eq!(
                     edges[0]["target"],
-                    oneiron::claim::substrate_facet_id(id).to_hex()
+                    oneiron::claim::substrate_facet_id(id).unwrap().to_hex()
                 );
             }
         }

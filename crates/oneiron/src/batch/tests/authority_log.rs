@@ -644,7 +644,7 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
             .edges_out(&loser)?
             .iter()
             .all(|edge| edge.kind == EdgeKind::HasFacet
-                && edge.target == crate::claim::substrate_facet_id(loser))
+                && edge.target == crate::claim::substrate_facet_id(loser).unwrap())
             && vault.edges_in(&survivor)?.is_empty(),
         "no half of the shell pair may survive its ledger justification"
     );

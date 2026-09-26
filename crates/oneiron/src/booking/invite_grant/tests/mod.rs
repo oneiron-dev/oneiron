@@ -224,7 +224,8 @@ fn put_booking_claims(
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(NOW);
         let seed = base_seed
@@ -406,7 +407,8 @@ fn seed_do_not_contact(vault: &Vault, seed: u8, party: &str) {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange {
                 start: NOW,
                 end: NOW,

@@ -42,7 +42,8 @@ fn open() -> (tempfile::TempDir, Vault) {
                 1.0,
                 ClaimApprovalStatus::Auto,
                 ClaimLifecycleStatus::Active,
-            ),
+            )
+            .unwrap(),
             TimeRange { start: 1, end: 1 },
             1,
         )
@@ -349,7 +350,8 @@ fn public_booking_publication_rejects_agent_and_invalid_claim_shapes_at_write_do
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     raw.source = Some(ClaimSource::UserStated);
     raw.valid_from = Some(100);
     raw.valid_to = Some(200);

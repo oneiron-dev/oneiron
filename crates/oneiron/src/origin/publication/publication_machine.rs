@@ -72,8 +72,8 @@ impl Vault {
         {
             self.validate_receive_pack_publication(request)?;
         } else if provenance.predicate != ORIGIN_PUBLICATION_INTENT_PREDICATE
-            || provenance.subject != origin_publication_intent_claim(request).subject
-            || provenance.value != origin_publication_intent_claim(request).value
+            || provenance.subject != origin_publication_intent_claim(request)?.subject
+            || provenance.value != origin_publication_intent_claim(request)?.value
         {
             return Err(Error::InvariantViolation(
                 "origin publication source does not authorize this actor and ref intent",

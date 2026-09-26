@@ -394,7 +394,8 @@ pub(crate) mod test_support {
                         1.0,
                         self.approval,
                         ClaimLifecycleStatus::Active,
-                    ),
+                    )
+                    .unwrap(),
                     TimeRange { start: 1, end: 1 },
                     1,
                 )

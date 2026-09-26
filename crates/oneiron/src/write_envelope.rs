@@ -443,7 +443,7 @@ impl ClaimCandidate {
         self,
         envelope: &WriteEnvelope,
         default_facet: EntityId,
-    ) -> ClaimBody {
+    ) -> crate::Result<ClaimBody> {
         let mut body = ClaimBody::new(
             self.predicate,
             self.subject,
@@ -451,7 +451,7 @@ impl ClaimCandidate {
             self.confidence,
             envelope.approval(),
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.salience = self.salience;
         body.evidence = Some(write_envelope_evidence(envelope, self.evidence));
         body.valid_from = self.valid_from;
@@ -484,7 +484,7 @@ impl ClaimCandidate {
         body.scope = self.scope;
         body.session_tag = envelope.session_tag.clone();
         body.stale = self.stale;
-        body
+        Ok(body)
     }
 }
 

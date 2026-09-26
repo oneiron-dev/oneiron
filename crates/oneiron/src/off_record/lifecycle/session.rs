@@ -12,7 +12,7 @@ use crate::session_overlay::{
     OverlayKeyspace, RouteTarget, SessionOverlay, SessionWriteRoute, SnapshotLookup,
 };
 use crate::side_table::{SideCodec, SideKey, SideTable};
-use crate::store::Store;
+use crate::vault::VaultId;
 
 use super::registry::{
     OffRecordSessionEntry, live_session_entry, session_entry_state, vet_off_record_session_ref,
@@ -601,16 +601,15 @@ impl OffRecordSession<'_> {
         table.get(&view, &rtxn, key)
     }
 
-    /// Identity of the store this session belongs to, as a bare pointer.
+    /// Identity of the vault this session belongs to.
     ///
-    /// The executor binding compares its storage's owning store against its
+    /// The executor binding compares its storage's owning vault against its
     /// dispatcher's before it reads or writes anything, and equal
     /// `session_ref`s across two different vaults must not read as the same
-    /// binding. A POINTER is the whole answer that question needs, so this
-    /// projects one rather than lending out the [`Store`] — nothing
-    /// dereferenceable escapes.
-    pub(crate) fn store_identity(&self) -> *const Store {
-        std::ptr::from_ref(&self.vault.store)
+    /// binding. The vault's identity is the whole answer that question needs,
+    /// so this projects it rather than lending out the vault.
+    pub(crate) fn vault_id(&self) -> VaultId {
+        self.vault.vault_id()
     }
 
     pub fn flip_on_record(&self) -> Result<()> {

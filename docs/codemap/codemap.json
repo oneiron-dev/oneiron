@@ -5396,7 +5396,7 @@
      "path": "src/calendar/ingest/mod.rs",
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "re-export": 3
      }
     },
@@ -8947,7 +8947,7 @@
      "path": "src/code_sandbox/wasmtime_runtime/wire.rs",
      "purpose": "Internal bounded JSON bridge between typed WIT and the borrowed engine host",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -8958,7 +8958,7 @@
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
       "const": 4,
-      "crate-vis": 29,
+      "crate-vis": 28,
       "fn": 2
      }
     },
@@ -8969,7 +8969,7 @@
      "path": "src/code_symbol/keys.rs",
      "purpose": "Manifest and revision-index key families and the deterministic symbol entity id",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -13089,7 +13089,7 @@
      "path": "src/dreamer_consolidation/support.rs",
      "purpose": "—",
      "surface": {
-      "const": 10,
+      "const": 9,
       "crate-vis": 29
      }
     },
@@ -13928,27 +13928,31 @@
       "EdgeActorClass",
       "EdgeConfirmationStatus",
       "EdgeInfo",
-      "EdgeKind",
       "EdgeProvenanceFlags",
       "EdgeValueLayout"
      ],
      "path": "src/edge.rs",
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
      "surface": {
-      "crate-vis": 17,
-      "enum": 4,
-      "fn": 4,
+      "crate-vis": 16,
+      "enum": 3,
+      "fn": 3,
+      "re-export": 1,
       "struct": 3
      }
     },
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
-     "path": "src/edge/relation.rs",
-     "purpose": "Canonical graph relation tokens shared by facade and outcome bindings",
+     "notable": [
+      "EdgeKind"
+     ],
+     "path": "src/edge/kind.rs",
+     "purpose": "The one edge-kind list: each variant with its stored byte and its snake_case name, generating `EdgeKind` and…",
      "surface": {
-      "crate-vis": 1
+      "const": 1,
+      "enum": 1,
+      "fn": 4
      }
     },
     {
@@ -15353,9 +15357,19 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 14,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_id/derived_domains.rs",
+     "purpose": "Every domain string `EntityId::derive` is called with",
+     "surface": {
+      "crate-vis": 24
      }
     },
     {
@@ -20850,7 +20864,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 10,
       "struct": 5
      }
@@ -20915,9 +20929,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/structural/codec.rs",
-     "purpose": "Edge-kind string codec and registry kind lookups for structural puts",
+     "purpose": "Edge weight and registry kind lookups for structural puts",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -30898,7 +30912,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -32053,13 +32067,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/vault/identity.rs",
+     "purpose": "One vault identity, resolved once at open and held on the handle",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "Vault"
      ],
      "path": "src/vault/mod.rs",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5,
       "struct": 1
      }
@@ -34350,7 +34374,7 @@
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge"
     },
     "entity_id": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35029,7 +35053,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35094,7 +35118,7 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2081,
+   "source_files": 2083,
    "test_files": 706
   },
   "oneiron-android": {

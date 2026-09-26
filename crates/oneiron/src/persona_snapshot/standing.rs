@@ -392,7 +392,7 @@ mod tests {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         note.source = Some(ClaimSource::UserStated);
         note.world = Some(world);
         note.scope = Some(Value::Map(vec![(
@@ -442,7 +442,7 @@ mod tests {
         crate::test_util::put_policy_manifest_bytes(
             &vault,
             crate::gate::default_policy_manifest_id()?,
-            &crate::gate::default_policy_manifest(),
+            &crate::gate::default_policy_manifest()?,
         )?;
         let issuer = crate::authority::HostSlipIssuer::from_secret(b"standing block fixture")?;
         let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;

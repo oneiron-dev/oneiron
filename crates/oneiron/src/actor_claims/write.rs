@@ -173,7 +173,7 @@ pub(super) fn write_actor_claim_in_txn(
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.evidence = Some(evidence.to_value());
     body.scope = Some(scope_with_lineage(pair_scope, meet));
     body.valid_from = Some(at);

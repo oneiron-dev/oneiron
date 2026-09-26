@@ -14,6 +14,6 @@ pub use self::types::{
     TextIndexField,
 };
 
-pub(super) use self::codec::{edge_kind_from_str, kind_string_for_type};
+pub(super) use self::codec::kind_string_for_type;
 use self::codec::{registered_edge_weight, type_byte_for_kind};
 use self::guards::ensure_structural_create_in_txn;

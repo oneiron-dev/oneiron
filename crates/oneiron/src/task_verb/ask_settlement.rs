@@ -1,13 +1,14 @@
 //! Atomic ask cutoffs and the fixed human-word reducers.
 use super::ask_record::{self, AskGroup};
 use super::ask_types::*;
+use crate::entity_id::derived_domains::TASK_ASK_SETTLEMENT;
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
 const SETTLEMENT: &str = "tasks.ask_settlement";
 
 fn settlement_id(group: EntityId) -> Result<EntityId> {
-    ask_record::derived_id(b"oneiron.tasks.ask.settlement", group, b"receipt")
+    EntityId::derive(TASK_ASK_SETTLEMENT, &[group.as_bytes(), b"receipt"])
 }
 
 pub(super) fn read_result(

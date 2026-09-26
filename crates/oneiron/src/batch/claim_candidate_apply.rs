@@ -87,7 +87,7 @@ pub(super) fn apply_claim_candidate(
         Some(facet) => facet,
         None => crate::claim::default_facet_in(store, wtxn)?,
     };
-    let body = candidate.into_claim_body(envelope, default_facet);
+    let body = candidate.into_claim_body(envelope, default_facet)?;
     let data = crate::claim::encode_claim_body(&body)?;
     let applied_put = apply_put(
         store,

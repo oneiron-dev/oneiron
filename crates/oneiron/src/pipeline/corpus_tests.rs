@@ -18,7 +18,7 @@ fn corpus_claim_body(corpus_scope: Option<CorpusId>) -> Result<Vec<u8>> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     if let Some(corpus_scope) = corpus_scope {
         body.scope = Some(scope_with_corpus_id(None, corpus_scope)?);
     }

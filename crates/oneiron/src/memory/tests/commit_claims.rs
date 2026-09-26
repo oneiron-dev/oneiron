@@ -110,7 +110,7 @@ fn commit_auto_request_downgrades_to_proposed_when_gate_pends() {
 
     // A Person-backed agent has a valid actor binding, but this explicit
     // ceiling still prevents the Auto request from attaching.
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(manifest.as_slice());
     let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode")
     else {
@@ -1257,9 +1257,9 @@ fn hydrate_round_trips_witness_short_ids() {
 /// exposed at this engine seam.
 #[test]
 fn edge_kind_names_round_trip_including_blocked_by() {
-    assert_eq!(edge_kind_from_str("blocked_by"), Some(EdgeKind::BlockedBy));
-    assert_eq!(edge_kind_name(EdgeKind::BlockedBy), "blocked_by");
-    assert_eq!(edge_kind_from_str("blockedBy"), None);
+    assert_eq!(EdgeKind::from_name("blocked_by"), Some(EdgeKind::BlockedBy));
+    assert_eq!(EdgeKind::BlockedBy.name(), "blocked_by");
+    assert_eq!(EdgeKind::from_name("blockedBy"), None);
 
     for kind in [
         EdgeKind::AuthoredBy,
@@ -1286,9 +1286,9 @@ fn edge_kind_names_round_trip_including_blocked_by() {
         EdgeKind::SplitInto,
         EdgeKind::BlockedBy,
     ] {
-        let name = edge_kind_name(kind);
+        let name = kind.name();
         assert_eq!(
-            edge_kind_from_str(name),
+            EdgeKind::from_name(name),
             Some(kind),
             "{kind:?} name {name} must parse back to itself"
         );
@@ -1300,9 +1300,9 @@ fn edge_kind_names_round_trip_including_blocked_by() {
 /// exactly as for `blocked_by`.
 #[test]
 fn same_as_edge_kind_name_round_trips() {
-    assert_eq!(edge_kind_from_str("same_as"), Some(EdgeKind::SameAs));
-    assert_eq!(edge_kind_name(EdgeKind::SameAs), "same_as");
-    assert_eq!(edge_kind_from_str("sameAs"), None);
+    assert_eq!(EdgeKind::from_name("same_as"), Some(EdgeKind::SameAs));
+    assert_eq!(EdgeKind::SameAs.name(), "same_as");
+    assert_eq!(EdgeKind::from_name("sameAs"), None);
     assert_eq!(EdgeKind::SameAs as u8, 20);
 }
 

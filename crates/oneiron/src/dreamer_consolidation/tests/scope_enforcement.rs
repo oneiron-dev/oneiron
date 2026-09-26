@@ -240,7 +240,7 @@ fn derive_id(
         facts.facet,
         facts.rel,
         facts.topic.as_deref(),
-    );
+    )?;
     Ok(())
 }
 

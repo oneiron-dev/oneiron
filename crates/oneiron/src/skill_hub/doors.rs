@@ -476,7 +476,7 @@ impl Vault {
                 1.0,
                 ClaimApprovalStatus::Proposed,
                 ClaimLifecycleStatus::Active,
-            );
+            )?;
             proposal.source = Some(ClaimSource::Imported);
             self.put_reserved_claim_in_txn(
                 &mut wtxn,

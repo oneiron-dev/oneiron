@@ -23,7 +23,7 @@ fn existing_companion_is_idempotent_only_for_matching_stamped_payload() -> Resul
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.source = Some(ClaimSource::UserStated);
     let envelope = WriteEnvelope::new(
         WriteActor::new(new, crate::edge::EdgeActorClass::Human),
@@ -35,7 +35,7 @@ fn existing_companion_is_idempotent_only_for_matching_stamped_payload() -> Resul
         write_companion(&vault, txn, &new, &old, &body, &body, &envelope, 2)
     };
     vault.with_write_txn(write)?;
-    let companion = companion_id(&new, &old, PREDICATE);
+    let companion = companion_id(&new, &old, PREDICATE)?;
     let original = vault.get_claim(&companion)?.expect("companion");
     vault.with_write_txn(write)?;
     assert_eq!(vault.get_claim(&companion)?, Some(original.clone()));

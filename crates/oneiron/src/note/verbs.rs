@@ -191,7 +191,7 @@ impl Vault {
                     1.0,
                     crate::claim::ClaimApprovalStatus::Proposed,
                     crate::claim::ClaimLifecycleStatus::Active,
-                );
+                )?;
                 body.source = Some(crate::claim::ClaimSource::Inferred);
                 body.scope_facet = origin_facet;
                 self.put_claim_in_txn(

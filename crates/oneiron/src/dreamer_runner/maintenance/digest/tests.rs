@@ -71,7 +71,7 @@ fn three_proposals_one_digest_urgent_breakthrough_and_row_timing() -> Result<()>
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     intent.source = Some(ClaimSource::UserStated);
     vault.put_claim(&intent_id, &intent, TimeRange { start: 1, end: 1 }, 1)?;
     let urgent = UrgentDigestWake {

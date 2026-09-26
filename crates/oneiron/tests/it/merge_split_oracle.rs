@@ -296,7 +296,8 @@ mod seam {
                     0.9,
                     ClaimApprovalStatus::Auto,
                     oneiron::ClaimLifecycleStatus::Active,
-                ),
+                )
+                .expect("fixture"),
                 oneiron::temporal::TimeRange {
                     start: 100,
                     end: 100,
@@ -930,10 +931,10 @@ fn ms03_facet_mints_exactly_n_type13_entities() {
     assert_ne!(minted[0], minted[1]);
     let all = vault.facets_of(&person).expect("facets of");
     assert_eq!(all.len(), 3);
-    assert!(all.contains(&oneiron::claim::substrate_facet_id(person)));
+    assert!(all.contains(&oneiron::claim::substrate_facet_id(person).expect("fixture")));
     let scenario_count = all
         .into_iter()
-        .filter(|mask| *mask != oneiron::claim::substrate_facet_id(person))
+        .filter(|mask| *mask != oneiron::claim::substrate_facet_id(person).expect("fixture"))
         .count();
     assert_eq!(scenario_count, 2);
     assert_eq!(seam::count_facet_entities_of(&vault, &person), 3);

@@ -350,7 +350,8 @@ fn claim_world_scope_admission_mirrors_the_gate_rule() {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )
+        .unwrap();
         body.world = world;
         body
     };
@@ -386,6 +387,7 @@ fn only_effective_claims_count_as_evidence() {
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
         )
+        .unwrap()
     };
     assert!(claim_effective_at(&base(), 1_000));
 
@@ -599,4 +601,24 @@ fn watermark_verdict_rejects_stale_epochs_without_calling_them_applied() {
         Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch: 2 })
     );
     assert_eq!(watermark_verdict(Some((2, None)), 3, &content), None);
+}
+
+/// A saved query names every edge kind by its list name except `same_as`,
+/// which stays refused: coreference links are never traversed (ONE-1414).
+#[test]
+fn a_saved_query_names_every_edge_kind_but_same_as() {
+    for &kind in crate::edge::EdgeKind::ALL {
+        let parsed = parse_filter_ast(&json!({"op": "edge_exists", "edge_kind": kind.name()}));
+        if kind == crate::edge::EdgeKind::SameAs {
+            assert!(matches!(parsed, Err(Error::InvalidConfig(_))), "{kind:?}");
+        } else {
+            assert_eq!(
+                parsed.expect("a listed edge kind parses"),
+                FilterAst::EdgeExists {
+                    edge_kind: kind.name().to_owned(),
+                    target: None,
+                },
+            );
+        }
+    }
 }

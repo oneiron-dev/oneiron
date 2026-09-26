@@ -621,7 +621,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
     }
     let project = oneiron::EntityId::now();
     let root = server.vault.root_project().expect("root");
-    let mut record = ProjectRecord::new(project, Some(root), root, owner);
+    let mut record = ProjectRecord::new(project, Some(root), root, owner).unwrap();
     record.roster.push(other.to_hex());
     server
         .vault
@@ -776,7 +776,7 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
         );
     }
     let second_project = oneiron::EntityId::now();
-    let second = ProjectRecord::new(second_project, Some(root), root, owner);
+    let second = ProjectRecord::new(second_project, Some(root), root, owner).unwrap();
     server
         .vault
         .put_project(second_project, &second, 1)

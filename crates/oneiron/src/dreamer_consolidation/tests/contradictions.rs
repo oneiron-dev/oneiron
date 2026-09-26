@@ -19,7 +19,7 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             0.9,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(ClaimSource::UserStated);
         body.approval = ClaimApprovalStatus::Approved;
         vault
@@ -131,7 +131,7 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             0.9,
             crate::ClaimApprovalStatus::Auto,
             crate::ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.source = Some(source);
         body.approval = ClaimApprovalStatus::Approved;
         vault

@@ -545,7 +545,7 @@ fn merged_candidate(
         conflict.identity.facet,
         conflict.identity.rel,
         conflict.identity.topic.as_deref(),
-    );
+    )?;
     let mut candidate = ClaimCandidate::new(
         conflict.identity.predicate.clone(),
         ClaimSubject::Entity(conflict.identity.subject),

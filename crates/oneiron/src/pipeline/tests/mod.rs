@@ -102,7 +102,8 @@ fn active_claim_body(world: Option<EntityId>) -> Vec<u8> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
@@ -115,7 +116,8 @@ fn active_claim_body_with_salience(salience: f32) -> Vec<u8> {
         0.9,
         crate::claim::ClaimApprovalStatus::Auto,
         crate::claim::ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.salience = Some(salience);
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
@@ -323,7 +325,8 @@ fn facet_claim_body() -> Vec<u8> {
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }
 
@@ -357,7 +360,7 @@ fn put_claim_with_vector_world(
         0.9,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     body.world = world;
     let encoded = crate::claim::encode_claim_body(&body).expect("encode claim body");
     vault
@@ -430,7 +433,8 @@ fn claim_body_bytes(appr: ClaimApprovalStatus, life: ClaimLifecycleStatus, stale
         0.9,
         appr,
         life,
-    );
+    )
+    .unwrap();
     body.stale = stale;
     crate::claim::encode_claim_body(&body).expect("encode claim body")
 }

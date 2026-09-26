@@ -79,7 +79,7 @@ impl Vault {
         read: &ScopedRead<'_>,
         visible: Option<&[EntityId]>,
     ) -> Result<ScopedReadResult<Option<BriefView>>> {
-        if !std::ptr::eq(self, read.vault()) {
+        if self.vault_id() != read.vault().vault_id() {
             return Err(invalid("brief read frame belongs to another vault"));
         }
         let brief = frame.scoped_body(read, &id)?;

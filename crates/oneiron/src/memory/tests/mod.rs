@@ -245,7 +245,7 @@ pub(super) fn assert_witness_left_nothing(
                 .edge_exists(
                     person,
                     crate::EdgeKind::HasFacet,
-                    &crate::claim::substrate_facet_id(*person)
+                    &crate::claim::substrate_facet_id(*person).unwrap()
                 )
                 .expect("substrate edge")
         );
@@ -261,7 +261,7 @@ pub(super) fn assert_witness_left_nothing(
 
 /// Installs the default manifest without adding an actor-specific grant.
 pub(super) fn install_default_policy_manifest(vault: &crate::Vault) {
-    let manifest = crate::gate::default_policy_manifest();
+    let manifest = crate::gate::default_policy_manifest().unwrap();
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id().expect("default manifest id"),
@@ -274,7 +274,7 @@ pub(super) fn install_default_policy_manifest(vault: &crate::Vault) {
 /// The owner's lever over the witness ceiling is an ordinary manifest row, not
 /// a second policy surface.
 pub(super) fn append_actor_ceiling_rows(vault: &crate::Vault, rows: Vec<(String, String, String)>) {
-    let mut manifest = crate::gate::default_policy_manifest();
+    let mut manifest = crate::gate::default_policy_manifest().unwrap();
     let mut cursor = std::io::Cursor::new(manifest.as_slice());
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("decode manifest")
     else {
@@ -548,7 +548,7 @@ pub(super) fn grant_world_reads(vault: &crate::Vault, reader: &str, world: Entit
         (Value::from("receipt_required"), Value::Boolean(false)),
     ]);
     let Value::Map(mut entries) =
-        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().unwrap().as_slice())
             .expect("default manifest")
     else {
         panic!("default manifest is a map");
@@ -580,7 +580,8 @@ fn stored_claim(
         1.0,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.world = world;
     body.source = Some(crate::claim::ClaimSource::UserStated);
     vault

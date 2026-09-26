@@ -164,7 +164,7 @@ pub(super) fn apply_ops_with_origin(
                 {
                     let owner = crate::vault::embedded_owner_actor_id()?;
                     if birth_mask.is_none()
-                        && facet == crate::claim::substrate_facet_id(owner)
+                        && facet == crate::claim::substrate_facet_id(owner)?
                         && stored_entity_type(store, wtxn, &owner)?.is_none()
                     {
                         apply_ops_with_origin(

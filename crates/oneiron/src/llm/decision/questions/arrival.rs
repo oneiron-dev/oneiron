@@ -302,7 +302,7 @@ pub(super) fn evaluate_fact(
             stage.stage.0
         }
         OutcomeSource::Edge { relation } => {
-            if crate::edge::parse_relation(relation) != edge_kind {
+            if crate::edge::EdgeKind::from_name(relation) != edge_kind {
                 return Ok(None);
             }
             let provenance = crate::provenance::decode_edge_provenance_body(&body.value)?;
@@ -347,7 +347,7 @@ fn linked(
         let (key, value) = row?;
         let edge = crate::vault::parse_edge_record(&key, &value)?;
         if edge.target == *subject
-            && Some(edge.kind) == crate::edge::parse_relation(relation)
+            && Some(edge.kind) == crate::edge::EdgeKind::from_name(relation)
             && edge.provenance.is_none_or(|p| {
                 p.confirmation_status != crate::edge::EdgeConfirmationStatus::Retracted
             })

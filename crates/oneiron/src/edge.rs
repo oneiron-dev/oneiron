@@ -11,129 +11,8 @@ pub(crate) const EDGE_VALUE_SEMANTIC_LEN: usize = 24;
 
 pub(crate) const EDGE_VALUE_SEMANTIC_PROVENANCED_LEN: usize = 26;
 
-/// Relationship kind used by graph edges.
-///
-/// Storage ABI: these discriminants are pinned to the ARCH-0034 `edgeKinds`
-/// registry. They are encoded into `edges_out`/`edges_in` keys and EdgeRef/CRDT
-/// edge-key refs; vaults written with the pre-M0-1 order need the M0-4
-/// schema-version migration (ONE-1081) before those bytes are read under this
-/// ordering.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum EdgeKind {
-    /// Entity belongs to another entity.
-    BelongsTo = 4,
-    /// Entity participates in another entity.
-    ParticipatesIn = 13,
-    /// Entity is attached to another entity.
-    Attached = 14,
-    /// Entity was authored by another entity.
-    AuthoredBy = 0,
-    /// Entity mentions another entity.
-    Mentions = 9,
-    /// Entity is about another entity.
-    About = 10,
-    /// Entity supports another entity.
-    Supports = 11,
-    /// Entity opposes another entity.
-    Opposes = 12,
-    /// Entity is a claim of another entity.
-    ClaimOf = 5,
-    /// Entity is scoped to another entity.
-    ScopedTo = 1,
-    /// Entity supersedes another entity.
-    Supersedes = 3,
-    /// Entity is derived from another entity.
-    DerivedFrom = 8,
-    /// Entity is part of another entity.
-    PartOf = 2,
-    /// Person is employed by an organization.
-    EmployedBy = 15,
-    /// Person has a behavioral facet.
-    HasFacet = 16,
-    /// Person exists in a world context.
-    InWorld = 18,
-    /// Claim is scoped to a facet.
-    FacetOf = 17,
-    /// Relationship is set in a world context.
-    SetIn = 19,
-    /// Task is a child of another task (tree hierarchy).
-    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.");
-    /// read via the dedicated `subtree` / `ancestors` tree APIs.
-    ChildOf = 6,
-    /// Task is assigned to a machine for execution.
-    /// Never traversed by PPR (contract `lambda: null`, "Not traversed.").
-    AssignedTo = 7,
-    /// Entity was merged into a surviving entity (ARCH-0055 r1). Canonical
-    /// D11 redirect edge — sole source of truth, no body-field twin; the
-    /// source entity is a `merged` redirect shell, never a tombstone.
-    /// Writes are reserved to the identity-topology apply/undo door.
-    MergedInto = 21,
-    /// Entity was split into a head entity (ARCH-0055 r2). Canonical D11
-    /// redirect edge — the original resolves to its head SET. Writes are
-    /// reserved to the identity-topology apply/undo door.
-    SplitInto = 22,
-    /// Two PERSON entities are the same person across vaults (ONE-1414).
-    ///
-    /// A structural, NON-TRAVERSING identity link: `lambda_for_kind` is
-    /// `None`, which IS the no-pooling contract. The link states coreference
-    /// and nothing else — no claim of either endpoint is copied, rewritten,
-    /// re-sourced, or re-worlded, and retrieval seeded on one endpoint never
-    /// reaches the other's claims through it. It carries no stored-weight
-    /// prior (writers pass an explicit `0.0`), and its status and per-pact
-    /// share consent live in `core.coreference.*` edge-subject Claims rather
-    /// than in the edge bytes.
-    SameAs = 20,
-    /// Task is blocked by another task — a directed TASK → TASK ordering
-    /// dependency; wave DAGs ride it. Never traversed by PPR or the
-    /// context-pack walk (contract `lambda: null`, "Not traversed."), like
-    /// `child_of`. Readiness stays COMPUTED at read time over task status
-    /// plus outgoing `blocked_by` edges (ARCH-0068 §RC5): this edge is the
-    /// sole source of truth, with no stored counter, `blocked` status, or
-    /// materialized projection twinning it.
-    BlockedBy = 23,
-    /// Readiness dependency `blocker → blocked` over CODE entities
-    /// (ARCH-0050 R6 L2 addendum, ONE-1608). NOT the reverse of
-    /// [`Self::BlockedBy`], which is the TASK-plane ordering relation on
-    /// byte 23: this byte is the L2 code-memory readiness edge and the two
-    /// never share a door.
-    ///
-    /// Closed, authority-gated, acyclic, non-decaying, and never traversed by
-    /// PPR (`lambda_for_kind` is `None`). Both generic public doors reject it
-    /// (`validate_public_edge_kind`); the only writers are
-    /// `code_memory::insert_blocks_edge` / `remove_blocks_edge`, which bind
-    /// the actor entity to its asserted [`EdgeActorClass`] and refuse a
-    /// permit-requiring `ClaimSource`. Local-only in v1: sync reverse
-    /// rematerialization skips it.
-    Blocks = 24,
-    /// A completed task brief discharges the target `commitment.record`
-    /// CLAIM (CMT-4, ONE-1541).
-    ///
-    /// Structural and never traversed by PPR (`lambda_for_kind` is `None`):
-    /// a brief that happens to discharge an obligation is not evidence that
-    /// the two share retrieval relevance. It carries no stored-weight prior
-    /// — the validated door writes an explicit `1.0` — and both generic
-    /// public doors reject it (`validate_public_edge_kind`), leaving
-    /// `commitment_lifecycle::link_brief_fulfillment` as the sole writer.
-    Fulfills = 25,
-    /// Inverse traversal edge: this commitment is discharged BY the target
-    /// task brief (CMT-4, ONE-1541).
-    ///
-    /// Deliberately NOT a creation-causation claim — the brief did not cause
-    /// the commitment to exist, it closed it. Same trust class, layout and
-    /// non-traversal contract as [`Self::Fulfills`], and written only in the
-    /// same validated transaction as its forward twin.
-    DischargedBy = 26,
-    /// Record-to-parent edge in the conversation DAG.
-    Parent = 27,
-    /// Sub-session-to-spawning-record edge.
-    SpawnedBy = 28,
-    /// Addressing, never a visibility restriction.
-    AddressedTo = 29,
-    /// Reply pointer, independent of the canonical parent.
-    RepliesTo = 30,
-}
+mod kind;
+pub use self::kind::EdgeKind;
 
 impl EdgeKind {
     /// Returns the default STORED edge weight for this edge kind — the
@@ -194,44 +73,6 @@ impl EdgeKind {
             // validated door that may write them carries an explicit `1.0`
             // per edge rather than inheriting a prior from here.
             Self::Fulfills | Self::DischargedBy => None,
-        }
-    }
-
-    /// Converts a raw discriminant into an edge kind.
-    pub fn try_from_u8(value: u8) -> Option<Self> {
-        match value {
-            0 => Some(Self::AuthoredBy),
-            1 => Some(Self::ScopedTo),
-            2 => Some(Self::PartOf),
-            3 => Some(Self::Supersedes),
-            4 => Some(Self::BelongsTo),
-            5 => Some(Self::ClaimOf),
-            6 => Some(Self::ChildOf),
-            7 => Some(Self::AssignedTo),
-            8 => Some(Self::DerivedFrom),
-            9 => Some(Self::Mentions),
-            10 => Some(Self::About),
-            11 => Some(Self::Supports),
-            12 => Some(Self::Opposes),
-            13 => Some(Self::ParticipatesIn),
-            14 => Some(Self::Attached),
-            15 => Some(Self::EmployedBy),
-            16 => Some(Self::HasFacet),
-            17 => Some(Self::FacetOf),
-            18 => Some(Self::InWorld),
-            19 => Some(Self::SetIn),
-            20 => Some(Self::SameAs),
-            21 => Some(Self::MergedInto),
-            22 => Some(Self::SplitInto),
-            23 => Some(Self::BlockedBy),
-            24 => Some(Self::Blocks),
-            25 => Some(Self::Fulfills),
-            26 => Some(Self::DischargedBy),
-            27 => Some(Self::Parent),
-            28 => Some(Self::SpawnedBy),
-            29 => Some(Self::AddressedTo),
-            30 => Some(Self::RepliesTo),
-            _ => None,
         }
     }
 }
@@ -706,6 +547,3 @@ pub(crate) fn encode_edge_value(
 
 #[cfg(test)]
 mod tests;
-
-mod relation;
-pub(crate) use relation::parse_relation;

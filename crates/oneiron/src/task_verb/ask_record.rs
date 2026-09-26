@@ -4,6 +4,9 @@ use super::ask_types::{
     TaskAskStatus, TaskAskWord,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::entity_id::derived_domains::{
+    TASK_ASK_ANSWER, TASK_ASK_INTENT, TASK_ASK_MEMBER, TASK_ASK_ORIGIN,
+};
 use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::ports::EdgeStoreRead;
@@ -78,16 +81,15 @@ pub(super) fn group_id(
         ASK_ORIGIN.put(&vault.store, txn, &(), &origin)?;
         origin
     };
-    let actor_origin = derived_id(b"oneiron.tasks.ask.origin.v1", origin, actor.as_bytes())?;
-    derived_id(
-        b"oneiron.tasks.ask.intent.v1",
-        actor_origin,
-        intent_key.as_bytes(),
+    let actor_origin = EntityId::derive(TASK_ASK_ORIGIN, &[origin.as_bytes(), actor.as_bytes()])?;
+    EntityId::derive(
+        TASK_ASK_INTENT,
+        &[actor_origin.as_bytes(), intent_key.as_bytes()],
     )
 }
 
 pub(super) fn member_id(group: EntityId, actor: EntityId) -> Result<EntityId> {
-    derived_id(b"oneiron.tasks.ask.member.v1", group, actor.as_bytes())
+    EntityId::derive(TASK_ASK_MEMBER, &[group.as_bytes(), actor.as_bytes()])
 }
 
 fn answer_id(
@@ -98,7 +100,7 @@ fn answer_id(
     word: &TaskAskWord,
 ) -> Result<EntityId> {
     let bytes = rmp_serde::to_vec_named(&(task, actor, source, word)).map_err(|_| invalid())?;
-    derived_id(b"oneiron.tasks.ask.answer.v1", group, &bytes)
+    EntityId::derive(TASK_ASK_ANSWER, &[group.as_bytes(), &bytes])
 }
 
 pub(super) fn owns_revision(
@@ -110,26 +112,17 @@ pub(super) fn owns_revision(
     let Some(origin) = ASK_ORIGIN.get(&vault.store, txn, &())? else {
         return Ok(false);
     };
-    let actor_origin = derived_id(
-        b"oneiron.tasks.ask.origin.v1",
-        origin,
-        entity(&group.owner)?.as_bytes(),
+    let actor_origin = EntityId::derive(
+        TASK_ASK_ORIGIN,
+        &[origin.as_bytes(), entity(&group.owner)?.as_bytes()],
     )?;
-    Ok(derived_id(
-        b"oneiron.tasks.ask.intent.v1",
-        actor_origin,
-        group.requested.intent_key.as_bytes(),
+    Ok(EntityId::derive(
+        TASK_ASK_INTENT,
+        &[
+            actor_origin.as_bytes(),
+            group.requested.intent_key.as_bytes(),
+        ],
     )? == id)
-}
-
-pub(super) fn derived_id(domain: &[u8], parent: EntityId, value: &[u8]) -> Result<EntityId> {
-    let mut hash = blake3::Hasher::new();
-    hash.update(domain);
-    hash.update(parent.as_bytes());
-    hash.update(value);
-    let mut id = [0_u8; 16];
-    id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
-    EntityId::from_bytes(id)
 }
 
 fn value<T: Serialize>(subkind: &str, record: &T) -> Result<Vec<u8>> {

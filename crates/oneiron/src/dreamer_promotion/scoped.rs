@@ -78,7 +78,8 @@ fn attach_evidence(
                     source_meet: source,
                 },
             ));
-        let gate_body = gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?);
+        let gate_body =
+            gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         crate::gate::check_claim_policy_for_write(
             &vault.store,

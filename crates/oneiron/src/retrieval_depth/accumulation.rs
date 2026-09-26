@@ -297,7 +297,7 @@ mod receipt_tests {
                 1.0,
                 ClaimApprovalStatus::Approved,
                 ClaimLifecycleStatus::Active,
-            ))
+            )?)
         };
         let original = claim("original")?;
         vault

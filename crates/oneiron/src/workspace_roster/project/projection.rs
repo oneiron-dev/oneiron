@@ -42,10 +42,17 @@ fn dependency(
         .map_err(|_| Error::CorruptedIndex("project dependency body"))
 }
 
+/// The project a home-room body names. A derived room id carries no order
+/// against its project's id, so an importer resolves the project first.
+pub(crate) fn project_room_dependency(bytes: &[u8]) -> Option<EntityId> {
+    let room = decode::<ProjectRoom>(bytes).ok()?;
+    EntityId::from_hex(&room.project_id).ok()
+}
+
 pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<EntityId>> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body.schema_version != 1
-        || body.home_room != home_room_id(id).to_hex()
+        || body.home_room != home_room_id(id)?.to_hex()
         || body.roster.is_empty()
     {
         return Err(invalid());

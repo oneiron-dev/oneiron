@@ -21,7 +21,7 @@ use crate::write_envelope::WriteActor;
 
 use super::{
     BlobArtifactInput, BlobVersionView, EntityRefReceipt, HabitCheckinInput, StructuralPutInput,
-    edge_kind_from_str, ensure_structural_create_in_txn, type_byte_for_kind,
+    ensure_structural_create_in_txn, type_byte_for_kind,
 };
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
@@ -128,7 +128,7 @@ impl Memory<'_> {
         let mut resolved_edges = Vec::new();
         if let Some(edges) = &input.edges {
             for spec in edges {
-                let kind = edge_kind_from_str(&spec.edge_kind).ok_or_else(|| {
+                let kind = EdgeKind::from_name(&spec.edge_kind).ok_or_else(|| {
                     MemoryError::bad_request_with(
                         format!("unknown edge kind {:?}", spec.edge_kind),
                         &["Use a snake_case EdgeKind name such as belongs_to or attached."],

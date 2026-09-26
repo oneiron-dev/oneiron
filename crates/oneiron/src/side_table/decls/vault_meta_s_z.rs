@@ -272,6 +272,9 @@ side_tables! {
     VAULT_CLEANUP_TASK_RETENTION_DAYS: VaultMeta b"vault_cleanup.task_retention_days.v1" Raw;
     /// Test-only marker that closes the automatic-cleanup release blockers. Key: ().
     VAULT_CLEANUP_TEST_BLOCKERS_CLOSED: VaultMeta b"vault_cleanup.test_blockers_closed" Raw;
+    /// Random 32-byte identity minted at the first open of a vault whose authority log has no
+    /// genesis yet; node-local, never synced, and unused once the log folds to a genesis. Key: ().
+    VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
     /// Owner voice reference pack. Key: string.
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference rows. Key: id16 + string.

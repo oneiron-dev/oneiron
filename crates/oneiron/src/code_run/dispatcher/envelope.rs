@@ -85,7 +85,7 @@ impl HostSelfDispatcher<'_> {
         subject: ClaimSubject,
         value: Value,
         envelope: &WriteEnvelope,
-    ) -> ClaimBody {
+    ) -> Result<ClaimBody> {
         let mut body = ClaimBody::new(
             effect.as_str(),
             subject,
@@ -93,12 +93,12 @@ impl HostSelfDispatcher<'_> {
             1.0,
             ClaimApprovalStatus::Approved,
             ClaimLifecycleStatus::Active,
-        );
+        )?;
         body.evidence = Some(crate::write_envelope::write_envelope_evidence(
             envelope, None,
         ));
         body.source = Some(envelope.source());
-        body
+        Ok(body)
     }
 
     /// Executor-path gate routing: DECISIONS FOLLOW THEIR CONTENT.

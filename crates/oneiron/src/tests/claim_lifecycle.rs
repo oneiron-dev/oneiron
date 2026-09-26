@@ -614,7 +614,7 @@ fn retract_claim_marks_retracted_and_preserves_record() -> Result<()> {
         (
             "scopeFacetId".into(),
             rmpv::Value::Binary(
-                crate::claim::substrate_facet_id(subject)
+                crate::claim::substrate_facet_id(subject)?
                     .as_bytes()
                     .to_vec(),
             ),
@@ -974,7 +974,7 @@ fn restamped_generated_origin_claim_cannot_supersede_user_stated_truth() -> Resu
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     new_body.source = Some(ClaimSource::Imported);
     new_body.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("federated_original_source"),
@@ -1025,7 +1025,7 @@ fn restamped_generated_origin_claim_cannot_supersede_legacy_unstamped_truth() ->
         0.9,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
-    );
+    )?;
     new_body.source = Some(ClaimSource::Imported);
     new_body.scope = Some(rmpv::Value::Map(vec![(
         rmpv::Value::from("federated_original_source"),

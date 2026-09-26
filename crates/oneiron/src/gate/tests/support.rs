@@ -269,7 +269,7 @@ pub(super) fn encode_policy_manifest(extra_entries: Vec<(Value, Value)>) -> Vec<
 }
 
 pub(super) fn encode_first_party_default_policy_manifest() -> Vec<u8> {
-    default_policy_manifest()
+    default_policy_manifest().unwrap()
 }
 
 pub(super) fn rewrite_policy_manifest_entries(
@@ -503,7 +503,8 @@ pub(super) fn source_trust_claim(source: ClaimSource) -> ClaimBody {
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
-    );
+    )
+    .unwrap();
     body.source = Some(source);
     body
 }

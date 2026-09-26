@@ -239,7 +239,7 @@ impl Vault {
         };
         self.put_claim(
             &intent,
-            &origin_publication_intent_claim(&publication),
+            &origin_publication_intent_claim(&publication)?,
             publication.occurred,
             publication.learned_at,
         )?;

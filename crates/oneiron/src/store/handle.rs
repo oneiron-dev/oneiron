@@ -458,7 +458,7 @@ pub(super) fn seed_default_policy_manifest_in_txn(
         return Err(Error::CorruptedIndex("default policy manifest id occupied"));
     }
     let timestamp = crate::gate::DEFAULT_POLICY_MANIFEST_TIMESTAMP;
-    let body = crate::gate::default_policy_manifest();
+    let body = crate::gate::default_policy_manifest()?;
     let mut payload = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + body.len());
     payload.push(ENTITY_TYPE_POLICY_MANIFEST);
     payload.extend_from_slice(&timestamp.to_be_bytes());
