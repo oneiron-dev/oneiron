@@ -506,3 +506,73 @@ mod paged_scan_property {
         }
     }
 }
+
+/// A role-correct connector TASK with an invalid connector body fails only its
+/// deferred read, not the other rows in the page or the direct-id error door.
+#[test]
+fn deferred_task_read_failure_is_reported_without_poisoning_section() {
+    let (_dir, vault) = open_vault();
+    let own = own_agent(&vault);
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    let healthy = facade
+        .tasks_create(&spec(120))
+        .expect("healthy task")
+        .task_ref
+        .expect("task ref");
+    let malformed = EntityId::from_bytes([0xC4; 16]).expect("malformed id");
+    let body = Value::Map(vec![
+        (Value::from("role"), Value::from(TaskRole::Task.role_byte())),
+        (
+            Value::from("subkind"),
+            Value::from(crate::outbound::CONNECTOR_SEND_TASK_SUBKIND),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &body).expect("encode body");
+    vault
+        .put_entity(
+            &malformed,
+            ENTITY_TYPE_TASK,
+            TimeRange {
+                start: 120,
+                end: 120,
+            },
+            120,
+            &bytes,
+        )
+        .expect("put malformed connector task");
+
+    let snapshot = task_presence_with_limits(&vault, 2, 32).expect("section survives");
+    assert!(
+        snapshot
+            .intents
+            .iter()
+            .any(|intent| intent.id == healthy.to_hex())
+    );
+    assert!(
+        !snapshot
+            .intents
+            .iter()
+            .any(|intent| intent.id == malformed.to_hex())
+    );
+    assert_eq!(snapshot.read_failures.len(), 1);
+    assert_eq!(snapshot.read_failures[0].task_ref, malformed);
+    assert_eq!(
+        snapshot.read_failures[0].stage,
+        TaskPresenceReadStage::Resolve
+    );
+    assert_eq!(
+        snapshot.read_failures[0].kind,
+        crate::error::ErrorKind::InvalidTaskBody
+    );
+    assert_eq!(
+        task_presence_for_id(&vault, malformed)
+            .expect_err("direct lookup returns connector decode failure")
+            .kind(),
+        crate::error::ErrorKind::InvalidTaskBody
+    );
+    let section = facade
+        .describe_section()
+        .expect("section remains available");
+    assert!(section.rows.iter().any(|row| row.id == healthy.to_hex()));
+}
