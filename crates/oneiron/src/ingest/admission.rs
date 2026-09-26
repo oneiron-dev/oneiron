@@ -297,7 +297,7 @@ fn imported_evidence_value(source_id: &str, source_record_id: &str) -> MsgpackVa
     ])
 }
 
-fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
+pub(super) fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
     match value {
         Value::Null => MsgpackValue::Nil,
         Value::Bool(value) => MsgpackValue::Boolean(*value),
@@ -330,7 +330,7 @@ fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
     }
 }
 
-fn imported_candidate(
+pub(super) fn imported_candidate(
     predicate: &str,
     value: MsgpackValue,
     source_record_id: &str,
