@@ -46,5 +46,6 @@ use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
 pub use rsi::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiSettlement, RsiSpendPurpose,
+    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiOverdraftReceipt,
+    RsiSettlement, RsiSpendPurpose,
 };
