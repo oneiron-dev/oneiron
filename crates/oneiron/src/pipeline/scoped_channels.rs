@@ -61,8 +61,8 @@ impl PipelineBuilder<'_> {
             rtxn,
             requested,
             filters,
-            metadata_cache,
-            claim_gate,
+            false,
+            (metadata_cache, claim_gate),
         )?;
         Ok(scores)
     }
@@ -82,6 +82,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
+                || self.has_strict_text_scope_filter()
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
@@ -94,8 +95,8 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             filters,
-            metadata_cache,
-            claim_gate,
+            self.has_strict_text_scope_filter(),
+            (metadata_cache, claim_gate),
         )?;
         Ok(scores)
     }
@@ -106,13 +107,16 @@ impl PipelineBuilder<'_> {
         rtxn: &RoTxn<'_>,
         requested: usize,
         filters: PipelineFilterConfig<'_>,
-        metadata_cache: &mut EntityMetadataCache,
-        claim_gate: &mut ClaimStatusGateCache,
+        strict_scope: bool,
+        caches: (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<()> {
+        let (metadata_cache, claim_gate) = caches;
         if self.memory_category {
             super::capabilities::retain_memory_candidates(scores, &self.vault.store, rtxn)?;
         }
-        if (filters.corpus_scope == &CorpusScope::All && filters.candidate_filter.is_none())
+        if (!strict_scope
+            && filters.corpus_scope == &CorpusScope::All
+            && filters.candidate_filter.is_none())
             || requested == 0
         {
             if self.memory_category && !self.has_codebase_scope_filter() {

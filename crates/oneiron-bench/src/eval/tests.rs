@@ -18,7 +18,8 @@ fn unix_now_secs() -> u64 {
         .as_secs()
 }
 
-fn open_vault_with(path: &Path, config: VaultConfig) -> Vault {
+fn open_vault_with(path: &Path, mut config: VaultConfig) -> Vault {
+    config.retrieval_telemetry_capture = true;
     Vault::open(path, config).expect("vault opens")
 }
 

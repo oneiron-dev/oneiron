@@ -448,6 +448,7 @@ fn rerank_claim_candidates_carry_decoded_bodies() -> Result<()> {
 #[test]
 fn funnel_fork_hash_distinguishes_fast_dims_and_skip_rescore() -> Result<()> {
     let mut funnel_config = embedding_test_config();
+    funnel_config.retrieval_telemetry_capture = true;
     funnel_config.fast_dims = Some(2);
     let (_dir, vault) = crate::test_util::open_test_vault_with(funnel_config);
     let id = entity_id(0xEA);

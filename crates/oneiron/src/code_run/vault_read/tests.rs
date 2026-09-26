@@ -1,7 +1,9 @@
 //! Contract, validation, projection and adapter tests for the vault-read module.
 
 mod regressions;
+mod support;
 
+use self::support::telemetry_config;
 use super::*;
 
 use std::sync::Mutex;
@@ -14,9 +16,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSo
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::store::{RetrievalAction, RetrievalRunRecord};
 use crate::temporal::TimeRange;
-use crate::test_util::{
-    embedding_test_config, entity, open_test_vault_with, put_policy_manifest_bytes,
-};
+use crate::test_util::{entity, open_test_vault_with, put_policy_manifest_bytes};
 
 // ── Test doubles ────────────────────────────────────────────────────────
 
@@ -715,7 +715,7 @@ fn cloud_adapter_is_total_over_the_surface() {
 
 #[test]
 fn exact_collapses_to_estimate() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let claim_count = seed_retrieval_budget_vault(&vault);
     let adapter = InProcessVaultReadAdapter::new(
         &vault,
@@ -1018,7 +1018,7 @@ fn seed_scoped_grant_vault(vault: &Vault) -> (EntityId, String, String) {
 /// per-item batch outcome, and no leaked id or body.
 #[test]
 fn scoped_grant_denial_reads_as_absence() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let (denied_id, admitted_ref, denied_ref) = seed_scoped_grant_vault(&vault);
     let adapter = InProcessVaultReadAdapter::new(
         &vault,
@@ -1140,7 +1140,7 @@ fn seed_retrieval_budget_vault(vault: &Vault) -> usize {
 /// most one CLAIM, and the visible stats describe the delivered pack.
 #[test]
 fn response_retrieval_budget_caps_claims_after_filtering() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let seeded_claims = seed_retrieval_budget_vault(&vault);
     let adapter = InProcessVaultReadAdapter::new(
         &vault,
@@ -1298,7 +1298,7 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
     // Same seed, no actor clamp: the naked builder this method enters
     // surfaces BOTH claims, so a finalize taken before the filter would
     // publish the denied id. That is the leak this ordering closes.
-    let (_leak_dir, leak_vault) = open_test_vault_with(embedding_test_config());
+    let (_leak_dir, leak_vault) = open_test_vault_with(telemetry_config());
     let (_, leaked_id) = seed_scoped_pack_vault(&leak_vault);
     let unfiltered = leak_vault
         .context_pack()
@@ -1315,7 +1315,7 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
         "the fixture is leak-prone: retrieval surfaces the denied claim pre-filter"
     );
 
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
     let adapter = InProcessVaultReadAdapter::new(
         &vault,
@@ -1397,7 +1397,7 @@ fn context_pack_run_row_publishes_only_actor_visible_ids() {
 /// and the answered pack's structured empty reason.
 #[test]
 fn fully_filtered_context_pack_publishes_an_empty_run_row() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
     // No grant names this actor, so a `core:read` grant exists that never
     // admits it: EVERY claim is denied.
@@ -1447,7 +1447,7 @@ fn fully_filtered_context_pack_publishes_an_empty_run_row() {
 /// the identity travels as an argument. The single-ref door is unchanged.
 #[test]
 fn batch_aborting_error_carries_the_batch_method() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let corrupt = entity(0x66);
     let occurred = TimeRange {
         start: 1_780_000_000,
@@ -1566,8 +1566,7 @@ fn structured_requests_reject_unknown_fields_before_dispatch() {
     }
 }
 fn read_receipt_fixture() -> crate::claim::ScopedReadReceipt {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with(telemetry_config());
     vault
         .scoped_read(crate::claim::ScopedReadActorKey::new("fixture").unwrap())
         .read_receipt(None, 0)
@@ -1601,7 +1600,7 @@ fn wire_read_response_without_narrowing_receipt_fails_closed() {
 
 #[test]
 fn hydrate_batch_counts_withheld_rows_not_missing_or_malformed_refs() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let (admitted, denied) = seed_scoped_pack_vault(&vault);
     let reader = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
     let denied_ref = short_ref(&vault, &denied);
@@ -1655,7 +1654,7 @@ fn wire_hydrate_absence_without_its_receipt_fails_closed() {
 
 #[test]
 fn timeline_receipts_survive_success_absence_and_wire_transport() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let (visible, hidden) = seed_scoped_pack_vault(&vault);
     let adapter =
         InProcessVaultReadAdapter::new(&vault, ScopedReadActorKey::new("reader").unwrap());

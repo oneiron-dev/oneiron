@@ -43,8 +43,7 @@ const EVAL_OUTCOME_INGEST_RECORD_TYPE: &str = "eval_outcome_ingest";
 const METADATA_EVALUATOR_KEY: &str = "evaluator";
 const METADATA_SOURCE_KEY: &str = "source";
 const RUN_ID_LEN: usize = 16;
-/// Explicit "the vault has no such value" token for the two nullable
-/// vault-open fields. It can never collide with a real value: an embedding
+/// "No value" token for nullable vault-open fields: an embedding
 /// model id must be `org/name@revision`, and a fast-lane prefix is an integer.
 const VAULT_CONFIG_NONE: &str = "none";
 
@@ -122,6 +121,7 @@ impl VaultOpenArgs {
     /// gate persists, compares, or reads off disk comes from the flags.
     fn vault_config(&self) -> VaultConfig {
         let mut config = VaultConfig::device();
+        config.retrieval_telemetry_capture = true;
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
         config.embedding_model = self.embedding_model.clone();

@@ -1358,3 +1358,42 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
     );
     assert_eq!(in_the_written_tick, one_tick_later);
 }
+
+#[test]
+fn world_scoped_last_week_recall_keeps_eligible_hit_at_limit_one() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0xE1);
+    let facade = facade_for(&vault, actor);
+    let now = crate::unix_seconds_now();
+    let eligible_world = EntityId::from_bytes([0xE2; 16]).unwrap();
+    let other_world = EntityId::from_bytes([0xE3; 16]).unwrap();
+    let scope = RecallScope {
+        world_ref: Some(eligible_world.to_hex()),
+        facet: None,
+    };
+    for (seed, world, days) in [(0xE4, eligible_world, 60), (0xE5, other_world, 3)] {
+        let subject = put_person(&vault, seed);
+        let mut claim = claim_input(
+            "preference.color",
+            &subject,
+            "user_stated",
+            serde_json::json!("amber"),
+        );
+        claim.world_ref = Some(world.to_hex());
+        claim.occurred_at = Some(now - 3 * 86_400);
+        claim.learned_at = Some(now - days * 86_400);
+        assert_eq!(facade.claim_upsert(&claim).unwrap().approval, "auto");
+    }
+    let wide = facade
+        .recall("last week", Effort::Light, &scope, 10, None, None)
+        .unwrap();
+    assert_eq!(wide.items.len(), 1);
+    let narrow = facade
+        .recall("last week", Effort::Light, &scope, 1, None, None)
+        .unwrap();
+    assert_eq!(narrow.items.len(), 1);
+    assert_eq!(
+        narrow.items[0].world.as_deref(),
+        Some(eligible_world.to_hex().as_str())
+    );
+}

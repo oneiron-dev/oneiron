@@ -124,7 +124,9 @@ fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
 }
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    crate::test_util::open_test_vault_with(config)
 }
 
 fn entity_id(byte: u8) -> EntityId {

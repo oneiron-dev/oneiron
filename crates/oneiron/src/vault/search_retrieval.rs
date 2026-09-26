@@ -252,6 +252,9 @@ impl Vault {
         results: &[ScoredEntity],
         limit: usize,
     ) -> Option<RetrievalRunId> {
+        if !self.store.retrieval_telemetry_capture_enabled() {
+            return None;
+        }
         let run_id = RetrievalRunId::from_bytes(self.store.clock.ulid().ok()?);
         let record = Self::vault_search_retrieval_run_record(
             run_id, signal, started_at, started, results, limit,

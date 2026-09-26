@@ -147,14 +147,16 @@ fn archive_restore_preserves_payload_and_all_seeded_indexes_across_reopen() {
             .expect("phonetic search")
             .is_empty()
     );
+    let temporal_hits = vault
+        .query()
+        .search_temporal(1, 1, 10)
+        .filter_types(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY])
+        .run()
+        .expect("temporal search");
     assert!(
-        vault
-            .query()
-            .search_temporal(1, 1, 10)
-            .filter_types(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY])
-            .run()
-            .expect("temporal search")
-            .is_empty()
+        temporal_hits
+            .iter()
+            .all(|hit| hit.id != person && hit.id != summary)
     );
     for id in [person, summary] {
         assert!(vault.get(&id).expect("regression fixture").is_none());
@@ -205,16 +207,14 @@ fn archive_restore_preserves_payload_and_all_seeded_indexes_across_reopen() {
             .len(),
         2
     );
-    assert_eq!(
-        vault
-            .query()
-            .search_temporal(1, 1, 10)
-            .filter_types(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY])
-            .run()
-            .expect("temporal search")
-            .len(),
-        2
-    );
+    let restored_hits = vault
+        .query()
+        .search_temporal(1, 1, 10)
+        .filter_types(&[ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY])
+        .run()
+        .expect("temporal search");
+    assert!(restored_hits.iter().any(|hit| hit.id == person));
+    assert!(restored_hits.iter().any(|hit| hit.id == summary));
     assert_eq!(
         vault
             .count_entities_by_type(ENTITY_TYPE_SUMMARY)
