@@ -28,7 +28,7 @@ name: CI
 # incremental dev/test profiles; main pushes, scheduled and dispatch builds keep non-incremental profiles.
 # sccache remains the compiler wrapper for non-incremental dependencies (never set CARGO_INCREMENTAL=1).
 # run_scoped.sh gives only oneiron a parallel front end for build/test and selects tmpfs for Linux tests
-# when /dev/shm has >=12 GiB free; otherwise it keeps the disk TMPDIR.
+# when /dev/shm has >=12 GiB free and permits execution; otherwise it keeps the disk TMPDIR.
 # `clean: true` on every checkout because `_work` persists between runs.
 on:
   workflow_dispatch:
