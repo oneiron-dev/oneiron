@@ -105,6 +105,7 @@ pub fn update_saved_query(
             // clears the pause. Archived is terminal and is not reopened here.
             lifecycle: match record.definition.lifecycle {
                 SavedQueryLifecycle::Archived => SavedQueryLifecycle::Archived,
+                SavedQueryLifecycle::Disabled => SavedQueryLifecycle::Disabled,
                 SavedQueryLifecycle::Active | SavedQueryLifecycle::Paused { .. } => {
                     SavedQueryLifecycle::Active
                 }

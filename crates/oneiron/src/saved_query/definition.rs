@@ -212,6 +212,9 @@ pub enum SavedQueryLifecycle {
         /// Operator-visible reason.
         error: String,
     },
+    /// Explicitly switched off by an owner. Unlike archive, a watch flag
+    /// can be switched back on without minting a second query identity.
+    Disabled,
     /// Retired. Archive is a transition, not a deletion: the record stays
     /// addressable for ONE-1778.
     Archived,

@@ -2,9 +2,11 @@
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
 use crate::{EdgeInfo, EntityId, Error, Result};
 use std::collections::HashSet;
+
+type TimelineEntityParts = (u8, u64, Vec<u8>);
 
 impl ScopedRead<'_> {
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
@@ -85,6 +87,80 @@ impl ScopedRead<'_> {
         })
     }
 
+    /// Read the bodies of already-authorized timeline rows. This is NOT a
+    /// retrieval search: closed claims are history, but their audience,
+    /// predicate, world, sensitivity and policy gates still apply. Recheck
+    /// each row against the caller's current authority snapshot before giving
+    /// its bytes to a renderer.
+    pub fn memory_timeline_parts_with_receipt(
+        &self,
+        records: &[MemoryTimelineRecord],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<TimelineEntityParts>>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let mut suppressed = 0;
+        let mut value = Vec::with_capacity(records.len());
+        for record in records {
+            if record.state == MemoryTimelineRecordState::Deleted {
+                value.push(None);
+                continue;
+            }
+            if !self.timeline_record_allowed_in(&txn, &policy, &filter, record)? {
+                suppressed += usize::from(self.entity_record_in(&txn, &record.id)?.is_some());
+                value.push(None);
+                continue;
+            }
+            let Some(raw) = self
+                .entity_record_in(&txn, &record.id)?
+                .map(|row| row.encode())
+            else {
+                value.push(None);
+                continue;
+            };
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            value.push(Some((
+                header.entity_type,
+                header.learned_at,
+                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            )));
+        }
+        Ok(ScopedReadResult {
+            value,
+            receipt: self.receipt_for(requested, &policy, &filter, suppressed),
+        })
+    }
+
+    /// A closed claim is not eligible for ordinary retrieval. This history
+    /// door tests ALL the ordinary authority predicates on the stored row,
+    /// changing only the lifecycle input to the retrieval status gate. It
+    /// never returns the normalized bytes; the caller receives the original.
+    fn history_row_readable_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            || raw.len() == ENTITY_METADATA_HEADER_LEN
+        {
+            return self.is_entity_raw_readable_with_filter_in(txn, policy, id, raw, filter);
+        }
+        let mut claim = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if claim.lifecycle == crate::claim::ClaimLifecycleStatus::Active {
+            return self.is_entity_raw_readable_with_filter_in(txn, policy, id, raw, filter);
+        }
+        claim.lifecycle = crate::claim::ClaimLifecycleStatus::Active;
+        let mut normalized = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
+        normalized.extend_from_slice(&crate::claim::encode_claim_body(&claim)?);
+        self.is_entity_raw_readable_with_filter_in(txn, policy, id, &normalized, filter)
+    }
+
     fn timeline_anchor_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -92,7 +168,9 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
-        if self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)? {
+        if let Some(raw) = self.entity_record_in(txn, id)?.map(|row| row.encode())
+            && self.history_row_readable_in(txn, policy, filter, id, &raw)?
+        {
             return Ok(true);
         }
         // A timeline reports deletion metadata, unlike a content search.
@@ -187,6 +265,6 @@ impl ScopedRead<'_> {
         if record.state == MemoryTimelineRecordState::Missing {
             return Ok(false);
         }
-        self.is_entity_retrievable_with_policy_in(txn, policy, filter, &record.id)
+        self.history_row_readable_in(txn, policy, filter, &record.id, &raw)
     }
 }

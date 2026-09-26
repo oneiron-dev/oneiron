@@ -220,7 +220,7 @@ fn facade_readable_task_rows(
 /// engine code this server has never heard of still reaches the client spelled
 /// the way the engine spelled it; only the HTTP status is this file's opinion.
 #[derive(Debug)]
-struct FacadeApiError {
+pub(crate) struct FacadeApiError {
     status: StatusCode,
     body: FacadeErrorEnvelope,
 }
