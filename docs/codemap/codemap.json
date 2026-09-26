@@ -10956,6 +10956,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/room/tests.rs",
+     "purpose": "Channel fixture for ROOM scope, fresh projection, and rooms.* verbs",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs.rs",
@@ -33958,7 +33966,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,7 +34907,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2062,
-   "test_files": 705
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

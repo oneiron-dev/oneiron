@@ -1,8 +1,13 @@
 //! Stateless ROOM projection and ordinary world-scope intersection.
 
 use super::{BoardFrameError, BoardSection, SectionPolicy, one_line_token};
+use crate::federation::{Scope, ScopeAxis, ScopeId};
 use crate::pipeline::WorldAuthoritySet;
 use crate::{EntityId, Result};
+use std::collections::BTreeSet;
+
+#[cfg(test)]
+mod tests;
 
 /// Host-resolved presence; authority comes from the normal turn resolver.
 #[derive(Debug, Clone)]
@@ -15,12 +20,13 @@ pub struct RoomPresence {
     pub active_worlds: WorldAuthoritySet,
 }
 
-/// This is the SAME authority-set type `PipelineBuilder::active_worlds` takes.
-/// A room intersects already narrowed per-turn sets; joining can never widen.
-pub fn room_scope(roster: &[RoomPresence]) -> Result<WorldAuthoritySet> {
+/// Meet the already narrowed per-turn world sets into the ordinary Scope.
+/// The other axes remain unchanged; the ordinary read grants for each present
+/// participant are checked separately at the read door. Joining cannot widen.
+pub fn room_scope(roster: &[RoomPresence]) -> Result<Scope> {
     let mut present = roster.iter().filter(|member| member.present);
     let Some(first) = present.next() else {
-        return Ok(WorldAuthoritySet::default());
+        return Ok(Scope::default());
     };
     let mut base = first.active_worlds.include_base();
     let mut worlds = first.active_worlds.worlds().clone();
@@ -28,7 +34,27 @@ pub fn room_scope(roster: &[RoomPresence]) -> Result<WorldAuthoritySet> {
         base &= member.active_worlds.include_base();
         worlds.retain(|id| member.active_worlds.worlds().contains(id));
     }
-    WorldAuthoritySet::new(base, worlds)
+    // Keep the world-set bound and canonical normalization at this door too.
+    let intersection = WorldAuthoritySet::new(base, worlds)?;
+    let mut ids: BTreeSet<_> = intersection
+        .worlds()
+        .iter()
+        .copied()
+        // Base has its own boolean authority. A caller-supplied world ID
+        // cannot smuggle that reserved Scope member into the intersection.
+        .filter(|id| *id != crate::claim::base_world_id())
+        .map(ScopeId)
+        .collect();
+    if intersection.include_base() {
+        ids.insert(ScopeId(crate::claim::base_world_id()));
+    }
+    let mut scope = Scope::top();
+    scope.worlds = if ids.is_empty() {
+        ScopeAxis::Bottom
+    } else {
+        ScopeAxis::Some(ids)
+    };
+    Ok(scope)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -63,7 +89,7 @@ impl RoomPosture {
 pub struct RoomSection {
     pub room: EntityId,
     pub roster: Vec<RoomPresence>,
-    pub scope: WorldAuthoritySet,
+    pub scope: Scope,
     pub posture: RoomPosture,
     pub claims: Vec<crate::memory::ClaimView>,
 }
@@ -83,13 +109,18 @@ impl RoomSection {
         }));
         rows.push(format!(
             "scope: base={} worlds={}",
-            self.scope.include_base(),
             self.scope
-                .worlds()
-                .iter()
-                .map(EntityId::to_hex)
-                .collect::<Vec<_>>()
-                .join(",")
+                .worlds
+                .contains(&ScopeId(crate::claim::base_world_id())),
+            match &self.scope.worlds {
+                ScopeAxis::Some(ids) => ids
+                    .iter()
+                    .filter(|id| id.0 != crate::claim::base_world_id())
+                    .map(|id| id.0.to_hex())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                _ => String::new(),
+            }
         ));
         let mode = match self.posture.mode {
             RoomMode::Chime => "chime",

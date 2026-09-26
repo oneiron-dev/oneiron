@@ -117,12 +117,16 @@ impl Memory<'_> {
         })? {
             let id = EntityId::from_hex(&claim.claim_ref)?;
             if read.get(&id)?.is_none()
-                || claim
-                    .world_ref
-                    .as_deref()
-                    .map_or(!scope.include_base(), |id| {
-                        EntityId::from_hex(id).map_or(true, |id| !scope.worlds().contains(&id))
-                    })
+                || claim.world_ref.as_deref().map_or(
+                    !scope
+                        .worlds
+                        .contains(&crate::federation::ScopeId(crate::claim::base_world_id())),
+                    |id| {
+                        EntityId::from_hex(id).map_or(true, |id| {
+                            !scope.worlds.contains(&crate::federation::ScopeId(id))
+                        })
+                    },
+                )
             {
                 continue;
             }
