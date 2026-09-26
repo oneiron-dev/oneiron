@@ -1,58 +1,37 @@
-//! DisclosureScope type with canonical msgpack codec and key validation.
+//! Contact clearance envelope and canonical six-axis Scope codec.
 
 use std::io::Cursor;
 
 use rmpv::Value;
 
-use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::federation::{
+    Scope,
+    scope_codec::{decode_scope_value, encode_scope_value},
+};
 
-/// Current DisclosureScope body schema version.
+/// Current contact clearance body schema version (prerelease wire format).
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
 
-/// Pinned on-disk MessagePack key set for DisclosureScope bodies.
-pub const DISCLOSURE_SCOPE_BODY_KEYS: [&str; 7] = [
+/// Pinned on-disk MessagePack key set for contact clearance bodies.
+pub const DISCLOSURE_SCOPE_BODY_KEYS: [&str; 6] = [
     "schema_version",
-    "entities",
-    "topics",
+    "scope",
     "purpose",
     "status",
     "created_at",
     "updated_at",
 ];
-
-const KEY_SCHEMA_VERSION: &str = DISCLOSURE_SCOPE_BODY_KEYS[0];
-
-const KEY_ENTITIES: &str = DISCLOSURE_SCOPE_BODY_KEYS[1];
-
-const KEY_TOPICS: &str = DISCLOSURE_SCOPE_BODY_KEYS[2];
-
-const KEY_PURPOSE: &str = DISCLOSURE_SCOPE_BODY_KEYS[3];
-
-const KEY_STATUS: &str = DISCLOSURE_SCOPE_BODY_KEYS[4];
-
-const KEY_CREATED_AT: &str = DISCLOSURE_SCOPE_BODY_KEYS[5];
-
-const KEY_UPDATED_AT: &str = DISCLOSURE_SCOPE_BODY_KEYS[6];
-
-/// Maximum explicit allowlist entries one scope may carry.
-pub const MAX_DISCLOSURE_SCOPE_ENTITIES: usize = 256;
-
-/// Maximum reserved topic tags one scope may carry.
-pub const MAX_DISCLOSURE_SCOPE_TOPICS: usize = 32;
-
+const MAX_PURPOSE_BYTES: usize = 512;
 pub(super) const MAX_DISCLOSURE_SCOPE_TOPIC_BYTES: usize = 128;
 
-const MAX_DISCLOSURE_SCOPE_PURPOSE_BYTES: usize = 512;
-
-/// OF-153 grant-grammar lifecycle for a disclosure scope.
+/// Lifecycle of a contact's clearance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum DisclosureScopeStatus {
     Active,
     Revoked,
 }
-
 impl DisclosureScopeStatus {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -61,7 +40,6 @@ impl DisclosureScopeStatus {
             Self::Revoked => "revoked",
         }
     }
-
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
@@ -72,203 +50,90 @@ impl DisclosureScopeStatus {
     }
 }
 
-/// Per-contact disclosure scope: WHAT a known contact may hear about
-/// (explicit entity allowlist; topics are schema-reserved, stored and
-/// intersected but NOT a v1 admission path — design §8).
+/// Owner-visible metadata around a contact's six-axis Scope clearance.
+/// The clearance itself is `scope`, not this envelope or an entity allowlist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisclosureScope {
-    /// Explicit allowlist, sorted and deduped; at most
-    /// [`MAX_DISCLOSURE_SCOPE_ENTITIES`].
-    pub entities: Vec<EntityId>,
-    /// Reserved topic tags (v1 stores + intersects; never admits).
-    pub topics: Vec<String>,
-    /// Human-readable task purpose from the introduction; 1..=512 bytes.
+    pub scope: Scope,
+    /// Human-readable purpose of the grant, 1..=512 bytes.
     pub purpose: String,
     pub status: DisclosureScopeStatus,
     pub created_at: u64,
     pub updated_at: u64,
 }
-
 impl DisclosureScope {
-    /// The auto-scope constructor introductions call: sorts and dedupes the
-    /// entity allowlist, starts Active with no topics.
-    pub fn task_scoped(
-        purpose: impl Into<String>,
-        mut entities: Vec<EntityId>,
-        created_at: u64,
-    ) -> Result<Self> {
-        entities.sort_unstable();
-        entities.dedup();
-        let scope = Self {
-            entities,
-            topics: Vec::new(),
+    pub fn new(scope: Scope, purpose: impl Into<String>, created_at: u64) -> Result<Self> {
+        let value = Self {
+            scope,
             purpose: purpose.into(),
             status: DisclosureScopeStatus::Active,
             created_at,
             updated_at: created_at,
         };
-        scope.validate()?;
-        Ok(scope)
+        value.validate()?;
+        Ok(value)
     }
 
-    /// The pinned EMPTY scope — the fail-closed default an unknown party,
-    /// revoked scope, or missing row contributes to the DEC-0005
-    /// intersection. An all-empty struct literal is invalid by construction
-    /// because `purpose` has a 1..=512-byte floor.
-    #[must_use]
-    pub fn deny_all(now: u64) -> Self {
-        Self {
-            entities: Vec::new(),
-            topics: Vec::new(),
-            purpose: "deny_all".to_owned(),
-            status: DisclosureScopeStatus::Active,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    /// Validates the pinned scope invariants.
     pub fn validate(&self) -> Result<()> {
-        if self.entities.len() > MAX_DISCLOSURE_SCOPE_ENTITIES {
-            return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                "scope entities exceed the 256-entry allowlist cap",
-            )));
-        }
-        if !self
-            .entities
-            .windows(2)
-            .all(|pair| pair[0].as_bytes() < pair[1].as_bytes())
-        {
-            return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                "scope entities must be sorted and deduped",
-            )));
-        }
-        if self.topics.len() > MAX_DISCLOSURE_SCOPE_TOPICS {
-            return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                "scope topics exceed the 32-entry cap",
-            )));
-        }
-        for topic in &self.topics {
-            if topic.trim().is_empty()
-                || topic.trim() != topic
-                || topic.len() > MAX_DISCLOSURE_SCOPE_TOPIC_BYTES
-            {
-                return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                    "scope topic must be trimmed, non-empty, and at most 128 bytes",
-                )));
-            }
-        }
         if self.purpose.trim().is_empty()
             || self.purpose.trim() != self.purpose
-            || self.purpose.len() > MAX_DISCLOSURE_SCOPE_PURPOSE_BYTES
+            || self.purpose.len() > MAX_PURPOSE_BYTES
         {
             return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                "scope purpose must be trimmed, non-empty, and at most 512 bytes",
+                "clearance purpose must be trimmed, non-empty, and at most 512 bytes",
             )));
         }
         if self.updated_at < self.created_at {
             return Err(Error::Gate(GateError::InvalidDisclosureScope(
-                "scope updated_at must not precede created_at",
+                "clearance updated_at must not precede created_at",
             )));
+        }
+        // Reject noncanonical in-memory axes (Some(empty) must be Bottom).
+        let wire = encode_scope_value(&self.scope).map_err(|_| invalid_scope())?;
+        if decode_scope_value(&wire).map_err(|_| invalid_scope())? != self.scope {
+            return Err(invalid_scope());
         }
         Ok(())
     }
 
-    /// DEC-0005 most-restrictive-wins intersection: entity/topic
-    /// set-intersection, earliest `created_at`, latest `updated_at`,
-    /// Revoked-propagating status. The empty scope is the absorbing element.
+    /// Revoked clearance is bottom; never re-use its stored scope for admission.
     #[must_use]
-    pub fn intersect(&self, other: &Self) -> Self {
-        let entities = self
-            .entities
-            .iter()
-            .filter(|id| other.entities.binary_search(id).is_ok())
-            .copied()
-            .collect();
-        let topics = self
-            .topics
-            .iter()
-            .filter(|topic| other.topics.contains(topic))
-            .cloned()
-            .collect();
-        let purpose = truncate_at_char_boundary(
-            format!("{} ∩ {}", self.purpose, other.purpose),
-            MAX_DISCLOSURE_SCOPE_PURPOSE_BYTES,
-        );
-        let status = if self.status == DisclosureScopeStatus::Active
-            && other.status == DisclosureScopeStatus::Active
-        {
-            DisclosureScopeStatus::Active
+    pub(super) fn effective_scope(&self) -> Scope {
+        if self.status == DisclosureScopeStatus::Active {
+            self.scope.clone()
         } else {
-            DisclosureScopeStatus::Revoked
-        };
-        Self {
-            entities,
-            topics,
-            purpose,
-            status,
-            created_at: self.created_at.min(other.created_at),
-            updated_at: self.updated_at.max(other.updated_at),
+            Scope::default()
         }
     }
-
-    pub(super) fn allows_entity(&self, id: &EntityId) -> bool {
-        self.entities.binary_search(id).is_ok()
-    }
 }
 
-fn truncate_at_char_boundary(mut value: String, max_bytes: usize) -> String {
-    if value.len() <= max_bytes {
-        return value;
-    }
-    let mut cut = max_bytes;
-    while cut > 0 && !value.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    value.truncate(cut);
-    value
-}
-
-pub(super) fn disclosure_scope_body_value(scope: &DisclosureScope) -> Value {
-    Value::Map(vec![
+pub(super) fn disclosure_scope_body_value(clearance: &DisclosureScope) -> Result<Value> {
+    Ok(Value::Map(vec![
         (
-            Value::from(KEY_SCHEMA_VERSION),
+            Value::from("schema_version"),
             Value::from(DISCLOSURE_SCOPE_SCHEMA_VERSION),
         ),
         (
-            Value::from(KEY_ENTITIES),
-            Value::Array(
-                scope
-                    .entities
-                    .iter()
-                    .map(|id| Value::from(id.to_hex()))
-                    .collect(),
-            ),
+            Value::from("scope"),
+            encode_scope_value(&clearance.scope).map_err(|_| invalid_scope())?,
         ),
         (
-            Value::from(KEY_TOPICS),
-            Value::Array(
-                scope
-                    .topics
-                    .iter()
-                    .map(|topic| Value::from(topic.as_str()))
-                    .collect(),
-            ),
+            Value::from("purpose"),
+            Value::from(clearance.purpose.as_str()),
         ),
         (
-            Value::from(KEY_PURPOSE),
-            Value::from(scope.purpose.as_str()),
+            Value::from("status"),
+            Value::from(clearance.status.as_str()),
         ),
-        (Value::from(KEY_STATUS), Value::from(scope.status.as_str())),
-        (Value::from(KEY_CREATED_AT), Value::from(scope.created_at)),
-        (Value::from(KEY_UPDATED_AT), Value::from(scope.updated_at)),
-    ])
+        (Value::from("created_at"), Value::from(clearance.created_at)),
+        (Value::from("updated_at"), Value::from(clearance.updated_at)),
+    ]))
 }
 
-/// Encodes a DisclosureScope body in canonical MessagePack key order.
-pub fn encode_disclosure_scope_body(scope: &DisclosureScope) -> Result<Vec<u8>> {
-    scope.validate()?;
-    let value = disclosure_scope_body_value(scope);
+/// Encodes the contact clearance with a canonical six-axis Scope payload.
+pub fn encode_disclosure_scope_body(clearance: &DisclosureScope) -> Result<Vec<u8>> {
+    clearance.validate()?;
+    let value = disclosure_scope_body_value(clearance)?;
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).map_err(|_| {
         Error::InvariantViolation("disclosure scope body MessagePack encode failed")
@@ -276,8 +141,7 @@ pub fn encode_disclosure_scope_body(scope: &DisclosureScope) -> Result<Vec<u8>> 
     Ok(out)
 }
 
-/// Decodes and validates a DisclosureScope body (strict key set, no
-/// duplicates, no trailing bytes).
+/// Strict decode: no trailing bytes, unknown/duplicate/missing envelope or Scope keys.
 pub fn decode_disclosure_scope_body(bytes: &[u8]) -> Result<DisclosureScope> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_scope())?;
@@ -286,62 +150,44 @@ pub fn decode_disclosure_scope_body(bytes: &[u8]) -> Result<DisclosureScope> {
     }
     decode_disclosure_scope_value(&value)
 }
-
 pub(super) fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {
     let Value::Map(entries) = value else {
         return Err(invalid_scope());
     };
     validate_keys(entries, &DISCLOSURE_SCOPE_BODY_KEYS)?;
-
-    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64()
-        != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
+    if required_value(entries, "schema_version")?.as_u64() != Some(DISCLOSURE_SCOPE_SCHEMA_VERSION)
     {
         return Err(invalid_scope());
     }
-    let Value::Array(raw_entities) = required_value(entries, KEY_ENTITIES)? else {
+    let scope_value = required_value(entries, "scope")?;
+    let scope = decode_scope_value(scope_value).map_err(|_| invalid_scope())?;
+    // In-memory and wire axes must use the same normalized, canonical shape.
+    if encode_scope_value(&scope).map_err(|_| invalid_scope())? != *scope_value {
         return Err(invalid_scope());
-    };
-    let entities = raw_entities
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .and_then(|hex| EntityId::from_hex(hex).ok())
-                .ok_or_else(invalid_scope)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let Value::Array(raw_topics) = required_value(entries, KEY_TOPICS)? else {
-        return Err(invalid_scope());
-    };
-    let topics = raw_topics
-        .iter()
-        .map(|value| value.as_str().map(str::to_owned).ok_or_else(invalid_scope))
-        .collect::<Result<Vec<_>>>()?;
-    let purpose = required_value(entries, KEY_PURPOSE)?
+    }
+    let purpose = required_value(entries, "purpose")?
         .as_str()
         .ok_or_else(invalid_scope)?
         .to_owned();
-    let status = required_value(entries, KEY_STATUS)?
+    let status = required_value(entries, "status")?
         .as_str()
         .and_then(DisclosureScopeStatus::parse)
         .ok_or_else(invalid_scope)?;
-    let created_at = required_value(entries, KEY_CREATED_AT)?
+    let created_at = required_value(entries, "created_at")?
         .as_u64()
         .ok_or_else(invalid_scope)?;
-    let updated_at = required_value(entries, KEY_UPDATED_AT)?
+    let updated_at = required_value(entries, "updated_at")?
         .as_u64()
         .ok_or_else(invalid_scope)?;
-
-    let scope = DisclosureScope {
-        entities,
-        topics,
+    let clearance = DisclosureScope {
+        scope,
         purpose,
         status,
         created_at,
         updated_at,
     };
-    scope.validate()?;
-    Ok(scope)
+    clearance.validate()?;
+    Ok(clearance)
 }
 
 pub(super) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
