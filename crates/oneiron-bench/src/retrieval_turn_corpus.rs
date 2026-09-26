@@ -303,10 +303,16 @@ mod tests {
     use super::*;
     use oneiron::{EntityId, TimeRange};
 
+    fn captured_run_config() -> VaultConfig {
+        let mut config = VaultConfig::device();
+        config.retrieval_telemetry_capture = true;
+        config
+    }
+
     #[test]
     fn logged_turns_export_reload_and_replay_identical_packs_and_traces() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = VaultConfig::device();
+        let mut cfg = captured_run_config();
         cfg.dimensions = 4;
         cfg.map_size = 32 * 1024 * 1024;
         let vault = Vault::open(dir.path(), cfg).unwrap();
@@ -394,7 +400,7 @@ mod tests {
             episode_id: [2; 16],
             turn_idx: 0,
         };
-        let vault = Vault::open(&vault_path, VaultConfig::device()).unwrap();
+        let vault = Vault::open(&vault_path, captured_run_config()).unwrap();
         let result = vault
             .query()
             .search_text("missing", 2)
@@ -453,7 +459,7 @@ mod tests {
             turn_idx: 0,
         };
         let dir = tempfile::tempdir().unwrap();
-        let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+        let vault = Vault::open(dir.path(), captured_run_config()).unwrap();
         let result = vault
             .query()
             .search_text("nothing", 2)
