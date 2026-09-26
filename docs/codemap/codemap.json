@@ -1888,6 +1888,21 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshMachineAddress",
+      "MeshMachineAddressEnvelope"
+     ],
+     "path": "src/authority/mesh_machine.rs",
+     "purpose": "Local host-authorized mesh binding and grants, distinct from address hints",
+     "surface": {
+      "const": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -1895,7 +1910,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 4,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -2052,7 +2067,7 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 15,
       "struct": 1
      }
@@ -15383,7 +15398,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -16026,7 +16041,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -17107,11 +17122,29 @@
      "path": "src/genui/mod.rs",
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectGoalDraft",
+      "ProjectMintIntent",
+      "ProjectProposalCard",
+      "ProjectProposalPicks"
+     ],
+     "path": "src/genui/project_proposal.rs",
+     "purpose": "Typed project proposal and owner-confirmed, write-free mint intent (OF-501)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 5,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Of336ActionDescriptor",
@@ -17160,6 +17193,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests/failure_integrity.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/genui/tests/project_proposal.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -18964,7 +19005,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GeneratedUiResultSetScope",
@@ -18975,14 +19016,17 @@
       "LensBackingTargetKind",
       "LensHostBackingRef",
       "LensReadHandle",
-      "LensReadReach"
+      "LensReadReach",
+      "LensSpanCursor",
+      "LensSpanSelectionRequest"
      ],
      "path": "src/lens/mediation/mediation_backing.rs",
      "purpose": "Backing refs, selection requests, and engine-issued read handles",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
-      "fn": 21,
-      "struct": 6
+      "fn": 25,
+      "struct": 8
      }
     },
     {
@@ -18995,7 +19039,7 @@
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
       "crate-vis": 3,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -20797,7 +20841,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -21052,6 +21096,21 @@
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemorySubscriptionOwner",
+      "ScopedView"
+     ],
+     "path": "src/memory/subscriptions.rs",
+     "purpose": "Transport-neutral subscription verbs",
+     "surface": {
+      "fn": 2,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -28340,6 +28399,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentPackFacets"
+     ],
+     "path": "src/skill_hub/pack_catalog/agent_facets.rs",
+     "purpose": "Typed, inert AGENT_PACK facets on the common pack source path",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
@@ -28392,7 +28464,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -28419,12 +28491,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/tests.rs",
      "purpose": "Source custody tests: exact bytes, inert imports, generic/replay parity and rollback",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -34025,7 +34099,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34585,7 +34659,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver"
     },
     "genui": {
-     "files": 9,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34732,7 +34806,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35068,7 +35142,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35273,8 +35347,8 @@
    },
    "over_bar": 7,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2090,
-   "test_files": 714
+   "source_files": 2094,
+   "test_files": 715
   },
   "oneiron-android": {
    "files": [
@@ -37646,7 +37720,7 @@
   "oneiron-mesh-transport": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IrohTransport"
@@ -37654,7 +37728,7 @@
      "path": "src/iroh_transport.rs",
      "purpose": "Private iroh data plane",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -37663,26 +37737,39 @@
      "kind": "src",
      "notable": [
       "AcceptPolicy",
-      "MachineAddress",
-      "MachineAddressEnvelope",
       "MachineGrants",
       "MachineRoster",
       "MeshConnection",
       "MeshError",
       "MeshStream",
       "MeshTransport",
+      "VaultMachineGrants",
       "VaultMachineRoster"
      ],
      "path": "src/lib.rs",
      "purpose": "Vault-scoped mesh transport",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 3,
-      "mod": 1,
-      "struct": 4,
+      "fn": 2,
+      "mod": 2,
+      "re-export": 1,
+      "struct": 3,
       "trait": 5,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TransportKey"
+     ],
+     "path": "src/transport_key.rs",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -37706,14 +37793,21 @@
     "iroh_transport": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Private iroh data plane"
+    },
+    "transport_key": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded"
     }
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 2,
+   "source_files": 3,
    "test_files": 2
   },
   "oneiron-napi": {
@@ -40948,7 +41042,7 @@
      "path": "src/livequery.rs",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
