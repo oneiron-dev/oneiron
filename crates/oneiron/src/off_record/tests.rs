@@ -1477,18 +1477,16 @@ fn assert_session_search_capture(capture: bool, on_record: bool) -> Result<()> {
         panic!("expected memory search");
     };
     assert!(found.results.iter().any(|row| row.id == id));
-    let room_runs = {
-        let view = session.read_view()?;
-        let rtxn = vault.store.env.read_txn()?;
-        view.retrieval_runs_in_txn(&rtxn, 10)?
-    };
-    assert_eq!(room_runs.len(), usize::from(capture));
     assert_eq!(
         vault.retrieval_runs(10)?.len(),
         usize::from(capture && on_record)
     );
     drop(dispatcher);
-    drop(session);
+    let close = session.close()?;
+    assert_eq!(
+        close.context_receipts_deleted,
+        usize::from(capture && !on_record)
+    );
     drop(vault);
     let reopened = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(
