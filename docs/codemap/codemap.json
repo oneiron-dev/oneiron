@@ -27204,13 +27204,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {

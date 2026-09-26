@@ -844,3 +844,68 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
     drop(segment);
     Ok(())
 }
+
+#[test]
+fn teardown_scrubs_owned_row_and_journal_payload() {
+    let mut op = put_op(b"journal-secret".to_vec());
+    super::journal::zeroize_batch_op_payload(&mut op);
+    assert!(matches!(op, BatchOp::Put { ref data, .. } if data.is_empty()));
+
+    let mut vector = BatchOp::Vector {
+        id: EntityId::now(),
+        vector: vec![4.0, 5.0],
+        pending_embedding_token: Some(b"token".to_vec()),
+    };
+    super::journal::zeroize_batch_op_payload(&mut vector);
+    assert!(
+        matches!(vector, BatchOp::Vector { ref vector, pending_embedding_token: Some(ref token), .. } if vector.is_empty() && token.is_empty())
+    );
+
+    let mut text = BatchOp::Text {
+        id: EntityId::now(),
+        fields: vec![("name".into(), "content".into())],
+    };
+    super::journal::zeroize_batch_op_payload(&mut text);
+    assert!(
+        matches!(text, BatchOp::Text { ref fields, .. } if fields[0].0.is_empty() && fields[0].1.is_empty())
+    );
+}
+
+#[test]
+fn closed_overlay_retains_taint_until_registry_release_without_wiping_live_state() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let id = EntityId::now();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, id.as_bytes(), b"private-row")?;
+    segment.commit()?;
+    // Closing does not scrub an Arc also held by the registry taint guard.
+    assert!(overlay.contains_entity(&id)?);
+    overlay.close()?;
+    assert!(overlay.contains_entity(&id)?);
+    assert!(matches!(
+        overlay.snapshot(),
+        Err(Error::OffRecord(
+            OffRecordError::OffRecordOverlayLeaseClosed { .. }
+        ))
+    ));
+    Ok(())
+}
+
+#[test]
+fn journal_refuses_payloads_outside_its_scrubbed_vocabulary() -> Result<()> {
+    let overlay = SessionOverlay::new(4096);
+    let segment = overlay.install_txn_segment()?;
+    let scope = JournalScope::new(EntityId::now(), EntityId::now());
+    let result = overlay.stage_journal_entry(journal_entry(
+        scope,
+        JournalRole::TurnOwnedArtifact,
+        BatchOp::ReconcileLexicalQueryHints {
+            source: EntityId::now(),
+            keep: Vec::new(),
+        },
+    ));
+    assert!(matches!(result, Err(Error::InvariantViolation(_))));
+    segment.commit()?;
+    assert!(overlay.snapshot()?.journal_ops(scope).is_empty());
+    Ok(())
+}

@@ -1,6 +1,8 @@
 use std::str;
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use xxhash_rust::xxh32::xxh32;
 
 use crate::entity_id::EntityId;
@@ -64,6 +66,7 @@ impl SessionOverlay {
         if let SnapshotLookup::Present(existing) =
             snapshot.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
         {
+            let existing = Zeroizing::new(existing);
             let (short_id, old_content_hash) = parse_session_short_id_value(&existing)?;
             let short_id = short_id.to_owned();
             if old_content_hash != content_hash {
@@ -99,7 +102,8 @@ impl SessionOverlay {
         short_id: &str,
         content_hash: u8,
     ) -> Result<()> {
-        let forward_key = encode_session_short_id_forward_key(short_id, content_hash);
+        let forward_key =
+            Zeroizing::new(encode_session_short_id_forward_key(short_id, content_hash));
         self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
         self.put(
             OverlayKeyspace::ShortIdsReverse,

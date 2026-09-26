@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -195,14 +197,19 @@ impl OverlaySnapshot {
         keyspace: OverlayKeyspace,
         include_key: impl Fn(&[u8]) -> bool,
     ) -> usize {
-        self.merge_plan(keyspace, include_key)
-            .rows
-            .iter()
-            .filter(|row| match row {
-                SnapshotMergeRow::Single { value, .. } => value.is_some(),
-                SnapshotMergeRow::Duplicate { present, .. } => present.is_some(),
-            })
-            .count()
+        match self.state.keyspaces[keyspace.slot()].as_ref() {
+            KeyspaceState::Single { rows, .. } => rows
+                .iter()
+                .filter(|(key, value)| {
+                    include_key(key) && matches!(value, OverlayValue::Present(_))
+                })
+                .count(),
+            KeyspaceState::DupSort { rows, .. } => rows
+                .iter()
+                .filter(|(key, _)| include_key(key))
+                .map(|(_, delta)| delta.present.len())
+                .sum(),
+        }
     }
 
     /// Journal entries staging a TRANSCRIPT entity put — the turn, its
@@ -296,6 +303,7 @@ impl OverlaySnapshot {
             if let SnapshotLookup::Present(value) =
                 self.lookup_single(OverlayKeyspace::ShortIdsReverse, id.as_bytes())
             {
+                let value = Zeroizing::new(value);
                 let (short_id, _content_hash) = parse_session_short_id_value(&value)?;
                 temporary_short_ids.push((*id, short_id.to_owned()));
             }

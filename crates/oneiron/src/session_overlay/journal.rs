@@ -1,3 +1,5 @@
+use zeroize::Zeroize;
+
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -53,6 +55,44 @@ impl JournalEntry {
     }
 }
 
+// Every journal clone owns a distinct payload. Wipe each copy on drop, not
+// at close: a COW journal can outlive the publishing overlay in a read lease.
+impl Drop for JournalEntry {
+    fn drop(&mut self) {
+        zeroize_batch_op_payload(&mut self.op);
+    }
+}
+
+pub(super) fn zeroize_batch_op_payload(op: &mut BatchOp) {
+    match op {
+        BatchOp::Put { data, .. } => data.zeroize(),
+        BatchOp::Vector {
+            vector,
+            pending_embedding_token,
+            ..
+        } => {
+            vector.zeroize();
+            if let Some(token) = pending_embedding_token {
+                token.zeroize();
+            }
+        }
+        BatchOp::Text { fields, .. } => {
+            for (name, value) in fields {
+                name.zeroize();
+                value.zeroize();
+            }
+        }
+        BatchOp::Phonetic { codes, .. } => {
+            for code in codes {
+                code.zeroize();
+            }
+        }
+        // These variants cannot be staged by the session journal. Their
+        // typed payloads are owned by the ordinary batch path, not this seam.
+        _ => {}
+    }
+}
+
 /// Turn/conversation scope carried by each typed journal operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct JournalScope {
@@ -101,6 +141,19 @@ pub(crate) struct PromotePlan {
     pub(crate) source_learned_at: Vec<u64>,
     pub(super) turn: EntityId,
     pub(super) conversation: EntityId,
+}
+
+// Replay ops and in-room aliases are private temporary copies of journal
+// material. The returned public promote outcome owns a separate mapping.
+impl Drop for PromotePlan {
+    fn drop(&mut self) {
+        for op in &mut self.ops {
+            zeroize_batch_op_payload(op);
+        }
+        for (_, alias) in &mut self.temporary_short_ids {
+            alias.zeroize();
+        }
+    }
 }
 
 impl PromotePlan {
