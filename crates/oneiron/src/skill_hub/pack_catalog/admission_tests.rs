@@ -771,15 +771,14 @@ fn agent_pack_and_section_share_fit_path_with_typed_permission_card() -> Result<
         }
     }
 
-    let section = serde_json::json!({"section_id":"alice.tools.panel", "state_family":{"family":"claim","version":1},
+    let section = serde_json::json!({"section_id":"example.worker.panel", "state_family":{"family":"claim","version":1},
         "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
-    let source = PackSource::from_files(vec![
-        HubFile::new("PACK.md", b"---\nname: alice.tools\ndescription: agent\nversion: 1\nkind: agent\nfacets: {\"identity\":\"identity.md\",\"policy\":\"policy.md\",\"skills\":\"skills.json\",\"knowledge\":\"knowledge/selected.json\"}\n---\nAgent source\n"),
-        HubFile::new("identity.md", b"Agent identity"), HubFile::new("policy.md", b"Agent policy"),
-        HubFile::new("skills.json", b"[]"),
-        HubFile::new("knowledge/selected.json", b"[]"),
-        HubFile::new("knowledge/sections/alice.tools.panel.json", serde_json::to_vec(&section).unwrap()),
-    ])?;
+    let mut files = super::tests::agent_files()?;
+    files.push(HubFile::new(
+        "knowledge/sections/example.worker.panel.json",
+        serde_json::to_vec(&section).expect("section JSON"),
+    ));
+    let source = PackSource::from_files(files)?;
     let (dir, vault, _owner, reference, publisher) =
         fixture(SkillHubTrustTier::Community, &source)?;
     let id = fetched_fixture(&vault, &source, &reference, &publisher, 3)?;
@@ -809,10 +808,10 @@ fn agent_pack_and_section_share_fit_path_with_typed_permission_card() -> Result<
         panic!("agent pack");
     };
     assert_eq!(receipt.sections.len(), 1);
-    assert_eq!(receipt.sections[0].section_id, "alice.tools.panel");
+    assert_eq!(receipt.sections[0].section_id, "example.worker.panel");
     let registry = crate::context_board::PluginSectionRegistry::rebuild(&vault, &Bindings)
         .expect("registry rebuild");
-    let section_id = crate::context_board::SectionId("alice.tools.panel".into());
+    let section_id = crate::context_board::SectionId("example.worker.panel".into());
     assert!(registry.get_pack_section(&section_id).is_some());
     assert_eq!(
         crate::context_board::render_pack_sections(&registry, &[])
@@ -946,5 +945,24 @@ fn invalid_bundled_skill_rolls_back_install() -> Result<()> {
     assert!(vault.pack_byte_map_snapshot()?.is_none());
     assert!(vault.pack_for_predicate("alice.tools.topic")?.is_none());
     assert_eq!(vault.get_pack_source(&id)?, Some(source));
+    Ok(())
+}
+
+#[test]
+fn agent_source_cannot_be_installed_as_a_runtime_pack() -> Result<()> {
+    struct UnexpectedQualification;
+    impl PackQualifier for UnexpectedQualification {
+        fn qualify(&self, _: &PackSource) -> Result<PackQualification> {
+            panic!("an inert agent source cannot reach the host qualifier");
+        }
+    }
+    let source = PackSource::from_files(super::tests::agent_files()?)?;
+    let (_dir, vault, _owner, reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let err = vault
+        .prepare_pack_install(id, &reference, &publisher, &UnexpectedQualification)
+        .expect_err("agent sources are not runtime installations");
+    assert!(matches!(err, crate::Error::InvalidConfig(_)));
     Ok(())
 }
