@@ -1143,6 +1143,7 @@ fn owner_verbs_suspend_when_a_first_seen_sidecar_is_lost_after_migration() {
             for key in &sidecars {
                 assert!(vault.store.sync_state.delete(wtxn, key.as_str())?);
             }
+            crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
             Ok(())
         })
         .expect("drop the sidecars");
