@@ -25465,7 +25465,7 @@
      "path": "src/recovery/snapshot_writer.rs",
      "purpose": "Off-hot-path publication of canonical Layer-1 window artifacts",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
