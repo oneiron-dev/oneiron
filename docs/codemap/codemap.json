@@ -31133,7 +31133,6 @@
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
       "enum": 1,
-      "fn": 1,
       "struct": 15
      }
     },

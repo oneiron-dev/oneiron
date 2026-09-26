@@ -25,7 +25,7 @@ pub struct TaskAskShort {
 }
 
 impl TaskAskRequest {
-    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
+    fn into_spec(self) -> MemoryResult<TaskAskSpec> {
         match self {
             Self::Rich(spec) => Ok(*spec),
             Self::Short(short) => {
