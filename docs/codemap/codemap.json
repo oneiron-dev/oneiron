@@ -39072,7 +39072,7 @@
      "path": "src/api/core/hydrate.rs",
      "purpose": "Hydrate and short-id hydrate DTOs, routes, and mappers",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {

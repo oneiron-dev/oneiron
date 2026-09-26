@@ -462,7 +462,10 @@ def external_mounts(sources):
                 ExternalMount(
                     parent=parent,
                     targets=targets,
-                    cfg_test=inside_test_module,
+                    # `#[cfg(test)]` beside the `#[path]` attribute gates this
+                    # mount exactly as it gates a plain `mod x;`.
+                    cfg_test=inside_test_module
+                    or (simple_nesting and "#[cfg(test)]" in compact),
                 )
             )
     return mounts

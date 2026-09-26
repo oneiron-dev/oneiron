@@ -318,6 +318,9 @@ pub(crate) async fn core_batch_short_id_hydrate(
         .read(&valid_refs, None)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     let narrowing = hydrated.receipt;
+    // Each item starts from the bulk read's receipt; a successor an item's
+    // observation reads narrows that item and the batch.
+    let mut batch_narrowing = narrowing.clone();
     let mut values = hydrated.value.into_iter();
     let mut results = Vec::with_capacity(req.refs.len());
     for (reference, parsed) in req.refs.into_iter().zip(parsed) {
@@ -329,8 +332,11 @@ pub(crate) async fn core_batch_short_id_hydrate(
                     content_hash,
                     view,
                     values.next().flatten(),
-                    narrowing.clone(),
                     staged_observations.as_mut(),
+                    ItemReceipts {
+                        start: narrowing.clone(),
+                        response: &mut batch_narrowing,
+                    },
                 )? {
                     Some(result) => CoreBatchShortIdHydrateItem {
                         reference,
@@ -373,7 +379,10 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if let (Some(target), Some(staged)) = (observations.as_deref_mut(), staged_observations) {
         *target = staged;
     }
-    Ok(Json(CoreBatchShortIdHydrateResponse { narrowing, results }))
+    Ok(Json(CoreBatchShortIdHydrateResponse {
+        narrowing: batch_narrowing,
+        results,
+    }))
 }
 
 pub(crate) fn hydrate_short_id_response_with_mode(
@@ -392,19 +401,27 @@ pub(crate) fn hydrate_short_id_response_with_mode(
         )
         .map_err(|error| core_engine_error("core short hydrate failed", error))?
         .single();
+    let mut receipt = read.receipt;
     let value = project_hydrated_short_id(
         scoped_read,
         short_id,
         content_hash,
         view,
         read.value,
-        read.receipt.clone(),
         observations,
+        ItemReceipts {
+            start: receipt.clone(),
+            response: &mut receipt,
+        },
     )?;
-    Ok(oneiron::claim::ScopedReadResult {
-        value,
-        receipt: read.receipt,
-    })
+    Ok(oneiron::claim::ScopedReadResult { value, receipt })
+}
+
+/// The receipt one hydrated item starts from, and the response receipt that
+/// also takes any successor the item's observation reads.
+pub(crate) struct ItemReceipts<'a> {
+    pub(crate) start: oneiron::claim::ScopedReadReceipt,
+    pub(crate) response: &'a mut oneiron::claim::ScopedReadReceipt,
 }
 
 pub(crate) fn project_hydrated_short_id(
@@ -413,9 +430,13 @@ pub(crate) fn project_hydrated_short_id(
     content_hash: u8,
     view: View,
     hydrated: Option<oneiron::claim::ReadRow>,
-    mut narrowing: oneiron::claim::ScopedReadReceipt,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
+    receipts: ItemReceipts<'_>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
+    let ItemReceipts {
+        start: mut narrowing,
+        response,
+    } = receipts;
     let content_hash_hex = format!("{content_hash:02x}");
     let Some(oneiron::claim::ReadRow {
         id,
@@ -452,6 +473,7 @@ pub(crate) fn project_hydrated_short_id(
             .map_err(|error| core_engine_error("session body observation failed", error))?
     {
         narrowing.restrict_with(&successor);
+        response.restrict_with(&successor);
     }
     let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
     Ok(Some(CoreHydrateResponse {
