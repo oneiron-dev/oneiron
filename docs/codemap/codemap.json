@@ -15340,7 +15340,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -15982,7 +15982,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Digest-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -18943,7 +18943,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GeneratedUiResultSetScope",
@@ -18954,14 +18954,17 @@
       "LensBackingTargetKind",
       "LensHostBackingRef",
       "LensReadHandle",
-      "LensReadReach"
+      "LensReadReach",
+      "LensSpanCursor",
+      "LensSpanSelectionRequest"
      ],
      "path": "src/lens/mediation/mediation_backing.rs",
      "purpose": "Backing refs, selection requests, and engine-issued read handles",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
-      "fn": 21,
-      "struct": 6
+      "fn": 25,
+      "struct": 8
      }
     },
     {
@@ -18974,7 +18977,7 @@
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
       "crate-vis": 3,
-      "fn": 9,
+      "fn": 10,
       "struct": 1
      }
     },
@@ -19362,7 +19365,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -19375,6 +19378,30 @@
      "surface": {
       "crate-vis": 18
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInContainerSandboxHost",
+      "LinkedInSeatHostServices",
+      "LinkedInSeatSandbox"
+     ],
+     "path": "src/linkedin_connector/sandbox_host.rs",
+     "purpose": "Container-backed, per-vault LinkedIn seat lifecycle",
+     "surface": {
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linkedin_connector/sandbox_host/tests.rs",
+     "purpose": "Lifecycle acceptance using a recording Docker-compatible executable",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34525,7 +34552,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35094,8 +35121,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2072,
-   "test_files": 711
+   "source_files": 2073,
+   "test_files": 712
   },
   "oneiron-android": {
    "files": [
