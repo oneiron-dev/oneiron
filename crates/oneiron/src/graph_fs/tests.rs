@@ -726,11 +726,23 @@ fn readdir_listing_carries_the_read_receipt() -> Result<()> {
     ] {
         let file = fs.read_file(&path)?;
         assert!(file.value.is_none());
-        assert_eq!(file.receipt.suppressed_count, 1);
+        assert_eq!(
+            file.receipt
+                .as_ref()
+                .expect("scoped file read receipt")
+                .suppressed_count,
+            1
+        );
     }
     let file = fs.read_file(&format!("/claims/{}", allowed.to_hex()))?;
     assert!(file.value.is_some());
-    assert_eq!(file.receipt.suppressed_count, 0);
+    assert_eq!(
+        file.receipt
+            .as_ref()
+            .expect("scoped file read receipt")
+            .suppressed_count,
+        0
+    );
 
     // The coreutils carry the receipt of the reads behind their output.
     let cat = fs.cat(&format!("/claims/{}", withheld.to_hex()), None)?;
