@@ -24,6 +24,61 @@ fn data(size: usize) -> Vec<u8> {
 }
 
 #[test]
+fn chunk_parameters_are_persisted_by_store_creation_before_vault_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = embedding_test_config();
+    let store = crate::store::Store::open(dir.path(), &config).unwrap();
+    let txn = store.env.read_txn().unwrap();
+    let raw = store
+        .vault_meta
+        .get(&txn, chunks::PARAM_KEY)
+        .unwrap()
+        .expect("creation must persist LFS parameters before a Vault opens");
+    let seed = u64::from_le_bytes(raw.as_ref().try_into().unwrap());
+    assert_ne!(seed, 0);
+    drop(txn);
+    drop(store);
+
+    let vault = Vault::open(dir.path(), config).unwrap();
+    assert_eq!(vault.lfs_chunk_parameters().unwrap().seed, seed);
+}
+
+#[test]
+fn missing_chunk_parameters_fail_closed_without_upload_reminting() {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut txn = vault.store.env.write_txn().unwrap();
+    vault
+        .store
+        .vault_meta
+        .delete(&mut txn, chunks::PARAM_KEY)
+        .unwrap();
+    txn.commit().unwrap();
+
+    assert_eq!(
+        vault.lfs_chunk_parameters().unwrap_err().kind(),
+        crate::ErrorKind::CorruptedIndex
+    );
+    let bytes = b"cannot mint params on upload";
+    let oid = LfsOid::digest(bytes);
+    assert_eq!(
+        vault
+            .put_lfs_object(oid, bytes, time(), time().start)
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::CorruptedIndex
+    );
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&txn, chunks::PARAM_KEY)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
 fn chunk_parameters_are_vault_private_and_small_files_use_one_chunk() {
     let (_a, a) = open_test_vault_with(embedding_test_config());
     let (_b, b) = open_test_vault_with(embedding_test_config());

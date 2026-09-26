@@ -205,6 +205,9 @@ impl Store {
             is_new_vault,
             storage_abi_version,
         )?;
+        if is_new_vault {
+            crate::origin::lfs::mint_lfs_chunk_parameters_in_txn(&vault_meta_view, &mut wtxn)?;
+        }
         if !is_new_vault {
             validate_db_manifest_set(&env, &wtxn)?;
         }

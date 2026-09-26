@@ -21873,7 +21873,7 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 3
      }
@@ -21896,7 +21896,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
