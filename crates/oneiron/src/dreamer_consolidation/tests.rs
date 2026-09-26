@@ -57,7 +57,7 @@ fn grant_fixture_reads(vault: &Vault) -> Result<()> {
         "scoped_grants".into(),
         Value::Array(vec![Value::Map(vec![
             ("actor_ref".into(), actor.entity_ref().to_hex().into()),
-            ("actor_class".into(), "agent".into()),
+            ("actor_class".into(), "system".into()),
             ("effector".into(), "core:read".into()),
             (
                 "scope".into(),

@@ -41,13 +41,13 @@ fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
         (
             "actor_ceilings".into(),
             Value::Array(
-                ["agent", "human", "first_party"]
+                ["system", "human", "first_party"]
                     .map(|actor| {
                         Value::Map(vec![
                             ("actor_class".into(), actor.into()),
                             (
                                 "ceiling".into(),
-                                if actor == "agent" && !auto {
+                                if actor == "system" && !auto {
                                     "proposed"
                                 } else {
                                     "auto"

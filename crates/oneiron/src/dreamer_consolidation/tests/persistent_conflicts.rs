@@ -19,7 +19,7 @@ fn auto_policy(vault: &Vault) {
         )
     })
     .collect();
-    let value = serde_json::json!({"schema_version":crate::gate::POLICY_SCHEMA_VERSION,"pack_id":"conflict-test","pack_version":"1","min_engine_version":env!("CARGO_PKG_VERSION"),"defaults":{"criticality":"normal","sensitivity":"normal"},"rules":[],"actor_ceilings":[{"actor_class":"agent","ceiling":"auto"},{"actor_class":"human","ceiling":"auto"},{"actor_class":"first_party","ceiling":"auto"}],"source_trust":sources,"signature":{"alg":"ed25519","key_id":"test","sig":"test-signature"}});
+    let value = serde_json::json!({"schema_version":crate::gate::POLICY_SCHEMA_VERSION,"pack_id":"conflict-test","pack_version":"1","min_engine_version":env!("CARGO_PKG_VERSION"),"defaults":{"criticality":"normal","sensitivity":"normal"},"rules":[],"actor_ceilings":[{"actor_class":"system","ceiling":"auto"},{"actor_class":"human","ceiling":"auto"},{"actor_class":"first_party","ceiling":"auto"}],"source_trust":sources,"signature":{"alg":"ed25519","key_id":"test","sig":"test-signature"}});
     crate::test_util::put_policy_manifest_bytes(
         vault,
         crate::gate::default_policy_manifest_id().unwrap(),

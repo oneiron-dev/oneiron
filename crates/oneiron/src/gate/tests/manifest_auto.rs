@@ -142,6 +142,42 @@ fn dreamer_generated_auto_write_requires_manifest_signature() -> Result<()> {
 }
 
 #[test]
+fn system_dreamer_auto_write_still_requires_a_signed_manifest() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let dreamer = vault.dreamer_authority()?;
+    let mut data = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Generated, 0)]);
+    append_actor_ceiling(
+        &mut data,
+        actor_ceiling_row_for_ref("system", &dreamer.entity_ref().to_hex(), "auto"),
+    );
+    put_policy_manifest_bytes(&vault, test_id(0xC9), &data)?;
+
+    let claim_id = test_id(0xCA);
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.evidence = Some(precommit_evidence(vec![first_party_connector_actor_id()]));
+    let (candidate, dummy_envelope) = dreamer_claim_candidate_write_parts(
+        &vault,
+        &body,
+        first_party_connector_actor_id(),
+        "dreamer-system-run",
+    )?;
+    let envelope = crate::WriteEnvelope::new(
+        dreamer,
+        dummy_envelope.source(),
+        dummy_envelope.provenance().clone(),
+        dummy_envelope.approval(),
+    );
+    let err = vault
+        .batch()
+        .claim_candidate(&claim_id, candidate, &envelope, test_time(3), 3)
+        .commit()
+        .expect_err("switching to system must not bypass the Dreamer signature gate");
+    assert_gate_rejected(err, "pending", &["gate.pending.policy_manifest_authority"]);
+    assert!(vault.get_raw(&claim_id)?.is_none());
+    Ok(())
+}
+
+#[test]
 fn dreamer_generated_auto_write_with_signed_manifest_reaches_auto() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let mut data = encode_policy_manifest(vec![
