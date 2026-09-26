@@ -3808,8 +3808,8 @@
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 12,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -10195,7 +10195,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 33,
       "struct": 7
@@ -12534,19 +12534,19 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DisclosureScope",
       "DisclosureScopeStatus"
      ],
      "path": "src/disclosure/scope_codec.rs",
-     "purpose": "DisclosureScope type with canonical msgpack codec and key validation",
+     "purpose": "Contact clearance envelope and canonical six-axis Scope codec",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 7,
       "enum": 1,
-      "fn": 8,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -36685,6 +36685,48 @@
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
    "source_files": 7,
    "test_files": 2
+  },
+  "oneiron-image-comfyui": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComfyModelShim",
+      "ComfyOptions",
+      "ComfyUiBackend",
+      "ComfyWorkflow",
+      "InputField"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Self-hosted ComfyUI image adapter",
+     "surface": {
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stub_server.rs",
+     "purpose": "Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Self-hosted ComfyUI image adapter"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Self-hosted ComfyUI image adapter",
+   "source_files": 1,
+   "test_files": 1
   },
   "oneiron-llm-anthropic": {
    "files": [
