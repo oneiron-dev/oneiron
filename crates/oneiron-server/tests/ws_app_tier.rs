@@ -112,11 +112,37 @@ fn bind_payload(credential: &Credential, timestamp: u64) -> Value {
     json!({"token":credential.slip.to_token().unwrap(),"binding":{"timestamp":timestamp,"nonce":nonce,"signature":signature}})
 }
 
+fn host_root_binding(fixture: &Fixture) -> (String, Value) {
+    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let slip = fixture
+        .server
+        .vault()
+        .ensure_host_root_slip(&issuer)
+        .unwrap();
+    let timestamp = fixture.server.vault().now_recorded_at();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature = issuer
+        .binding_proof(&slip, challenge.as_bytes())
+        .unwrap()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    (
+        slip.to_token().unwrap(),
+        json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}),
+    )
+}
+
 async fn connect(fixture: &Fixture, version: u8) -> Socket {
     let mut request = fixture.url.as_str().into_client_request().unwrap();
+    let (token, binding) = host_root_binding(fixture);
     request
         .headers_mut()
-        .insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
+        .insert("authorization", format!("Bearer {token}").parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-oneiron-binding", binding.to_string().parse().unwrap());
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
     socket
         .send(Message::Binary(vec![TAG_PROTOCOL_HELLO, version].into()))

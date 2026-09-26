@@ -108,11 +108,11 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
 ///
 /// stdout is exactly one line, the link, so piping it yields nothing else; the
 /// expiry goes to stderr. It opens no vault, so it runs beside a live server,
-/// and the host secret reaches the server only on curl's config channel.
+/// and the slip plus holder proof reach curl only on its config channel.
 pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
-    let Ok(secret) = std::env::var(&args.secret_env) else {
-        anyhow::bail!("{} holds no host secret; nothing was sent", args.secret_env);
-    };
+    let token = std::env::var(&args.token_env)
+        .map_err(|_| anyhow::anyhow!("{} holds no capability slip", args.token_env))?;
+    let binding = api::signed_binding(&token, &args.binding_key_env)?;
     let mut scope = oneiron::federation::Scope::top();
     if let Some(verbs) = args.scope {
         scope.verbs = oneiron::federation::ScopeAxis::Some(verbs.into_iter().collect());
@@ -127,7 +127,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         "lifetime_secs": args.lifetime_secs,
         "principal": principal,
     }))?;
-    let (origin, link) = api::create_pairing_link(&args.url, &secret, body)?;
+    let (origin, link) = api::create_pairing_link(&args.url, &token, &binding, body)?;
     println!(
         "{}",
         oneiron::authority::format_pairing_link(&origin, &link.code, &args.principal_ref)

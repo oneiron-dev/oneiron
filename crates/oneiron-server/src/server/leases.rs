@@ -1,4 +1,8 @@
-//! Device-lease registry: reads, registration, revocation, and commit/mirror.
+//! Receipt-attestation registry: historical device keys, revocation and mirroring.
+//!
+//! Lease rows are verification records for REDACTION_AUDIT receipt replay, not
+//! transport authority. New registration always refuses, and rotation is gone.
+//! Slip-backed receipt attestation is a separate open design item (ONE-2294).
 use loro::{ExportMode, Frontiers, LoroValue, ValueOrContainer, VersionVector};
 use oneiron::SyncEngineContext;
 use oneiron::sync::lease::{self, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP};

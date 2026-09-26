@@ -81,8 +81,17 @@ pub async fn api(args: ApiArgs) -> anyhow::Result<()> {
             anyhow::bail!("{secret_env} is not valid UTF-8; nothing was sent")
         }
     };
+    let binding = secret
+        .as_deref()
+        .filter(|token| token.starts_with("v2.slip."))
+        .map(|token| signed_binding(token, &args.binding_key_env))
+        .transpose()?;
     let request = request_for_command(&args.base_url, args.command)?;
-    run_curl(&request, secret.as_deref())
+    if let Some(binding) = binding.as_deref() {
+        run_curl_with_binding(&request, secret.as_deref(), Some(binding))
+    } else {
+        run_curl(&request, secret.as_deref())
+    }
 }
 
 /// Map a short command onto an EXISTING route. Every URL is built from the
@@ -161,12 +170,56 @@ pub(crate) fn request_for_command(
     }
 }
 
+/// A slip bearer is only a credential when the holder signs a fresh request.
+/// Return a JSON header value, never the binding seed.
+pub(crate) fn signed_binding(token: &str, key_env: &str) -> anyhow::Result<String> {
+    let seed =
+        std::env::var(key_env).map_err(|_| anyhow::anyhow!("{key_env} holds no binding seed"))?;
+    signed_binding_for_seed(token, &seed)
+}
+
+pub(super) fn signed_binding_for_seed(token: &str, seed: &str) -> anyhow::Result<String> {
+    use ed25519_dalek::{Signer, SigningKey};
+    let slip = oneiron::authority::CapabilitySlip::from_token(token)?;
+    anyhow::ensure!(
+        seed.len() == 64 && seed.bytes().all(|b| b.is_ascii_hexdigit()),
+        "binding seed must be 64 hex characters"
+    );
+    let bytes: Vec<u8> = seed
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap_or(""), 16))
+        .collect::<Result<_, _>>()?;
+    let key = SigningKey::from_bytes(
+        &bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid binding seed length"))?,
+    );
+    anyhow::ensure!(
+        key.verifying_key().to_bytes() == slip.claims.binding_key,
+        "binding seed does not match the capability slip"
+    );
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let nonce = oneiron::EntityId::now().to_hex();
+    let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+    let signature: String = key
+        .sign(&slip.binding_transcript(challenge.as_bytes())?)
+        .to_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(serde_json::json!({"timestamp":timestamp,"nonce":nonce,"signature":signature}).to_string())
+}
+
 /// `token pair`: one POST on the pairing route. Its one reply is captured
 /// rather than streamed, because the caller prints a link built from it; a
 /// refusal's body still reaches stderr verbatim.
 pub(crate) fn create_pairing_link(
     base_url: &str,
-    secret: &str,
+    token: &str,
+    binding: &str,
     body: Vec<u8>,
 ) -> anyhow::Result<(String, oneiron::authority::PairingLink)> {
     let base = normalized_base(base_url)?;
@@ -176,10 +229,11 @@ pub(crate) fn create_pairing_link(
         body: Some(body),
         content_type: Some(JSON_CONTENT_TYPE.to_owned()),
     };
-    let output = run_curl_output(
+    let output = run_curl_output_with_binding(
         OsStr::new(CURL_PROGRAM),
         &request,
-        Some(secret),
+        token,
+        binding,
         Stdio::piped(),
         Stdio::inherit(),
     )?;
@@ -205,6 +259,22 @@ pub(crate) fn run_curl(request: &CurlRequest, secret: Option<&str>) -> anyhow::R
     exit_status_result(&output.status)
 }
 
+fn run_curl_with_binding(
+    request: &CurlRequest,
+    secret: Option<&str>,
+    binding: Option<&str>,
+) -> anyhow::Result<()> {
+    let output = run_curl_output_inner(
+        OsStr::new(CURL_PROGRAM),
+        request,
+        secret,
+        binding,
+        Stdio::inherit(),
+        Stdio::inherit(),
+    )?;
+    exit_status_result(&output.status)
+}
+
 /// The one execution path, parameterized only by where the child's streams go.
 ///
 /// Production INHERITS both, which is what makes a success body byte-identical:
@@ -223,8 +293,33 @@ pub(crate) fn run_curl_output(
     stdout: Stdio,
     stderr: Stdio,
 ) -> anyhow::Result<Output> {
+    run_curl_output_inner(program, request, secret, None, stdout, stderr)
+}
+
+fn run_curl_output_with_binding(
+    program: &OsStr,
+    request: &CurlRequest,
+    token: &str,
+    binding: &str,
+    stdout: Stdio,
+    stderr: Stdio,
+) -> anyhow::Result<Output> {
+    run_curl_output_inner(program, request, Some(token), Some(binding), stdout, stderr)
+}
+
+fn run_curl_output_inner(
+    program: &OsStr,
+    request: &CurlRequest,
+    secret: Option<&str>,
+    binding: Option<&str>,
+    stdout: Stdio,
+    stderr: Stdio,
+) -> anyhow::Result<Output> {
     let config = match secret {
-        Some(secret) => Some(curl_config(secret)?),
+        Some(secret) => Some(match binding {
+            Some(binding) => curl_config_with_binding(secret, Some(binding))?,
+            None => curl_config(secret)?,
+        }),
         None => None,
     };
     let body = match request.body.as_deref() {
@@ -297,6 +392,13 @@ pub(crate) fn exit_status_result(status: &ExitStatus) -> anyhow::Result<()> {
 /// with backslash escapes. Refusing a control character keeps a credential
 /// from smuggling a second option onto a following line.
 pub(crate) fn curl_config(secret: &str) -> anyhow::Result<String> {
+    curl_config_with_binding(secret, None)
+}
+
+pub(super) fn curl_config_with_binding(
+    secret: &str,
+    binding: Option<&str>,
+) -> anyhow::Result<String> {
     anyhow::ensure!(
         !secret.is_empty(),
         "the configured credential is empty; nothing was sent"
@@ -305,9 +407,17 @@ pub(crate) fn curl_config(secret: &str) -> anyhow::Result<String> {
         !secret.chars().any(char::is_control),
         "the configured credential contains a control character; nothing was sent"
     );
-
     let escaped = secret.replace('\\', "\\\\").replace('"', "\\\"");
-    Ok(format!("header = \"Authorization: Bearer {escaped}\"\n"))
+    let mut config = format!("header = \"Authorization: Bearer {escaped}\"\n");
+    if let Some(binding) = binding {
+        anyhow::ensure!(
+            !binding.is_empty() && !binding.chars().any(char::is_control),
+            "binding proof is empty or contains a control character; nothing was sent"
+        );
+        let escaped = binding.replace('\\', "\\\\").replace('"', "\\\"");
+        config.push_str(&format!("header = \"x-oneiron-binding: {escaped}\"\n"));
+    }
+    Ok(config)
 }
 
 /// Percent-encode one path segment or query value: everything outside the

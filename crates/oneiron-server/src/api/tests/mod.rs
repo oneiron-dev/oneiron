@@ -438,9 +438,9 @@ pub(super) fn test_bearer(claims: &str) -> String {
     format!("{}{claims}", slip_credentials::RECIPE_PREFIX)
 }
 
-/// Owner-grade credential: the bare trust root over the standard header.
+/// Owner-grade fixture: mint a logged, holder-bound top-scope slip.
 pub(super) fn owner_bearer() -> String {
-    "Bearer secret".to_owned()
+    test_bearer("")
 }
 
 pub(super) fn core_request(
@@ -856,7 +856,15 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
+    // The old per-entity allowlist was replaced by the six-axis clearance.
+    // Keep the older test cases runnable while their record-scope expectations
+    // are updated alongside the read-plane migration.
+    let clearance = if entities.is_empty() {
+        oneiron::federation::Scope::default()
+    } else {
+        oneiron::federation::Scope::top()
+    };
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
         .vault

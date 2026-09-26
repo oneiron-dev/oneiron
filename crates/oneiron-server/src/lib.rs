@@ -3,8 +3,8 @@
 //! Hosts the root + per-window Loro Docs OVER LMDB (vault + sync_state) per
 //! ARCH-0023b Fig. 1: imported client updates are persisted synchronously to
 //! `sync_state` before fan-out, window/root snapshots reload on boot, and the
-//! `/ws` upgrade enforces the Phase-1 shared secret (fail-closed when
-//! configured).
+//! `/ws` upgrade requires a logged, holder-bound capability slip (fail-closed
+//! when configured).
 //!
 //! The binary (`main.rs`) and the integration tests share this construction
 //! path: [`server::SyncServer::new`] + [`build_app`].

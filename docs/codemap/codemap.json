@@ -29906,15 +29906,16 @@
       "NoteSyncSession",
       "SyncClientConfig",
       "SyncEvent",
-      "SyncStatus"
+      "SyncStatus",
+      "SyncTransportCredential"
      ],
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 3,
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -30111,7 +30112,7 @@
       "const": 7,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 16,
+      "fn": 15,
       "mod": 1,
       "struct": 2
      }
@@ -39339,7 +39340,7 @@
      "path": "src/api/lease.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 3
      }
     },
     {
@@ -40123,7 +40124,7 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -41532,26 +41533,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/server/lease_rotation.rs",
-     "purpose": "Owner-authorized atomic rekey: revoke the old binding and grant a fresh one",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/server/lease_scope_tests.rs",
-     "purpose": "—",
-     "surface": {}
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
      "path": "src/server/leases.rs",
-     "purpose": "Device-lease registry: reads, registration, revocation, and commit/mirror",
+     "purpose": "Receipt-attestation registry: historical device keys, revocation and mirroring",
      "surface": {
       "crate-vis": 10
      }
@@ -41583,9 +41566,17 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "re-export": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/slip_transport_tests.rs",
+     "purpose": "Slip-only transport admission with a historical receipt-key registry row",
+     "surface": {}
     },
     {
      "bucket": "L",
@@ -41595,16 +41586,6 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/server/vault_binding.rs",
-     "purpose": "Hosted API and socket binding to one local vault and one registered device key",
-     "surface": {
-      "crate-vis": 4
      }
     },
     {
@@ -41642,7 +41623,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -42083,7 +42064,7 @@
      "purpose": "—"
     },
     "server": {
-     "files": 12,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42127,7 +42108,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
+   "source_files": 228,
    "test_files": 96
   },
   "oneiron-uniffi": {

@@ -174,9 +174,7 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         }),
     );
     assert_error(&payload_actor, "FORBIDDEN");
-    let mut headers = axum::http::HeaderMap::new();
-    headers.insert("authorization", format!("Bearer {SECRET}").parse().unwrap());
-    let owner = CoreAuth::from_headers(&headers, &server.config, server.vault().as_ref()).unwrap();
+    let owner = crate::test_credentials::authenticate(&server, "jti=production-unregistered-host");
     let reply = rpc(&server, &owner, "receipts", json!({}));
     assert_error(&reply, "FORBIDDEN");
     assert_eq!(

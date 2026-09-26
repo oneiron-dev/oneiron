@@ -83,10 +83,14 @@ pub struct TokenPairArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
     pub url: String,
 
-    /// Environment variable holding the host secret. The secret is never a
-    /// positional argument, never printed, and never reaches curl's argv.
-    #[arg(long, default_value = "ONEIRON_SECRET")]
-    pub secret_env: String,
+    /// Environment variable holding a logged owner-grade capability slip.
+    #[arg(long, default_value = "ONEIRON_TOKEN")]
+    pub token_env: String,
+
+    /// Environment variable holding its Ed25519 binding seed (64 hex chars).
+    /// Neither credential reaches curl's argv.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
 
     /// Verbs the paired slip carries, comma-separated (e.g.
     /// `core:read,core:write`). Omit for every verb.
@@ -131,13 +135,17 @@ pub struct ApiArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:3000")]
     pub base_url: String,
 
-    /// Environment variable holding the bearer credential. The secret is never
+    /// Environment variable holding a bearer slip. The credential is never
     /// a positional argument, never printed, and never reaches curl's argv.
     /// When the variable is unset the request carries no `Authorization`
     /// header at all, which is what a public route and an
     /// `allow_unauthenticated` server answer.
     #[arg(long, default_value = "ONEIRON_SECRET")]
     pub secret_env: String,
+
+    /// Environment variable with the Ed25519 binding seed for a slip bearer.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
 
     #[command(subcommand)]
     pub command: ApiCommand,

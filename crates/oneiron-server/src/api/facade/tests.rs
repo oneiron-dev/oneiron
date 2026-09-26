@@ -205,7 +205,7 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         })
     };
     let (status, _) = post(&server, &format!("Bearer {SECRET}"), "tasks.ask", json!({})).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     for answer_first in [false, true] {
         let spec = ask_spec(format!("order-{answer_first}"));
         let (status, receipt) = post(&server, &owner_token, "tasks.ask", spec.clone()).await;

@@ -404,7 +404,7 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
 }
 
 #[tokio::test]
-async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
+async fn core_context_pack_owner_absent_top_scope_does_not_invent_record_filter() {
     let (_dir, server) = interlocutor_test_server();
     let identity_ref = seeded_test_entity_id(0x1517_0001);
     let contact_principal = seeded_test_entity_id(0x1517_0002);
@@ -415,11 +415,12 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         "kenji@example.com",
     );
     let party = seed_text_turn(&server, "hanami party planning needle17");
-    let diary = seed_text_turn(&server, "private diary entry needle17");
+    let _diary = seed_text_turn(&server, "private diary entry needle17");
     seed_disclosure_scope(&server, contact_principal, vec![party]);
 
-    // Scoped bearer whose principal IS the contact row; no block (N13 shape
-    // with a real scope). AbsenceClamp admits only the allowlisted party.
+    // The six-axis top clearance does not retain the retired entity allowlist.
+    // A contact caller still takes the absence-clamp path without an invented
+    // per-record filter.
     let request = json!({ "query": "needle17", "limit": 10 });
     let (status, body) = route_json(
         server,
@@ -438,20 +439,14 @@ async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
         body["disclosure"]["notice"].is_null(),
         "notice is Some iff supervised"
     );
+    assert_eq!(body["disclosure"]["clamped_out"], Value::from(0));
+    let party_hex = party.to_hex();
     assert!(
-        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
-        "candidate sweep counted removals: {body:?}"
-    );
-    let result_ids: Vec<&str> = body["results"]
-        .as_array()
-        .expect("results")
-        .iter()
-        .filter_map(|entity| entity["id"].as_str())
-        .collect();
-    assert!(result_ids.contains(&party.to_hex().as_str()));
-    assert!(
-        !result_ids.contains(&diary.to_hex().as_str()),
-        "out-of-scope Tier-B memory absent from the assembled context"
+        body["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .any(|entity| entity["id"].as_str() == Some(party_hex.as_str()))
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());

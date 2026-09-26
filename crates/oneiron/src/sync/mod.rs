@@ -52,7 +52,10 @@ pub mod transport;
 pub mod types;
 pub mod window;
 
-pub use client::{EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus};
+pub use client::{
+    EphemeralChangeOrigin, SyncClient, SyncClientConfig, SyncEvent, SyncStatus,
+    SyncTransportCredential,
+};
 pub use connection::{ConnectionConfig, LocalUpdate, SyncConnection};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,

@@ -10,8 +10,10 @@ pub struct SyncClientConfig {
     pub federation_admission_role: crate::sync::FederationAdmissionRole,
     /// WebSocket server URL (e.g., "wss://user-{id}.fly.dev/ws").
     pub server_url: String,
-    /// Auth token (WorkOS JWT for production, shared secret for Phase 1).
+    /// Legacy bearer-only token. A production host requires `transport_credential`.
     pub auth_token: String,
+    /// Logged owner-grade slip and holder key for the `/ws` upgrade.
+    pub transport_credential: Option<SyncTransportCredential>,
     /// Opt in to this configured server as the NOTE admission authority.
     /// Must be a MAC-verified actor-bound slip with core:read,core:write and jti.
     /// Only TLS or loopback URLs are accepted for this lane.
@@ -35,6 +37,7 @@ impl Default for SyncClientConfig {
             federation_admission_role: crate::sync::FederationAdmissionRole::Guest,
             server_url: String::new(),
             auth_token: String::new(),
+            transport_credential: None,
             note_session: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
@@ -42,6 +45,30 @@ impl Default for SyncClientConfig {
             reconnect_initial_ms: 1_000,
             ephemeral_timeout_ms: 30_000,
         }
+    }
+}
+
+/// A logged slip and its throwaway holder key for each WebSocket upgrade.
+/// The key is not an enrolled device authority; the host verifies the slip.
+#[derive(Clone)]
+pub struct SyncTransportCredential {
+    token: String,
+    key: ed25519_dalek::SigningKey,
+}
+impl SyncTransportCredential {
+    pub fn new(token: String, key: ed25519_dalek::SigningKey) -> Self {
+        Self { token, key }
+    }
+    pub(in crate::sync) fn token(&self) -> &str {
+        &self.token
+    }
+    pub(in crate::sync) fn key(&self) -> &ed25519_dalek::SigningKey {
+        &self.key
+    }
+}
+impl std::fmt::Debug for SyncTransportCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SyncTransportCredential([redacted])")
     }
 }
 

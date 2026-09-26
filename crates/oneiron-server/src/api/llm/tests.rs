@@ -124,7 +124,7 @@ fn seed_models(vault: &Vault) {
     }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn own_server_transport_reaches_authenticated_server_and_settles_local_budget() {
+async fn raw_remote_transport_refuses_issuer_secret_without_a_holder_proof() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     seed_models(&vault);
@@ -147,33 +147,21 @@ async fn own_server_transport_reaches_authenticated_server_and_settles_local_bud
     });
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        let client = RemoteLlmClient::connect(&origin, "fixture-owner").unwrap();
-        let guard = BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
+        let guard =
+            BudgetGuard::with_reserve_units("client", 100, 10, BudgetExhaustionPolicy::Suspend);
         let lease = guard.admit_for_request(&request()).unwrap().lease;
-        assert_eq!(runtime.block_on(client.generate(request(), &lease)).unwrap(), response());
-        let mut stream = client.stream(request(), &lease).unwrap();
-        let mut events = Vec::new();
-        while let Some(event) = runtime.block_on(stream.next()) { events.push(event.unwrap()); }
-        assert_eq!(events.len(), 4);
-        assert!(matches!(events.last(), Some(LlmStreamEvent::Done { usage, .. }) if usage == &response().usage));
-        let mut bad = request(); bad.model = ModelId::new("own/fail@1").unwrap();
-        assert!(matches!(runtime.block_on(client.generate(bad.clone(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
-        let mut failed = client.stream(bad, &lease).unwrap();
-        assert!(matches!(runtime.block_on(failed.next()), Some(Err(LlmError::Fatal(FatalLlmError::Auth)))));
-        for name in ["filtered", "empty", "unsupported"] {
-            let mut typed = request();
-            typed.model = ModelId::new(format!("own/{name}@1")).unwrap();
-            let expected = backend_error(&typed.model).unwrap();
-            assert_eq!(runtime.block_on(client.generate(typed, &lease)), Err(expected.into()));
+        for raw in ["fixture-owner", "wrong", "v2.scope=core:write.invalid"] {
+            let client = RemoteLlmClient::connect(&origin, raw).unwrap();
+            assert!(matches!(
+                runtime.block_on(client.generate(request(), &lease)),
+                Err(LlmError::Fatal(FatalLlmError::Auth))
+            ));
         }
-        let denied = RemoteLlmClient::connect(&origin, "wrong").unwrap();
-        assert!(matches!(runtime.block_on(denied.generate(request(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
-        let scoped_token = crate::auth::mint_core_token_v2("fixture-owner", "scope=core:write");
-        let scoped = RemoteLlmClient::connect(&origin, &scoped_token).unwrap();
-        assert!(matches!(runtime.block_on(scoped.generate(request(), &lease)), Err(LlmError::Fatal(FatalLlmError::Auth))));
         guard.abort(&lease).unwrap();
-    }).await.unwrap();
-    assert_eq!(budget.read().used_units, 50);
+    })
+    .await
+    .unwrap();
+    assert_eq!(budget.read().used_units, 0);
     assert_eq!(budget.read().reserved_units, 0);
     serving.abort();
 }
@@ -263,20 +251,24 @@ async fn unconfigured_and_exhausted_llm_routes_fail_closed() {
                 ),
             );
         }
-        let router = crate::api::api_routes(Arc::new(server));
+        let server = Arc::new(server);
+        let router = crate::api::api_routes(server.clone());
+        let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-budget");
         for verb in ["generate", "stream"] {
             let mut wire = request();
             wire.envelope.locality = ModelLocality::OnDevice;
             let response = router
                 .clone()
-                .oneshot(
+                .oneshot(crate::test_credentials::bind_slip_request(
+                    &server,
+                    &slip,
+                    &key,
                     axum::http::Request::post(format!("/v1/llm/{verb}"))
-                        .header("authorization", "Bearer owner")
                         .header("content-type", "application/json")
                         .header("x-oneiron-budget-lease", "forged-remote-lease")
                         .body(Body::from(serde_json::to_vec(&wire).unwrap()))
                         .unwrap(),
-                )
+                ))
                 .await
                 .unwrap();
             assert_eq!(
@@ -328,14 +320,18 @@ async fn cancelled_and_failed_streams_charge_reserved_estimate_without_terminal_
         )
         .unwrap()
         .with_llm_backend(Arc::new(Partial(fail)), budget.clone());
-        let response = crate::api::api_routes(Arc::new(server))
-            .oneshot(
+        let server = Arc::new(server);
+        let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-stream");
+        let response = crate::api::api_routes(server.clone())
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
                 axum::http::Request::post("/v1/llm/stream")
-                    .header("authorization", "Bearer owner")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&request()).unwrap()))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
         let mut body = response.into_body().into_data_stream();
@@ -400,17 +396,21 @@ async fn successful_calls_without_usage_charge_estimates_for_both_verbs() {
     )
     .unwrap()
     .with_llm_backend(Arc::new(MissingUsage), budget.clone());
-    let router = crate::api::api_routes(Arc::new(server));
+    let server = Arc::new(server);
+    let (slip, key) = crate::test_credentials::credential(&server, "jti=llm-missing-usage");
+    let router = crate::api::api_routes(server.clone());
     for (index, verb) in ["generate", "stream", "generate"].into_iter().enumerate() {
         let reply = router
             .clone()
-            .oneshot(
+            .oneshot(crate::test_credentials::bind_slip_request(
+                &server,
+                &slip,
+                &key,
                 axum::http::Request::post(format!("/v1/llm/{verb}"))
-                    .header("authorization", "Bearer owner")
                     .header("content-type", "application/json")
                     .body(Body::from(serde_json::to_vec(&request()).unwrap()))
                     .unwrap(),
-            )
+            ))
             .await
             .unwrap();
         if index == 2 {
