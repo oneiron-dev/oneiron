@@ -33,6 +33,7 @@ mod protocol;
 pub mod registry;
 mod safeguard;
 pub mod score_scraper;
+pub mod seat;
 mod step;
 pub mod tagger;
 

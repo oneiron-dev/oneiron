@@ -247,6 +247,21 @@ impl Vault {
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
         read_manifest(&self.store, &self.store.env.read_txn()?)
     }
+    /// Effective per-vault route, including a resident narrowing if present.
+    pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let route = read_routes(&self.store, &txn)?
+            .get(&slot)
+            .copied()
+            .unwrap_or(manifest.routes[&slot]);
+        if route_rank(route) > route_rank(manifest.routes[&slot]) {
+            return Err(invalid("resident route cannot widen manifest pin"));
+        }
+        Ok(Some(route))
+    }
     pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
         let manifest =

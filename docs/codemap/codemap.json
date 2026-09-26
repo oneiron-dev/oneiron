@@ -20045,7 +20045,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
       "struct": 4
      }
     },
@@ -20065,7 +20065,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "crate-vis": 6,
-      "mod": 7,
+      "mod": 8,
       "re-export": 18
      }
     },
@@ -20185,6 +20185,39 @@
       "struct": 3,
       "trait": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DescriptionLine",
+      "DescriptionSource",
+      "ModelDescription",
+      "ModelSeat",
+      "SeatCandidate",
+      "SeatChoiceReceipt",
+      "SeatJudge",
+      "SeatJudgment",
+      "SeatKind",
+      "SeatPool",
+      "SeatTask"
+     ],
+     "path": "src/llm/seat.rs",
+     "purpose": "Seat-birth model routing above the raw LLM call seam",
+     "surface": {
+      "enum": 2,
+      "fn": 14,
+      "struct": 8,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34617,7 +34650,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35172,8 +35205,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2075,
-   "test_files": 714
+   "source_files": 2076,
+   "test_files": 715
   },
   "oneiron-android": {
    "files": [
