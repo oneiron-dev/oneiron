@@ -280,6 +280,81 @@ impl CampaignConfig {
         Ok(())
     }
 
+    /// Represent this pinned OF-366 campaign as a generic, skill-driven
+    /// campaign row. OF-366 admission and reports still use their own gates.
+    pub fn as_general(&self) -> CampaignResult<super::general::CampaignConfig> {
+        use super::general::{
+            BudgetLease, CampaignConfig as GeneralConfig, CampaignKnobs, DecideRules, MetricAxis,
+            MetricDirection, MetricRole, MetricSet, SearchAxis,
+        };
+        self.validate()?;
+        let definitions = of360_metric_definitions()?;
+        let reserve = self
+            .tournament_budget_axes()?
+            .reserve_units()
+            .map_err(|_| CampaignError::InvalidConfig {
+                field: "budget.reserve_units_per_step",
+                reason: "tournament reservation product overflows u64",
+            })?;
+        let config = GeneralConfig {
+            campaign_id: self.campaign_id.clone(),
+            search_axes: vec![
+                SearchAxis {
+                    name: "fanout_m".into(),
+                    values: vec![self.tournament.fanout_m.to_string()],
+                },
+                SearchAxis {
+                    name: "uncertainty_tau".into(),
+                    values: vec![self.tournament.uncertainty_tau.to_string()],
+                },
+            ],
+            metric_set: MetricSet {
+                set_id: definitions.set_id,
+                revision: definitions.revision,
+                axes: definitions
+                    .metrics
+                    .iter()
+                    .map(|metric| MetricAxis {
+                        name: metric.metric_id.clone(),
+                        direction: match metric.direction {
+                            crate::extraction_eval::Of360MetricDirection::HigherIsBetter => {
+                                MetricDirection::Higher
+                            }
+                            crate::extraction_eval::Of360MetricDirection::LowerIsBetter => {
+                                MetricDirection::Lower
+                            }
+                        },
+                        role: if metric.primary {
+                            MetricRole::Primary
+                        } else {
+                            MetricRole::Floor
+                        },
+                    })
+                    .collect(),
+            },
+            splits: self.splits.clone(),
+            budget: BudgetLease {
+                budget_id: self
+                    .budget
+                    .as_ref()
+                    .ok_or(CampaignError::InvalidConfig {
+                        field: "budget",
+                        reason: "absent",
+                    })?
+                    .budget_id
+                    .clone(),
+                max_units: reserve,
+                exploration_units: 0,
+            },
+            decide: DecideRules {
+                min_primary_gain: self.verdict_epsilon,
+            },
+            knobs: CampaignKnobs::default(),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Incumbent arm admission: the landed single-pass value, unchanged.
     #[must_use]
     pub const fn single_pass_admission(&self) -> DreamerClaimAuthoringAdmission {

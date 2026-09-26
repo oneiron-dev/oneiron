@@ -358,6 +358,20 @@ fn accept_branch(
 }
 
 #[test]
+fn of366_is_an_instance_of_the_general_campaign_config() {
+    let specific = test_config();
+    let general = specific
+        .as_general()
+        .expect("OF-366 maps to general config");
+    general.validate().expect("generic config validates");
+    assert_eq!(general.campaign_id, specific.campaign_id);
+    assert_eq!(general.splits, specific.splits);
+    assert_eq!(general.metric_set.set_id, specific.metric_pin.set_id);
+    assert_eq!(general.budget.budget_id, specific.budget.unwrap().budget_id);
+    assert!(!general.knobs.merge_crossover.requested);
+}
+
+#[test]
 fn campaign_config_round_trips_and_validates() {
     let config = test_config();
     config.validate().expect("of366 config validates");
