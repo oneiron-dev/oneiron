@@ -56,7 +56,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_def/portable_source.rs` | src | s | 12 crate-vis | — | Immutable captured agent source |
 | `src/agent_def/portable_source/tests.rs` | test | m | — | — | Actual birth capture and replay retain bytes without granting authority |
 | `src/agent_def/tests.rs` | test | XL | — | — | AGENT_DEF (ONE-1443) tests |
-| `src/agent_def/types.rs` | src | m | 4 struct · 3 enum · 13 fn · 13 const · 44 crate-vis | AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, ContextBudgetSplit, McpRef, MemoryProfile | AgentDefinition domain types, key/limit consts, and constructors |
+| `src/agent_def/types.rs` | src | m | 4 struct · 4 enum · 17 fn · 13 const · 46 crate-vis | AgentCeiling, AgentDefinition, AgentScope, CompactionOwnership, ContextBudgetSplit, DreamingMode, McpRef, MemoryProfile | AgentDefinition domain types, key/limit consts, and constructors |
 | `src/agent_def/workflow.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | WorkflowDefinition | Saved ordered agent compositions |
 | `src/agent_def/workflow/tests.rs` | test | s | — | — | — |
 | `src/agent_dispatch/attenuation.rs` | src | s | 4 crate-vis | — | Live-ceiling attenuation and deterministic attenuated-fork registration |

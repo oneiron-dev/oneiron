@@ -362,6 +362,13 @@ pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
             "modelTier must be a non-empty UTF-8 string at most 256 bytes",
         )?;
     }
+    if let Some(model) = &def.dreaming_model {
+        validate_text_field(
+            model.as_str(),
+            AGENT_MODEL_TIER_MAX_BYTES,
+            "dreamingModel must be a non-empty UTF-8 string at most 256 bytes",
+        )?;
+    }
     if let Some(logical_id) = &def.logical_id {
         validate_text_field(
             logical_id,

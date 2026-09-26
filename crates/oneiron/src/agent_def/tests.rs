@@ -606,6 +606,8 @@ fn pinned_key_contract_is_stable() {
             "enabled",
             "displayName",
             "memory_profile",
+            "dreaming",
+            "dreamingModel",
         ]
     );
     assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
@@ -1701,4 +1703,112 @@ fn the_profile_may_change_on_update_under_the_version_bump_rule() {
             .kind(),
         ErrorKind::InvalidAgentDefBody
     );
+}
+
+#[test]
+fn dreaming_modes_model_and_absent_default_round_trip() -> Result<()> {
+    let plain = minimal_agent("1");
+    assert_eq!(plain.dreaming, None);
+    assert_eq!(plain.dreaming_mode(), DreamingMode::Inherit); // on by default
+    assert_eq!(plain.dreaming_model, None);
+    let bytes = encode_agent_definition(&plain)?;
+    assert_eq!(
+        decode_agent_definition(&bytes)?.dreaming_mode(),
+        DreamingMode::Inherit
+    );
+    assert!(!encoded_body_keys(&plain).contains(&"dreaming".to_owned()));
+    assert!(!encoded_body_keys(&plain).contains(&"dreamingModel".to_owned()));
+
+    let model_only =
+        minimal_agent("1").with_dreaming(None, Some(ModelTierRef("resident.slot".to_owned())));
+    assert_eq!(
+        decode_agent_definition(&encode_agent_definition(&model_only)?)?,
+        model_only
+    );
+    assert_eq!(model_only.dreaming_mode(), DreamingMode::Inherit);
+
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    for mode in [DreamingMode::Own, DreamingMode::Inherit, DreamingMode::Off] {
+        let def = minimal_agent("1")
+            .with_dreaming(Some(mode), Some(ModelTierRef("dream.model".to_owned())));
+        let body = encode_agent_definition(&def)?;
+        let decoded = decode_agent_definition(&body)?;
+        assert_eq!(decoded, def);
+        assert_eq!(decoded.dreaming_mode(), mode);
+        assert_eq!(
+            decoded.dreaming_model.as_ref().map(ModelTierRef::as_str),
+            Some("dream.model")
+        );
+        assert_eq!(encode_agent_definition(&decoded)?, body);
+        assert!(encoded_body_keys(&def).contains(&"dreaming".to_owned()));
+        assert!(encoded_body_keys(&def).contains(&"dreamingModel".to_owned()));
+        let id = EntityId::now();
+        vault.put_agent_definition(&id, &def, TimeRange { start: 10, end: 10 }, 11)?;
+        assert_eq!(vault.get_agent_definition(&id)?, Some(def));
+    }
+    Ok(())
+}
+
+#[test]
+fn dreaming_gate_rejects_unknown_mode_and_bad_model_on_raw_put() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    for (field, value) in [
+        ("dreaming", Value::from("unexpected")),
+        ("dreaming", Value::from(17)),
+        ("dreamingModel", Value::from("  ")),
+        ("dreamingModel", Value::from(17)),
+    ] {
+        let mut entries = valid_scope_all_entries();
+        entries.push((field, value));
+        let bad = body_from(entries);
+        assert_eq!(
+            decode_agent_definition(&bad)
+                .expect_err("invalid dreaming setting")
+                .kind(),
+            ErrorKind::InvalidAgentDefBody
+        );
+        assert_eq!(
+            vault
+                .put_entity(
+                    &EntityId::now(),
+                    ENTITY_TYPE_AGENT_DEF,
+                    TimeRange { start: 10, end: 10 },
+                    11,
+                    &bad
+                )
+                .expect_err("raw put must validate dreaming setting")
+                .kind(),
+            ErrorKind::InvalidAgentDefBody
+        );
+    }
+    let invalid = minimal_agent("1")
+        .with_dreaming(Some(DreamingMode::Own), Some(ModelTierRef("".to_owned())));
+    assert_eq!(
+        encode_agent_definition(&invalid)
+            .expect_err("invalid model")
+            .kind(),
+        ErrorKind::InvalidAgentDefBody
+    );
+}
+
+#[test]
+fn seeded_work_agents_inherit_dreaming() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    for logical_id in [
+        "sys.scout",
+        "sys.keeper",
+        "sys.creative",
+        "sys.herald",
+        "sys.guide",
+        "sys.default",
+        "sys.team_lead",
+    ] {
+        let (_, def) = vault
+            .get_seeded_agent_definition_by_logical_id(logical_id)?
+            .expect("seeded work agent");
+        assert_eq!(def.dreaming, Some(DreamingMode::Inherit), "{logical_id}");
+        assert_eq!(def.dreaming_mode(), DreamingMode::Inherit);
+        assert_eq!(def.dreaming_model, None);
+    }
+    Ok(())
 }

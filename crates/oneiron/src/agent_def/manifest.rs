@@ -4,7 +4,7 @@ use super::codec::{decode_agent_definition, encode_agent_definition, legacy_logi
 use super::decode::validate_text_field;
 use super::types::{
     AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AgentCeiling, AgentDefinition,
-    AgentScope, McpRef, SYSTEM_AGENT_DEFINITIONS_V1_JSON, SYSTEM_LOGICAL_ID_PREFIX,
+    AgentScope, DreamingMode, McpRef, SYSTEM_AGENT_DEFINITIONS_V1_JSON, SYSTEM_LOGICAL_ID_PREFIX,
 };
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
@@ -94,6 +94,8 @@ struct AgentDefinitionManifestFields {
     connectors: Vec<String>,
     code_mode_mcps: Vec<ManifestMcpRef>,
     model_tier: Option<String>,
+    dreaming: Option<String>,
+    dreaming_model: Option<String>,
     scope: ManifestScope,
     ceiling: String,
     forked_from: Option<HexEntityId>,
@@ -151,6 +153,17 @@ impl AgentDefinitionManifestFields {
         let source = ClaimSource::parse(&self.source).ok_or(Error::Artifact(
             ArtifactError::InvalidAgentDefBody("manifest source must be a known claim source"),
         ))?;
+        let dreaming = self
+            .dreaming
+            .as_deref()
+            .map(|mode| {
+                DreamingMode::parse(mode).ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDefBody(
+                        "manifest dreaming must be one of own|inherit|off",
+                    ),
+                ))
+            })
+            .transpose()?;
         Ok(AgentDefinition::new(
             self.agent_id.clone(),
             self.desc.clone(),
@@ -189,7 +202,8 @@ impl AgentDefinitionManifestFields {
             Some(logical_id),
             enabled,
             Some(display_name),
-        ))
+        )
+        .with_dreaming(dreaming, self.dreaming_model.clone().map(ModelTierRef)))
     }
 }
 
