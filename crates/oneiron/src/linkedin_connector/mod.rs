@@ -8,6 +8,7 @@
 
 mod inbox_sync;
 mod normalize_keys;
+mod sandbox_host;
 mod seat_policy;
 mod verified_connect;
 mod verified_send;
@@ -36,6 +37,9 @@ use self::normalize_keys::{
     linkedin_inbox_sync_dedupe_key, normalize_non_blank, normalize_verb_key, optional_section_text,
     reference_kind_is, section_references, thread_id_from_payload_url, thread_id_from_reference,
     vault_scoped_secret_ref,
+};
+pub use self::sandbox_host::{
+    LinkedInContainerSandboxHost, LinkedInSeatHostServices, LinkedInSeatSandbox,
 };
 pub use self::seat_policy::{
     LinkedInAccountRiskLimits, LinkedInConsentScreenCopy, LinkedInKillSwitchState,
