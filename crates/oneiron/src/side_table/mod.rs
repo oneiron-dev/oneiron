@@ -619,8 +619,9 @@ pub(crate) fn host_declared_sync_state(key: &str) -> Result<()> {
 /// that short, and LMDB refuses an empty prefix, so a caller walking the
 /// whole keyspace one leading byte at a time (a diagnostic byte-scan, not a
 /// lookup) is a legitimate read this check cannot usefully judge either way.
-/// A scan can only ever surface a row a declared door already wrote, so it
-/// is refused only when it could not possibly reach any declared table.
+/// An overlapping prefix can also match undeclared rows planted by legacy or
+/// damaged writers. Scan callers must check each returned key with
+/// [`host_declared_sync_state`] before exposing it.
 #[cfg(feature = "sync")]
 pub(crate) fn host_declared_sync_state_scan(prefix: &str) -> Result<()> {
     if prefix.len() <= 1 || declared_overlaps(SideDb::SyncState, prefix.as_bytes()) {
