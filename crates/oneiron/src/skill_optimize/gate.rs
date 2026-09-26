@@ -241,7 +241,6 @@ pub(super) const VERDICTS: SideTable<EntityId, Vec<u8>, Raw> =
 
 /// Bumped by OF-214 (v3 → v4: audited measurements and bound world labels).
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
-
 /// digests, so a reader that accepted one would be trusting an acceptance
 /// nobody can check the body of) and again by the MATERIAL-6 repair (v2 → v3: a
 /// v2 row binds no PROPOSAL tier, so an owner's identity mark on the proposal
