@@ -18,7 +18,7 @@ fn record(started: u64) -> RetrievalRunRecord {
 
 #[test]
 fn state_roundtrip_replay_and_ordered_turn_projection_survive_delete() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let state = RetrievalState {
         top_score_norm: 0.7,
         score_gap_ratio: 0.4,
@@ -58,7 +58,7 @@ fn state_roundtrip_replay_and_ordered_turn_projection_survive_delete() -> crate:
 
 #[test]
 fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut run = record(10);
     let turn = RetrievalTurn {
         turn_id: [4; 16],
@@ -86,8 +86,8 @@ fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
 
 #[test]
 fn telemetry_failure_disables_only_that_vault_without_corrupt_rows() -> crate::Result<()> {
-    let (dir, vault) = open_test_vault_with(VaultConfig::default());
-    let (_other_dir, other) = open_test_vault_with(VaultConfig::default());
+    let (dir, vault) = open_test_vault_with(telemetry_config());
+    let (_other_dir, other) = open_test_vault_with(telemetry_config());
     crate::store::test_hooks::fail_next_retrieval_run_write_for(dir.path().canonicalize()?);
     assert!(vault.store.record_retrieval_run(&record(10)).is_err());
     assert!(!vault.store.retrieval_telemetry_writes_enabled());
@@ -101,7 +101,7 @@ fn telemetry_failure_disables_only_that_vault_without_corrupt_rows() -> crate::R
 
 #[test]
 fn one_shot_baseline_is_measured_from_stored_runs_without_policy() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB3);
     vault
         .batch()
@@ -184,7 +184,7 @@ fn one_shot_strength_is_not_a_binary_flag_and_agreement_is_distinct() {
 
 #[test]
 fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let id = crate::test_util::entity(0xB4);
     vault
         .batch()
@@ -240,7 +240,7 @@ fn pipeline_persists_one_shot_signals_and_verbatim_host_override() -> crate::Res
 
 #[test]
 fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut invalid = record(10);
     invalid.state.top_score_norm = f32::NAN;
     assert!(matches!(
@@ -269,7 +269,7 @@ fn invalid_caller_state_does_not_disable_later_pipeline_telemetry() -> crate::Re
 
 #[test]
 fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::Result<()> {
-    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let mut run = record(10);
     vault.store.record_retrieval_run(&run)?;
     for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -292,4 +292,11 @@ fn persisted_nonfinite_retrieval_state_is_corruption_at_read_doors() -> crate::R
         ));
     }
     Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
 }
