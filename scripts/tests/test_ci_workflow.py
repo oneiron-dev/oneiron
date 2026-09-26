@@ -8,8 +8,8 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 RUNNER = ROOT / "scripts/ci/run_scoped.sh"
 FEATURELESS_FULL = (
-    "run cargo test -p oneiron --lib --no-default-features",
-    "run cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0",
+    "run cargo test --locked -p oneiron --lib --no-default-features",
+    "run cargo nextest run --locked -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0",
 )
 GUARD = (
     "      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' "
@@ -59,13 +59,13 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("SCOPE_DEPENDENTS", "\n".join(self.job_lines("test-linux")))
         self.assertNotIn("SCOPE_DEPENDENTS", "\n".join(self.job_lines("test-linux-featureless")))
         self.assertIn('for p in $packages $dependents; do pk+=(-p "$p"); done', self.runner)
-        self.assertIn('cargo clippy "${pk[@]}" --all-targets --all-features', self.runner)
+        self.assertIn('cargo clippy --locked "${pk[@]}" --all-targets --all-features', self.runner)
 
     def test_full_gate_runs_nightly_and_keeps_both_featureless_process_models(self):
         self.assertIn("    - cron: '0 18 * * *'", self.lines)
         first, second = (self.runner.index(c) for c in FEATURELESS_FULL)
         self.assertLess(first, second)
-        self.assertIn("run cargo test --doc --workspace --exclude oneiron-bench --all-features", self.runner)
+        self.assertIn("run cargo test --locked --doc --workspace --exclude oneiron-bench --all-features", self.runner)
         self.assertIn("schedule | workflow_dispatch) python3 scripts/ci/ci_scope.py --full ;;", self.text)
 
     def test_macos_recipe_and_mutation_audit_are_dispatch_only(self):
@@ -111,11 +111,11 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_full_tier_nextest_commands_are_not_replaced_by_cache_setup(self):
         self.assertIn(
-            "run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
+            "run: cargo nextest run --locked --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
             self.text,
         )
         self.assertIn(
-            "run cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
+            "run cargo nextest run --locked --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
             self.runner,
         )
 
@@ -153,6 +153,24 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("RUSTC_WORKSPACE_WRAPPER: ", "\n".join(self.job_lines("checks")))
         self.assertTrue((ROOT / "scripts/ci/rustc-threads.sh").stat().st_mode & 0o111)
         self.assertTrue((ROOT / "scripts/ci/with-test-tmpdir.sh").stat().st_mode & 0o111)
+
+    def test_first_party_ci_builds_reject_lockfile_drift(self):
+        # Exclude installer probes and the separately packaged manifest; the
+        # workspace verification lanes must not rewrite the checked-in lock.
+        import re
+        sources = (
+            self.runner,
+            self.text,
+            (ROOT / "scripts/verify.sh").read_text(),
+            (ROOT / "scripts/verify-leg.sh").read_text(),
+        )
+        for source in sources:
+            for line in source.splitlines():
+                if (line.lstrip().startswith("#") or "cargo nextest --version" in line
+                        or "package_manifest" in line):
+                    continue
+                for match in re.finditer(r"\bcargo (?:clippy|doc|test|nextest run)\b", line):
+                    self.assertIn("--locked", line[match.start():], line)
 
     def test_workflow_guard_is_executed_by_python_check(self):
         self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", self.text)
