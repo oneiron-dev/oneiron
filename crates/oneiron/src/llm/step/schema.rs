@@ -4,6 +4,7 @@ use super::super::{
     LlmRequest, LlmResponse, LlmUsage, ResponseFormat,
 };
 use super::{DurableStepError, DurableStepResult};
+use crate::dreamer_wake::WakePassDeadline;
 
 /// The shared validator also serves hosts implementing self.json.validate.
 pub fn validate_json_schema(
@@ -52,6 +53,7 @@ pub(super) async fn generate(
     request: &LlmRequest,
     lease: &BudgetLease,
     guard: &BudgetGuard,
+    deadline: Option<&WakePassDeadline>,
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
@@ -85,6 +87,13 @@ pub(super) async fn generate(
         let active_lease = if attempt == 1 {
             lease
         } else {
+            // A correction is a new paid call with a new lease, not a retry
+            // under the admitted call's lease. The prior response is settled.
+            if deadline.is_some_and(WakePassDeadline::in_finalize_window) {
+                return Err(DurableStepError::SpentFinalizeRefused {
+                    usage: Box::new(usage),
+                });
+            }
             correction = CorrectionLease {
                 guard,
                 lease: guard
@@ -133,9 +142,10 @@ pub(super) async fn generate(
             return Ok(response);
         }
         if attempt == max_attempts {
-            return Err(DurableStepError::SchemaValidation {
+            return Err(DurableStepError::SpentSchemaValidation {
                 attempts: attempt,
                 errors,
+                usage: Box::new(usage),
             });
         }
         wire.messages.push(response.message);

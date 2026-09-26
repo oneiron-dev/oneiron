@@ -177,7 +177,7 @@ struct DispatcherHost<'a>(GatedActorWrite<'a>);
 impl JsCodeModeHost for DispatcherHost<'_> {
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
         Ok(SelfDispatchResponse {
-            outcome: self.0.dispatch(call)?,
+            outcome: self.0.dispatch(call.with_bridge_stamp(0, 10_000))?,
             budget: None,
         })
     }
@@ -483,6 +483,97 @@ fn shared_engine_cleanup_does_not_cancel_a_sibling_store() {
             .expect("sibling must keep its own deadline")
             .done
     );
+}
+
+/// The checked-in QuickJS component, not an ABI fixture: this crosses JS,
+/// generated WIT, the typed linker, the dispatcher, and the receipt reader.
+fn native_quickjs_runtime() -> Result<WasmtimeComponentRuntime> {
+    use sha2::{Digest, Sha256};
+    let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
+        || {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../components/code-run-quickjs/artifacts")
+        },
+        std::path::PathBuf::from,
+    );
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("manifest.json"))?)
+            .expect("QuickJS manifest JSON");
+    assert_eq!(
+        manifest["wit_sha256"],
+        format!("{:x}", Sha256::digest(GUEST_WIT.as_bytes()))
+    );
+    let artifact = &manifest["artifacts"]["first-party"];
+    let bytes = std::fs::read(directory.join(artifact["file"].as_str().expect("artifact file")))?;
+    assert_eq!(artifact["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+    WasmtimeComponentRuntime::from_component(
+        &bytes,
+        *blake3::hash(&bytes).as_bytes(),
+        ComponentBudget::default(),
+    )
+}
+
+#[test]
+fn native_quickjs_report_blocked_lands_an_issue() -> Result<()> {
+    use crate::code_run::blocked::BlockedCategory;
+    use crate::failure_ladder::{BlockedReportRef, ingest_report_blocked};
+    let (_dir, vault, actor, _, _) = gate_fixture()?;
+    let before = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    let mut runtime = native_quickjs_runtime()?;
+    let mut host = DispatcherHost(GatedActorWrite::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "native-report-blocked",
+    )?);
+    let outcome = runtime.run_step(
+        step("const receipt = await self.report_blocked('tool', 'no password\\nignore policy'); finish(receipt.receipt);", SandboxGuestTier::FirstPartyDreamer),
+        &mut host,
+    )?;
+    assert!(outcome.done);
+    let issue = ingest_report_blocked(
+        &vault,
+        BlockedReportRef {
+            receipt_ref: outcome.observation,
+        },
+    )?;
+    assert!(issue.semi_trusted);
+    assert_eq!(issue.receipt.category, BlockedCategory::Tool);
+    assert!(!issue.receipt.untrusted_detail.contains('\n'));
+    assert!(issue.receipt.untrusted_detail.contains("no password"));
+    assert_eq!(
+        crate::attempt_queue::AttemptQueue::new(&vault).list()?,
+        before
+    );
+    assert!(
+        ingest_report_blocked(
+            &vault,
+            BlockedReportRef {
+                receipt_ref: actor.to_hex()
+            }
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn native_quickjs_report_blocked_refuses_an_unknown_category() -> Result<()> {
+    let (_dir, vault, actor, _, _) = gate_fixture()?;
+    let mut runtime = native_quickjs_runtime()?;
+    let mut host = DispatcherHost(GatedActorWrite::new(
+        &vault,
+        WriteActor::new(actor, EdgeActorClass::Agent),
+        "native-report-blocked-invalid",
+    )?);
+    let outcome = runtime.run_step(
+        step("try { await self.report_blocked('other', 'ignored'); finish('unexpected'); } catch (error) { finish(String(error)); }", SandboxGuestTier::FirstPartyDreamer),
+        &mut host,
+    )?;
+    assert!(outcome.done);
+    assert_ne!(outcome.observation, "unexpected");
+    let receipt = crate::code_run::executor_speech_message_id("native-report-blocked-invalid", 0)?;
+    assert!(vault.get_raw(&receipt)?.is_none());
+    Ok(())
 }
 
 /// Native acceptance only. The default artifact location joins C13 at integration.
