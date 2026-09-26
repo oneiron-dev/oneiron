@@ -170,6 +170,9 @@ impl Vault {
                 }
             }
             wtxn.commit()?;
+            if existed {
+                self.notify_local_delete_materialized(id);
+            }
             // An archive publishes nothing (`publishes_crdt_tombstone` is
             // false for exactly one reason): there is no remote-binding act
             // to re-gate, and nothing for a peer to obey, so the local `ac:`
@@ -338,6 +341,9 @@ impl Vault {
                 authority_settled = true;
             }
             wtxn.commit()?;
+            if existed {
+                self.notify_local_delete_materialized(id);
+            }
             self.store.clock.now_recorded_at()
         } else {
             tombstone_complete_at
@@ -472,6 +478,9 @@ impl Vault {
         )?;
 
         wtxn.commit()?;
+        if existed {
+            self.notify_local_delete_materialized(id);
+        }
         // The CRDT record (tombstone-first, above) is durable — the crash
         // marker has served its purpose. In non-`sync` builds the marker
         // STAYS: it is the deletion's only propagation intent until a

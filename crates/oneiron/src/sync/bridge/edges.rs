@@ -44,7 +44,7 @@ pub(super) fn materialize_edges_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) -> bool {
+) -> Option<Vec<EntityId>> {
     // ONE-1147: source id + LMDB edge key + op bytes for every UPSERT
     // pushed into the batch, retained outside the txn for the swallow site
     // below (no surviving per-op failure point on whole-txn failure).
@@ -67,6 +67,14 @@ pub(super) fn materialize_edges_from_delta(
         // leaves behind, replayed through the very same gauntlet as its own
         // ops.
         let replay = replayed_child_of_candidates(vault, &*wtxn, &edges_map, delta)?;
+        // Candidate replay can replace an incoming ChildOf parent not named
+        // by the wire delta. Carry both endpoints out of this transaction;
+        // publish them only if the whole batch commits.
+        let replayed_entities: Vec<_> = replay
+            .iter()
+            .filter_map(|(key, _)| parse_edge_key(key))
+            .flat_map(|(source, _, target)| [source, target])
+            .collect();
         let mut ops = Vec::<BatchOp>::new();
         let mut metas = Vec::<EdgeOpMeta>::new();
         for (key, new_val) in delta
@@ -419,7 +427,7 @@ pub(super) fn materialize_edges_from_delta(
                 "injected batch commit failure (test hook)",
             )));
         }
-        Ok(())
+        Ok(replayed_entities)
     });
 
     if result.is_ok()
@@ -432,8 +440,7 @@ pub(super) fn materialize_edges_from_delta(
         );
     }
 
-    let committed = result.is_ok();
-    if let Err(e) = result {
+    if let Err(e) = &result {
         // ONE-1147: whole-txn failure — same marker semantics and
         // best-effort layering as the entity swallow site above. Two classes
         // of write the dead txn rolled back get a durable entity-scoped rm:
@@ -476,7 +483,7 @@ pub(super) fn materialize_edges_from_delta(
             "observer-b: edge batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
-    committed
+    result.ok()
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed

@@ -42,7 +42,7 @@ pub(super) fn materialize_entities_from_delta(
     vault: &Vault,
     window_key: &str,
     lease_vault_id: u64,
-) -> bool {
+) -> Option<Vec<EntityId>> {
     let tombstones_map = doc.get_map("tombstones");
     // ONE-1147: ids + op bytes applied into the batch txn, retained outside
     // it — on whole-txn failure there is no surviving per-entity failure
@@ -275,7 +275,7 @@ pub(super) fn materialize_entities_from_delta(
             "observer-b: entity batch commit failed — flagged entity-scoped rm: markers for durable retry"
         );
     }
-    committed
+    committed.then(Vec::new)
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed

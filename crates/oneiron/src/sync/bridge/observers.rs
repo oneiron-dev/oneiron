@@ -467,7 +467,13 @@ fn subscribe_map_observer(
     vault: &Arc<Vault>,
     materializer: &Arc<Materializer>,
     window_key: &str,
-    materialize: fn(&LoroDoc, &loro::event::MapDelta<'_>, &Vault, &str, u64) -> bool,
+    materialize: fn(
+        &LoroDoc,
+        &loro::event::MapDelta<'_>,
+        &Vault,
+        &str,
+        u64,
+    ) -> Option<Vec<EntityId>>,
     live_query: (&'static str, Option<Arc<dyn LiveQueryTee>>),
 ) -> Subscription {
     let callback_doc = doc.clone();
@@ -505,29 +511,35 @@ fn subscribe_map_observer(
             }
             let _guard = materializer.lock();
             for cdiff in &event.events {
-                if let Some(map_delta) = cdiff.diff.as_map() {
-                    let committed = materialize(
+                if let Some(map_delta) = cdiff.diff.as_map()
+                    && let Some(replayed_entities) = materialize(
                         &callback_doc,
                         map_delta,
                         &vault,
                         &window_key,
                         lease_vault_id,
+                    )
+                {
+                    let path = format!("w:{window_key}/{}", live_query.0);
+                    let mut diff = entity_document_diff(&path, live_query.0, map_delta);
+                    diff.containers.extend(
+                        replayed_entities
+                            .iter()
+                            .map(|id| format!("e:{}", id.to_hex())),
                     );
-                    if committed {
-                        let path = format!("w:{window_key}/{}", live_query.0);
-                        let diff = entity_document_diff(&path, live_query.0, map_delta);
-                        let by = OriginMark {
-                            conn_id: event
-                                .origin
-                                .strip_prefix("conn:")
-                                .and_then(|id| id.parse().ok()),
-                            origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
-                        };
-                        if let Some(tee) = &live_query.1 {
-                            tee.on_materialized(&path, &diff, &by);
-                        }
-                        materializer.notify_live_queries(&path, &diff, &by);
+                    diff.containers.sort_unstable();
+                    diff.containers.dedup();
+                    let by = OriginMark {
+                        conn_id: event
+                            .origin
+                            .strip_prefix("conn:")
+                            .and_then(|id| id.parse().ok()),
+                        origin: (!event.origin.is_empty()).then(|| event.origin.to_owned()),
+                    };
+                    if let Some(tee) = &live_query.1 {
+                        tee.on_materialized(&path, &diff, &by);
                     }
+                    materializer.notify_live_queries(&path, &diff, &by);
                 }
             }
         }),

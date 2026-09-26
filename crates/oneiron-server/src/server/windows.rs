@@ -103,7 +103,12 @@ struct LocalReadTee {
 }
 
 impl LiveQueryTee for LocalReadTee {
-    fn on_materialized(&self, _path: &str, diff: &MaterializedDiffSummary, _by: &OriginMark) {
+    fn on_materialized(&self, _path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
+        // Publication precedes the hard purge. The deletion door sends a
+        // separate entity notice only after its destructive commit.
+        if by.origin.as_deref() == Some("deletion_tombstone") {
+            return;
+        }
         let entities: Vec<_> = diff
             .containers
             .iter()

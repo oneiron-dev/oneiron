@@ -135,6 +135,9 @@ impl Vault {
         }
         if !reason.writes_receipt() {
             wtxn.commit()?;
+            if existed {
+                self.notify_local_delete_materialized(id);
+            }
             if crdt_persisted {
                 self.clear_pending_tombstone(&window_label, id)?;
             }
@@ -168,6 +171,9 @@ impl Vault {
             HardEraseSweepExtras::default(),
         )?;
         wtxn.commit()?;
+        if existed {
+            self.notify_local_delete_materialized(id);
+        }
         if crdt_persisted {
             self.clear_pending_tombstone(&window_label, id)?;
         }

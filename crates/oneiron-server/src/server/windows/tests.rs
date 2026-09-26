@@ -48,3 +48,53 @@ async fn document_relay_gap_requests_resync_and_preserves_later_edits() {
         }
     }).await.expect("document relay must recover after notification loss");
 }
+
+/// A hard-delete tombstone is published before LMDB purge. The local-only
+/// tee must ignore that early publication, even if its diff names the entity;
+/// a later committed deletion notice reaches the same local subscriber.
+#[tokio::test]
+async fn local_tee_waits_for_delete_commit_after_tombstone_publication() {
+    use crate::api::ReactiveDependency;
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (tx, _) = broadcast::channel(8);
+    let tee = super::LocalReadTee { tx: tx.clone() };
+    let mut query = ReactiveChangeSubscriber::new(&tx);
+    let id = EntityId::now();
+    let path = format!("w:2026-03/entities/{}", id.to_hex());
+    tee.on_materialized(
+        "w:2026-03/tombstones",
+        &MaterializedDiffSummary {
+            containers: vec![path],
+            bytes: 0,
+        },
+        &OriginMark {
+            conn_id: None,
+            origin: Some("deletion_tombstone".to_owned()),
+        },
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), query.recv())
+            .await
+            .is_err()
+    );
+    let entity = format!("e:{}", id.to_hex());
+    tee.on_materialized(
+        &entity,
+        &MaterializedDiffSummary {
+            containers: vec![entity.clone()],
+            bytes: 0,
+        },
+        &OriginMark {
+            conn_id: None,
+            origin: Some("local_delete_committed".to_owned()),
+        },
+    );
+    assert!(
+        query
+            .recv()
+            .await
+            .unwrap()
+            .invalidates(&[ReactiveDependency::Doc(id)])
+    );
+}

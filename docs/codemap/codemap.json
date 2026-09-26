@@ -12322,7 +12322,7 @@
      "path": "src/deletion/publish.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {

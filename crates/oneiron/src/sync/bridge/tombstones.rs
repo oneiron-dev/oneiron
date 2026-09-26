@@ -44,7 +44,7 @@ pub(super) fn materialize_tombstones_from_delta(
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
-) -> bool {
+) -> Option<Vec<EntityId>> {
     let entities_map = doc.get_map("entities");
     // Staged BEFORE the batch transaction opens: the door gates below are
     // document reads plus their own committing quarantine writes (pre-batch
@@ -176,12 +176,12 @@ pub(super) fn materialize_tombstones_from_delta(
     }
 
     if staged.is_empty() {
-        return false;
+        return None;
     }
     // Soft-over-hard `ra:` reassert for staged soft items runs INSIDE
     // apply_tombstone_batch's single parent write txn (ONE-521) — materialize
     // must not open any per-item committing helper over staged work.
-    apply_tombstone_batch(vault, window_key, &staged)
+    apply_tombstone_batch(vault, window_key, &staged).then(Vec::new)
 }
 
 /// One tombstone staged out of the delta, owned so the batch transaction can

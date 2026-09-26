@@ -450,3 +450,174 @@ async fn observer_b_materialization_refreshes_only_changed_entity() {
     );
     assert_eq!(reactive_reads(&second_reads), 1);
 }
+
+/// Publication is before hard purge, so a tombstone notification must not
+/// consume the local read's invalidation while the old body is still readable.
+/// Only the committed scrub/purge notice may wake it.
+async fn assert_local_deletion_refreshes_only_target(reason: oneiron::DeleteReason) {
+    let (_dir, server) = test_server();
+    let learned_at = 1_770_000_000;
+    let window = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let doc = server
+        .get_or_create_window(&window)
+        .await
+        .expect("open window");
+    let id = seeded_test_entity_id(0x1437_0018);
+    let sibling = seeded_test_entity_id(0x1437_0019);
+    for entity in [id, sibling] {
+        seed_reactive_turn(server.vault(), &entity, learned_at);
+    }
+    assert_eq!(
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &doc, &window)
+            .expect("mirror entities"),
+        2
+    );
+    let (probe, reads) = reactive_probe(id, vec![ReactiveDependency::Doc(id)]);
+    let (sibling_probe, sibling_reads) =
+        reactive_probe(sibling, vec![ReactiveDependency::Doc(sibling)]);
+    let mut read = open_local_reactive_read(&server, probe).expect("open target read");
+    let mut sibling_read = open_local_reactive_read(&server, sibling_probe).expect("open sibling");
+    let before = read.snapshot().clone();
+    assert!(before.is_some());
+
+    let outcome = server
+        .vault()
+        .delete_entity_with_reason(&id, reason)
+        .expect("delete");
+    assert!(outcome.existed);
+    let refreshed =
+        tokio::time::timeout(std::time::Duration::from_secs(5), read.refresh_on_change())
+            .await
+            .expect("post-commit notice")
+            .expect("re-read");
+    assert_eq!(
+        refreshed,
+        &server.vault().get(&id).expect("stored post-delete state")
+    );
+    assert_ne!(refreshed, &before);
+    assert_eq!(reactive_reads(&reads), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            sibling_read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "same-window sibling must retain its snapshot"
+    );
+    assert_eq!(reactive_reads(&sibling_reads), 1);
+}
+
+#[tokio::test]
+async fn soft_delete_refreshes_only_deleted_local_entity() {
+    assert_local_deletion_refreshes_only_target(oneiron::DeleteReason::UserDelete).await;
+}
+
+#[tokio::test]
+async fn hard_delete_waits_for_purge_then_refreshes_only_deleted_local_entity() {
+    assert_local_deletion_refreshes_only_target(oneiron::DeleteReason::UserHardDelete).await;
+}
+
+/// The wire delta names child X and old parent A, but replay installs the
+/// losing candidate X→B from the live CRDT map in the same LMDB transaction.
+/// B's incoming-edge read must re-run; an unrelated parent remains untouched.
+#[tokio::test]
+async fn replayed_child_of_parent_invalidates_incoming_edge_read() {
+    use loro::CommitOptions;
+    use oneiron::sync::bridge::{encode_edge_value_for_crdt, format_edge_key};
+
+    struct IncomingEdges {
+        parent: oneiron::EntityId,
+        dependencies: [ReactiveDependency; 1],
+        reads: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl ReactiveLocalQuery for IncomingEdges {
+        type Output = Vec<oneiron::EntityId>;
+        fn dependencies(&self) -> &[ReactiveDependency] {
+            &self.dependencies
+        }
+        fn read(&self, vault: &oneiron::Vault) -> oneiron::Result<Self::Output> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(vault
+                .edges_in(&self.parent)?
+                .into_iter()
+                .filter(|edge| edge.kind == oneiron::EdgeKind::ChildOf)
+                .map(|edge| edge.target)
+                .collect())
+        }
+    }
+    let (_dir, server) = test_server();
+    let learned_at = 1_770_000_000;
+    let window = oneiron::sync::WindowKey::from_timestamp(learned_at);
+    let doc = server
+        .get_or_create_window(&window)
+        .await
+        .expect("open window");
+    let child = seeded_test_entity_id(0x1437_0020);
+    let a = seeded_test_entity_id(0x1437_0021);
+    let b = seeded_test_entity_id(0x1437_0022);
+    let other = seeded_test_entity_id(0x1437_0023);
+    for entity in [child, a, b, other] {
+        seed_reactive_turn(server.vault(), &entity, learned_at);
+    }
+    assert_eq!(
+        oneiron::sync::window::reverse_rematerialize(server.vault(), &doc, &window)
+            .expect("mirror endpoints"),
+        4
+    );
+    let kind = oneiron::EdgeKind::ChildOf;
+    let key_a = format_edge_key(&child, kind, &a);
+    let key_b = format_edge_key(&child, kind, &b);
+    for (key, timestamp) in [(&key_a, 100), (&key_b, 90)] {
+        let value = encode_edge_value_for_crdt(kind, 1.0, timestamp, None, None).unwrap();
+        doc.get_map("edges").insert(key, value.as_slice()).unwrap();
+    }
+    doc.commit_with(CommitOptions::new().origin("conn:7"));
+    assert_eq!(server.vault().sources(&a, kind, None).unwrap(), vec![child]);
+    assert!(server.vault().sources(&b, kind, None).unwrap().is_empty());
+
+    let counter_b = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter_other = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut b_read = open_local_reactive_read(
+        &server,
+        IncomingEdges {
+            parent: b,
+            dependencies: [ReactiveDependency::Doc(b)],
+            reads: counter_b.clone(),
+        },
+    )
+    .unwrap();
+    let mut other_read = open_local_reactive_read(
+        &server,
+        IncomingEdges {
+            parent: other,
+            dependencies: [ReactiveDependency::Doc(other)],
+            reads: counter_other.clone(),
+        },
+    )
+    .unwrap();
+    assert!(b_read.snapshot().is_empty());
+
+    doc.get_map("edges").delete(&key_a).unwrap();
+    doc.commit_with(CommitOptions::new().origin("conn:7"));
+    let refreshed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        b_read.refresh_on_change(),
+    )
+    .await
+    .expect("replayed parent invalidation")
+    .expect("incoming edge read");
+    assert_eq!(refreshed, &vec![child]);
+    assert_eq!(reactive_reads(&counter_b), 2);
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            other_read.refresh_on_change()
+        )
+        .await
+        .is_err(),
+        "unrelated parent must not re-read"
+    );
+    assert_eq!(reactive_reads(&counter_other), 1);
+}
