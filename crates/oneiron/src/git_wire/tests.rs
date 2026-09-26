@@ -361,6 +361,45 @@ fn git_wire_refuses_repository_filter_before_staging_a_file() {
 
 #[cfg(unix)]
 #[test]
+fn git_wire_preserves_harmless_eol_attributes_for_checkout_and_status() {
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md text eol=crlf\n",
+    )
+    .expect("write attributes");
+    run_git(repo.path(), &["add", "--", ".gitattributes"]);
+    let mut commit = TEST_IDENTITY.to_vec();
+    commit.extend_from_slice(&["commit", "-m", "attribute policy"]);
+    run_git(repo.path(), &commit);
+    let head = GitOid::parse_hex(trimmed(run_git(
+        repo.path(),
+        &["rev-parse", "--verify", "HEAD"],
+    )))
+    .expect("head");
+
+    let wire = new_wire(&vault);
+    let proven = open(&wire, &repo);
+    let checkout_root = tempfile::tempdir().expect("worktree root");
+    let tree = checkout_root.path().join("tree");
+    wire.add_worktree(&proven, &tree, &head, 100)
+        .expect("worktree add");
+    let materialized = fs::read(tree.join("README.md")).expect("checkout README");
+    // An unchanged stock-Git CRLF file must not be reported as locally dirty.
+    fs::write(tree.join("README.md"), b"base\r\n").expect("stock Git bytes");
+    let linked = wire
+        .open_repo(repo.repo_ref, &tree)
+        .expect("linked worktree");
+    let status = wire
+        .run_read(&linked, &FrozenGitArgv::status_porcelain())
+        .expect("read status");
+    assert_eq!(materialized, b"base\r\n");
+    assert!(status.stdout.is_empty(), "unchanged CRLF content is clean");
+}
+
+#[cfg(unix)]
+#[test]
 fn git_wire_rejects_conditional_worktree_smudge_filter() {
     use std::io::Write;
 

@@ -43,26 +43,28 @@ pub(super) fn spawn_git(
     // used only by the test-only bounded-process probes; no production caller
     // passes it. Every other git child must refuse executable filter drivers
     // before the operation can read .gitattributes and run one.
-    if args.is_empty()
-        || args
-            .first()
-            .is_some_and(|arg| arg.as_os_str() == std::ffi::OsStr::new("init"))
-    {
+    if args.is_empty() {
+        // Only test-only process-bound probes use the empty argv.
         return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
     }
-    reject_repository_filter_commands(process_env, &repo_root)?;
-    if !requires_attribute_scope(args) {
+    let verb_index = git_verb_index(process_env, args)?;
+    if args[verb_index].as_os_str() == std::ffi::OsStr::new("init") {
+        return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
+    }
+    let prefix = &args[..verb_index];
+    reject_repository_filter_commands(process_env, &repo_root, prefix)?;
+    if !requires_attribute_scope(process_env, args, verb_index) {
         return spawn_git_inner(process_env, &repo_root, args, stdin_payload, None);
     }
     // Include conditions are evaluated again in Git's child worktree, so a
     // source-root probe cannot approve them. Refuse them before any effect.
-    reject_conditional_config(process_env, &repo_root)?;
-    let scope = TrustedAttributeScope::new(process_env, &repo_root, args)?;
+    reject_conditional_config(process_env, &repo_root, prefix)?;
+    let scope = TrustedAttributeScope::new(process_env, &repo_root, args, prefix)?;
     // Close the source-probe-to-snapshot window too: a changed repository
     // config is never certified even though the child only sees the sealed
     // common dir. Changes after this point are checked again on return.
-    reject_repository_filter_commands(process_env, &repo_root)?;
-    reject_conditional_config(process_env, &repo_root)?;
+    reject_repository_filter_commands(process_env, &repo_root, prefix)?;
+    reject_conditional_config(process_env, &repo_root, prefix)?;
     if scope.source_config_changed()? {
         return Err(super::failure::invalid(
             "repository configuration changed before git effect",
@@ -97,24 +99,59 @@ pub(super) fn spawn_git(
     Ok(output)
 }
 
+/// The hub's `--git-dir=repo` is a validated selector for its private bare
+/// scratch store, not the operation. Never drop it from a config/identity probe.
+fn git_verb_index(process_env: &GitWireProcessEnv, args: &[OsString]) -> Result<usize> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if arg.as_os_str() == std::ffi::OsStr::new("-c") {
+            if args.get(index + 1).is_none() {
+                return Err(super::failure::invalid("git -c lacks a value"));
+            }
+            index += 2;
+        } else if arg.as_os_str() == std::ffi::OsStr::new("--git-dir=repo")
+            && process_env.hub_root.is_some()
+        {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    if args.get(index).is_none() {
+        return Err(super::failure::invalid("git argv has no verb"));
+    }
+    Ok(index)
+}
+
+fn prefixed_probe(prefix: &[OsString], command: &[&str]) -> Vec<OsString> {
+    prefix
+        .iter()
+        .cloned()
+        .chain(command.iter().map(|arg| OsString::from(*arg)))
+        .collect()
+}
+
 fn reject_repository_filter_commands(
     process_env: &GitWireProcessEnv,
     repo_root: &Path,
+    prefix: &[OsString],
 ) -> Result<()> {
     // `--includes` considers local and per-worktree includeIf entries;
     // system/global config is already disabled by the pinned child baseline.
     // Git has no wildcard override for filter.<driver>.process/clean/smudge,
     // so an arbitrary driver must fail closed, not be enumerated from a
     // possibly changing .gitattributes file.
-    let args = [
-        "config",
-        "--includes",
-        "--null",
-        "--name-only",
-        "--get-regexp",
-        r"^filter\..*\.(clean|smudge|process)$",
-    ]
-    .map(OsString::from);
+    let args = prefixed_probe(
+        prefix,
+        &[
+            "config",
+            "--includes",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\..*\.(clean|smudge|process)$",
+        ],
+    );
     let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
     if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
     {
@@ -133,14 +170,11 @@ fn reject_repository_filter_commands(
 /// Only these verbs never consult working-tree attributes while executing.
 /// Unknown verbs go through the isolated common-dir boundary, not the other way
 /// around. `worktree add` is the one worktree subcommand that materializes files.
-fn requires_attribute_scope(args: &[OsString]) -> bool {
-    let mut index = 0;
-    while args
-        .get(index)
-        .is_some_and(|arg| arg.as_os_str() == std::ffi::OsStr::new("-c"))
-    {
-        index += 2;
-    }
+fn requires_attribute_scope(
+    process_env: &GitWireProcessEnv,
+    args: &[OsString],
+    index: usize,
+) -> bool {
     let Some(verb) = args.get(index).and_then(|arg| arg.to_str()) else {
         return true;
     };
@@ -159,6 +193,10 @@ fn requires_attribute_scope(args: &[OsString]) -> bool {
         "hash-object" => tail
             .iter()
             .any(|arg| arg.to_string_lossy().starts_with("--path")),
+        // The validated hub profile fetches objects into a bare private repo.
+        // There is no checkout or working-tree attribute consumer, and its
+        // remote.origin config must persist in that repo between calls.
+        "fetch" if process_env.hub_root.is_some() => false,
         "worktree" => !tail
             .first()
             .is_some_and(|arg| matches!(arg.to_str(), Some("list" | "prune" | "remove"))),
@@ -166,15 +204,21 @@ fn requires_attribute_scope(args: &[OsString]) -> bool {
     }
 }
 
-fn reject_conditional_config(process_env: &GitWireProcessEnv, repo_root: &Path) -> Result<()> {
-    let args = [
-        "config",
-        "--null",
-        "--name-only",
-        "--get-regexp",
-        r"^(include\.path|includeif\..*\.path)$",
-    ]
-    .map(OsString::from);
+fn reject_conditional_config(
+    process_env: &GitWireProcessEnv,
+    repo_root: &Path,
+    prefix: &[OsString],
+) -> Result<()> {
+    let args = prefixed_probe(
+        prefix,
+        &[
+            "config",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^(include\.path|includeif\..*\.path)$",
+        ],
+    );
     let probe = spawn_git_inner(process_env, repo_root, &args, None, None)?;
     if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
     {
@@ -190,9 +234,9 @@ fn reject_conditional_config(process_env: &GitWireProcessEnv, repo_root: &Path) 
     ))
 }
 
-/// A per-child trusted Git common directory. The data-bearing refs and objects
-/// still point at the proven repository, but executable configuration and
-/// attribute policy come only from this private, short-lived directory.
+/// A per-child trusted Git common directory. Refs and objects still point at
+/// the proven repository. Executable configuration and `info/attributes` are
+/// private, while harmless versioned `.gitattributes` remain in force.
 struct TrustedAttributeScope {
     shadow: TempDir,
     common: PathBuf,
@@ -201,11 +245,13 @@ struct TrustedAttributeScope {
 }
 
 impl TrustedAttributeScope {
-    fn new(process_env: &GitWireProcessEnv, repo_root: &Path, args: &[OsString]) -> Result<Self> {
-        let command = [
-            OsString::from("rev-parse"),
-            OsString::from("--git-common-dir"),
-        ];
+    fn new(
+        process_env: &GitWireProcessEnv,
+        repo_root: &Path,
+        args: &[OsString],
+        prefix: &[OsString],
+    ) -> Result<Self> {
+        let command = prefixed_probe(prefix, &["rev-parse", "--git-common-dir"]);
         let observed = spawn_git_inner(process_env, repo_root, &command, None, None)?;
         if !observed.success {
             return Err(super::failure::invalid(
@@ -369,10 +415,6 @@ fn spawn_git_inner(
     command.env("GIT_CEILING_DIRECTORIES", ceiling);
     if let Some(common) = attribute_common_dir {
         command.env("GIT_COMMON_DIR", common);
-        command.env(
-            "GIT_ATTR_SOURCE",
-            "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
-        );
     }
     if let Some(root) = &process_env.hub_root {
         super::hub_read::configure(&mut command, root)?;
