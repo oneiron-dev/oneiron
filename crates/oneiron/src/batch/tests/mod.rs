@@ -379,7 +379,7 @@ fn agent_birth_source_asset_inherits_batch_mask_on_both_terminals() -> Result<()
         1.0,
         true,
         false,
-        Value::Map(vec![]),
+        Value::Map(vec![(Value::from("fixture"), Value::from("masked-agent"))]),
         None,
         true,
         None,

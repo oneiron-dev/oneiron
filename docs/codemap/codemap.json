@@ -32168,6 +32168,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/vault/transactions/sync_scan_tests.rs",
+     "purpose": "Host scans refuse undeclared sync-state rows even under a broad prefix",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/vault_cleanup/attempt_retention.rs",
@@ -35079,7 +35087,7 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35145,7 +35153,7 @@
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2084,
-   "test_files": 708
+   "test_files": 709
   },
   "oneiron-android": {
    "files": [

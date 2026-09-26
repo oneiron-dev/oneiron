@@ -139,7 +139,13 @@ fn memory_view_short_ref_and_body_use_the_same_scoped_snapshot() {
             &original,
         )
         .unwrap();
-    let original_ref = vault.pinned_short_ref(&id).unwrap();
+    let original_ref = facade
+        .get_entity(&id.to_hex())
+        .unwrap()
+        .value
+        .unwrap()
+        .short_ref
+        .unwrap();
     let lane = facade
         .read_lane(crate::claim::ClaimReadStatus::Recorded)
         .unwrap();
@@ -147,7 +153,10 @@ fn memory_view_short_ref_and_body_use_the_same_scoped_snapshot() {
     // view is projected. The old row and its short id must still agree.
     let read = facade
         .read_views_after(&lane, &[Some((id, crate::vault::ReadMode::Live))], || {
-            assert!(vault.delete_entity(&id).unwrap());
+            std::thread::scope(|scope| {
+                let writer = scope.spawn(|| vault.delete_entity(&id).unwrap());
+                assert!(writer.join().unwrap());
+            });
         })
         .unwrap()
         .single();
