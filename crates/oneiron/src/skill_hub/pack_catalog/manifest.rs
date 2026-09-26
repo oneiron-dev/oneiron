@@ -1,7 +1,7 @@
 //! Closed PACK.md manifest parser. Requested powers stay data until local admission.
 use std::collections::BTreeSet;
 
-use super::invalid;
+use super::{AgentPackFacets, invalid};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum PackKind {
     Capability,
     Connector,
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +28,8 @@ pub struct PackManifest {
     pub license: Option<String>,
     pub kind: PackKind,
     pub adapter: Option<PackAdapter>,
+    /// Named, typed facet paths for the inert agent-pack container.
+    pub agent_facets: Option<AgentPackFacets>,
     /// Predicate declarations are byteless. They never allocate a type byte.
     pub predicates: BTreeSet<String>,
     /// Runtime structural shapes, by global name; handles are local, never in PACK.md.
@@ -62,6 +65,7 @@ impl PackManifest {
                     | "kinds"
                     | "grants"
                     | "wakes"
+                    | "facets"
             ) {
                 return Err(invalid("unknown PACK.md field"));
             }
@@ -99,6 +103,7 @@ impl PackManifest {
         let kind = match required("kind")?.as_str() {
             "capability" => PackKind::Capability,
             "connector" => PackKind::Connector,
+            "agent" => PackKind::Agent,
             _ => return Err(invalid("unsupported pack kind")),
         };
         let adapter = fields
@@ -130,6 +135,28 @@ impl PackManifest {
         if kind == PackKind::Connector && adapter.is_none() {
             return Err(invalid("connector pack requires an adapter"));
         }
+        let agent_facets = fields
+            .get("facets")
+            .map(|value| {
+                serde_json::from_str::<AgentPackFacets>(value)
+                    .map_err(|_| invalid("agent facets must be a typed JSON object"))
+            })
+            .transpose()?;
+        if kind == PackKind::Agent {
+            agent_facets
+                .as_ref()
+                .ok_or_else(|| invalid("agent pack requires a facet map"))?
+                .validate_paths()?;
+            if adapter.is_some()
+                || ["predicates", "kinds", "grants", "wakes"]
+                    .iter()
+                    .any(|key| fields.contains_key(key))
+            {
+                return Err(invalid("agent pack cannot declare runtime powers"));
+            }
+        } else if agent_facets.is_some() {
+            return Err(invalid("only agent packs declare agent facets"));
+        }
         let name = required("name")?;
         validate_name(&name)?;
         let predicates = list("predicates")?;
@@ -150,6 +177,7 @@ impl PackManifest {
             license: fields.get("license").map(|v| scalar(v)).transpose()?,
             kind,
             adapter,
+            agent_facets,
             predicates,
             kinds,
             requested_grants: list("grants")?,

@@ -258,3 +258,24 @@ fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()
     assert_eq!(vault.get_pack_source(&id)?, Some(source));
     Ok(())
 }
+
+#[test]
+fn agent_source_cannot_be_installed_as_a_runtime_pack() -> Result<()> {
+    let source = PackSource::from_files(super::tests::agent_files()?)?;
+    let (_dir, vault, _owner, reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let err = vault
+        .prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: false,
+                passed: true,
+            },
+        )
+        .expect_err("agent sources are not runtime installations");
+    assert!(format!("{err:?}").contains("agent packs are inert sources"));
+    Ok(())
+}

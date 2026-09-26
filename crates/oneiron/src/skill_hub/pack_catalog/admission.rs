@@ -219,6 +219,11 @@ impl Vault {
     }
 }
 fn validate_qualification(source: &PackSource, result: &PackQualification) -> Result<()> {
+    if source.manifest.kind == PackKind::Agent {
+        return Err(invalid(
+            "agent packs are inert sources, not runtime installations",
+        ));
+    }
     if !result.passed
         || !result.advisory_accepted
         || result.suite.is_empty()
