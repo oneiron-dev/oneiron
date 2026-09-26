@@ -1537,7 +1537,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 14 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | L | 167 mod · 71 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | L | 168 mod · 71 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limits.rs` | src | s | 3 crate-vis | — | — |
 | `src/linear_sync/codec.rs` | src | s | 3 fn · 1 crate-vis | — | Stable link keys, operation/event digests, field hashes |
 | `src/linear_sync/engine.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | LinearSyncAdapter | LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic |
@@ -1991,6 +1991,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
 | `src/ports/time.rs` | src | s | 1 struct · 2 trait · 6 fn · 6 crate-vis | Clock, IdGen, StoreClock | Per-store clock and id source |
+| `src/posterior.rs` | src | s | 1 trait · 2 crate-vis | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/ppr/cache_store.rs` | src | m | 29 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
 | `src/ppr/community.rs` | src | s | 7 crate-vis | — | Community-boost bridge adapter over ppr_community |
 | `src/ppr/mod.rs` | src | s | 7 crate-vis | — | — |

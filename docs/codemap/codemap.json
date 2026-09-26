@@ -19157,7 +19157,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 167,
+      "mod": 168,
       "re-export": 71
      }
     },
@@ -24557,6 +24557,19 @@
       "fn": 6,
       "struct": 1,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Posterior"
+     ],
+     "path": "src/posterior.rs",
+     "purpose": "Shared Beta posterior bandit seam; outcome admission stays with each estimator",
+     "surface": {
+      "crate-vis": 2,
+      "trait": 1
      }
     },
     {
@@ -34539,6 +34552,13 @@
      "layout": "dir",
      "purpose": "Transaction-composable storage ports"
     },
+    "posterior": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Shared Beta posterior bandit seam; outcome admission stays with each estimator"
+    },
     "ppr": {
      "files": 9,
      "impl_vault": false,
@@ -34962,7 +34982,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2065,
+   "source_files": 2066,
    "test_files": 708
   },
   "oneiron-android": {
