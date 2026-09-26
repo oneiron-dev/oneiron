@@ -10147,7 +10147,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/consent/adapters.rs",
@@ -12526,19 +12526,19 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DisclosureScope",
       "DisclosureScopeStatus"
      ],
      "path": "src/disclosure/scope_codec.rs",
-     "purpose": "DisclosureScope type with canonical msgpack codec and key validation",
+     "purpose": "Contact clearance envelope and canonical six-axis Scope codec",
      "surface": {
-      "const": 4,
-      "crate-vis": 7,
+      "const": 2,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 8,
+      "fn": 7,
       "struct": 1
      }
     },

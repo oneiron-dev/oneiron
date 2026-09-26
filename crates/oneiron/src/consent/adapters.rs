@@ -265,32 +265,34 @@ fn policy_value_selectors(label: &str, value: Option<&Value>) -> Vec<String> {
     selectors
 }
 
-/// Projects a [`DisclosureScope`] into a [`DisclosureGrant`] for one resolved
-/// interlocutor.
-///
-/// The resolved interlocutor/contact is the audience; entity/topic/purpose
-/// selectors are the envelope. A missing or malformed scope remains HIDE:
-/// callers with no scope must not call this at all, and a scope that fails
-/// validation returns an error rather than an empty-but-permissive bound.
+/// Projects an active contact clearance to an exact Scope identity selector.
+/// This legacy selector envelope cannot model lattice containment: a digest
+/// admits only an identical Scope, never a wider axis or an entity allowlist.
+/// Actual disclosure admission evaluates the Scope against the record stamp.
 pub fn disclosure_grant_from_disclosure_scope(
-    scope: &DisclosureScope,
+    clearance: &DisclosureScope,
     interlocutor_ref: &str,
     class: &str,
 ) -> Result<DisclosureGrant> {
-    scope.validate()?;
-    if scope.status != DisclosureScopeStatus::Active {
+    clearance.validate()?;
+    let scope = &clearance.scope;
+    if clearance.status != DisclosureScopeStatus::Active
+        || scope.worlds.is_bottom()
+        || scope.bands.is_bottom()
+        || scope.audience.is_bottom()
+        || scope.verbs.is_bottom()
+        || scope.sensitivity == crate::federation::SensitivityCeiling::Bottom
+    {
         return Err(invalid_bound(
-            "revoked disclosure scope projects to no bound; the fail-safe is hide",
+            "empty or revoked contact clearance projects to no bound",
         ));
     }
     let audience = AudienceBound::singleton(interlocutor_ref)?;
-    let mut selectors: Vec<String> = scope
-        .entities
-        .iter()
-        .map(|entity| format!("entity:{}", entity.to_hex()))
-        .collect();
-    selectors.extend(scope.topics.iter().map(|topic| format!("topic:{topic}")));
-    selectors.push(format!("purpose:{}", scope.purpose));
+    let value = crate::federation::scope_codec::encode_scope_value(scope)?;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value)
+        .map_err(|_| invalid_bound("contact Scope encoding failed"))?;
+    let selectors = vec![format!("scope:{}", blake3::hash(&bytes).to_hex())];
     DisclosureGrant::new(GrantBound::disclosure(
         audience,
         DisclosureClass::new(class)?,

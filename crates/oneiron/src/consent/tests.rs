@@ -976,7 +976,7 @@ fn consent_fail_safe_hides_disclosure_and_asks_writes() {
     // too: it yields no bound at all rather than a permissive one.
     let revoked = DisclosureScope {
         status: DisclosureScopeStatus::Revoked,
-        ..DisclosureScope::task_scoped("purpose", vec![entity(0x71)], 5).expect("scope")
+        ..DisclosureScope::new(crate::federation::Scope::top(), "purpose", 5).expect("scope")
     };
     assert_eq!(
         disclosure_grant_from_disclosure_scope(&revoked, "contact:doctor", "health")
@@ -1257,11 +1257,30 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     );
 
     // DisclosureScope → DisclosureGrant.
-    let scope = DisclosureScope::task_scoped("q3 planning", vec![entity(0x71)], 5).expect("scope");
+    let scope =
+        DisclosureScope::new(crate::federation::Scope::top(), "q3 planning", 5).expect("scope");
     let before = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
     let projected = disclosure_grant_from_disclosure_scope(&scope, "contact:doctor", "health")
         .expect("project");
     assert_eq!(projected.bound().domain(), ConsentDomain::Disclosure);
+    let BoundEnvelope::Disclosure(envelope) = projected.bound().envelope() else {
+        panic!("disclosure envelope");
+    };
+    assert_eq!(envelope.selectors().len(), 1);
+    assert!(envelope.selectors()[0].starts_with("scope:"));
+    let mut repurposed = scope.clone();
+    repurposed.purpose = "same clearance, new purpose".into();
+    assert_eq!(
+        disclosure_grant_from_disclosure_scope(&repurposed, "contact:doctor", "health")
+            .expect("same Scope")
+            .bound(),
+        projected.bound(),
+    );
+    repurposed.scope = crate::federation::Scope::default();
+    assert!(
+        disclosure_grant_from_disclosure_scope(&repurposed, "contact:doctor", "health").is_err(),
+        "lattice bottom never projects a grant",
+    );
     let after = crate::disclosure::encode_disclosure_scope_body(&scope).expect("encode");
     assert_eq!(
         before, after,

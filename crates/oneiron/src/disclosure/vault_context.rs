@@ -17,6 +17,7 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
+use crate::federation::{Scope, record_scope::scope_for_blob};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_COUNTERPARTY_CONTACT};
 use crate::store::Store;
@@ -25,8 +26,8 @@ use crate::vault::CLAIM_OF_DEFAULT_WEIGHT;
 
 use super::disclosure_tier;
 use super::scope_codec::{
-    DisclosureScope, DisclosureScopeStatus, decode_disclosure_scope_body,
-    disclosure_scope_body_value, encode_disclosure_scope_body,
+    DisclosureScope, decode_disclosure_scope_body, disclosure_scope_body_value,
+    encode_disclosure_scope_body,
 };
 use super::tier_classification::{
     DISCLOSURE_TIER_VALUE_TIER_A, DisclosureMode, DisclosureTier, PREDICATE_DISCLOSURE_SCOPE,
@@ -120,7 +121,7 @@ impl Vault {
         let claim = ClaimBody::new(
             PREDICATE_DISCLOSURE_SCOPE,
             ClaimSubject::Entity(*contact_id),
-            disclosure_scope_body_value(scope),
+            disclosure_scope_body_value(scope)?,
             1.0,
             ClaimApprovalStatus::Auto,
             ClaimLifecycleStatus::Active,
@@ -132,7 +133,7 @@ impl Vault {
 
     /// Reads the enforcement-truth scope row for a contact. Missing row ->
     /// `Ok(None)`; a Revoked scope decodes fine — `DisclosureContext::resolve`
-    /// maps it to deny-all.
+    /// maps it to Scope bottom.
     pub fn counterparty_disclosure_scope(
         &self,
         contact_id: &EntityId,
@@ -291,21 +292,21 @@ impl Vault {
 }
 
 /// The resolved disclosure state one context assembly is clamped against:
-/// mode, interlocutor set, and (owner-absent only) the DEC-0005-intersected
-/// scope. One value feeds builder, board, and response so the response can
+/// mode, interlocutor set, and (owner-absent only) the met six-axis
+/// contact clearances. One value feeds builder, board, and response so the response can
 /// never describe a different clamp than the one applied (design §11 rule 6).
 #[derive(Debug, Clone)]
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
-    pub(super) scope: Option<DisclosureScope>,
+    pub(super) scope: Option<Scope>,
 }
 
 impl DisclosureContext {
     /// Derives the mode and, under `AbsenceClamp`, loads and intersects every
-    /// non-owner interlocutor's scope. Fail-closed: an unknown party, a
+    /// non-owner interlocutor's Scope. Fail-closed: an unknown party, a
     /// revoked scope, a missing row, or a row that FAILS TO DECODE
-    /// contributes the EMPTY scope, so the intersection denies everything.
+    /// contributes lattice bottom, so the meet denies everything.
     /// Corruption never propagates as an error from this path (§14.5: the
     /// clamp only ever narrows — an abort here could surface partial state
     /// or be swallowed by a caller into a wider-than-intended pack); only
@@ -315,31 +316,25 @@ impl DisclosureContext {
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
         let mode = DisclosureMode::from_set(&set);
         let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
-            let now = vault.store.clock.now_recorded_at();
-            let mut folded: Option<DisclosureScope> = None;
+            let mut folded = Scope::top();
             for entry in set.non_owner() {
                 let entry_scope = match entry.contact_ref() {
                     Some(hex) => {
                         let contact_id = EntityId::from_hex(hex)?;
                         match vault.counterparty_disclosure_scope(&contact_id) {
-                            Ok(Some(scope)) if scope.status == DisclosureScopeStatus::Active => {
-                                scope
-                            }
-                            Ok(_) => DisclosureScope::deny_all(now),
+                            Ok(Some(clearance)) => clearance.effective_scope(),
+                            Ok(_) => Scope::default(),
                             Err(error) if error.kind() == ErrorKind::InvalidDisclosureScope => {
-                                DisclosureScope::deny_all(now)
+                                Scope::default()
                             }
                             Err(error) => return Err(error),
                         }
                     }
-                    None => DisclosureScope::deny_all(now),
+                    None => Scope::default(),
                 };
-                folded = Some(match folded {
-                    None => entry_scope,
-                    Some(accumulated) => accumulated.intersect(&entry_scope),
-                });
+                folded = folded.meet(&entry_scope);
             }
-            folded
+            Some(folded)
         } else {
             None
         };
@@ -362,9 +357,9 @@ impl DisclosureContext {
 
     /// The clamp's admission predicate: `OwnerAlone` admits everything;
     /// `Supervised` admits everything not Tier A; `AbsenceClamp` admits only
-    /// non-Tier-A entities on the intersected allowlist, or claims ABOUT an
-    /// allowlisted entity. Tier is checked FIRST so scope can never override
-    /// tier (never-widen, I2).
+    /// non-Tier-A records whose record-position Scope is admitted by the
+    /// intersected contact Scope. Tier is checked FIRST so clearance can
+    /// never override tier (never-widen, I2).
     pub(crate) fn admits(
         &self,
         store: &Store,
@@ -397,15 +392,13 @@ impl DisclosureContext {
         let Some(scope) = self.scope.as_ref() else {
             return Ok(false);
         };
-        if scope.allows_entity(id) {
-            return Ok(true);
-        }
-        if let Some(body) = body
-            && let ClaimSubject::Entity(subject) = body.subject
-        {
-            return Ok(scope.allows_entity(&subject));
-        }
-        Ok(false)
+        let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
+            return Ok(false);
+        };
+        let Some(record_scope) = scope_for_blob(store, rtxn, *id, &raw)? else {
+            return Ok(false);
+        };
+        Ok(scope.admits("read", &record_scope, &Scope::top()))
     }
 
     /// Builds the agent-visible assembly block for this clamp.
