@@ -226,6 +226,9 @@ impl SandboxLinkedImport {
             (SandboxImportClass::WriteTrap, "self.memory.put_edge") => {
                 Some(SelfEffect::MemoryPutEdge)
             }
+            (SandboxImportClass::WriteTrap, "self.report_blocked") => {
+                Some(SelfEffect::ReportBlocked)
+            }
             _ => None,
         }
     }
@@ -256,6 +259,9 @@ const SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT: SandboxLinkedImport =
 
 const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.put_edge", SandboxImportClass::WriteTrap);
+
+const SELF_REPORT_BLOCKED_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.report_blocked", SandboxImportClass::WriteTrap);
 
 const SELF_ASK_HUMAN_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.ask_human", SandboxImportClass::DurableWait);
@@ -288,6 +294,7 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
+    SELF_REPORT_BLOCKED_IMPORT,
     SELF_ASK_HUMAN_IMPORT,
     SELF_ASK_HUMAN_CAMEL_IMPORT,
     SELF_SPEAK_IMPORT,

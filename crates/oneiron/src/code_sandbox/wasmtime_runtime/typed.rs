@@ -174,6 +174,15 @@ pub(super) fn link_imports(
                     })();
                     Ok((reply,))
                 }),
+            "self.report_blocked" => root.func_wrap(wit,
+                |mut cx: StoreContextMut<'_, State>, (category, detail): (String, String)| {
+                    cx.data_mut().begin_call()?;
+                    let reply: Reply<BlockedOutput> = cx.data_mut().call("self.report_blocked",
+                        json!({"category":category,"detail":detail}))
+                        .and_then(|value| field(&value,"receipt"))
+                        .map(|receipt| BlockedOutput { receipt });
+                    Ok((reply,))
+                }),
             "self.ask_human" | "self.askHuman" => root.func_wrap(wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (PromptInput,)| {
                     cx.data_mut().begin_call()?;

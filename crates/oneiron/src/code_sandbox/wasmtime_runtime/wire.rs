@@ -4,6 +4,7 @@ use super::{Bridge, failure};
 use crate::code_run::{
     SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
     SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
+    blocked::{BlockedCategory, SelfReportBlockedCall},
 };
 use crate::code_sandbox::{
     SandboxCredentialCall, SandboxCredentialHandle, SandboxReadFile, SandboxVirtualPath,
@@ -55,6 +56,12 @@ struct Search {
 #[serde(deny_unknown_fields)]
 struct Speech {
     text: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReportBlocked {
+    category: String,
+    detail: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -197,6 +204,12 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 args.query,
                 args.limit.unwrap_or(20),
             ))
+        }
+        "self.report_blocked" => {
+            let args: ReportBlocked = parse(input)?;
+            let category: BlockedCategory = serde_json::from_value(Value::String(args.category))
+                .map_err(|_| failure("invalid blocked category"))?;
+            SelfCall::ReportBlocked(SelfReportBlockedCall::new(category, args.detail))
         }
         "self.ask_human" | "self.askHuman" => {
             SelfCall::AskHuman(SelfAskHumanCall::new(parse::<Ask>(input)?.prompt))
