@@ -235,7 +235,7 @@ impl Memory<'_> {
             // The Owner fact may be nominated by the creating agent. Only
             // this independent human-authored witness can establish the
             // principal relationship for an omitted recipient.
-            if self.vault().task_human_assigner_in(txn, task)? != Some(owner) {
+            if self.vault().task_human_assigner_in(txn, task)? != Some((owner, self.actor())) {
                 continue;
             }
             if !rooted && owner != crate::vault::embedded_owner_actor_id()? {

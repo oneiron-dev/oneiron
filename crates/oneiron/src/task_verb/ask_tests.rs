@@ -1444,6 +1444,45 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
             .code,
         crate::memory::MEMORY_CODE_BAD_REQUEST,
     );
+    // A genuine human assignment to B is not a principal binding for A,
+    // even if a public raw TASK rewrite later retargets its mutable body.
+    let other_agent = EntityId::now();
+    super::tests::support::put_person(&vault, other_agent);
+    let for_other = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("other agent"), None, None, None).with_assignee(
+            TaskAssignee::Peer {
+                actor_ref: other_agent,
+            },
+        ),
+    )?;
+    let other_task = for_other.task_ref.expect("human assignment for B");
+    let mut rewritten =
+        super::wire_decode::task_verb_body(&vault, other_task)?.expect("typed task body");
+    rewritten.assignee = Some(TaskAssignee::Peer { actor_ref: agent });
+    let rewritten_bytes = super::wire_encode::encode_task_verb_body(rewritten);
+    let now = crate::unix_seconds_now() + 5;
+    vault.put_entity(
+        &other_task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rewritten_bytes,
+    )?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, other_task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Peer { actor_ref: agent }),
+    );
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
     let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
         &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
             .with_assignee(TaskAssignee::Peer { actor_ref: agent }),

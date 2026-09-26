@@ -140,6 +140,7 @@ impl Memory<'_> {
                         task_ref,
                         kind: TaskAuthorityFactKind::HumanAssigned,
                         actor_ref: owner_ref,
+                        assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
                         occurred_at: now,
                     },
                 )?;
@@ -299,6 +300,7 @@ impl Memory<'_> {
                 task_ref,
                 kind: TaskAuthorityFactKind::Owner,
                 actor_ref: owner_ref,
+                assigned_ref: None,
                 occurred_at: now,
             },
         )?;

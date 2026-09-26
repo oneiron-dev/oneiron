@@ -49,9 +49,10 @@ const BODY_KEY_SUBKIND: &str = "subkind";
 const BODY_KEY_TASK_REF: &str = "task_ref";
 const BODY_KEY_KIND: &str = "kind";
 const BODY_KEY_ACTOR_REF: &str = "actor_ref";
+const BODY_KEY_ASSIGNED_REF: &str = "assigned_ref";
 const BODY_KEY_OCCURRED_AT: &str = "occurred_at";
 
-/// The exact v1 key count. A fact carries these seven keys and nothing else.
+/// Base v1 key count. HumanAssigned carries one additional assigned_ref.
 const FACT_BODY_KEY_COUNT: usize = 7;
 
 /// Contract stored-weight prior for `scoped_to` edges (contracts.ts
@@ -110,6 +111,8 @@ pub struct TaskAuthorityFact {
     pub kind: TaskAuthorityFactKind,
     /// Owner facts name the owner; Cancelled/Acked facts name who acted.
     pub actor_ref: EntityId,
+    /// Present only for HumanAssigned: the immutable agent H assigned.
+    pub assigned_ref: Option<EntityId>,
     pub occurred_at: u64,
 }
 
@@ -136,7 +139,7 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) owner_ref: Option<EntityId>,
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
-    pub(crate) human_assigner: Option<EntityId>,
+    pub(crate) human_assigner: Option<(EntityId, EntityId)>,
 }
 
 impl TaskAuthorityFacts {
@@ -164,12 +167,17 @@ impl TaskAuthorityFacts {
             },
             TaskAuthorityFactKind::Cancelled => self.cancelled = true,
             TaskAuthorityFactKind::Acked => self.acked = true,
-            TaskAuthorityFactKind::HumanAssigned => match self.human_assigner {
-                Some(actor) if actor != fact.actor_ref => {
-                    return Err(Error::InvariantViolation("task human assignment fork"));
+            TaskAuthorityFactKind::HumanAssigned => {
+                let assigned = fact.assigned_ref.ok_or(Error::InvariantViolation(
+                    "task human assignment lacks agent",
+                ))?;
+                match self.human_assigner {
+                    Some(binding) if binding != (fact.actor_ref, assigned) => {
+                        return Err(Error::InvariantViolation("task human assignment fork"));
+                    }
+                    _ => self.human_assigner = Some((fact.actor_ref, assigned)),
                 }
-                _ => self.human_assigner = Some(fact.actor_ref),
-            },
+            }
         }
         Ok(())
     }
@@ -211,7 +219,7 @@ pub(crate) fn put_task_authority_fact_in_txn(
 /// infallible, so this returns bytes directly — the same shape
 /// `task_verb::wire_encode` uses for the primary TASK body.
 pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u8> {
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(BODY_KEY_ROLE),
             Value::from(TaskRole::AuthorityFact.role_byte()),
@@ -237,7 +245,14 @@ pub(crate) fn encode_task_authority_fact_body(fact: &TaskAuthorityFact) -> Vec<u
             Value::from(BODY_KEY_OCCURRED_AT),
             Value::from(fact.occurred_at),
         ),
-    ]);
+    ];
+    if let Some(assigned) = fact.assigned_ref {
+        entries.push((
+            Value::from(BODY_KEY_ASSIGNED_REF),
+            Value::from(assigned.to_hex()),
+        ));
+    }
+    let value = Value::Map(entries);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &value)
         .expect("writing msgpack into a Vec is infallible");
@@ -264,14 +279,10 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
         .ok_or(Error::Record(RecordError::InvalidTaskBody(
             "task authority fact body",
         )))?;
-    // The key set is EXACT: a v1 fact has these seven keys and nothing else,
+    // The key set is EXACT: a base fact has seven keys and HumanAssigned
+    // carries exactly one additional agent id,
     // so no unread field can ride along in a body two decoders would disagree
     // about.
-    if entries.len() != FACT_BODY_KEY_COUNT {
-        return Err(Error::Record(RecordError::InvalidTaskBody(
-            "task authority fact key set",
-        )));
-    }
     let byte = |key| {
         fact_body_field(entries, key)?
             .as_u64()
@@ -304,12 +315,29 @@ pub(crate) fn decode_task_authority_fact_body(bytes: &[u8]) -> Result<TaskAuthor
             "task authority fact subkind",
         )));
     }
+    let kind = TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
+        RecordError::InvalidTaskBody("task authority fact kind"),
+    ))?;
+    let assigned_ref = if kind == TaskAuthorityFactKind::HumanAssigned {
+        if entries.len() != FACT_BODY_KEY_COUNT + 1 {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "task human assignment key set",
+            )));
+        }
+        Some(entity_ref(BODY_KEY_ASSIGNED_REF)?)
+    } else {
+        if entries.len() != FACT_BODY_KEY_COUNT {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "task authority fact key set",
+            )));
+        }
+        None
+    };
     Ok(TaskAuthorityFact {
         task_ref: entity_ref(BODY_KEY_TASK_REF)?,
-        kind: TaskAuthorityFactKind::from_byte(byte(BODY_KEY_KIND)?).ok_or(Error::Record(
-            RecordError::InvalidTaskBody("task authority fact kind"),
-        ))?,
+        kind,
         actor_ref: entity_ref(BODY_KEY_ACTOR_REF)?,
+        assigned_ref,
         occurred_at: fact_body_field(entries, BODY_KEY_OCCURRED_AT)?
             .as_u64()
             .ok_or(Error::Record(RecordError::InvalidTaskBody(
@@ -367,10 +395,12 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         task_ref: EntityId,
-    ) -> Result<Option<EntityId>> {
+    ) -> Result<Option<(EntityId, EntityId)>> {
         let facts = self.task_authority_facts_in(txn, task_ref)?;
         match (facts.owner_ref, facts.human_assigner) {
-            (Some(owner), Some(assigner)) if owner == assigner => Ok(Some(owner)),
+            (Some(owner), Some((assigner, assigned))) if owner == assigner => {
+                Ok(Some((owner, assigned)))
+            }
             (Some(_), Some(_)) => Err(Error::InvariantViolation(
                 "task human assigner is not owner",
             )),
@@ -460,6 +490,7 @@ mod tests {
             task_ref,
             kind,
             actor_ref,
+            assigned_ref: (kind == TaskAuthorityFactKind::HumanAssigned).then(|| id(0xA8)),
             occurred_at: 100,
         }
     }
@@ -507,6 +538,7 @@ mod tests {
             task_ref: id(0xA1),
             kind: TaskAuthorityFactKind::Cancelled,
             actor_ref: id(0xA2),
+            assigned_ref: None,
             occurred_at: 1_700_000_000,
         };
         let encoded = encode_task_authority_fact_body(&original);
@@ -532,6 +564,11 @@ mod tests {
         ] {
             cases.push(body_with(&encoded, key, value));
         }
+        cases.push(body_with(
+            &encoded,
+            BODY_KEY_KIND,
+            Value::from(TaskAuthorityFactKind::HumanAssigned.as_byte()),
+        ));
         // A dropped key and a smuggled extra key are both refusals: the key
         // set is exact, so nothing can ride along unread.
         cases.push(rewrite_body(&encoded, |entries| {
@@ -565,8 +602,15 @@ mod tests {
         let txn = vault.store.env.read_txn().expect("read txn");
         assert_eq!(
             vault.task_human_assigner_in(&txn, task).unwrap(),
-            Some(owner)
+            Some((owner, id(0xA8)))
         );
+        let witness = fact(task, TaskAuthorityFactKind::HumanAssigned, owner);
+        let encoded = encode_task_authority_fact_body(&witness);
+        assert_eq!(decode_task_authority_fact_body(&encoded).unwrap(), witness);
+        let missing_agent = rewrite_body(&encoded, |entries| {
+            entries.retain(|(key, _)| key.as_str() != Some(BODY_KEY_ASSIGNED_REF));
+        });
+        assert!(decode_task_authority_fact_body(&missing_agent).is_err());
         drop(txn);
         put_fact(
             &vault,
@@ -574,6 +618,19 @@ mod tests {
         );
         let txn = vault.store.env.read_txn().expect("read txn");
         assert!(vault.task_human_assigner_in(&txn, task).is_err());
+        drop(txn);
+
+        let another = id(0xA9);
+        put_fact(&vault, fact(another, TaskAuthorityFactKind::Owner, owner));
+        put_fact(
+            &vault,
+            fact(another, TaskAuthorityFactKind::HumanAssigned, owner),
+        );
+        let mut changed = fact(another, TaskAuthorityFactKind::HumanAssigned, owner);
+        changed.assigned_ref = Some(other);
+        put_fact(&vault, changed);
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert!(vault.task_human_assigner_in(&txn, another).is_err());
     }
 
     /// Direct authority fails CLOSED: no Owner fact, no owner — while the
