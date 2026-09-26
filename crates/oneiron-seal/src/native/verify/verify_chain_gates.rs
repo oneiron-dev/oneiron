@@ -2,13 +2,13 @@
 
 use lopdf::{Document, LoadOptions};
 
-use crate::api::{
-    PadesProfile, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
-};
+use crate::api::{Modifications, SealConfig, VerifyCheckKind, VerifyFindingCode, VerifyReport};
 use crate::error::{InputInvalidCode, SealError};
 
-use super::super::cms;
+use super::super::{cms, pdf};
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
+use super::verify_report_build::{classify_signature, signature_report};
+use super::verify_revisions;
 use super::verify_sig_pipeline::{Checks, collect_signatures, verify_cades_sig, verify_doc_ts};
 
 pub(crate) struct VerifyCtx<'a> {
@@ -139,7 +139,7 @@ pub(crate) fn verify_document(
     ctx: &VerifyCtx<'_>,
 ) -> Result<VerifyReport, SealError> {
     let limits = &ctx.config.resource_limits;
-    let evidence_sha256 = cms::sha256(bytes);
+    let artifact_sha256 = cms::sha256(bytes);
     if bytes.is_empty() {
         return Err(SealError::InputInvalid {
             code: InputInvalidCode::Empty,
@@ -169,6 +169,13 @@ pub(crate) fn verify_document(
         });
     }
     let mut checks = Checks::new();
+    // The refuse-to-seal gate and output verifier share this object/security
+    // scan. An output may have signatures; neither path accepts active content.
+    checks.record(
+        VerifyCheckKind::PdfRevision,
+        pdf::analyze_security(&doc, false).is_ok(),
+        VerifyFindingCode::InvalidPdfRevision,
+    );
     // Legal revision chain and final EOF: the strict parse plus an EOF tail
     // (an optional single trailing EOL is tolerated for interoperability).
     let eof_ok = bytes
@@ -190,7 +197,7 @@ pub(crate) fn verify_document(
         .collect();
     let sigs = collect_signatures(&doc)?;
     let last_idx = sigs.len().saturating_sub(1);
-    let mut saw_cades = false;
+    let mut signatures = Vec::new();
     // Certificates of the CMS signer/TSA chains this report covers; the DSS
     // binding requires the validation material to speak about them.
     let mut covered: Vec<EmbeddedCert> = Vec::new();
@@ -210,12 +217,13 @@ pub(crate) fn verify_document(
     // archival profile.
     let mut covering_dts_valid = false;
     for (i, e) in sigs.iter().enumerate() {
+        let mut sig_checks = Checks::new();
         if e.is_doc_ts {
             if let Some(gen_time) = verify_doc_ts(
                 bytes,
                 e,
                 &anchors,
-                &mut checks,
+                &mut sig_checks,
                 i == last_idx,
                 &mut covered,
                 ctx.clock_ms,
@@ -227,12 +235,9 @@ pub(crate) fn verify_document(
                 }
             }
         } else {
-            saw_cades = true;
-            verify_cades_sig(bytes, e, ctx, &anchors, &mut checks, &mut covered);
+            verify_cades_sig(bytes, e, ctx, &anchors, &mut sig_checks, &mut covered);
         }
-    }
-    if !saw_cades {
-        checks.absent(VerifyCheckKind::SignatureTimestamp);
+        signatures.push(signature_report(bytes, e, i, sig_checks.list));
     }
     verify_dss(
         &doc,
@@ -242,44 +247,32 @@ pub(crate) fn verify_document(
         limits.max_input_bytes,
         &mut checks,
     );
-    let valid = saw_cades
-        && eof_ok
-        && !checks
-            .list
-            .iter()
-            .any(|c| c.status == VerifyCheckStatus::Fail);
-    let achieved = classify(&checks, valid, covering_dts_valid);
+    let dss_ok = checks.passed(VerifyCheckKind::ValidationMaterial);
+    for sig in &mut signatures {
+        if sig.kind == crate::api::SignatureKind::Signature {
+            sig.profile = classify_signature(&sig.checks, dss_ok, covering_dts_valid);
+        }
+    }
+    let (revisions, modifications, anomalies) = verify_revisions::classify(bytes, &signatures);
+    match modifications {
+        Modifications::Suspicious => checks.record(
+            VerifyCheckKind::Modification,
+            false,
+            VerifyFindingCode::ModificationNotAllowed,
+        ),
+        Modifications::NotRun => checks.not_run(VerifyCheckKind::Modification),
+        Modifications::Clean(_) => checks.record(
+            VerifyCheckKind::Modification,
+            true,
+            VerifyFindingCode::ModificationNotAllowed,
+        ),
+    }
     Ok(VerifyReport {
-        valid,
-        achieved_profile: achieved,
-        evidence_sha256,
+        artifact_sha256,
+        revisions,
+        signatures,
+        modifications,
+        anomalies,
         checks: checks.list,
     })
-}
-
-/// Highest achieved baseline profile from the check outcomes. The archival
-/// rung requires a VALIDATED DocTimeStamp that provably covers the final
-/// /DSS revision: `lt` already implies a present, valid DSS, so a
-/// non-covering (or absent) DocTimeStamp tops out at B-LT even when its
-/// DocumentTimestamp check passes.
-pub(super) fn classify(
-    checks: &Checks,
-    valid: bool,
-    covering_dts_valid: bool,
-) -> Option<PadesProfile> {
-    if !valid {
-        return None;
-    }
-    let t = checks.passed(VerifyCheckKind::SignatureTimestamp);
-    let lt = t && checks.passed(VerifyCheckKind::ValidationMaterial);
-    let lta = lt && checks.passed(VerifyCheckKind::DocumentTimestamp) && covering_dts_valid;
-    if lta {
-        Some(PadesProfile::BaselineLta)
-    } else if lt {
-        Some(PadesProfile::BaselineLt)
-    } else if t {
-        Some(PadesProfile::BaselineT)
-    } else {
-        Some(PadesProfile::BaselineB)
-    }
 }

@@ -14,12 +14,16 @@ use super::verify_revocation::gen_time_beyond_skew;
 
 #[derive(Debug)]
 pub(super) struct SigEntry {
+    pub(super) field_name: String,
     pub(super) is_doc_ts: bool,
     pub(super) byte_range: [u64; 4],
     /// Decoded `/Contents` bytes (DER CMS followed by zero padding).
     pub(super) contents: Vec<u8>,
 }
 
+fn resolved_name<'a>(doc: &'a Document, obj: &'a Object) -> Result<&'a Object, SealError> {
+    Ok(doc.dereference(obj).map_err(|_| malformed_input())?.1)
+}
 fn name_eq(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
 }
@@ -135,7 +139,7 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         // /FT is inheritable: a node's own /FT overrides, otherwise the
         // ancestor's verdict carries down.
         let is_sig_ft = match field.get(b"FT") {
-            Ok(ft) => name_eq(ft, b"Sig"),
+            Ok(ft) => name_eq(resolved_name(doc, ft)?, b"Sig"),
             Err(_) => inherited_sig_ft,
         };
         // Descend /Kids whenever present. A node's /Kids may hold CHILD
@@ -171,15 +175,25 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let Object::Dictionary(d) = doc.dereference(v).map_err(|_| malformed_input())?.1 else {
             return Err(malformed_input());
         };
-        let is_doc_ts = match d.get(b"Type") {
-            Ok(t) if name_eq(t, b"Sig") => {
-                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.CAdES.detached")) {
+        let ty = d
+            .get(b"Type")
+            .ok()
+            .map(|o| resolved_name(doc, o))
+            .transpose()?;
+        let subfilter = d
+            .get(b"SubFilter")
+            .ok()
+            .map(|o| resolved_name(doc, o))
+            .transpose()?;
+        let is_doc_ts = match ty {
+            Some(t) if name_eq(t, b"Sig") => {
+                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.CAdES.detached")) {
                     continue;
                 }
                 false
             }
-            Ok(t) if name_eq(t, b"DocTimeStamp") => {
-                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.RFC3161")) {
+            Some(t) if name_eq(t, b"DocTimeStamp") => {
+                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.RFC3161")) {
                     continue;
                 }
                 true
@@ -187,13 +201,13 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
             // A PRESENT /Type naming neither handler (or not a name at all)
             // is never a candidate: the typeless interop allowance exists
             // only for an ABSENT /Type.
-            Ok(_) => continue,
-            Err(_) if !d.has(b"ByteRange") => continue,
-            Err(_) => {
+            Some(_) => continue,
+            None if !d.has(b"ByteRange") => continue,
+            None => {
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
                 }
-                if matches!(d.get(b"SubFilter"), Ok(sf) if !name_eq(sf, b"ETSI.CAdES.detached")) {
+                if subfilter.is_some_and(|sf| !name_eq(sf, b"ETSI.CAdES.detached")) {
                     continue;
                 }
                 false
@@ -216,7 +230,17 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
+        let field_name = field
+            .get(b"T")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_str().ok())
+            .map_or_else(
+                || "unnamed".to_owned(),
+                |v| String::from_utf8_lossy(v).into_owned(),
+            );
         out.push(SigEntry {
+            field_name,
             is_doc_ts,
             byte_range: br,
             contents: contents.clone(),
@@ -250,7 +274,15 @@ impl Checks {
     pub(super) fn absent(&mut self, kind: VerifyCheckKind) {
         self.list.push(VerifyCheck {
             kind,
-            status: VerifyCheckStatus::AbsentAllowed,
+            status: VerifyCheckStatus::NotApplicable,
+            finding: None,
+        });
+    }
+
+    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) {
+        self.list.push(VerifyCheck {
+            kind,
+            status: VerifyCheckStatus::NotRun,
             finding: None,
         });
     }
@@ -315,7 +347,22 @@ pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     if !decoded_contents_within_input(e.contents.len(), bytes.len()) {
         return false;
     }
-    hex_chars == e.contents.len() * 2
+    if hex_chars != e.contents.len() * 2 {
+        return false;
+    }
+    let mut digits = bytes[l1 + 1..s2 - 1]
+        .iter()
+        .copied()
+        .filter(|b| !is_pdf_whitespace(*b));
+    e.contents.iter().all(|value| {
+        let (Some(hi), Some(lo)) = (
+            digits.next().and_then(|b| (b as char).to_digit(16)),
+            digits.next().and_then(|b| (b as char).to_digit(16)),
+        ) else {
+            return false;
+        };
+        (hi * 16 + lo) == u32::from(*value)
+    })
 }
 
 /// Strip the zero padding after the leading CMS DER; reject nonzero padding.
@@ -346,6 +393,11 @@ pub(super) fn verify_cades_sig(
         VerifyCheckKind::ByteRange,
         br_ok,
         VerifyFindingCode::InvalidByteRange,
+    );
+    checks.record(
+        VerifyCheckKind::UnsignedGap,
+        br_ok,
+        VerifyFindingCode::InvalidUnsignedGap,
     );
     let spans_digest = if br_ok {
         pdf::hash_byte_range(bytes, e.byte_range).ok()
@@ -491,11 +543,22 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    checks.record(
-        VerifyCheckKind::CertificatePath,
-        validate_chain(&chain_ders, anchors, at_unix).is_ok(),
-        VerifyFindingCode::CertificatePathInvalid,
-    );
+    // An absent root cannot prove a broken signature. Keep trust unresolved
+    // instead of laundering it into an integrity failure.
+    let path_valid = validate_chain(&chain_ders, anchors, at_unix).is_ok();
+    if !path_valid
+        && !chain_ders
+            .iter()
+            .any(|der| ctx.config.trust_anchors_der.contains(der))
+    {
+        checks.not_run(VerifyCheckKind::CertificatePath);
+    } else {
+        checks.record(
+            VerifyCheckKind::CertificatePath,
+            path_valid,
+            VerifyFindingCode::CertificatePathInvalid,
+        );
+    }
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -590,6 +653,16 @@ pub(super) fn verify_doc_ts(
     clock_ms: u64,
 ) -> Option<u64> {
     let br_ok = check_byte_range(bytes, e);
+    checks.record(
+        VerifyCheckKind::ByteRange,
+        br_ok,
+        VerifyFindingCode::InvalidByteRange,
+    );
+    checks.record(
+        VerifyCheckKind::UnsignedGap,
+        br_ok,
+        VerifyFindingCode::InvalidUnsignedGap,
+    );
     let covers_end = !is_last
         || e.byte_range
             .get(2..4)

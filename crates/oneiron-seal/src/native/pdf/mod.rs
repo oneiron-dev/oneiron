@@ -14,7 +14,9 @@ pub(crate) use self::incremental::{
     append_revision, field_name_for, hash_byte_range, patch_contents, pdf_date,
 };
 pub(crate) use self::objects::{DraftRevision, RevisionKind};
-pub(crate) use self::parse::{PreparedInput, last_startxref, reparse_revision, validate_prepared};
+pub(crate) use self::parse::{
+    PreparedInput, analyze_security, last_startxref, reparse_revision, validate_prepared,
+};
 #[cfg(test)]
 pub(crate) use self::parse::{RevisionState, XrefStyle};
 

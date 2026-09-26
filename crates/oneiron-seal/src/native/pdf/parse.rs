@@ -56,14 +56,9 @@ pub(super) fn name_is(obj: &Object, expected: &[u8]) -> bool {
 /// dictionaries and STREAM dictionaries: a security-slot name hidden in a
 /// stream object's dict must not bypass the prepared-input scan.
 fn deref_dict<'d>(doc: &'d Document, obj: &'d Object) -> Option<&'d Dictionary> {
-    match obj {
+    match doc.dereference(obj).ok()?.1 {
         Object::Dictionary(d) => Some(d),
         Object::Stream(s) => Some(&s.dict),
-        Object::Reference(r) => match doc.get_object(*r) {
-            Ok(Object::Dictionary(d)) => Some(d),
-            Ok(Object::Stream(s)) => Some(&s.dict),
-            _ => None,
-        },
         _ => None,
     }
 }
@@ -89,7 +84,7 @@ fn resolved<'d>(doc: &'d Document, mut obj: &'d Object) -> Option<&'d Object> {
 }
 
 /// Scan every object for prepared-input contract violations (§7.1 rules 6-7).
-pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
+fn scan_objects_mode(doc: &Document, reject_signatures: bool) -> Result<(), SealError> {
     for obj in doc.objects.values() {
         let Some(dict) = deref_dict(doc, obj) else {
             continue;
@@ -98,7 +93,7 @@ pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
             let Some(t) = resolved(doc, t) else {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             };
-            if name_is(t, b"Sig") || name_is(t, b"DocTimeStamp") {
+            if reject_signatures && (name_is(t, b"Sig") || name_is(t, b"DocTimeStamp")) {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             }
             if name_is(t, b"Filespec") {
@@ -109,13 +104,13 @@ pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
             let Some(ft) = resolved(doc, ft) else {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             };
-            if name_is(ft, b"Sig") {
+            if reject_signatures && name_is(ft, b"Sig") {
                 return Err(input_invalid(InputInvalidCode::ExistingSignature));
             }
         }
         // A signature-shaped dictionary is rejected even without a /Type
         // marker: /ByteRange + /Contents together only exist for signing.
-        if dict.has(b"ByteRange") && dict.has(b"Contents") {
+        if reject_signatures && dict.has(b"ByteRange") && dict.has(b"Contents") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
         // A filespec-shaped dictionary is rejected even without the
@@ -126,7 +121,7 @@ pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
         if dict.has(b"AA") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
-        if dict.has(b"Lock") {
+        if reject_signatures && dict.has(b"Lock") {
             return Err(input_invalid(InputInvalidCode::ExistingSignature));
         }
         if let Ok(s) = dict.get(b"S") {
@@ -144,13 +139,17 @@ pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
 /// Catalog-level checks: OpenAction, /Names JavaScript + EmbeddedFiles,
 /// DocMDP/FieldMDP in /Perms, associated files at catalog and page dicts,
 /// and XFA active form content.
-pub(super) fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
+fn scan_catalog_mode(
+    doc: &Document,
+    root: &Dictionary,
+    reject_signatures: bool,
+) -> Result<(), SealError> {
     if root.has(b"OpenAction") {
         return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
     }
-    if let Ok(names) = root.get(b"Names")
-        && let Some(names_dict) = deref_dict(doc, names)
-    {
+    if let Ok(names) = root.get(b"Names") {
+        let names_dict = deref_dict(doc, names)
+            .ok_or_else(|| input_invalid(InputInvalidCode::ActiveContentPresent))?;
         if names_dict.has(b"JavaScript") {
             return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
         }
@@ -158,11 +157,12 @@ pub(super) fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), Seal
             return Err(input_invalid(InputInvalidCode::EmbeddedFilePresent));
         }
     }
-    if let Ok(perms) = root.get(b"Perms")
-        && let Some(pd) = deref_dict(doc, perms)
-        && (pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3"))
-    {
-        return Err(input_invalid(InputInvalidCode::ExistingSignature));
+    if let Ok(perms) = root.get(b"Perms") {
+        let pd = deref_dict(doc, perms)
+            .ok_or_else(|| input_invalid(InputInvalidCode::ExistingSignature))?;
+        if reject_signatures && (pd.has(b"DocMDP") || pd.has(b"FieldMDP") || pd.has(b"UR3")) {
+            return Err(input_invalid(InputInvalidCode::ExistingSignature));
+        }
     }
     // /AF (associated files) at the catalog or any page dict is embedded-file
     // content outside the /Names tree; it rides the same rejection class.
@@ -179,13 +179,33 @@ pub(super) fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), Seal
     }
     // An /AcroForm carrying /XFA is active form content (XML Forms
     // Architecture), never a static AcroForm: reject, never sign over it.
-    if let Ok(af) = root.get(b"AcroForm")
-        && let Some(af_dict) = deref_dict(doc, af)
-        && af_dict.has(b"XFA")
-    {
-        return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+    if let Ok(af) = root.get(b"AcroForm") {
+        let af_dict = deref_dict(doc, af)
+            .ok_or_else(|| input_invalid(InputInvalidCode::ActiveContentPresent))?;
+        if af_dict.has(b"XFA") {
+            return Err(input_invalid(InputInvalidCode::ActiveContentPresent));
+        }
     }
     Ok(())
+}
+
+/// Shared security analysis: prepared input rejects existing signatures;
+/// verification permits their presence but still refuses active content and
+/// embedded files. Both doors resolve the same reference chains.
+pub(crate) fn analyze_security(doc: &Document, reject_signatures: bool) -> Result<(), SealError> {
+    scan_objects_mode(doc, reject_signatures)?;
+    let root = doc
+        .catalog()
+        .map_err(|_| input_invalid(InputInvalidCode::MalformedXref))?;
+    scan_catalog_mode(doc, root, reject_signatures)
+}
+#[cfg(test)]
+pub(super) fn scan_objects(doc: &Document) -> Result<(), SealError> {
+    scan_objects_mode(doc, true)
+}
+#[cfg(test)]
+pub(super) fn scan_catalog(doc: &Document, root: &Dictionary) -> Result<(), SealError> {
+    scan_catalog_mode(doc, root, true)
 }
 
 /// Offset recorded by the last `startxref` marker in the byte buffer.
@@ -265,9 +285,9 @@ pub(super) fn revision_state(doc: &Document, bytes: &[u8]) -> Result<RevisionSta
     let (acroform, acroform_dict) = match root_dict.get(b"AcroForm") {
         Ok(Object::Reference(r)) => {
             let dict = doc
-                .get_object(*r)
+                .dereference(&Object::Reference(*r))
                 .ok()
-                .and_then(|o| o.as_dict().ok())
+                .and_then(|(_, o)| o.as_dict().ok())
                 .cloned();
             (Some(*r), dict)
         }
@@ -396,19 +416,7 @@ pub(crate) fn validate_prepared(
     if doc.get_pages().is_empty() {
         return Err(input_invalid(InputInvalidCode::MissingPage));
     }
-    scan_objects(&doc)?;
-    let root_id = doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(ref_of)
-        .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
-    let root_dict = doc
-        .get_object(root_id)
-        .ok()
-        .and_then(|o| o.as_dict().ok())
-        .ok_or_else(|| input_invalid(InputInvalidCode::MalformedXref))?;
-    scan_catalog(&doc, root_dict)?;
+    analyze_security(&doc, true)?;
     let state = revision_state(&doc, bytes)?;
     Ok(PreparedInput {
         bytes: bytes.to_vec(),

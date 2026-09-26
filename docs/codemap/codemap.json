@@ -38073,24 +38073,48 @@
       "SignDigestRequest",
       "SignatureAlgorithm",
       "SigningIdentity",
-      "TsaEndpoint",
-      "VerifyCheck",
-      "VerifyCheckKind",
-      "VerifyCheckStatus",
-      "VerifyFindingCode",
-      "VerifyReport"
+      "TsaEndpoint"
      ],
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
       "const": 2,
-      "enum": 14,
-      "fn": 2,
+      "enum": 11,
+      "fn": 1,
       "mod": 1,
-      "re-export": 1,
-      "struct": 13,
+      "re-export": 2,
+      "struct": 11,
       "trait": 4,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "Anomaly",
+      "ByteRangeEvidence",
+      "Coverage",
+      "ModificationLevel",
+      "Modifications",
+      "RevisionKind",
+      "RevisionReport",
+      "SignatureKind",
+      "SignatureReport",
+      "SignedRangeDigest",
+      "VerifyCheck",
+      "VerifyCheckKind",
+      "VerifyCheckStatus",
+      "VerifyFindingCode",
+      "VerifyReport",
+      "VerifyVerdict"
+     ],
+     "path": "src/api/report.rs",
+     "purpose": "Evidence-oriented verification report",
+     "surface": {
+      "enum": 10,
+      "fn": 7,
+      "struct": 6
      }
     },
     {
@@ -38265,7 +38289,7 @@
      "path": "src/native/pdf/parse.rs",
      "purpose": "Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -38351,7 +38375,7 @@
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -38362,6 +38386,26 @@
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_report_build.rs",
+     "purpose": "Convert envelope checks into separate evidence axes and derived profile rungs",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_revisions.rs",
+     "purpose": "Bounded revision snapshots and default-deny classification of post-sign changes",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -38381,7 +38425,7 @@
      "path": "src/native/verify/verify_sig_pipeline.rs",
      "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -38457,7 +38501,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/verify_vectors.rs",
@@ -38485,10 +38529,10 @@
    ],
    "modules": {
     "api": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)"
     },
     "error": {
@@ -38499,7 +38543,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 31,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38508,7 +38552,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 31,
+   "source_files": 34,
    "test_files": 9
   },
   "oneiron-server": {

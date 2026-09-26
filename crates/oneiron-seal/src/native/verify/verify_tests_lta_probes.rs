@@ -156,10 +156,16 @@ pub(crate) mod tests {
         eprintln!(
             "PROBE-A br_end={br_end} dss_end={:?} rev_xref={rev_xref} newest_dss={newest_dss} -> {:?}",
             dss_revision_end(&doc, &bytes),
-            report.achieved_profile
+            report.achieved_profile()
         );
-        assert!(report.valid, "attested evidence must validate: {report:?}");
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
+        // The hand-built filler and later countersign are not engine LTA
+        // renewals. The evidence still confers LTA on the first signature.
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid());
+        assert_eq!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
+        );
     }
 
     #[test]
@@ -191,15 +197,15 @@ pub(crate) mod tests {
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b4).unwrap();
-        assert!(report.valid, "fresh evidence must validate: {report:?}");
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid(), "later countersign is not an LTA update");
         let dts = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
             .unwrap();
         assert_eq!(dts.status, VerifyCheckStatus::Pass);
         assert_eq!(
-            report.achieved_profile,
+            report.signatures[0].profile,
             Some(PadesProfile::BaselineLt),
             "a non-covering DocTimeStamp confers no archival rung"
         );
@@ -248,12 +254,17 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile);
-        assert!(!report.valid, "stale unattested evidence must not launder");
-        assert_eq!(report.achieved_profile, None);
+        eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile());
+        assert!(
+            !report.valid(),
+            "stale unattested evidence must not launder"
+        );
+        assert_ne!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
+        );
         let vm = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -314,12 +325,15 @@ pub(crate) mod tests {
         assert!(dss_end <= ts_br_end, "gate passes over staged objects");
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile);
-        assert!(
-            report.valid,
-            "attested staged evidence must validate: {report:?}"
+        eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile());
+        // Switching /Root in a pointer-only revision is not on the
+        // default-deny modification whitelist, even if old evidence is sound.
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid());
+        assert_eq!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineLta));
     }
 
     /// Probe C (the sharpening found while building A/B): the /CRLs array
@@ -372,20 +386,22 @@ pub(crate) mod tests {
         );
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
-        eprintln!("PROBE-C outcome -> {:?}", report.achieved_profile);
+        eprintln!("PROBE-C outcome -> {:?}", report.achieved_profile());
         assert!(
             dss_end > ts_br_end,
             "chain-resolved gate must measure the planted stream"
         );
         assert!(
-            !report.valid,
+            !report.valid(),
             "unattested planted evidence laundered to {:?}",
-            report.achieved_profile
+            report.achieved_profile()
         );
-        assert_eq!(report.achieved_profile, None);
+        assert_ne!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
+        );
         let vm = report
-            .checks
-            .iter()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -627,10 +643,10 @@ pub(crate) mod tests {
         let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
         assert!(
-            report.valid,
+            report.valid(),
             "typeless signature doc must verify: {report:?}"
         );
-        assert_eq!(report.achieved_profile, Some(PadesProfile::BaselineB));
+        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));
     }
 
     #[test]

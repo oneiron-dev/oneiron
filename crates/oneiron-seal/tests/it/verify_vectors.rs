@@ -51,8 +51,7 @@ fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
 
 fn finding(report: &VerifyReport, kind: VerifyCheckKind) -> Option<VerifyFindingCode> {
     report
-        .checks
-        .iter()
+        .checks()
         .find(|c| c.kind == kind && c.status == VerifyCheckStatus::Fail)
         .and_then(|c| c.finding)
 }
@@ -132,12 +131,12 @@ fn one_byte_mutation_in_signed_span_fails_digest() {
     let mut mutated = bytes;
     mutated[40] ^= 0x01;
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(!report.valid());
     assert_eq!(
         finding(&report, VerifyCheckKind::ContentDigest),
         Some(VerifyFindingCode::DigestMismatch)
     );
-    assert_eq!(report.achieved_profile, None);
+    assert_eq!(report.achieved_profile(), None);
 }
 
 #[test]
@@ -156,7 +155,7 @@ fn mutation_inside_cms_signed_attributes_fails() {
     let at = pos + needle.len() + 24;
     mutated[at] = if mutated[at] == b'0' { b'1' } else { b'0' };
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(!report.valid());
     let f = [
         finding(&report, VerifyCheckKind::ContentDigest),
         finding(&report, VerifyCheckKind::SignedAttributes),
@@ -183,7 +182,7 @@ fn trailing_bytes_after_final_eof_fail() {
     let mut mutated = bytes;
     mutated.extend_from_slice(b"\njunk-after-eof");
     let report = engine.verify_sealed_pdf(&mutated).unwrap();
-    assert!(!report.valid);
+    assert!(!report.valid());
     assert_eq!(
         finding(&report, VerifyCheckKind::PdfRevision),
         Some(VerifyFindingCode::InvalidPdfRevision)
@@ -196,8 +195,8 @@ fn unsigned_document_is_not_valid() {
     let report = engine
         .verify_sealed_pdf(&fixture_pdf("classic_1page.pdf"))
         .unwrap();
-    assert!(!report.valid);
-    assert_eq!(report.achieved_profile, None);
+    assert!(!report.valid());
+    assert_eq!(report.achieved_profile(), None);
 }
 
 #[test]
@@ -226,11 +225,13 @@ fn wrong_anchor_fails_certificate_path() {
     )
     .unwrap();
     let report = engine2.verify_sealed_pdf(&bytes).unwrap();
-    assert!(!report.valid);
+    assert!(!report.valid());
+    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Indeterminate);
     assert_eq!(
-        finding(&report, VerifyCheckKind::CertificatePath),
-        Some(VerifyFindingCode::CertificatePathInvalid)
+        report.signatures[0].integrity,
+        oneiron_seal::VerifyVerdict::Passed
     );
+    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::NotRun);
 }
 
 #[test]
@@ -240,6 +241,86 @@ fn verify_report_serde_roundtrip_is_stable() {
     let json = serde_json::to_string(&report).unwrap();
     let back: VerifyReport = serde_json::from_str(&json).unwrap();
     assert_eq!(report, back);
+}
+
+#[test]
+fn v2_report_keeps_per_signature_evidence_and_derived_verdict() {
+    let (engine, bytes) = sealed_b();
+    let report = engine.verify_sealed_pdf(&bytes).unwrap();
+    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Passed);
+    assert_eq!(report.signatures.len(), 1);
+    let sig = &report.signatures[0];
+    assert_eq!(sig.kind, oneiron_seal::SignatureKind::Signature);
+    assert_eq!(sig.coverage, oneiron_seal::Coverage::EntireFile);
+    assert_eq!(sig.trust, VerifyCheckStatus::Pass);
+    assert_eq!(sig.byte_range.values[0], 0);
+    assert_eq!(sig.byte_range.covers_to, Some(bytes.len() as u64));
+    assert!(sig.digest.is_some());
+    assert_eq!(
+        report.modifications,
+        oneiron_seal::Modifications::Clean(oneiron_seal::ModificationLevel::None)
+    );
+    assert_eq!(report.revisions.len(), 2);
+    assert!(
+        report.anomalies.is_empty(),
+        "ordinary signing is not anomalous"
+    );
+    assert_eq!(
+        report.revisions[1].signed_by.as_deref(),
+        Some(sig.id.as_str())
+    );
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["verdict"], "passed", "wire verdict is derived");
+    assert!(json["reasons"].as_array().unwrap().is_empty());
+}
+
+/// Append a well-formed but unrecognized object after signing. The original
+/// signature still verifies; the revision itself must not be whitelisted.
+fn append_unknown_revision(bytes: &[u8]) -> Vec<u8> {
+    let doc = lopdf::Document::load_mem(bytes).unwrap();
+    let root = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let next = doc.trailer.get(b"Size").unwrap().as_i64().unwrap();
+    let prev = bytes.windows(9).rposition(|w| w == b"startxref").unwrap();
+    let previous_xref: usize = std::str::from_utf8(&bytes[prev + 9..])
+        .unwrap()
+        .trim_start()
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let mut out = bytes.to_vec();
+    out.extend_from_slice(b"\n");
+    let obj_start = out.len();
+    out.extend_from_slice(format!("{next} 0 obj\n<< /Unknown (changed) >>\nendobj\n").as_bytes());
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n{next} 1\n{obj_start:010} 00000 n\r\ntrailer\n<< /Size {} /Root {} {} R /Prev {previous_xref} >>\nstartxref\n{xref}\n%%EOF", next + 1, root.0, root.1).as_bytes());
+    out
+}
+
+#[test]
+fn unknown_post_signature_object_is_not_a_lta_update() {
+    let (engine, bytes) = sealed_b();
+    let tampered = append_unknown_revision(&bytes);
+    let report = engine.verify_sealed_pdf(&tampered).unwrap();
+    assert_eq!(
+        report.signatures[0].integrity,
+        oneiron_seal::VerifyVerdict::Passed
+    );
+    assert_eq!(
+        report.modifications,
+        oneiron_seal::Modifications::Suspicious
+    );
+    assert_eq!(report.verdict(), oneiron_seal::VerifyVerdict::Failed);
+    assert!(
+        report
+            .reasons()
+            .contains(&VerifyFindingCode::ModificationNotAllowed)
+    );
+    assert_ne!(
+        report.artifact_sha256,
+        oneiron_seal::api::Sha256Digest::default()
+    );
 }
 
 // Bounded property/fuzz legs (test budget: 24 cases each, no dependency
