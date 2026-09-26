@@ -19280,7 +19280,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/linkedin_connector/sandbox_host/tests.rs",

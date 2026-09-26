@@ -1,6 +1,7 @@
 //! Container-backed, per-vault LinkedIn seat lifecycle. The remote gateway and
 //! verb registry are host integrations; neither passwords nor cookies cross this API.
 
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -26,12 +27,23 @@ pub trait LinkedInSeatHostServices {
 
 /// One active sandbox's opaque handle. The URL is an expiring one-use gateway
 /// link; the caller must hand it to the member only, never persist it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LinkedInSeatSandbox {
     pub sandbox_name: String,
     pub login_url: String,
     pub browser_profile_ref: String,
     pub session_cookie_secret_ref: String,
+}
+
+impl fmt::Debug for LinkedInSeatSandbox {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LinkedInSeatSandbox")
+            .field("sandbox_name", &self.sandbox_name)
+            .field("login_url", &"<redacted>")
+            .field("browser_profile_ref", &self.browser_profile_ref)
+            .field("session_cookie_secret_ref", &self.session_cookie_secret_ref)
+            .finish()
+    }
 }
 
 /// Docker-compatible host for one vault. `custody_root` must be a private,
@@ -118,10 +130,8 @@ impl<'v, S: LinkedInSeatHostServices> LinkedInContainerSandboxHost<'v, S> {
     fn sandbox_name(&self, host: &LinkedInSandboxHostConfig) -> String {
         let mut hasher = blake3::Hasher::new();
         for part in [
-            self.custody_root.to_string_lossy().as_ref(),
             self.vault.store.env.path().to_string_lossy().as_ref(),
             &host.seat_ref,
-            &host.sandbox_ref,
         ] {
             hasher.update(part.as_bytes());
             hasher.update(&[0]);
