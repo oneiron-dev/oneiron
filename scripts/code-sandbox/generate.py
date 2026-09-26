@@ -127,7 +127,7 @@ def generate(source):
                 result = ts(value['result'])
                 if value['async']:
                     result = f"Promise<{result}>"
-                dts.append(prefix + f"function {name}({args}): {result};")
+                dts.append(prefix + ("declare " if indent == 0 else "") + f"function {name}({args}): {result};")
     emit(tree)
     metadata = json.dumps({"records": records, "imports": imports}, separators=(',', ':'))
     js = '// Generated from code-run.wit; do not edit.\nconst schema = ' + metadata + ';\n' + SDK_RUNTIME

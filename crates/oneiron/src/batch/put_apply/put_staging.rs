@@ -214,17 +214,27 @@ pub(super) fn validate_domain_carriers(
     store: &Store,
     txn: &RwTxn<'_>,
     id: EntityId,
-    entity_type: u8,
+    header: crate::batch::EntityMetadataHeader,
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
-    if entity_type == crate::registry::ENTITY_TYPE_TASK {
-        crate::task_verb::guard_ask_fact_put(store, txn, id, data)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_TASK {
+        crate::task_verb::guard_ask_fact_put(
+            store,
+            txn,
+            id,
+            TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            data,
+        )?;
     }
-    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+    if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;
     }
-    if entity_type == crate::registry::ENTITY_TYPE_EVENT {
+    if header.entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;
     }
     Ok(())

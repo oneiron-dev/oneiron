@@ -72,7 +72,19 @@ pub(in crate::batch) fn apply_put(
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
-    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
+    super::put_staging::validate_domain_carriers(
+        store,
+        wtxn,
+        id,
+        crate::batch::EntityMetadataHeader {
+            entity_type,
+            occurred_start: occurred.start,
+            occurred_end: occurred.end,
+            learned_at,
+        },
+        data,
+        replicated,
+    )?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
     crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;

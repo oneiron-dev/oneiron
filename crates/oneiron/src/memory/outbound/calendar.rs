@@ -131,5 +131,6 @@ impl Memory<'_> {
             &OutboundScheduleContext::default(),
             Some(&input.frozen_payload()),
         )
+        .map(|(receipt, _)| receipt)
     }
 }

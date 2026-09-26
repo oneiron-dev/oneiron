@@ -148,7 +148,10 @@ fn advertised_host_verbs(dts: &str) -> Vec<String> {
             if let Some(name) = rest.split_whitespace().next() {
                 namespaces.push(name);
             }
-        } else if let Some(rest) = line.strip_prefix("function ") {
+        } else if let Some(rest) = line
+            .strip_prefix("declare function ")
+            .or_else(|| line.strip_prefix("function "))
+        {
             let name = rest.split('(').next().unwrap_or_default().trim();
             if !name.is_empty() {
                 let mut verb = namespaces.join(".");

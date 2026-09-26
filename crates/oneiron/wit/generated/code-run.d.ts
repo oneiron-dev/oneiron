@@ -44,4 +44,4 @@ declare namespace self {
   function think(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
   function express(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
 }
-function ask(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
+declare function ask(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;

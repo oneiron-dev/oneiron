@@ -64,10 +64,17 @@ impl Memory<'_> {
                     reference.entity_ref(),
                 )?;
             }
-            let route = if kind == Some(crate::registry::ENTITY_TYPE_PERSON) {
-                crate::human_task::resolve_native_human_route_in(self.vault(), &txn, actor).ok()
-            } else {
-                None
+            let route = match super::ask_facade::ask_assignee(&effective.who, actor, kind) {
+                super::TaskAssignee::Human { actor_ref } => {
+                    crate::human_task::resolve_native_human_route_for_actor_in(
+                        self.vault(),
+                        &txn,
+                        actor_ref,
+                        self.actor(),
+                    )
+                    .ok()
+                }
+                _ => None,
             };
             let face = match &route {
                 Some(route) => self

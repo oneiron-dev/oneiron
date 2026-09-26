@@ -281,7 +281,13 @@ fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
     assert!(dts.contains("function put_claim"));
     assert!(dts.contains("function supersede_claim"));
     assert!(dts.contains("function put_edge"));
-    assert!(dts.contains("function ask"));
+    assert!(dts.contains("declare function ask"));
+    assert!(
+        contract
+            .runtime()
+            .advertised_prompt_verbs()
+            .contains(&"ask".to_owned())
+    );
     assert!(!dts.contains("ask_human"));
     assert!(!dts.contains("askHuman"));
     assert!(dts.contains("namespace clock"));

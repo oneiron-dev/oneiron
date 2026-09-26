@@ -60,21 +60,16 @@ impl Memory<'_> {
                 ) {
                     return Err(MemoryError::bad_request("ask recipient is not an actor"));
                 }
-                let assignee = match &effective.who {
-                    Some(TaskAskTarget::Responder(assignee)) => *assignee,
-                    _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
-                        TaskAssignee::Human { actor_ref: *actor }
-                    }
-                    _ => TaskAssignee::Peer { actor_ref: *actor },
-                };
+                let assignee = ask_assignee(&effective.who, *actor, kind);
                 // No contact route is required to QUEUE a question. Human followup
                 // is registered only where the native route actually resolves.
                 let reachable = match assignee {
                     TaskAssignee::Human { actor_ref } => {
-                        crate::human_task::resolve_native_human_route_in(
+                        crate::human_task::resolve_native_human_route_for_actor_in(
                             self.vault(),
                             txn,
                             actor_ref,
+                            self.actor(),
                         )
                         .is_ok()
                     }
@@ -724,4 +719,20 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
     Ok(())
+}
+
+/// Both `tasks_ask` and `can(ask)` preserve an explicitly addressed
+/// non-human responder, even when that actor is stored as a PERSON.
+pub(super) fn ask_assignee(
+    who: &Option<TaskAskTarget>,
+    actor: EntityId,
+    kind: Option<u8>,
+) -> TaskAssignee {
+    match who {
+        Some(TaskAskTarget::Responder(assignee)) => *assignee,
+        _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
+            TaskAssignee::Human { actor_ref: actor }
+        }
+        _ => TaskAssignee::Peer { actor_ref: actor },
+    }
 }

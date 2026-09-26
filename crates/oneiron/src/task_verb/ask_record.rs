@@ -679,13 +679,24 @@ pub(crate) fn guard_ask_fact_put(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
+    occurred: crate::TimeRange,
+    learned_at: u64,
     data: &[u8],
 ) -> Result<()> {
     let kind = fact_kind(data);
     if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+        let header = EntityMetadataHeader::parse(raw.as_ref()).ok_or_else(invalid)?;
         let old = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
-        if (kind.is_some() || fact_kind(old).is_some()) && old != data {
-            return Err(invalid());
+        if kind.is_some() || fact_kind(old).is_some() {
+            // Identity pins BOTH body and header, including an identical-body
+            // metadata rewrite through sync replay or internal batch.
+            if old != data
+                || header.occurred_start != occurred.start
+                || header.occurred_end != occurred.end
+                || header.learned_at != learned_at
+            {
+                return Err(invalid());
+            }
         }
     }
     match kind {
@@ -721,6 +732,9 @@ pub(crate) fn guard_ask_fact_put(
             let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
             if fact.order == 0
                 || fact.at == 0
+                || occurred.start != fact.at
+                || occurred.end != fact.at
+                || learned_at != fact.at
                 || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
                 || answer_id(fact.group, fact.task, fact.actor, fact.source, &fact.word)? != id
             {
