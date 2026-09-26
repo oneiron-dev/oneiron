@@ -10920,10 +10920,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ChangedEvent",
       "ChangedLine",
+      "ConnectorChange",
+      "ConnectorStateChange",
+      "ProposalChange",
+      "ProposalChangeError",
+      "ProposalReason",
       "ServedLifecycle",
       "SessionReadSet"
      ],
@@ -10931,9 +10937,9 @@
      "purpose": "Session read-set tracking, separate from the stateless board renderer",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 6,
-      "struct": 2
+      "enum": 5,
+      "fn": 10,
+      "struct": 4
      }
     },
     {
@@ -11116,7 +11122,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/surfaces_tests.rs",

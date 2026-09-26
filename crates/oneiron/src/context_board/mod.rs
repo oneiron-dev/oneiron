@@ -14,7 +14,10 @@ mod room;
 mod room_verbs;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
-pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};
+pub use read_set::{
+    ChangedEvent, ChangedLine, ConnectorChange, ConnectorStateChange, ProposalChange,
+    ProposalChangeError, ProposalReason, ServedLifecycle, SessionReadSet,
+};
 pub use room::{RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, room_scope};
 pub use worlds::{WorldPresence, WorldsSection};
 mod frame;
