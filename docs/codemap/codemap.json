@@ -19249,7 +19249,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 5
      }
     },
@@ -19262,6 +19262,30 @@
      "surface": {
       "crate-vis": 18
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInContainerSandboxHost",
+      "LinkedInSeatHostServices",
+      "LinkedInSeatSandbox"
+     ],
+     "path": "src/linkedin_connector/sandbox_host.rs",
+     "purpose": "Container-backed, per-vault LinkedIn seat lifecycle",
+     "surface": {
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/linkedin_connector/sandbox_host/tests.rs",
+     "purpose": "Lifecycle acceptance using a recording Docker-compatible executable",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34336,7 +34360,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,8 +34922,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
