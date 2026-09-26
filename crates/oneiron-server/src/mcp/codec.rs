@@ -44,9 +44,10 @@ where
 /// runtime's at every legacy numeric field. This closes that gap the same way
 /// [`parse_json_unsigned_integer`] does: from the number's own TEXT, with no
 /// floating-point arithmetic, and only when the text denotes an exact integer
-/// that the JSON integer types can hold. A value that is not integral, or too
-/// large to restate, is left exactly as it arrived so both doors still refuse
-/// it.
+/// that the JSON integer types can hold. On the raw path, nonintegral or
+/// out-of-range number text is refused before a `Value` can round it through
+/// `f64`. Already-parsed values have lost that exact spelling and keep their
+/// previous behavior.
 ///
 /// It is deliberately SCHEMA-DIRECTED rather than a blanket sweep: a free-form
 /// caller payload (`value`, `evidence`, `data`, or an untyped `spec`) is
@@ -187,7 +188,7 @@ pub(super) fn schema_normalized_arguments(
                 return Ok(value);
             };
             let mut rewrites = Vec::new();
-            collect_advertised_integer_tokens(schema, &node, &text, &mut rewrites);
+            collect_advertised_integer_tokens(schema, &node, &text, &mut rewrites)?;
             serde_json::from_str::<Value>(&restated_json_text(&text, rewrites))
                 .map_err(|error| error.to_string())
         }
@@ -407,8 +408,8 @@ impl McpRawJsonScanner<'_> {
     }
 }
 
-/// Collects every ADVERTISED integer position whose number token can be
-/// restated as an exact integer, as `(span, integer spelling)` rewrites.
+/// Restates exact integers at ADVERTISED integer positions and refuses raw
+/// fractional tokens before `serde_json::Value` can round them through `f64`.
 ///
 /// It visits exactly the positions [`normalize_advertised_integers`] visits —
 /// the same schema-directed discipline, so a free-form `{}` payload such as a
@@ -419,20 +420,22 @@ fn collect_advertised_integer_tokens(
     node: &McpRawJsonNode,
     text: &str,
     rewrites: &mut Vec<(Range<usize>, String)>,
-) {
-    if advertises_integer(schema)
-        && matches!(node.kind, McpRawJsonKind::Number)
-        && let Some(integral) = integral_json_token(&text[node.span.clone()])
-    {
-        rewrites.push((node.span.clone(), integral));
-        return;
+) -> Result<(), String> {
+    if advertises_integer(schema) && matches!(node.kind, McpRawJsonKind::Number) {
+        if let Some(integral) = integral_json_token(&text[node.span.clone()])? {
+            rewrites.push((node.span.clone(), integral));
+        }
+        return Ok(());
     }
     match &node.kind {
-        McpRawJsonKind::Object(entries) => {
+        McpRawJsonKind::Object(_) => {
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-                for (key, entry) in entries {
-                    if let Some(property) = properties.get(key) {
-                        collect_advertised_integer_tokens(property, entry, text, rewrites);
+                // Match the parsed `Value`: the last occurrence of a key is
+                // live. Shadowed values never reach typed admission, so they
+                // must not trigger a raw-number rejection either.
+                for (key, property) in properties {
+                    if let Some(entry) = node.entry(key) {
+                        collect_advertised_integer_tokens(property, entry, text, rewrites)?;
                     }
                 }
             }
@@ -441,23 +444,24 @@ fn collect_advertised_integer_tokens(
             for keyword in ["oneOf", "anyOf", "allOf"] {
                 if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
                     for branch in branches {
-                        collect_advertised_integer_tokens(branch, node, text, rewrites);
+                        collect_advertised_integer_tokens(branch, node, text, rewrites)?;
                     }
                 }
             }
             if let Some(conditional) = schema.get("then") {
-                collect_advertised_integer_tokens(conditional, node, text, rewrites);
+                collect_advertised_integer_tokens(conditional, node, text, rewrites)?;
             }
         }
         McpRawJsonKind::Array(items) => {
             if let Some(item_schema) = schema.get("items") {
                 for item in items {
-                    collect_advertised_integer_tokens(item_schema, item, text, rewrites);
+                    collect_advertised_integer_tokens(item_schema, item, text, rewrites)?;
                 }
             }
         }
         McpRawJsonKind::Number | McpRawJsonKind::Opaque => {}
     }
+    Ok(())
 }
 
 /// Applies the collected integer rewrites to the arguments' source text.
@@ -487,33 +491,35 @@ fn restated_json_text(text: &str, mut rewrites: Vec<(Range<usize>, String)>) -> 
 }
 
 /// The integer spelling of one JSON number TOKEN whose own text denotes an
-/// exact integer, or `None` when it is already spelled as an integer, is
-/// fractional, or cannot be restated without loss.
+/// exact integer, `Ok(None)` when it is already spelled as an integer,
+/// or an error when its exact spelling is fractional or outside the range.
 ///
 /// This is [`integral_json_number`]'s decision taken one step earlier, on the
 /// bytes the caller actually sent, so a value at the `u64` ceiling is judged on
 /// its mathematical value instead of on the `f64` it would have rounded to.
-fn integral_json_token(token: &str) -> Option<String> {
+fn integral_json_token(token: &str) -> Result<Option<String>, String> {
     if !token.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
-        // Already an integer spelling: `serde_json` decodes the same
-        // mathematical value, so restating it would only move bytes.
-        return None;
+        // An integer spelling needs no restatement. The typed decoder still
+        // judges its range after serde_json parses the value.
+        return Ok(None);
     }
     let (negative, magnitude) = match token.strip_prefix('-') {
         Some(magnitude) => (true, magnitude),
         None => (false, token),
     };
-    let magnitude = parse_json_unsigned_integer(magnitude, u128::from(u64::MAX)).ok()?;
-    if negative {
-        let magnitude = i128::try_from(magnitude).ok()?;
+    let magnitude =
+        parse_json_unsigned_integer(magnitude, u128::from(u64::MAX)).map_err(str::to_owned)?;
+    let integral = if negative {
+        let magnitude = i128::try_from(magnitude).map_err(|error| error.to_string())?;
         i64::try_from(-magnitude)
-            .ok()
-            .map(|integral| integral.to_string())
+            .map_err(|error| error.to_string())?
+            .to_string()
     } else {
         u64::try_from(magnitude)
-            .ok()
-            .map(|integral| integral.to_string())
-    }
+            .map_err(|error| error.to_string())?
+            .to_string()
+    };
+    Ok(Some(integral))
 }
 
 /// Parses a JSON number against an unsigned integer domain without going
