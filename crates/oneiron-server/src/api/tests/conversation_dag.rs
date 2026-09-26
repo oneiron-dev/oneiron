@@ -309,6 +309,10 @@ fn dag_routes_are_registered_in_openapi() {
         ("/v1/core/conversations/{conversation_id}/summaries", "post"),
         ("/v1/core/summaries/{summary_id}/covers", "get"),
         ("/v1/core/claims/{claim_id}/drill", "get"),
+        (
+            "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
+            "post",
+        ),
     ] {
         assert!(doc["paths"][path][method].is_object(), "{method} {path}");
     }
@@ -388,6 +392,8 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
     )
     .await;
     let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
+    let empty = get(&server, &format!("{path}/records?with=thread_meta")).await;
+    assert!(empty["thread_meta"][root["id"].as_str().unwrap()].is_null());
     let reply = post(
         &server,
         &thread_path,
@@ -406,4 +412,68 @@ async fn records_thread_and_canonical_share_the_typed_dag() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
+}
+
+#[tokio::test]
+async fn thread_meta_and_summary_routes_roundtrip() {
+    let (_dir, server, actor) = setup();
+    let conversation = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let path = format!(
+        "/v1/core/conversations/{}",
+        conversation["id"].as_str().unwrap()
+    );
+    let root = post(
+        &server,
+        &format!("{path}/records"),
+        json!({"advance": true, "body": {"txt": "root"}, "actor": actor}),
+    )
+    .await;
+    let thread_path = format!("{path}/records/{}/thread", root["id"].as_str().unwrap());
+    let reply = post(
+        &server,
+        &thread_path,
+        json!({"advance": false, "body": {"txt": "reply"}, "actor": actor}),
+    )
+    .await;
+    let page = get(&server, &format!("{path}/records?with=thread_meta")).await;
+    let id = root["id"].as_str().unwrap();
+    assert_eq!(page["thread_meta"][id]["root"], reply["id"]);
+    assert_eq!(page["thread_meta"][id]["count"], 1);
+    assert_eq!(
+        get(&server, &thread_path).await["roots"],
+        json!([reply["id"]])
+    );
+    let summary = post(
+        &server,
+        &format!("{thread_path}/summary"),
+        json!({"text": "thread summary", "actor": actor}),
+    )
+    .await;
+    let covers = get(
+        &server,
+        &format!(
+            "/v1/core/summaries/{}/covers",
+            summary["summary"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert_eq!(covers["covers"], json!([root["id"], reply["id"]]));
+    let drill = get(
+        &server,
+        &format!(
+            "/v1/core/claims/{}/drill",
+            summary["claim"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert_eq!(drill["records"], covers["covers"]);
+    let (status, _) = route_json(
+        server.clone(),
+        Request::builder()
+            .uri(format!("{path}/records?with=unknown"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -204,6 +204,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/records/{record}/thread",
             post(reply_in_thread),
         )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread/summary",
+            post(summarize_thread),
+        )
         .route("/sessions/{id}", axum::routing::patch(sessions::mode))
         .route("/sessions/{id}/presence", post(sessions::presence))
         .route(

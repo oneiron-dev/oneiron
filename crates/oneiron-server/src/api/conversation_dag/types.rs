@@ -133,6 +133,8 @@ pub(crate) struct DagSummaryRequest {
 pub(crate) struct DagPageQuery {
     pub after: Option<String>,
     pub limit: Option<usize>,
+    /// Optional per-record projection: thread_meta.
+    pub with: Option<String>,
 }
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
@@ -156,6 +158,9 @@ pub(crate) struct DagPageResponse {
     pub head: Option<String>,
     pub root: Option<String>,
     pub main_line: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    pub thread_meta: Option<std::collections::BTreeMap<String, Option<DagThreadMetaResponse>>>,
     pub page: DagPageCursor,
 }
 
@@ -202,7 +207,22 @@ pub(crate) struct DagCoversResponse {
 }
 
 #[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DagThreadMetaResponse {
+    pub root: String,
+    pub count: u64,
+    pub last_at: u64,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DagThreadSummaryRequest {
+    pub text: String,
+    pub actor: DagActor,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct DagThreadResponse {
+    pub roots: Vec<String>,
     pub root: Option<String>,
     pub replies: Vec<String>,
     pub count: u64,

@@ -11830,7 +11830,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 2
      }
@@ -11846,17 +11846,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReplyStrip",
-      "Thread"
+      "Thread",
+      "ThreadMeta"
      ],
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "fn": 3,
-      "struct": 2
+      "crate-vis": 2,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -26459,7 +26461,7 @@
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
       "crate-vis": 4,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -38997,7 +38999,7 @@
      "path": "src/api/conversation_dag/mod.rs",
      "purpose": "HTTP adapters for transactional conversation DAG and summary doors",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -39007,7 +39009,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {

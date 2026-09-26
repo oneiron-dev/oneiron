@@ -8,7 +8,7 @@ use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
-    is_sub_session_record, require_type, resolve_in_txn,
+    is_sub_session_record, require_type, resolve_in_txn, thread_tip_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -418,6 +418,28 @@ impl Vault {
                 actor,
                 self.store.clock.now_recorded_at(),
             )
+        })
+    }
+
+    /// Projects the first thread chain and lands its header on the trunk atomically.
+    pub fn mint_and_land_thread_summary(
+        &self,
+        trunk: EntityId,
+        text: &str,
+        actor: WriteActor,
+    ) -> Result<(EntityId, LandedHeader)> {
+        self.with_write_txn(|txn| {
+            let tip = thread_tip_in_txn(self, txn, trunk)?;
+            let scope = ScopeSelector {
+                conversation: conversation_of(&self.store, txn, &trunk)?,
+                session: None,
+                path: ScopePath::Branch(tip),
+                include_forks: false,
+            };
+            let now = self.store.clock.now_recorded_at();
+            let summary = mint_in_txn(self, txn, &scope, text, actor, now)?;
+            let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;
+            Ok((summary, landed))
         })
     }
 

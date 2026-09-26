@@ -906,3 +906,85 @@ fn head_cannot_select_a_thread_or_escape_through_its_descendant() {
         ErrorKind::InvalidConversationDag
     );
 }
+
+#[test]
+fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let trunk = vault
+        .append_dag_record(&input(conversation, Some(root), true, actor))
+        .unwrap()
+        .id;
+    assert!(vault.thread_roots(root).unwrap().is_empty());
+    assert_eq!(vault.thread_meta(root).unwrap(), None);
+    let mut reply = input(conversation, None, false, actor);
+    reply.occurred = time(21);
+    let first = vault.reply_in_thread(root, &reply).unwrap().id;
+    let at_head = vault.reply_in_thread(trunk, &reply).unwrap().id;
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    assert_eq!(vault.thread_roots(trunk).unwrap(), [at_head]);
+    reply.occurred = time(23);
+    let second = vault.reply_in_thread(root, &reply).unwrap().id;
+    reply.occurred = time(22);
+    let third = vault.reply_in_thread(root, &reply).unwrap().id;
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    let meta = vault.thread_meta(root).unwrap().unwrap();
+    assert_eq!(meta.root, first);
+    assert_eq!(meta.count, 3);
+    assert_eq!(meta.last_at, 23);
+    assert_eq!(vault.rebuild_thread_meta(root).unwrap(), Some(meta));
+    assert_eq!(vault.thread(root).unwrap().replies, [first, second, third]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(root, "summary", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [root, first, second, third]
+    );
+    assert_eq!(
+        vault.drill(&header.claim).unwrap(),
+        [root, first, second, third]
+    );
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(root)
+    );
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+    let mut canonical_reply = input(conversation, Some(trunk), true, actor);
+    canonical_reply.reply_to = Some(root);
+    let canonical = vault.append_dag_record(&canonical_reply).unwrap().id;
+    assert_eq!(vault.thread_roots(root).unwrap(), [first]);
+    assert_eq!(vault.head(&conversation).unwrap(), Some(canonical));
+}
+
+#[test]
+fn thread_depth_two_and_another_root_are_not_refused() {
+    let (_dir, vault, conversation, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conversation, None, true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    let nested = vault
+        .reply_in_thread(first, &input(conversation, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, nested]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 2);
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut other = input(conversation, None, false, actor);
+    other.session = Some(session);
+    let second_root = vault.reply_in_thread(trunk, &other).unwrap().id;
+    assert_eq!(vault.thread_roots(trunk).unwrap().len(), 2);
+    assert!(vault.thread_roots(trunk).unwrap().contains(&second_root));
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
+}
