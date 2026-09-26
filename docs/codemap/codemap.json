@@ -10928,6 +10928,7 @@
       "ConnectorChange",
       "ConnectorStateChange",
       "ProposalChange",
+      "ProposalChangeError",
       "ProposalReason",
       "ServedLifecycle",
       "SessionReadSet"
@@ -10936,7 +10937,7 @@
      "purpose": "Session read-set tracking, separate from the stateless board renderer",
      "surface": {
       "crate-vis": 1,
-      "enum": 4,
+      "enum": 5,
       "fn": 10,
       "struct": 4
      }

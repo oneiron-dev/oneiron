@@ -56,6 +56,12 @@ pub struct ProposalChange {
     pub diagnostic: Option<String>,
 }
 
+#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+pub enum ProposalChangeError {
+    #[error("rejected proposal needs a nonempty diagnostic")]
+    MissingRejectionDiagnostic,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorChange {
@@ -124,19 +130,27 @@ impl SessionReadSet {
         to: impl Into<String>,
         reason: ProposalReason,
         diagnostic: Option<String>,
-    ) -> bool {
+    ) -> Result<bool, ProposalChangeError> {
         if !self.own_proposals.contains(id) {
-            return false;
+            return Ok(false);
+        }
+        let to = to.into();
+        if to == "rejected"
+            && diagnostic
+                .as_deref()
+                .is_none_or(|text| text.trim().is_empty())
+        {
+            return Err(ProposalChangeError::MissingRejectionDiagnostic);
         }
         self.proposal_changes.insert(
             id.to_owned(),
             ProposalChange {
-                to: to.into(),
+                to,
                 reason,
                 diagnostic,
             },
         );
-        true
+        Ok(true)
     }
 
     /// Call only after the next keyframe was successfully assembled from the

@@ -110,18 +110,36 @@ fn changed_line_survives_epoch_and_rides_without_pushing() {
 fn own_proposal_change_keeps_the_answer_reference_and_next_wake_diagnostic() {
     let mut session = SessionReadSet::default();
     session.own_proposal("pr1");
-    assert!(!session.proposal_changed(
-        "foreign",
-        "rejected",
-        ProposalReason::RuleRow("rl2".into()),
-        Some("denied".into()),
-    ));
-    assert!(session.proposal_changed(
-        "pr1",
-        "rejected",
-        ProposalReason::PersonWord("msg7".into()),
-        Some("Scope is too wide\ntry w1".into()),
-    ));
+    assert!(
+        !session
+            .proposal_changed(
+                "foreign",
+                "rejected",
+                ProposalReason::RuleRow("rl2".into()),
+                Some("denied".into()),
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        session.proposal_changed(
+            "pr1",
+            "rejected",
+            ProposalReason::RuleRow("rl2".into()),
+            None,
+        ),
+        Err(ProposalChangeError::MissingRejectionDiagnostic)
+    );
+    assert!(session.changed(2, |_| None).render().is_empty());
+    assert!(
+        session
+            .proposal_changed(
+                "pr1",
+                "rejected",
+                ProposalReason::PersonWord("msg7".into()),
+                Some("Scope is too wide\ntry w1".into()),
+            )
+            .unwrap()
+    );
     let mut reopened: SessionReadSet =
         serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
     let changes = reopened.changed(2, |_| None);
@@ -147,12 +165,16 @@ fn own_proposal_change_keeps_the_answer_reference_and_next_wake_diagnostic() {
     };
     assert_eq!(rows[0].key, "changed");
     assert!(rows[0].line.contains("diagnostic=Scope is too wide try w1"));
-    assert!(reopened.proposal_changed(
-        "pr1",
-        "approved",
-        ProposalReason::RuleRow("rl9".into()),
-        None
-    ));
+    assert!(
+        reopened
+            .proposal_changed(
+                "pr1",
+                "approved",
+                ProposalReason::RuleRow("rl9".into()),
+                None
+            )
+            .unwrap()
+    );
     assert_eq!(
         reopened.changed(2, |_| None).render()[1],
         "pr1: approved why=rule:rl9"
@@ -194,12 +216,14 @@ fn change_cap_is_shared_between_proposals_connectors_and_lifecycle() {
     let mut session = SessionReadSet::default();
     session.served("cl1", ServedLifecycle::Active);
     session.own_proposal("pr1");
-    session.proposal_changed(
-        "pr1",
-        "approved",
-        ProposalReason::RuleRow("rl1".into()),
-        None,
-    );
+    session
+        .proposal_changed(
+            "pr1",
+            "approved",
+            ProposalReason::RuleRow("rl1".into()),
+            None,
+        )
+        .unwrap();
     session.keyframe_committed(1);
     session.connector_changed("mt1", ConnectorChange::Installed, "write=w1");
     let changes = session.changed(2, |_| Some(ServedLifecycle::Retracted));
