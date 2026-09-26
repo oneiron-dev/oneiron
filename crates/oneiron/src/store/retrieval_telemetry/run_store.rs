@@ -107,6 +107,11 @@ impl SessionStoreView<'_> {
 }
 
 impl Store {
+    /// Runtime capture opt-in, separate from the write-failure fuse below.
+    pub(crate) fn retrieval_telemetry_capture_enabled(&self) -> bool {
+        self.core.retrieval_telemetry_capture
+    }
+
     pub fn retrieval_telemetry_writes_enabled(&self) -> bool {
         !self
             .retrieval_writes_disabled

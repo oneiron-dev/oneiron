@@ -4625,7 +4625,9 @@ fn retrieval_quality_ppr_empty_cached_scores_still_report_hit() -> Result<()> {
 fn retrieval_quality_cached_empty_ppr_yields_full_no_data_context() -> Result<()> {
     use crate::retrieval_quality::{ConfidenceAdjustment, RetrievalQuality};
 
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let mut config = embedding_test_config();
+    config.retrieval_telemetry_capture = true;
+    let (_dir, vault) = open_test_vault_with(config);
     let seed = entity(0x76);
     // A servable zero-score cache row exercises completion independently of
     // candidate presence. Vault open still seeds AGENT_DEF records at time 0;
