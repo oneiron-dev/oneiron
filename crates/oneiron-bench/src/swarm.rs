@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::perf::sessions::ReleaseGate;
 
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, RetrievalRunId, TimeRange, Vault, VaultConfig};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde::Serialize;
 
@@ -57,6 +57,27 @@ impl Metric {
     }
 }
 
+/// Diagnostic percentiles collected after the operation window from public
+/// retrieval telemetry; not part of throughput or the steady-state hot path.
+#[derive(Serialize)]
+struct LatencyEvidence {
+    count: usize,
+    p50_ms: f64,
+    p99_ms: f64,
+}
+
+impl LatencyEvidence {
+    fn new(mut samples: Vec<f64>) -> Self {
+        samples.sort_by(f64::total_cmp);
+        let rank = |percent: usize| samples[(samples.len() * percent).div_ceil(100).max(1) - 1];
+        Self {
+            count: samples.len(),
+            p50_ms: rank(50),
+            p99_ms: rank(99),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct Report {
     schema: &'static str,
@@ -73,6 +94,14 @@ struct Report {
     writes: Option<Metric>,
     recalls: Option<Metric>,
     recall_telemetry_rows: usize,
+    /// Public run records store search time BEFORE the telemetry writer runs.
+    /// Present only with SWARM_DIAGNOSTIC=1 (recall-only trials).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_only_ms: Option<LatencyEvidence>,
+    /// API latency minus its own search-only duration; includes telemetry
+    /// commit plus other post-search work, not an exact fsync timer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    post_search_ms: Option<LatencyEvidence>,
 }
 
 fn id(rng: &mut StdRng) -> EntityId {
@@ -335,9 +364,12 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
             return Err(format!("warmup lost planted document {token}"));
         }
     }
+    let diagnostic =
+        mode == Mode::Recall && std::env::var("SWARM_DIAGNOSTIC").as_deref() == Ok("1");
     let cohort = run_cohort(agents, |agent, gate| {
         let mut writes = Vec::new();
         let mut reads = Vec::new();
+        let mut diagnostic_runs: Vec<(f64, Option<RetrievalRunId>)> = Vec::new();
         let mut telemetry_rows = 0;
         gate.arrive_and_wait();
         // Fixed disjoint action slots, with per-agent deterministic query rotation.
@@ -371,10 +403,17 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
                     return Err(format!("recall {index}: planted document missing"));
                 }
                 telemetry_rows += usize::from(result.run_id.is_some());
-                reads.push(started.elapsed().as_secs_f64() * 1000.0);
+                let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+                if diagnostic {
+                    diagnostic_runs.push((elapsed_ms, result.run_id));
+                }
+                reads.push(elapsed_ms);
             }
         }
-        Ok(((writes, reads, telemetry_rows), Instant::now()))
+        Ok((
+            (writes, reads, telemetry_rows, diagnostic_runs),
+            Instant::now(),
+        ))
     })?;
     let window_seconds = cohort
         .finished_at
@@ -383,11 +422,41 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
     let mut writes = Vec::new();
     let mut reads = Vec::new();
     let mut telemetry_rows = 0;
-    for (w, r, t) in cohort.results {
+    let mut diagnostic_runs = Vec::new();
+    for (w, r, t, observed) in cohort.results {
         writes.extend(w);
         reads.extend(r);
         telemetry_rows += t;
+        diagnostic_runs.extend(observed);
     }
+    // Every read below happens AFTER the end timestamp; it cannot change the
+    // measured operation window or its successful-call latency samples.
+    let (search_only_ms, post_search_ms) = if diagnostic {
+        if diagnostic_runs.len() != ops {
+            return Err("diagnostic missing recall samples".into());
+        }
+        let mut searches = Vec::with_capacity(ops);
+        let mut residuals = Vec::with_capacity(ops);
+        for (api_ms, run_id) in diagnostic_runs {
+            let id = run_id.ok_or("diagnostic missing telemetry run id")?;
+            let row = vault
+                .retrieval_run(id)
+                .map_err(|e| format!("diagnostic retrieval run read: {e}"))?
+                .ok_or("diagnostic telemetry row absent")?;
+            let search_ms = row.elapsed_us as f64 / 1000.0;
+            if search_ms > api_ms + 0.1 {
+                return Err("diagnostic search time exceeds API duration".into());
+            }
+            searches.push(search_ms);
+            residuals.push((api_ms - search_ms).max(0.0));
+        }
+        (
+            Some(LatencyEvidence::new(searches)),
+            Some(LatencyEvidence::new(residuals)),
+        )
+    } else {
+        (None, None)
+    };
     if writes.len() + reads.len() != ops {
         return Err("incomplete operations".into());
     }
@@ -412,6 +481,8 @@ fn measure(mode: Mode, agents: usize, ops: usize, seed: u64) -> Result<Report, S
         writes: (!writes.is_empty()).then(|| Metric::new(writes, window_seconds)),
         recalls: (!reads.is_empty()).then(|| Metric::new(reads, window_seconds)),
         recall_telemetry_rows: telemetry_rows,
+        search_only_ms,
+        post_search_ms,
     })
 }
 

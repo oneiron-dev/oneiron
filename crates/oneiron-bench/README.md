@@ -119,6 +119,76 @@ cannot support precise phase proportions. Background builds shared both disks.
   timed action window but the wait profile alone cannot establish a precise
   300-agent time share.
 
+### Recall inversion: bounded interleaved diagnostic
+
+The original primary/secondary tables show an HDD-over-NVMe recall-rate
+inversion (HDD/NVMe median 2.27×, 2.46×, 2.54×, 1.52× at 1/10/100/300).
+**Do not use those recall rows as a device-read-speed comparison.** Every
+public recall persists one retrieval-telemetry row through
+`Store::record_retrieval_run_with_visibility` and its own LMDB write
+transaction + `commit()` (`store/retrieval_telemetry/run_store.rs`). The
+retrieval-run record stores `elapsed_us` **before** that commit is attempted
+(`vault/search_retrieval.rs`); full public-call latency includes it.
+
+To check the inversion, we alternated **fresh vaults** on NVMe and HDD at
+1/10/100/300 agents, three paired trials per tier, with the same release
+binary, seed, 256-query warmup and 1,200 recall calls per trial. Pair order
+was NVMe→HDD, HDD→NVMe, NVMe→HDD. Two bounded passes are saved:
+[`results/recall-interleaved-2026-09-26.jsonl`](results/recall-interleaved-2026-09-26.jsonl)
+(the original baseline binary) and
+[`results/recall-decomposition-2026-09-26.jsonl`](results/recall-decomposition-2026-09-26.jsonl)
+(one new binary used identically on both drives, SHA-256
+`d3a7c662db88dee0a7fdfae3e520026326b498e9d3899c905e71696f162b1522`,
+`src/swarm.rs` SHA-256
+`e08bf8881ba428f904b5093135370dc5ef599e457210fabee3cd874bb0d70936`).
+With `SWARM_DIAGNOSTIC=1`, the bench retains each run ID and API-call latency,
+then reads its public `Vault::retrieval_run(id).elapsed_us` **after** the
+throughput window. It reports both stored search-only time and the **paired
+per-call residual** (API time minus search time). The residual includes
+telemetry construction/staging/commit and minor post-search work: it is
+**not** an isolated fsync timer. All 24 decomposition runs found 1,200/1,200
+telemetry records. This bench-only diagnostic does not change engine behavior.
+
+| Agents | NVMe recalls/s | HDD recalls/s | NVMe search / post-search p50 ms | HDD search / post-search p50 ms |
+|---:|---:|---:|---:|---:|
+| 1 | 245.2 | 278.0 | 0.024 / 3.996 | 0.026 / 2.231 |
+| 10 | 244.8 | 304.4 | 0.028 / 29.043 | 0.028 / 24.538 |
+| 100 | 243.5 | 395.2 | 0.028 / 319.947 | 0.024 / 207.797 |
+| 300 | 261.9 | 348.8 | 0.052 / 1073.013 | 0.041 / 762.403 |
+
+Each cell is the median of three trial-level rates or p50s. Search-only time
+is tens of **microseconds** at every tier; the post-search writer path
+accounts for nearly all median public-call latency and its inverse-rate
+ordering. This **establishes the first bottleneck as per-recall telemetry
+write/commit and its serialization**, not text search or an error in the
+completed-action denominator. It does **not** establish why this host's
+post-search median is lower on HDD than NVMe.
+
+Every diagnostic row also includes start/end `/proc/diskstats` for both
+physical devices, counter deltas, whole-process duration, and per-run start/
+end load. The counters include unconnected host I/O and setup/warmup/teardown,
+so they are not per-call fsync timings. For example, second-pass HDD
+100-agent trial 1 had 395.2 recalls/s, 4 reads completed, 5,382 cumulative
+write-ms and 3,352 busy-ms over 3.53 process seconds; trial 3 dropped to
+81.1 recalls/s with 885 reads, 1,357,912 read sectors (~663 MiB), 19,193
+write-ms and 17,641 busy-ms over 18.0 process seconds. Both one-minute
+start loads were 7.95. This is direct **HDD I/O interference** evidence not
+visible in load average. The NVMe 1-agent diagnostic calls had search p50
+0.024 ms and post-search p50 3.996 ms; its HDD paired calls had search p50
+0.026 ms and post-search p50 2.231 ms, with ~11,000 versus ~8,000
+whole-process block-device writes per typical run. These are observations,
+not proof that a device's fsync implementation alone caused the difference.
+
+Mounts differ (`/dev/nvme0n1p2` ext4 `rw,relatime`;
+`/dev/sda1` ext4 `rw,noatime`), as do sysfs write-cache modes
+(`nvme0n1`: `write back`, `sda`: `write through`). `hdparm -W /dev/sda`
+returned permission denied on this host; `nvme` CLI was unavailable. No
+cache policy was changed. The cause of the HDD's lower *non-stalled*
+post-search latency is still unisolated. **Finding for the next work:** a
+public recall is currently a serialized telemetry commit workload; separate
+that writer cost before using recall QPS as a pure read or device-ranking
+number. Keep the quiet-machine rerun and paired-device caution.
+
 No engine behavior, writer policy, telemetry policy, or group commit was changed.
 
 ### Reproduce
@@ -132,4 +202,9 @@ TMPDIR=/home/lexi/w8-opus/swarm-temp-nvme SWARM_DISK_DEVICE=/dev/nvme0n1p2 SWARM
 Confirm `findmnt -T "$TMPDIR"` and `lsblk -o NAME,ROTA,FSTYPE,MOUNTPOINTS`
 before running: the storage labels are inputs, not automatic device detection.
 `swarm --mode write|recall|mixed --agents 1|10|100|300 [--ops 1200] [--seed 42]`
-runs one cell; `--matrix` emits exactly 36 rows.
+runs one cell; `--matrix` emits exactly 36 rows. To reproduce the
+post-search decomposition, set `SWARM_DIAGNOSTIC=1` and run recall-only cells
+on **both** devices with the same freshly built binary; the extra telemetry
+lookups happen only after the timed cohort. Capture `/proc/diskstats` and
+`/proc/loadavg` just before and after each process to compare with the checked-in
+diagnostic rows; alternate device order per pair to reduce time-order bias.
