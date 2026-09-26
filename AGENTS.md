@@ -189,6 +189,12 @@ build to work around an occupied target directory.
 Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, labels and the cache
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
+**Per-PR CI is off (owner ruling 2026-09-27).** The repository variable `CI_PAUSED` is `true`, so every PR
+check reports *skipped*, which counts as passing. Before you open or update a PR, run the touched tests (both
+tiers) and clippy yourself; never wait for CI or report it as a blocker. A PR merges when its review passes. The
+full gate runs on `main` after PRs merge (at most once an hour, and only when something new landed), and a red
+gate gets a fix PR. The workflows below describe what runs when the variable is `false`.
+
 - `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
   `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints the touched packages and their
   transitive workspace reverse dependents with `--all-targets` (plus the featureless build when `oneiron`
