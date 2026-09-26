@@ -13,18 +13,19 @@ impl Memory<'_> {
         receipt: &mut ScopedReadReceipt,
     ) -> MemoryResult<Option<MemoryItem>> {
         let ScopedReadResult {
-            value: rows,
+            value: admitted,
             receipt: read,
-        } = lane.read(&[PointRead::id(*id).at(mode)], None)?;
+        } = lane.read_projected(&[PointRead::id(*id).at(mode)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok::<_, MemoryError>(None);
+            };
+            let entity_type = row.entity_type;
+            let body = row.body.clone();
+            let view = self.entity_view_of_in_txn(txn, row, mode)?;
+            Ok(Some((entity_type, body, view)))
+        })?;
         receipt.restrict_with(&read);
-        let Some(row) = rows.into_iter().next().flatten() else {
-            return Ok(None);
-        };
-        let entity_type = row.entity_type;
-        let Some(body) = row.body.clone() else {
-            return Ok(None);
-        };
-        let Some(view) = self.entity_view_of(row, mode)? else {
+        let Some((entity_type, Some(body), Some(view))) = admitted else {
             return Ok(None);
         };
         let ScopedReadResult {
