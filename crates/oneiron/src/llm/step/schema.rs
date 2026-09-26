@@ -12,15 +12,19 @@ pub fn validate_json_schema(
     value: &serde_json::Value,
 ) -> Result<(), String> {
     let validator = jsonschema::validator_for(schema).map_err(|error| error.to_string())?;
-    let errors: Vec<String> = validator
-        .iter_errors(value)
-        .map(|error| error.to_string())
-        .collect();
+    let errors = validation_errors(&validator, value);
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors.join("; "))
     }
+}
+
+fn validation_errors(validator: &jsonschema::Validator, value: &serde_json::Value) -> Vec<String> {
+    validator
+        .iter_errors(value)
+        .map(|error| error.to_string())
+        .collect()
 }
 
 pub(super) fn validate_fallback(
@@ -131,10 +135,7 @@ pub(super) async fn generate(
             })
             .collect();
         let errors = match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => validator
-                .iter_errors(&value)
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>(),
+            Ok(value) => validation_errors(&validator, &value),
             Err(error) => vec![error.to_string()],
         };
         if errors.is_empty() {

@@ -139,6 +139,33 @@ fn quickjs_real_language_typed_writes_determinism_and_escape_refusal() {
 }
 
 #[test]
+fn quickjs_json_validate_returns_shared_allow_reject_verdicts_without_dispatch() {
+    let (bytes, hash) = artifact("first-party");
+    let factory =
+        QuickJsRuntimeFactory::from_component(&bytes, hash, ComponentBudget::default()).unwrap();
+    let mut host = Host::default();
+    let result = run(
+        &mut factory.runtime().unwrap(),
+        "const schema = {type:'object',required:['count'],properties:{count:{type:'integer'}}}; \
+         const allow = await self.json.validate(schema,{count:3}); \
+         const reject = await self.json.validate(schema,{count:'three'}); \
+         const invalidSchema = await self.json.validate({type:'not-a-type'},{count:3}); \
+         finish(JSON.stringify({allow,reject,invalidSchema}));",
+        &mut host,
+    )
+    .unwrap();
+    assert!(result.done);
+    assert_eq!(
+        serde_json::from_str::<Value>(&result.observation).unwrap(),
+        serde_json::json!({"allow":true,"reject":false,"invalidSchema":false})
+    );
+    assert!(
+        host.calls.is_empty(),
+        "validation must not dispatch a self effect"
+    );
+}
+
+#[test]
 fn default_budget_passes_the_readiness_probe() {
     let (bytes, hash) = artifact("first-party");
     assert!(
@@ -214,6 +241,9 @@ impl crate::code_sandbox::wasmtime_boundary::bindings::GuestImports for ForeignH
         &mut self,
         _: crate::code_sandbox::wasmtime_boundary::bindings::CredentialInput,
     ) -> std::result::Result<String, String> {
+        Err("unlinked capability".into())
+    }
+    fn json_validate(&mut self, _: String, _: String) -> std::result::Result<bool, String> {
         Err("unlinked capability".into())
     }
     fn memory_search(
