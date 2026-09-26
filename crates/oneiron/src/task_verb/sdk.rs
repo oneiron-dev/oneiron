@@ -1,7 +1,47 @@
 //! Shared typed agent-verb inputs and generated transport dispatch.
-use super::TaskAskHandle;
+use super::{TaskAskDefault, TaskAskHandle, TaskAskQuestion, TaskAskSpec, TaskAskTarget};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use serde::{Deserialize, Serialize};
+
+/// One SDK verb with two disjoint wire shapes. Rich fields cannot be
+/// reinterpreted as first-answer shorthand after Serde drops field presence.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum TaskAskRequest {
+    Rich(Box<TaskAskSpec>),
+    Short(Box<TaskAskShort>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskShort {
+    #[serde(default)]
+    pub who: Option<TaskAskTarget>,
+    pub what: TaskAskQuestion,
+    #[serde(default)]
+    pub until: Option<u64>,
+    #[serde(default)]
+    pub default: TaskAskDefault,
+}
+
+impl TaskAskRequest {
+    pub fn into_spec(self) -> MemoryResult<TaskAskSpec> {
+        match self {
+            Self::Rich(spec) => Ok(*spec),
+            Self::Short(short) => {
+                // The key names the *requested* short call, never a cutoff
+                // derived from the current clock or the resolved electorate.
+                let bytes =
+                    rmp_serde::to_vec_named(&(&short.who, &short.what, short.until, short.default))
+                        .map_err(|_| MemoryError::bad_request("short ask encoding"))?;
+                let mut spec =
+                    TaskAskSpec::shorthand(short.who, short.what, short.until, short.default);
+                spec.intent_key = format!("short/v1/{}", blake3::hash(&bytes).to_hex());
+                Ok(spec)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -188,7 +228,7 @@ fn non_keyed_sdk_request_does_not_claim_a_keyed_decoder() {
 #[cfg(test)]
 #[test]
 fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
-    use crate::task_verb::{TaskAskDefault, TaskAskEffectAuthorization, TaskAskSpec, TaskAskWait};
+    use crate::task_verb::{TaskAskDefault, TaskAskEffectAuthorization, TaskAskWait};
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
@@ -199,19 +239,7 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
         "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
         "default": "proceed",
     });
-    let schema = input_schema("tasks.ask").unwrap();
-    assert!(
-        !schema["required"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("intent_key"))
-    );
-    assert!(
-        schema["required"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("what"))
-    );
+    assert!(input_schema("tasks.ask").unwrap().is_object());
     let receipt = invoke(&memory, "tasks.ask", short.clone()).unwrap();
     let handle: crate::task_verb::TaskAskHandle =
         serde_json::from_value(receipt["handle"].clone()).unwrap();
@@ -219,22 +247,24 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
         invoke(&memory, "tasks.ask", short).unwrap()["handle"],
         receipt["handle"]
     );
-    let spec: TaskAskSpec = serde_json::from_value(serde_json::json!({
-        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
-    }))
-    .unwrap();
-    assert_eq!(
-        spec.normalize_sdk_input().unwrap().decide,
-        Some(crate::task_verb::TaskAskDecide::First)
-    );
-    let bad = serde_json::json!({
-        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
-        "need": {"count": 2}
-    });
-    assert_eq!(
-        invoke(&memory, "tasks.ask", bad).unwrap_err().code,
-        crate::memory::MEMORY_CODE_BAD_REQUEST
-    );
+    for rich_field in [
+        serde_json::json!({"need": {"count": 1, "of": "any"}}),
+        serde_json::json!({"decide": null}),
+        serde_json::json!({"on_disagree": {"branch": "hold", "surface": "card"}}),
+    ] {
+        let mut malformed = serde_json::json!({
+            "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
+            "who": {"people": [actor]}
+        });
+        malformed
+            .as_object_mut()
+            .unwrap()
+            .extend(rich_field.as_object().unwrap().clone());
+        assert_eq!(
+            invoke(&memory, "tasks.ask", malformed).unwrap_err().code,
+            crate::memory::MEMORY_CODE_BAD_REQUEST
+        );
+    }
     let answer = memory
         .tasks_answer(&handle, &crate::task_verb::TaskAskWord::new(actor))
         .unwrap();
@@ -264,4 +294,70 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
     );
     assert_eq!(result.settlement.effective.default, TaskAskDefault::Proceed);
     assert!(result.settlement.effective.until.is_some());
+
+    // Rich collect remains collect. Supplying the retry key selects the
+    // AskSpec branch; its omitted decide is not a shorthand first reducer.
+    let mut rich = crate::task_verb::TaskAskSpec::shorthand(
+        Some(crate::task_verb::TaskAskTarget::People([actor].into())),
+        crate::task_verb::TaskAskQuestion::new(question),
+        Some(u64::MAX),
+        TaskAskDefault::Hold,
+    );
+    rich.intent_key = "rich-collect".into();
+    rich.decide = None;
+    let rich_receipt = invoke(&memory, "tasks.ask", serde_json::to_value(rich).unwrap()).unwrap();
+    let rich_handle: crate::task_verb::TaskAskHandle =
+        serde_json::from_value(rich_receipt["handle"].clone()).unwrap();
+    memory
+        .tasks_answer(&rich_handle, &crate::task_verb::TaskAskWord::new(actor))
+        .unwrap();
+    let crate::task_verb::TaskAskWait::Ready(collected) =
+        memory.tasks_wait(rich_handle, None).unwrap()
+    else {
+        panic!("rich collect settled");
+    };
+    assert_eq!(
+        collected.decision,
+        crate::task_verb::TaskAskDecision::Collected
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn short_ask_retry_identity_includes_recipient_deadline_and_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let other = crate::EntityId::from_bytes([0xE2; 16]).unwrap();
+    super::tests::support::put_person(&vault, other);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let memory = vault.memory(actor, crate::EdgeActorClass::Human);
+    let base = serde_json::json!({
+        "who": {"people": [actor]},
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
+        "until": u64::MAX,
+        "default": "hold"
+    });
+    let first = invoke(&memory, "tasks.ask", base.clone()).unwrap();
+    assert_eq!(
+        invoke(&memory, "tasks.ask", base.clone()).unwrap()["handle"],
+        first["handle"]
+    );
+    let mut handles = std::collections::BTreeSet::from([first["handle"]["group_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()]);
+    for change in [
+        serde_json::json!({"who": {"people": [other]}}),
+        serde_json::json!({"until": u64::MAX - 1}),
+        serde_json::json!({"default": "proceed"}),
+    ] {
+        let mut input = base.clone();
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(change.as_object().unwrap().clone());
+        let result = invoke(&memory, "tasks.ask", input).unwrap();
+        assert!(handles.insert(result["handle"]["group_ref"].as_str().unwrap().to_owned()));
+    }
 }

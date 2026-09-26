@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { agentVerbs } from "../src/agent-verbs"
-import type { TaskAskAnswer, TaskAskResult, TaskAskSpec, TaskAskWord } from "../src/agent-verbs"
+import type { TaskAskAnswer, TaskAskResult, TaskAskShort, TaskAskSpec, TaskAskWord } from "../src/agent-verbs"
 
 test("generated task and room projections keep the caller step and settlement data", () => {
   const calls: [string, unknown][] = []
@@ -57,12 +57,15 @@ test("one tasks.ask verb accepts both SDK call shapes without merging authority 
   api.tasks.ask("11".repeat(16), question)
   api.tasks.ask(["11".repeat(16)], question)
   api.tasks.ask(undefined, question)
+  const optionalDeadline: TaskAskShort = { who, what: question, until: null }
+  api.tasks.ask(optionalDeadline.who, optionalDeadline.what, optionalDeadline.until)
   api.tasks.ask({ intent_key: "rich", who, what: question, until: 123, decide: "first" })
   expect(calls).toEqual([
     ["tasksAsk", { who, what: question, until: 123, default: "hold" }],
     ["tasksAsk", { who: {people: ["11".repeat(16)]}, what: question, until: undefined, default: undefined }],
     ["tasksAsk", { who: {people: ["11".repeat(16)]}, what: question, until: undefined, default: undefined }],
     ["tasksAsk", { who: undefined, what: question, until: undefined, default: undefined }],
+    ["tasksAsk", { who, what: question, until: null, default: undefined }],
     ["tasksAsk", { intent_key: "rich", who, what: question, until: 123, decide: "first" }],
   ])
 })

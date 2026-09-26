@@ -1409,3 +1409,42 @@ fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()
     assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     Ok(())
 }
+
+#[test]
+fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Result<()> {
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let input = serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
+    });
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
+    );
+    let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(assignment.effected);
+    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input)?;
+    let handle: TaskAskHandle = serde_json::from_value(receipt["handle"].clone())?;
+    let task: EntityId = serde_json::from_value(receipt["task_refs"][0].clone())?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Human { actor_ref: human })
+    );
+    let answer = vault
+        .memory(human, EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(human))?;
+    let result = settled(&agent_memory, handle);
+    assert_eq!(result.decision, TaskAskDecision::First(answer));
+    assert_eq!(result.coverage.responded, [human].into());
+    Ok(())
+}

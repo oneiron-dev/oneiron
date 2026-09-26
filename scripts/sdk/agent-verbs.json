@@ -472,9 +472,9 @@
     },
     {
       "name": "tasks.ask",
-      "input": "crate::task_verb::TaskAskSpec",
+      "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
-      "call": "memory.tasks_ask(&input.normalize_sdk_input()?)?",
+      "call": "memory.tasks_ask(&input.into_spec()?)?",
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"

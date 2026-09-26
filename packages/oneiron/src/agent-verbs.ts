@@ -36,7 +36,7 @@ export function agentVerbs(invoke: AgentInvoke) {
 tasks: {
 create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
 update(turn: Record<string, unknown>): unknown { return invoke("tasksUpdate", turn) as unknown },
-ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number, defaultBranch?: TaskAskDefault]): TaskAskReceipt {
+ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt {
   const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]};
   return invoke("tasksAsk", input) as TaskAskReceipt
 },

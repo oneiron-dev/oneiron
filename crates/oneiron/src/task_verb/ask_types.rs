@@ -223,7 +223,6 @@ pub struct TaskAskClass {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskSpec {
-    #[serde(default)]
     pub intent_key: String,
     #[serde(default)]
     pub task_ref: Option<EntityId>,
@@ -268,27 +267,6 @@ impl TaskAskSpec {
             on_disagree: TaskAskDisagree::default(),
             remind: None,
         }
-    }
-
-    /// Only the SDK's four-field short call may omit the retry key. Keep the
-    /// rich AskSpec strict; an omitted key cannot weaken its coverage rules.
-    pub(crate) fn normalize_sdk_input(mut self) -> MemoryResult<Self> {
-        if self.intent_key.is_empty() {
-            if self.task_ref.is_some()
-                || self.class.is_some()
-                || self.need != TaskAskNeed::default()
-                || self.decide.is_some()
-                || self.provisional != TaskAskProvisional::Inform
-                || self.on_disagree != TaskAskDisagree::default()
-                || self.remind.is_some()
-            {
-                return Err(MemoryError::bad_request(
-                    "short ask only accepts who, what, until and default",
-                ));
-            }
-            self = Self::shorthand(self.who, self.what, self.until, self.default);
-        }
-        Ok(self)
     }
 
     pub(super) fn effective(
