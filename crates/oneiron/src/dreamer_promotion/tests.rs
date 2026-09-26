@@ -400,6 +400,17 @@ fn promotion_cannot_supersede_user_stated() -> Result<()> {
             .supersede_claim(&superseding_id, &head, fixture.run.now_ms)
             .is_err()
     );
+    assert_eq!(
+        vault
+            .grant_deferred_claim_auto(&superseding_id, fixture.run.now_ms + 1)
+            .expect_err("attributed truth needs owner confirmation")
+            .kind(),
+        crate::ErrorKind::GateWriteRejected,
+    );
+    assert_eq!(
+        vault.pending_claim_supersession(&superseding_id)?,
+        Some(head)
+    );
 
     // The UserStated head is untouched and the other candidate landed.
     let head_body = vault.get_claim(&head)?.expect("head");
@@ -432,6 +443,57 @@ fn per_op_gating_no_bulk() -> Result<()> {
         gate_decision_count(&vault) - decisions_before,
         3,
         "one gate evaluation per candidate"
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinary_dreamer_replacement_stages_before_closure() -> Result<()> {
+    let (_dir, vault) = open_auto_vault();
+    let fixture = fixture(&vault)?;
+    let first = candidate(&fixture, "profile.name", "Ada", vec![fixture.turn]);
+    let old = first.claim_id;
+    assert_eq!(
+        promote_consolidated_claims(&vault, &fixture.run, vec![first])?.landed,
+        vec![old]
+    );
+    let mut second = candidate(&fixture, "profile.name", "Ada Lovelace", vec![fixture.turn]);
+    second.supersedes = Some(old);
+    let new = second.claim_id;
+    let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![second])?;
+    assert!(outcome.landed.is_empty());
+    assert!(outcome.rejected.is_empty());
+    assert_eq!(outcome.pended, vec![new]);
+    assert_eq!(
+        vault.get_claim(&new)?.expect("staged").approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+    assert_eq!(
+        vault.get_claim(&old)?.expect("old").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Active
+    );
+    assert!(
+        !vault
+            .edges_out(&new)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes)
+    );
+    vault.grant_deferred_claim_auto(&new, fixture.run.now_ms + 1)?;
+    assert_eq!(
+        vault.get_claim(&new)?.expect("granted").approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(vault.pending_claim_supersession(&new)?, None);
+    assert_eq!(
+        vault.get_claim(&old)?.expect("closed").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Superseded
+    );
+    assert!(
+        vault
+            .edges_out(&new)?
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
     );
     Ok(())
 }
@@ -497,9 +559,15 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
     clean.supersedes = Some(head_id);
     let clean_id = clean.claim_id;
     let outcome = promote_consolidated_claims(&vault, &fixture.run, vec![clean])?;
-    assert_eq!(outcome.landed, vec![clean_id]);
-    assert!(outcome.pended.is_empty());
+    assert!(outcome.landed.is_empty());
+    assert_eq!(outcome.pended, vec![clean_id]);
     assert!(outcome.rejected.is_empty());
+    assert_eq!(vault.pending_claim_supersession(&clean_id)?, Some(head_id));
+    assert_eq!(
+        vault.get_claim(&head_id)?.expect("old head").lifecycle,
+        crate::claim::ClaimLifecycleStatus::Active
+    );
+    vault.grant_deferred_claim_auto(&clean_id, fixture.run.now_ms + 1)?;
 
     let new_head = vault.get_claim(&clean_id)?.expect("new head");
     assert_eq!(

@@ -2606,7 +2606,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -7292,8 +7292,8 @@
      "path": "src/claim/deferred.rs",
      "purpose": "Local, content-bound destructive proposals",
      "surface": {
-      "crate-vis": 12,
-      "fn": 2
+      "crate-vis": 11,
+      "fn": 3
      }
     },
     {

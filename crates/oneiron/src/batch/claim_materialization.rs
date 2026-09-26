@@ -202,6 +202,76 @@ impl ClaimMaterialization {
         )
     }
 
+    /// Re-gate an exact parked replacement as Auto under its attested author.
+    /// The caller checks the deferred content/frontier binding and performs
+    /// closure in this same transaction. No arbitrary Put may use this path.
+    pub(crate) fn apply_deferred_auto_grant(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        let raw = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+            return Err(binding_error());
+        }
+        let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+        if prior.approval != ClaimApprovalStatus::Proposed {
+            return Err(binding_error());
+        }
+        let mut envelope =
+            lifecycle_envelope(&vault.store, txn, id, &prior)?.ok_or(binding_error())?;
+        envelope = WriteEnvelope::with_lineage(
+            envelope.actor(),
+            envelope.source(),
+            envelope.provenance().clone(),
+            ClaimApprovalStatus::Auto,
+            envelope.lineage().clone(),
+        );
+        let mut next = prior;
+        next.approval = ClaimApprovalStatus::Auto;
+        let data = encode_claim_body(&next)?;
+        let occurred = crate::temporal::TimeRange {
+            start: header.occurred_start,
+            end: header.occurred_end,
+        };
+        let binding = Self {
+            id: *id,
+            occurred,
+            learned_at: header.learned_at,
+            data: data.clone(),
+            reserved: false,
+            envelope,
+            prior: Some(row_digest(&raw)),
+            approval: false,
+        };
+        binding.validate_actor(&vault.store, txn)?;
+        super::apply_ops_with_gate_mode(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![BatchOp::Put {
+                id: *id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at: header.learned_at,
+                data,
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            ApplyOpsGateMode::new(true, false).with_claim_materializations(vec![binding]),
+        )
+    }
+
     /// Admit only the current row's unamended approval: the stored body with
     /// its approval set to Approved. An approval never removes the author, so
     /// the author binding is rebuilt from the stored row and refreshed on the

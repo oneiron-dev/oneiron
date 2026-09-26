@@ -246,6 +246,71 @@ fn claim_upsert_supersedes_prior_single_cardinality() {
 }
 
 #[test]
+fn auto_eligible_upsert_stages_before_closing_prior() {
+    let (_dir, vault) = open_vault();
+    let actor = put_person(&vault, 0x73);
+    let subject = put_person(&vault, 0x74);
+    let facade = facade_for(&vault, actor);
+    let first = facade
+        .claim_upsert(&claim_input(
+            "profile.name",
+            &subject,
+            "observed",
+            serde_json::json!("Ada"),
+        ))
+        .expect("first revision");
+    assert_eq!(first.approval, "auto");
+    let mut input = claim_input(
+        "profile.name",
+        &subject,
+        "observed",
+        serde_json::json!("Ada Lovelace"),
+    );
+    input.learned_at = Some(200);
+    input.occurred_at = Some(200);
+    let second = facade.claim_upsert(&input).expect("second revision");
+    let old = facade.resolve_ref(&first.claim_short_id).unwrap();
+    let new = facade.resolve_ref(&second.claim_short_id).unwrap();
+    assert_eq!(second.approval, "proposed");
+    assert!(second.superseded_short_id.is_none());
+    assert_eq!(
+        vault.get_claim(&new).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Proposed
+    );
+    assert_eq!(vault.pending_claim_supersession(&new).unwrap(), Some(old));
+    assert_eq!(
+        vault.get_claim(&old).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    assert!(
+        !vault
+            .edges_out(&new)
+            .unwrap()
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes)
+    );
+    vault
+        .grant_deferred_claim_auto(&new, 201)
+        .expect("later Auto grant");
+    assert_eq!(
+        vault.get_claim(&new).unwrap().unwrap().approval,
+        ClaimApprovalStatus::Auto
+    );
+    assert_eq!(vault.pending_claim_supersession(&new).unwrap(), None);
+    assert_eq!(
+        vault.get_claim(&old).unwrap().unwrap().lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    assert!(
+        vault
+            .edges_out(&new)
+            .unwrap()
+            .iter()
+            .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
+    );
+}
+
+#[test]
 fn multi_cardinality_supersede_matches_on_question_id() {
     let (_dir, vault) = open_vault();
     let actor = put_person(&vault, 0x81);

@@ -45,10 +45,10 @@ pub(super) fn load(
         .transpose()
 }
 fn attributed(body: &ClaimBody) -> bool {
-    // Explicit human testimony is attributed truth, including legacy unlabelled truth.
     matches!(body.source, None | Some(ClaimSource::UserStated))
         || body.evidence.as_ref().is_some_and(has_attributed_hop)
 }
+
 fn has_attributed_hop(value: &rmpv::Value) -> bool {
     let mut pending = vec![value];
     while let Some(value) = pending.pop() {
@@ -67,6 +67,7 @@ fn has_attributed_hop(value: &rmpv::Value) -> bool {
     }
     false
 }
+
 impl Vault {
     /// Read-only projection of the prior head named by a parked replacement.
     pub fn pending_claim_supersession(&self, id: &EntityId) -> Result<Option<EntityId>> {
@@ -130,20 +131,6 @@ impl Vault {
         Ok(())
     }
 
-    pub(crate) fn supersession_requires_confirmation_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        old: &EntityId,
-        new: &ClaimBody,
-    ) -> Result<bool> {
-        let old = self.require_named_claim_target_active_in(txn, old)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-        Ok(attributed(&old)
-            || attributed(new)
-            || policy.criticality_for_predicate(&old.predicate) == PolicyCriticality::Critical
-            || policy.criticality_for_predicate(&new.predicate) == PolicyCriticality::Critical)
-    }
-
     pub(crate) fn stage_claim_supersession_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -161,16 +148,6 @@ impl Vault {
         let body = self
             .get_claim_in_txn(txn, new)?
             .ok_or(Error::EntityNotFound)?;
-        let held = self.supersession_requires_confirmation_in_txn(txn, old, &body)?;
-        if body.approval == ClaimApprovalStatus::Auto
-            && !held
-            && self.store.pending_gate_consent_in_txn(txn, new)?.is_none()
-        {
-            self.supersede_claim_in_txn(txn, new, old, now)?;
-            return super::supersession_provenance::write_companion(
-                self, txn, new, old, &body, &old_body, envelope, now,
-            );
-        }
         if body.approval != ClaimApprovalStatus::Proposed {
             return Err(Error::InvalidClaimBody(
                 "destructive replacement requires a proposed claim",
@@ -190,7 +167,57 @@ impl Vault {
             critical,
         };
         put_pending(self, txn, new, &body, proposal, Some(envelope), now)?;
-        super::supersession_provenance::write_coaching(self, txn, new, old, &body, envelope, now)
+        if critical || attributed(&old_body) || attributed(&body) {
+            super::supersession_provenance::write_coaching(
+                self, txn, new, old, &body, envelope, now,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Re-evaluate an ordinary parked replacement for Auto and close the
+    /// prior only after that grant, in the same write transaction. Critical
+    /// or attributed truth still needs the owner-confirmation door.
+    pub fn grant_deferred_claim_auto(&self, id: &EntityId, now: u64) -> Result<()> {
+        self.with_write_txn(|txn| {
+            let proposal = load(self, txn, id)?.ok_or(Error::EntityNotFound)?;
+            let DeferredAction::Supersede { old, old_hash } = proposal.action else {
+                return Err(Error::InvalidClaimBody("not a deferred supersession"));
+            };
+            let old = EntityId::from_bytes(old)?;
+            let prior = self.require_named_claim_target_active_in(txn, &old)?;
+            let body = self
+                .get_claim_in_txn(txn, id)?
+                .ok_or(Error::EntityNotFound)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            if proposal.body_hash != body_hash(&body)?
+                || proposal.frontier != policy.read_frontier_hash()?
+                || old_hash != body_hash(&prior)?
+                || self.store.pending_gate_consent_in_txn(txn, id)?.is_none()
+            {
+                return Err(Error::Gate(crate::error::GateError::GateConsentStale {
+                    claim_id: *id,
+                }));
+            }
+            if proposal.critical || attributed(&prior) || attributed(&body) {
+                return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
+                    outcome: "pending",
+                    reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
+                }));
+            }
+            // The standard materialization gate has no injected host checker.
+            // Never silently skip one that the manifest requires.
+            if policy.auto_checker().is_some()
+                || crate::llm::manifest::read_manifest(&self.store, txn)?
+                    .is_some_and(|manifest| manifest.verdict.is_some())
+            {
+                return Err(Error::InvalidConfig(
+                    "deferred Auto grant requires the configured host checker".into(),
+                ));
+            }
+            crate::batch::ClaimMaterialization::apply_deferred_auto_grant(self, txn, id)?;
+            self.complete_deferred_claim_in_txn(txn, id, false, now)
+        })
     }
 
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
