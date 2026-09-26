@@ -200,46 +200,21 @@ pub fn delegated_custody_scopes(channel: &str, address: &str) -> Vec<String> {
 /// admission projection, so no OAuth token material reaches it or anything
 /// derived from it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DelegatedCustodyProof<'txn> {
+pub(crate) struct DelegatedCustodyProof<'txn> {
     channel: String,
     address: String,
     custody_record_ref: String,
-    effector: &'static str,
     _txn: PhantomData<&'txn ()>,
 }
 
 impl DelegatedCustodyProof<'_> {
-    /// The channel this proof was verified for.
-    #[must_use]
-    pub fn channel(&self) -> &str {
-        &self.channel
-    }
-
-    /// The mailbox (assignment address) this proof was verified for.
-    #[must_use]
-    pub fn address(&self) -> &str {
-        &self.address
-    }
-
-    /// The custody record NAME whose bindings were verified.
-    #[must_use]
-    pub fn custody_record_ref(&self) -> &str {
-        &self.custody_record_ref
-    }
-
-    /// The effector whose read binding covered the record.
-    #[must_use]
-    pub const fn effector(&self) -> &'static str {
-        self.effector
-    }
-
     /// Whether this proof covers exactly `(channel, address, grant)`.
     ///
     /// The ADDRESS arm is the one that matters: a two-way `(channel, record)`
     /// match is what would let a proof for one member's record stand up a row
     /// over another member's mailbox.
     #[must_use]
-    pub fn covers(&self, channel: &str, address: &str, grant: &DelegatedGrant) -> bool {
+    pub(super) fn covers(&self, channel: &str, address: &str, grant: &DelegatedGrant) -> bool {
         self.channel == channel
             && self.address == address
             && self.custody_record_ref == grant.custody_record_ref
@@ -315,7 +290,6 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         channel: channel.to_owned(),
         address: address.to_owned(),
         custody_record_ref: grant.custody_record_ref.clone(),
-        effector,
         _txn: PhantomData,
     })
 }

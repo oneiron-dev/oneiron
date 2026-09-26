@@ -45,7 +45,8 @@ pub(super) const KEY_CREATED_AT: &str = CONSENT_GRANT_BODY_KEYS[7];
 
 pub(super) const OWNER_STAMP_KEYS: [&str; 3] = ["actor", "principal_ref", "decision_id"];
 pub(super) const SUBJECT_KEYS: [&str; 2] = ["kind", "refs"];
-pub(super) const ENVELOPE_KEYS: [&str; 4] = ["selectors", "target", "budget", "receipt_required"];
+pub(super) const ENVELOPE_KEYS: [&str; 5] =
+    ["selectors", "target", "budget", "receipt_required", "scope"];
 
 // ---------------------------------------------------------------------------
 // Persistence codec
@@ -65,7 +66,10 @@ pub fn encode_consent_grant_row(row: &ConsentGrantRow) -> Result<Vec<u8>> {
         ),
         (Value::from(KEY_SUBJECT), encode_subject(bound.subject())),
         (Value::from(KEY_CLASS), Value::from(bound.class().as_str())),
-        (Value::from(KEY_ENVELOPE), encode_envelope(bound.envelope())),
+        (
+            Value::from(KEY_ENVELOPE),
+            encode_envelope(bound.envelope())?,
+        ),
         (Value::from(KEY_STATUS), Value::from(row.status.as_str())),
         (
             Value::from(KEY_OWNER_STAMP),
@@ -200,25 +204,31 @@ fn decode_subject(value: &Value, domain: ConsentDomain) -> Result<BoundSubject> 
     }
 }
 
-fn encode_envelope(envelope: &BoundEnvelope) -> Value {
-    let (selectors, target, budget, receipt_required) = match envelope {
-        BoundEnvelope::Disclosure(envelope) => (&envelope.selectors, None, None, false),
+fn encode_envelope(envelope: &BoundEnvelope) -> Result<Value> {
+    let (selectors, target, budget, receipt_required, scope) = match envelope {
+        BoundEnvelope::Disclosure(envelope) => (
+            &envelope.selectors,
+            None,
+            None,
+            false,
+            envelope
+                .scope
+                .as_deref()
+                .map(crate::federation::scope_codec::encode_scope_value)
+                .transpose()?,
+        ),
         BoundEnvelope::Action(envelope) => (
             &envelope.selectors,
             envelope.target.as_deref(),
             envelope.budget,
             envelope.receipt_required,
+            None,
         ),
     };
-    Value::Map(vec![
+    Ok(Value::Map(vec![
         (
             Value::from(ENVELOPE_KEYS[0]),
-            Value::Array(
-                selectors
-                    .iter()
-                    .map(|selector| Value::from(selector.as_str()))
-                    .collect(),
-            ),
+            Value::Array(selectors.iter().map(|s| Value::from(s.as_str())).collect()),
         ),
         (
             Value::from(ENVELOPE_KEYS[1]),
@@ -229,7 +239,8 @@ fn encode_envelope(envelope: &BoundEnvelope) -> Value {
             budget.map_or(Value::Nil, Value::from),
         ),
         (Value::from(ENVELOPE_KEYS[3]), Value::from(receipt_required)),
-    ])
+        (Value::from(ENVELOPE_KEYS[4]), scope.unwrap_or(Value::Nil)),
+    ]))
 }
 
 fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope> {
@@ -249,6 +260,7 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
     let receipt_required = required_value(entries, ENVELOPE_KEYS[3])?
         .as_bool()
         .ok_or_else(invalid_row)?;
+    let scope_value = required_value(entries, ENVELOPE_KEYS[4])?;
 
     match domain {
         ConsentDomain::Disclosure => {
@@ -260,11 +272,29 @@ fn decode_envelope(value: &Value, domain: ConsentDomain) -> Result<BoundEnvelope
             {
                 return Err(invalid_row());
             }
-            Ok(BoundEnvelope::Disclosure(
-                DisclosureEnvelope::new(selectors).map_err(|_| invalid_row())?,
-            ))
+            let envelope = if matches!(scope_value, Value::Nil) {
+                DisclosureEnvelope::new(selectors).map_err(|_| invalid_row())?
+            } else {
+                let scope = crate::federation::scope_codec::decode_scope_value(scope_value)
+                    .map_err(|_| invalid_row())?;
+                let envelope = DisclosureEnvelope::from_scope(scope).map_err(|_| invalid_row())?;
+                if envelope.selectors != selectors
+                    || crate::federation::scope_codec::encode_scope_value(
+                        envelope.scope.as_deref().ok_or_else(invalid_row)?,
+                    )
+                    .map_err(|_| invalid_row())?
+                        != *scope_value
+                {
+                    return Err(invalid_row());
+                }
+                envelope
+            };
+            Ok(BoundEnvelope::Disclosure(envelope))
         }
         ConsentDomain::Action => {
+            if !matches!(scope_value, Value::Nil) {
+                return Err(invalid_row());
+            }
             let mut envelope = ActionEnvelope::new(selectors).map_err(|_| invalid_row())?;
             if !matches!(target_value, Value::Nil) {
                 envelope = envelope
@@ -330,16 +360,19 @@ fn decode_owner_stamp(value: &Value) -> Result<ConsentOwnerStamp> {
 }
 
 /// Canonical bound-only value used by propose-only widen deltas.
-pub(super) fn encode_bound_value(bound: &GrantBound) -> Value {
-    Value::Map(vec![
+pub(super) fn encode_bound_value(bound: &GrantBound) -> Result<Value> {
+    Ok(Value::Map(vec![
         (
             Value::from(KEY_DOMAIN),
             Value::from(bound.domain().as_str()),
         ),
         (Value::from(KEY_SUBJECT), encode_subject(bound.subject())),
         (Value::from(KEY_CLASS), Value::from(bound.class().as_str())),
-        (Value::from(KEY_ENVELOPE), encode_envelope(bound.envelope())),
-    ])
+        (
+            Value::from(KEY_ENVELOPE),
+            encode_envelope(bound.envelope())?,
+        ),
+    ]))
 }
 pub(super) fn decode_bound_value(value: &Value) -> Result<GrantBound> {
     let Value::Map(entries) = value else {

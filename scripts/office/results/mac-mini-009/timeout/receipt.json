@@ -1,0 +1,21 @@
+{
+  "detail": "open exceeded deadline",
+  "environment": {
+    "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "input": {
+    "bytes": 28281,
+    "sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480"
+  },
+  "outputs": {},
+  "staged_input_sha256": "a737f4c991836665b2dcc7a835a72d268cafd3cbab13cba0e59df1d402619480",
+  "status": "timed_out"
+}
