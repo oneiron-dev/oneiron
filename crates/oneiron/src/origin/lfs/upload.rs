@@ -2,15 +2,22 @@
 
 use super::chunks::{self, LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkRef, LfsManifest};
 use super::lifecycle::{DELETED, GC, JOURNAL, REVERSE};
-use super::store::{encode_lfs_object_record, lfs_object_key};
+use super::store::{LfsObjectRecord, OBJECTS};
 use super::{LfsOid, LfsPutOutcome, VaultLfsObject};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::side_table::HexId;
 use crate::{EntityId, TimeRange, Vault};
 use fastcdc::v2020::{Normalization, StreamCDC};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom, Write};
+
+/// Local hard-delete marker (`deletion::tombstone` owns the writer side; this is a read-only
+/// existence check bound to the SAME declaration, never decoding the value — presence-only,
+/// exactly as every other reader of this row treats it). Key: hex32.
+const HARD_DELETE_MARKERS: crate::side_table::SideTable<HexId, Vec<u8>, crate::side_table::Raw> =
+    crate::side_table::SideTable::new(&crate::side_table::DELETION_HARD_DELETE_MARKER);
 
 impl Vault {
     /// Uploads any-sized object with bounded resident bytes and bounded writers.
@@ -135,27 +142,13 @@ impl Vault {
         let encoded = manifest.encode()?;
         let asset_id = manifest.asset_id()?;
         let owner = EntityId::now();
-        let journal_key = chunks::key(JOURNAL, owner.as_bytes());
         self.with_write_txn(|txn| {
-            if self
-                .store
-                .vault_meta
-                .get(txn, &chunks::key(DELETED, oid.as_bytes()))?
-                .is_some()
-                || self
-                    .store
-                    .sync_state
-                    .get(txn, &crate::deletion::local_hard_delete_key(&asset_id))?
-                    .is_some()
+            if DELETED.contains(&self.store, txn, &oid)?
+                || HARD_DELETE_MARKERS.contains(&self.store, txn, &HexId(asset_id))?
             {
                 return Err(chunks::invalid("lfs object was permanently deleted"));
             }
-            let journal = [
-                oid.as_bytes().as_slice(),
-                crate::unix_seconds_now().to_le_bytes().as_slice(),
-            ]
-            .concat();
-            self.store.vault_meta.put(txn, &journal_key, &journal)?;
+            JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
             Ok(())
         })?;
         let outcome = (|| {
@@ -176,12 +169,8 @@ impl Vault {
                 }
                 let id = chunks::chunk_id(&chunk.hash)?;
                 self.with_write_txn(|txn| {
-                    if self.store.vault_meta.get(txn, &journal_key)?.is_none()
-                        || self
-                            .store
-                            .vault_meta
-                            .get(txn, &chunks::key(DELETED, oid.as_bytes()))?
-                            .is_some()
+                    if !JOURNAL.contains(&self.store, txn, &owner)?
+                        || DELETED.contains(&self.store, txn, &oid)?
                     {
                         return Err(chunks::invalid("lfs upload was cancelled"));
                     }
@@ -197,25 +186,10 @@ impl Vault {
                             .put(&id, ENTITY_TYPE_ASSET, occurred, learned_at, &bytes)
                             .apply(txn)?;
                     }
-                    self.store.vault_meta.put(
-                        txn,
-                        &chunks::key(chunks::CHUNK_MARK, id.as_bytes()),
-                        &chunk.hash,
-                    )?;
-                    self.store
-                        .vault_meta
-                        .put(txn, &chunks::ref_key(&chunk.hash, owner), &[])?;
-                    self.store.vault_meta.put(
-                        txn,
-                        &chunks::owner_ref_key(owner, &chunk.hash),
-                        &[],
-                    )?;
-                    let heartbeat = [
-                        oid.as_bytes().as_slice(),
-                        crate::unix_seconds_now().to_le_bytes().as_slice(),
-                    ]
-                    .concat();
-                    self.store.vault_meta.put(txn, &journal_key, &heartbeat)?;
+                    chunks::CHUNK_MARKS.put(&self.store, txn, &id, &chunk.hash)?;
+                    chunks::CHUNK_REFS.put(&self.store, txn, &(chunk.hash, owner), &())?;
+                    chunks::OWNER_REFS.put(&self.store, txn, &(owner, chunk.hash), &())?;
+                    JOURNAL.put(&self.store, txn, &owner, &journal_heartbeat(oid))?;
                     Ok(())
                 })?;
             }
@@ -224,19 +198,14 @@ impl Vault {
                 return Err(chunks::invalid("lfs manifest pointer mismatch"));
             }
             self.with_write_txn(|txn| {
-                if self.store.vault_meta.get(txn, &journal_key)?.is_none()
-                    || self
-                        .store
-                        .vault_meta
-                        .get(txn, &chunks::key(DELETED, oid.as_bytes()))?
-                        .is_some()
+                if !JOURNAL.contains(&self.store, txn, &owner)?
+                    || DELETED.contains(&self.store, txn, &oid)?
                 {
                     return Err(chunks::invalid("lfs upload was cancelled"));
                 }
-                if let Some(raw) = self.store.vault_meta.get(txn, &lfs_object_key(&oid))? {
-                    let object = super::store::decode_lfs_object_record(oid, &raw)?;
+                if let Some(record) = OBJECTS.get(&self.store, txn, &oid)? {
                     return Ok(LfsPutOutcome {
-                        object,
+                        object: record.with_oid(oid),
                         deduplicated: true,
                     });
                 }
@@ -250,17 +219,14 @@ impl Vault {
                     created_at: learned_at,
                     ref_owner: owner,
                 };
-                self.store.vault_meta.put(
+                OBJECTS.put(
+                    &self.store,
                     txn,
-                    &lfs_object_key(&oid),
-                    &encode_lfs_object_record(&object),
+                    &oid,
+                    &LfsObjectRecord::from_object(&object),
                 )?;
-                self.store.vault_meta.put(
-                    txn,
-                    &chunks::key(REVERSE, asset_id.as_bytes()),
-                    oid.as_bytes(),
-                )?;
-                self.store.vault_meta.delete(txn, &journal_key)?;
+                REVERSE.put(&self.store, txn, &asset_id, &oid)?;
+                JOURNAL.delete(&self.store, txn, &owner)?;
                 Ok(LfsPutOutcome {
                     object,
                     deduplicated: false,
@@ -270,14 +236,20 @@ impl Vault {
         // Failed/in-race duplicate imports cannot leave unreferenced byte assets.
         if !matches!(&outcome, Ok(result) if !result.deduplicated) {
             self.with_write_txn(|txn| {
-                self.store.vault_meta.delete(txn, &journal_key)?;
-                self.store
-                    .vault_meta
-                    .put(txn, &chunks::key(GC, owner.as_bytes()), &[])?;
+                JOURNAL.delete(&self.store, txn, &owner)?;
+                GC.put(&self.store, txn, &owner, &())?;
                 Ok(())
             })?;
             while self.collect_lfs_garbage(32)? != 0 {}
         }
         outcome
     }
+}
+
+/// `oid(32) ++ now u64 LE(8)`, unchanged — a fresh heartbeat stamp every time it is written.
+fn journal_heartbeat(oid: LfsOid) -> [u8; 40] {
+    let mut journal = [0_u8; 40];
+    journal[..32].copy_from_slice(oid.as_bytes());
+    journal[32..].copy_from_slice(&crate::unix_seconds_now().to_le_bytes());
+    journal
 }

@@ -1,6 +1,7 @@
 //! Local, content-bound destructive proposals. Replay never invokes this gate.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimSource, encode_claim_body};
 use crate::gate::{GateReasonCode, PolicyCriticality};
+use crate::side_table::{Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord};
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
@@ -22,11 +23,11 @@ pub(super) struct DeferredClaim {
     pub(super) frontier: [u8; 32],
     pub(super) critical: bool,
 }
-fn key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"claim.deferred.v1:".to_vec();
-    key.extend(id.as_bytes());
-    key
-}
+
+/// A destructive claim action parked behind unresolved gate consent. Key: id16.
+const DEFERRED: SideTable<EntityId, DeferredClaim, Named> =
+    SideTable::new(&crate::side_table::CLAIM_DEFERRED);
+
 pub(super) fn body_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     let mut body = body.clone();
     body.approval = ClaimApprovalStatus::Proposed;
@@ -37,12 +38,7 @@ pub(super) fn load(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<Option<DeferredClaim>> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, &key(id))?
-        .map(|raw| rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("deferred claim")))
-        .transpose()
+    DEFERRED.get(&vault.store, txn, id)
 }
 fn attributed(body: &ClaimBody) -> bool {
     // Explicit human testimony is attributed truth, including legacy unlabelled truth.
@@ -126,7 +122,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<()> {
-        self.store.vault_meta.delete(txn, &key(id))?;
+        DEFERRED.delete(&self.store, txn, id)?;
         Ok(())
     }
 
@@ -278,7 +274,7 @@ impl Vault {
                 self.apply_claim_demotion_in_txn(txn, id, action, now)?;
             }
         }
-        self.store.vault_meta.delete(txn, &key(id))?;
+        DEFERRED.delete(&self.store, txn, id)?;
         Ok(())
     }
 }
@@ -294,8 +290,10 @@ pub(super) fn put_pending(
 ) -> Result<()> {
     let encoded = rmp_serde::to_vec_named(&proposal)
         .map_err(|_| Error::InvariantViolation("deferred claim encode"))?;
-    if let Some(existing) = vault.store.vault_meta.get(txn, &key(id))? {
-        if existing == encoded {
+    if let Some(existing) = DEFERRED.get(&vault.store, txn, id)? {
+        let existing_encoded = rmp_serde::to_vec_named(&existing)
+            .map_err(|_| Error::InvariantViolation("deferred claim encode"))?;
+        if existing_encoded == encoded {
             return Ok(());
         }
         return Err(Error::Gate(crate::error::GateError::GateConsentStale {
@@ -355,7 +353,7 @@ pub(super) fn put_pending(
             dreamer_run_id: run,
         },
     )?;
-    vault.store.vault_meta.put(txn, &key(id), &encoded)?;
+    DEFERRED.put(&vault.store, txn, id, &proposal)?;
     Ok(())
 }
 

@@ -7,59 +7,49 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_COUNTERPARTY_CONTACT};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use sha2::Digest;
 
 use sha2::Sha256;
 
-const COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX: &[u8] = b"counterparty_contact.index.v1:";
+/// Lookup index from (identity ref, normalized counterparty) to the contact
+/// entity id. Key: id16 + hash32(sha256).
+pub(super) const CONTACT_INDEX: SideTable<(EntityId, [u8; 32]), EntityId, Raw> =
+    SideTable::new(&side_table::COUNTERPARTY_CONTACT_INDEX);
 
-/// Vault-meta prefix of the identity-INDEPENDENT `(party_ref, channel_class)`
-/// contact index (ONE-1868 / ARCH-0057 §3).
-///
-/// Index only: no entity, no type byte, no second copy of opt-out truth. Its
-/// value is the canonical de-duplicated set of every contact ref recorded for
-/// the pair, because one party can be reachable on one channel class through
-/// several sending identities and the send-time aggregate is RESTRICTIVE.
-pub const COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX_PREFIX: &[u8] =
-    b"counterparty.contact.party_channel.v1:";
+/// Deduplicated set of contact refs reachable for a (party, channel class)
+/// pair. Key: hash32(sha256).
+const PARTY_CHANNEL_INDEX: SideTable<[u8; 32], ContactRefs, Raw> =
+    SideTable::new(&side_table::COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX);
 
-pub(crate) fn counterparty_contact_index_key(
+pub(super) fn counterparty_contact_index_key_parts(
     identity_ref: &EntityId,
     counterparty: &str,
-) -> Result<Vec<u8>> {
+) -> Result<(EntityId, [u8; 32])> {
     let counterparty = normalize_counterparty(counterparty.to_owned())?;
-    let counterparty_hash = Sha256::digest(counterparty.as_bytes());
-    let mut key = Vec::with_capacity(
-        COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX.len() + ENTITY_ID_LEN + counterparty_hash.len(),
-    );
-    key.extend_from_slice(COUNTERPARTY_CONTACT_INDEX_KEY_PREFIX);
-    key.extend_from_slice(identity_ref.as_bytes());
-    key.extend_from_slice(&counterparty_hash);
-    Ok(key)
+    let digest: [u8; 32] = Sha256::digest(counterparty.as_bytes()).into();
+    Ok((*identity_ref, digest))
 }
 
 pub(super) fn counterparty_contact_index_key_for_record(
     record: &CounterpartyContactRecord,
-) -> Result<Vec<u8>> {
-    counterparty_contact_index_key(&record.identity_ref, &record.counterparty)
+) -> Result<(EntityId, [u8; 32])> {
+    counterparty_contact_index_key_parts(&record.identity_ref, &record.counterparty)
 }
 
-pub(super) fn encode_counterparty_contact_index_value(id: &EntityId) -> [u8; ENTITY_ID_LEN] {
-    *id.as_bytes()
-}
-
-pub(crate) fn decode_counterparty_contact_index_value(raw: &[u8]) -> Result<EntityId> {
-    if raw.len() != ENTITY_ID_LEN {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact lookup index value",
-        ));
-    }
-    EntityId::from_bytes(
-        raw.try_into()
-            .map_err(|_| Error::CorruptedIndex("counterparty contact lookup index value"))?,
+/// The contact id the (identity, counterparty) lookup row names, if any.
+pub(crate) fn counterparty_contact_by_index_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity_ref: &EntityId,
+    counterparty: &str,
+) -> Result<Option<EntityId>> {
+    CONTACT_INDEX.get(
+        store,
+        txn,
+        &counterparty_contact_index_key_parts(identity_ref, counterparty)?,
     )
-    .map_err(|_| Error::CorruptedIndex("counterparty contact lookup index value"))
 }
 
 /// Canonical channel-class normalization for the party-channel index.
@@ -73,6 +63,16 @@ pub fn normalize_channel_class(channel: &str) -> String {
     channel.trim().to_ascii_lowercase()
 }
 
+fn party_channel_digest(party_ref: &str, channel_class: &str) -> Result<[u8; 32]> {
+    let party = normalize_counterparty(party_ref.to_owned())?;
+    let channel_class = normalize_channel_class(channel_class);
+    let mut hasher = Sha256::new();
+    hasher.update((party.len() as u64).to_be_bytes());
+    hasher.update(party.as_bytes());
+    hasher.update(channel_class.as_bytes());
+    Ok(hasher.finalize().into())
+}
+
 /// Vault-meta key of the `(party_ref, channel_class)` contact index.
 ///
 /// The party is length-prefixed before the class so no `(party, class)` pair
@@ -81,43 +81,40 @@ pub fn counterparty_contact_party_channel_index_key(
     party_ref: &str,
     channel_class: &str,
 ) -> Result<Vec<u8>> {
-    let party = normalize_counterparty(party_ref.to_owned())?;
-    let channel_class = normalize_channel_class(channel_class);
-    let mut hasher = Sha256::new();
-    hasher.update((party.len() as u64).to_be_bytes());
-    hasher.update(party.as_bytes());
-    hasher.update(channel_class.as_bytes());
-    let digest = hasher.finalize();
-    let mut key =
-        Vec::with_capacity(COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX_PREFIX.len() + digest.len());
-    key.extend_from_slice(COUNTERPARTY_CONTACT_PARTY_CHANNEL_INDEX_PREFIX);
-    key.extend_from_slice(&digest);
-    Ok(key)
+    Ok(PARTY_CHANNEL_INDEX.key_bytes(&party_channel_digest(party_ref, channel_class)?))
 }
 
-fn encode_party_channel_index_value(refs: &[EntityId]) -> Vec<u8> {
-    let mut sorted: Vec<[u8; ENTITY_ID_LEN]> = refs.iter().map(|id| *id.as_bytes()).collect();
-    sorted.sort_unstable();
-    sorted.dedup();
-    sorted.concat()
-}
+/// A de-duplicated, sorted set of contact refs, stored as concatenated
+/// 16-byte ids — the module's pre-existing byte layout.
+struct ContactRefs(Vec<EntityId>);
 
-fn decode_party_channel_index_value(raw: &[u8]) -> Result<Vec<EntityId>> {
-    if !raw.len().is_multiple_of(ENTITY_ID_LEN) {
-        return Err(Error::CorruptedIndex(
-            "counterparty contact party/channel index value",
-        ));
+impl RawValue for ContactRefs {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut sorted: Vec<[u8; ENTITY_ID_LEN]> = self.0.iter().map(|id| *id.as_bytes()).collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+        Ok(sorted.concat())
     }
-    raw.chunks_exact(ENTITY_ID_LEN)
-        .map(|chunk| {
-            let bytes: [u8; ENTITY_ID_LEN] = chunk.try_into().map_err(|_| {
-                Error::CorruptedIndex("counterparty contact party/channel index value")
-            })?;
-            EntityId::from_bytes(bytes).map_err(|_| {
-                Error::CorruptedIndex("counterparty contact party/channel index value")
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        if !bytes.len().is_multiple_of(ENTITY_ID_LEN) {
+            return Err(
+                Error::CorruptedIndex("counterparty contact party/channel index value").into(),
+            );
+        }
+        let refs = bytes
+            .chunks_exact(ENTITY_ID_LEN)
+            .map(|chunk| {
+                let raw: [u8; ENTITY_ID_LEN] = chunk.try_into().map_err(|_| {
+                    Error::CorruptedIndex("counterparty contact party/channel index value")
+                })?;
+                EntityId::from_bytes(raw).map_err(|_| {
+                    Error::CorruptedIndex("counterparty contact party/channel index value")
+                })
             })
-        })
-        .collect()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self(refs))
+    }
 }
 
 /// Appends `contact_ref` to the canonical de-duplicated set for this pair.
@@ -128,14 +125,13 @@ pub(super) fn put_counterparty_contact_party_channel_index(
     channel_class: &str,
     contact_ref: EntityId,
 ) -> Result<()> {
-    let key = counterparty_contact_party_channel_index_key(party_ref, channel_class)?;
-    let mut refs = match store.vault_meta.get(&*wtxn, &key)? {
-        Some(raw) => decode_party_channel_index_value(&raw)?,
+    let digest = party_channel_digest(party_ref, channel_class)?;
+    let mut refs = match PARTY_CHANNEL_INDEX.get(store, &*wtxn, &digest)? {
+        Some(ContactRefs(refs)) => refs,
         None => Vec::new(),
     };
     refs.push(contact_ref);
-    let value = encode_party_channel_index_value(&refs);
-    store.vault_meta.put(wtxn, &key, &value)?;
+    PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
     Ok(())
 }
 
@@ -148,17 +144,15 @@ pub(super) fn remove_counterparty_contact_party_channel_index(
     channel_class: &str,
     contact_ref: EntityId,
 ) -> Result<()> {
-    let key = counterparty_contact_party_channel_index_key(party_ref, channel_class)?;
-    let Some(raw) = store.vault_meta.get(&*wtxn, &key)? else {
+    let digest = party_channel_digest(party_ref, channel_class)?;
+    let Some(ContactRefs(mut refs)) = PARTY_CHANNEL_INDEX.get(store, &*wtxn, &digest)? else {
         return Ok(());
     };
-    let mut refs = decode_party_channel_index_value(&raw)?;
     refs.retain(|id| *id != contact_ref);
     if refs.is_empty() {
-        store.vault_meta.delete(wtxn, &key)?;
+        PARTY_CHANNEL_INDEX.delete(store, wtxn, &digest)?;
     } else {
-        let value = encode_party_channel_index_value(&refs);
-        store.vault_meta.put(wtxn, &key, &value)?;
+        PARTY_CHANNEL_INDEX.put(store, wtxn, &digest, &ContactRefs(refs))?;
     }
     Ok(())
 }
@@ -215,12 +209,12 @@ pub(crate) fn counterparty_contacts_by_party_channel(
     party_ref: &str,
     channel_class: &str,
 ) -> Result<Vec<(EntityId, CounterpartyContactRecord)>> {
-    let key = counterparty_contact_party_channel_index_key(party_ref, channel_class)?;
-    let Some(raw) = store.vault_meta.get(txn, &key)? else {
+    let digest = party_channel_digest(party_ref, channel_class)?;
+    let Some(ContactRefs(refs)) = PARTY_CHANNEL_INDEX.get(store, txn, &digest)? else {
         return Ok(Vec::new());
     };
     let mut records = Vec::new();
-    for id in decode_party_channel_index_value(&raw)? {
+    for id in refs {
         let Some(record) = read_counterparty_contact_in_txn(store, txn, &id)? else {
             return Err(Error::CorruptedIndex(
                 "counterparty contact party/channel index entity row",
@@ -282,12 +276,12 @@ pub(crate) fn rebuild_checkpoint_contact_index(
 ) -> Result<()> {
     let record = decode_counterparty_contact_body(body)?;
     let key = counterparty_contact_index_key_for_record(&record)?;
-    if let Some(previous) = store.vault_meta.get(txn, &key)?
-        && previous.as_ref() != id.as_bytes()
+    if let Some(previous) = CONTACT_INDEX.get(store, txn, &key)?
+        && previous != id
     {
         return Err(Error::CorruptedIndex("ambiguous restored contact index"));
     }
-    store.vault_meta.put(txn, &key, id.as_bytes())?;
+    CONTACT_INDEX.put(store, txn, &key, &id)?;
     if let Some(class) = counterparty_contact_channel_class(store, txn, &record)? {
         put_counterparty_contact_party_channel_index(store, txn, &record.counterparty, &class, id)?;
     }

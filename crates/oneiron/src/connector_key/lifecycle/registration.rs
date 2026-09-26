@@ -15,9 +15,9 @@ use super::super::record::{
     EffectorBudget, invalid_body, normalize_connector_key,
 };
 use super::super::txn::{
-    ConnectorKeyGeneration, append_connector_key_op_record, connector_catalog_name_index_key,
-    connector_key_index_entity_id, connector_key_index_key, connector_key_index_prefix,
-    read_connector_key_in_txn, write_connector_key_generation_in_txn,
+    CATALOG_NAME_INDEX, CONNECTOR_INDEX, ConnectorIndexKey, ConnectorKeyGeneration,
+    append_connector_key_op_record, read_connector_key_in_txn,
+    write_connector_key_generation_in_txn,
 };
 use crate::error::RecordError;
 
@@ -131,12 +131,13 @@ impl Vault {
         if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
         }
-        let prefix = connector_key_index_prefix(&record.connector)?;
-        let mut sibling_ids = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&*wtxn, &prefix)? {
-            let (key, _) = entry?;
-            sibling_ids.push(connector_key_index_entity_id(&key, &record.connector)?);
-        }
+        let mut key_prefix = record.connector.as_bytes().to_vec();
+        key_prefix.push(0);
+        let sibling_ids = CONNECTOR_INDEX
+            .scan_from(&self.store, &*wtxn, &key_prefix)?
+            .into_iter()
+            .map(|(key, ())| key.id)
+            .collect::<Vec<_>>();
         for sibling_id in sibling_ids {
             let sibling = read_connector_key_in_txn(&self.store, &*wtxn, &sibling_id)?
                 .ok_or(Error::CorruptedIndex("connector key index row"))?;
@@ -159,11 +160,10 @@ impl Vault {
         // key: `remove_connector_key` leaves this row standing, so a taken
         // name stays taken even after removal.
         if let Some(catalog) = record.catalog.as_ref() {
-            let name_key = connector_catalog_name_index_key(&catalog.name);
-            if self.store.vault_meta.get(&*wtxn, &name_key)?.is_some() {
+            if CATALOG_NAME_INDEX.contains(&self.store, &*wtxn, &catalog.name)? {
                 return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
             }
-            self.store.vault_meta.put(wtxn, &name_key, id.as_bytes())?;
+            CATALOG_NAME_INDEX.put(&self.store, wtxn, &catalog.name, id)?;
         }
 
         self.apply_connector_key_body(wtxn, id, record.registered_at, data)?;
@@ -209,8 +209,11 @@ impl Vault {
         data: Vec<u8>,
     ) -> Result<()> {
         let new_record = decode_connector_key_body(&data)?;
-        let new_index_key = connector_key_index_key(&new_record.connector, id)?;
-        let old_index_key = if let Some(raw) = self
+        let new_index_key = ConnectorIndexKey {
+            connector: new_record.connector,
+            id: *id,
+        };
+        let old_connector = if let Some(raw) = self
             .store
             .port_entity_record(&*wtxn, id)?
             .map(|row| row.encode())
@@ -222,7 +225,7 @@ impl Vault {
                 return Err(Error::CorruptedIndex("connector key entity type"));
             }
             let old_record = decode_connector_key_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            Some(connector_key_index_key(&old_record.connector, id)?)
+            Some(old_record.connector)
         } else {
             None
         };
@@ -249,12 +252,19 @@ impl Vault {
             false,
             true,
         )?;
-        if let Some(old_index_key) = old_index_key.as_ref()
-            && old_index_key != &new_index_key
+        if let Some(old_connector) = old_connector
+            && old_connector != new_index_key.connector
         {
-            self.store.vault_meta.delete(wtxn, old_index_key)?;
+            CONNECTOR_INDEX.delete(
+                &self.store,
+                wtxn,
+                &ConnectorIndexKey {
+                    connector: old_connector,
+                    id: *id,
+                },
+            )?;
         }
-        self.store.vault_meta.put(wtxn, &new_index_key, &[])?;
+        CONNECTOR_INDEX.put(&self.store, wtxn, &new_index_key, &())?;
         Ok(())
     }
 }

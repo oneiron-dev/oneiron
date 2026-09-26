@@ -1,18 +1,23 @@
 //! Publisher comm transport: counterparty, send states, and the send door.
 
 use super::dial::publisher_enabled;
-use super::signature_store::{send_state_key, signature_key};
-use super::{PublisherError, PublisherResult, put_meta};
+use super::signature_store::SIGNATURE;
+use super::{PublisherError, PublisherResult};
 use crate::Vault;
 use crate::comm::{record_comm_send_receipt, resolve_or_create_comm_party};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 /// The comm party key the publisher counterparty resolves under.
 pub const PUBLISHER_PARTY_KEY: &str = "publisher";
 
 /// The comm channel class publisher sends ride.
 pub const PUBLISHER_CHANNEL_CLASS: &str = "publisher";
+
+/// Send-state token for a publisher issue signature, keyed by signature id.
+const SEND_STATE: SideTable<EntityId, SignatureSendState, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ISSUE_SIGNATURE_SEND);
 
 /// Resolves — creating on first use — the PERSON entity the publisher channel
 /// hangs off.
@@ -57,6 +62,19 @@ impl SignatureSendState {
     }
 }
 
+impl RawValue for SignatureSendState {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.as_str().as_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        std::str::from_utf8(bytes)
+            .ok()
+            .and_then(Self::parse)
+            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex("issue signature send state")))
+    }
+}
+
 /// What one [`send_signatures_if_enabled`] batch did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SendOutcome {
@@ -78,28 +96,18 @@ pub struct SendOutcome {
 /// wrote.
 pub fn signature_send_state(vault: &Vault, id: EntityId) -> PublisherResult<SignatureSendState> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    let Some(raw) = vault.store.vault_meta.get(&rtxn, &send_state_key(id))? else {
-        return Ok(SignatureSendState::Pending);
-    };
-    let token = std::str::from_utf8(&raw)
-        .ok()
-        .and_then(SignatureSendState::parse)
-        .ok_or_else(|| Error::CorruptedIndex("issue signature send state"))?;
-    Ok(token)
+    Ok(SEND_STATE
+        .get(&vault.store, &rtxn, &id)?
+        .unwrap_or(SignatureSendState::Pending))
 }
 
 fn put_send_state(vault: &Vault, id: EntityId, state: SignatureSendState) -> Result<()> {
-    put_meta(vault, &send_state_key(id), state.as_str().as_bytes())
+    vault.with_write_txn(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, &state))
 }
 
 fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    if vault
-        .store
-        .vault_meta
-        .get(&rtxn, &signature_key(id))?
-        .is_none()
-    {
+    if !SIGNATURE.contains(&vault.store, &rtxn, &id)? {
         return Err(PublisherError::SignatureNotFound);
     }
     Ok(())

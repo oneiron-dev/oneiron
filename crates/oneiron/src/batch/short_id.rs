@@ -8,8 +8,14 @@ use xxhash_rust::xxh32::xxh32;
 use crate::edge::parse_strict_edge_record;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
+
+/// Per-entity-type short-id counter, little-endian `u64`. Key: the entity
+/// type byte.
+const SHORT_ID_COUNTER: SideTable<[u8; 1], [u8; 8], Raw> =
+    SideTable::new(&side_table::SHORT_ID_COUNTER);
 
 pub(super) enum ShortIdPlan {
     UpdateExisting {
@@ -18,7 +24,7 @@ pub(super) enum ShortIdPlan {
         content_hash: u8,
     },
     InsertNew {
-        counter_key: [u8; crate::store::SHORT_ID_COUNTER_KEY_LEN],
+        entity_type: u8,
         next_counter: u64,
         short_id: String,
         content_hash: u8,
@@ -48,15 +54,8 @@ pub(super) fn plan_short_id_update(
     // `b"sid_counter:" ‖ type_byte` key scheme (store.rs), NOT as sentinel
     // rows inside `short_ids` — that table holds only the ARCH-0019 row n3
     // mapping `(short_id, content_hash)` -> `entity_id`.
-    let counter_key = crate::store::short_id_counter_key(entity_type);
-    let current = match store.vault_meta().get(txn, &counter_key)? {
-        Some(raw) => {
-            let buf: [u8; SHORT_ID_COUNTER_LEN] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("short id counter"))?;
-            u64::from_le_bytes(buf)
-        }
+    let current = match SHORT_ID_COUNTER.get(store, txn, &[entity_type])? {
+        Some(buf) => u64::from_le_bytes(buf),
         None => 0,
     };
 
@@ -65,7 +64,7 @@ pub(super) fn plan_short_id_update(
         .ok_or(Error::ArithmeticOverflow("short id counter"))?;
     let short_id = format!("{short_id_prefix}{next}");
     Ok(ShortIdPlan::InsertNew {
-        counter_key,
+        entity_type,
         next_counter: next,
         short_id,
         content_hash,
@@ -93,14 +92,12 @@ pub(super) fn apply_short_id_plan(
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
         ShortIdPlan::InsertNew {
-            counter_key,
+            entity_type,
             next_counter,
             short_id,
             content_hash,
         } => {
-            store
-                .vault_meta()
-                .put(wtxn, &counter_key, &next_counter.to_le_bytes())?;
+            SHORT_ID_COUNTER.put(store, wtxn, &[entity_type], &next_counter.to_le_bytes())?;
             write_short_id_rows(store, wtxn, id, &short_id, content_hash)?;
         }
     }

@@ -3,9 +3,27 @@ use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticWorkingSet, MAX_EVENTS_PER_RUN,
     decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
 };
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
+
+/// The device's own signing public key. Owned by `crate::identity`, which
+/// binds its own (private) table to the same declaration; this is a READ of
+/// that row from a different module, so it binds a second typed table rather
+/// than reaching into `identity`'s private const.
+const DEVICE_PK: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::IDENTITY_DEVICE_PK);
+
+/// A host-signed scheduled detector run receipt, keyed by its content digest.
+/// Key: bytes32 (blake3 digest of the signed detector run).
+const SIGNED_RUN: SideTable<[u8; 32], SignedDetectorRun, Named> =
+    SideTable::new(&side_table::SELF_HEAL_SIGNED_RUN);
+
+/// Points a diagnostic event id at the signed detector run that produced it.
+/// Key: id16 (diagnostic event id). Value: bytes32 (the run's digest).
+const SIGNED_EVENT: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::SELF_HEAL_SIGNED_EVENT);
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignedDetectorRun {
     pub instance: String,
@@ -83,11 +101,9 @@ impl Vault {
             return Ok(None);
         }
         let txn = self.store.env.read_txn()?;
-        if self
-            .store
-            .sync_state
-            .get(&txn, crate::identity::KEY_DEVICE_PK)?
-            .is_none_or(|pk| pk.as_ref() != run.public_key)
+        if DEVICE_PK
+            .get(&self.store, &txn, &())?
+            .is_none_or(|pk| pk != run.public_key)
         {
             return Ok(None);
         }
@@ -126,17 +142,11 @@ impl Vault {
         if ids.is_empty() {
             return Ok(ids);
         }
-        let receipt = rmp_serde::to_vec_named(run)
-            .map_err(|_| Error::InvariantViolation("detector receipt encode"))?;
-        let digest = blake3::hash(&receipt);
-        let mut run_key = b"self_heal:signed:v2:run:".to_vec();
-        run_key.extend_from_slice(digest.as_bytes());
+        let digest = *blake3::hash(&SIGNED_RUN.encode_value(run)?).as_bytes();
         self.with_write_txn(|txn| {
-            self.store.vault_meta.put(txn, &run_key, &receipt)?;
+            SIGNED_RUN.put(&self.store, txn, &digest, run)?;
             for id in &ids {
-                let mut key = b"self_heal:signed:v2:event:".to_vec();
-                key.extend_from_slice(id.as_bytes());
-                self.store.vault_meta.put(txn, &key, digest.as_bytes())?;
+                SIGNED_EVENT.put(&self.store, txn, id, &digest)?;
             }
             Ok(())
         })?;
@@ -145,28 +155,21 @@ impl Vault {
     /// Only locally verified scheduled tripwires can feed the future auto arm.
     /// This is eligibility, not permission to execute a repair.
     pub fn is_signed_tripwire(&self, id: &EntityId) -> Result<bool> {
-        let mut key = b"self_heal:signed:v2:event:".to_vec();
-        key.extend_from_slice(id.as_bytes());
-        let raw = {
+        let run = {
             let txn = self.store.env.read_txn()?;
-            let Some(digest) = self.store.vault_meta.get(&txn, &key)? else {
+            let Some(digest) = SIGNED_EVENT.get_lenient(&self.store, &txn, id)? else {
                 return Ok(false);
             };
-            if digest.len() != 32 {
-                return Ok(false);
-            }
-            let mut run_key = b"self_heal:signed:v2:run:".to_vec();
-            run_key.extend_from_slice(&digest);
-            let Some(raw) = self.store.vault_meta.get(&txn, &run_key)? else {
+            let Some(raw) = SIGNED_RUN.get_bytes(&self.store, &txn, &digest)? else {
                 return Ok(false);
             };
-            if blake3::hash(&raw).as_bytes().as_slice() != digest.as_ref() {
+            if blake3::hash(&raw).as_bytes() != &digest {
                 return Ok(false);
             }
-            raw.to_vec()
-        };
-        let Ok(run) = rmp_serde::from_slice::<SignedDetectorRun>(&raw) else {
-            return Ok(false);
+            let Ok(run) = SIGNED_RUN.decode_value(&raw) else {
+                return Ok(false);
+            };
+            run
         };
         Ok(self
             .verified_run(&run)?

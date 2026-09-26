@@ -30,9 +30,6 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid("body decode"))
 }
-fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    [prefix, id.as_bytes()].concat()
-}
 fn require_kind(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, kind: u8) -> Result<Vec<u8>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
         return Err(Error::EntityNotFound);

@@ -1,23 +1,14 @@
 //! Transactional erasure of a NOTE's own carriers and outgoing pin indexes.
 
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
+use crate::side_table::HexId;
 use crate::store::Store;
 use crate::{EntityId, Result};
 
-pub(super) fn delete_sync_prefix(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    prefix: &str,
-) -> Result<()> {
-    let keys = store
-        .sync_state
-        .prefix_iter(txn, prefix)?
-        .map(|row| row.map(|(key, _)| key.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        store.sync_state.delete(txn, &key)?;
-    }
-    Ok(())
-}
+use super::documents::{NOTE_HEAD, NOTE_HEAD_DOC};
+use super::sync_rows::{
+    NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E,
+};
 
 // Byte-level cleanup runs featureless too. Incoming source/claim dependencies
 // stay indexed until hard erasure scrubs their citing documents. Soft deletion
@@ -27,45 +18,26 @@ pub(crate) fn delete_document_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let hex = id.to_hex();
-    for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:", "ds:e:"] {
-        store.sync_state.delete(txn, &format!("{prefix}{hex}"))?;
+    let own = DocumentSlot::of(*id);
+    store.port_document_rows_delete(txn, own, &DocumentRow::ALL)?;
+    SYNC_DS_E.delete(store, txn, &HexId(*id))?;
+    let heads = NOTE_HEAD_DOC.scan_keys(store, txn, id.as_bytes())?;
+    for (note, head) in heads {
+        let slot = DocumentSlot::of(head);
+        store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
+        store.port_document_updates_delete(txn, slot)?;
+        NOTE_HEAD_DOC.delete(store, txn, &(note, head))?;
     }
-    let heads_prefix = super::documents::head_doc_prefix(*id);
-    let heads = store
-        .vault_meta
-        .prefix_iter(txn, &heads_prefix)?
-        .map(|row| row.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in heads {
-        let head = key
-            .get(heads_prefix.len()..)
-            .and_then(|bytes| bytes.try_into().ok())
-            .and_then(|bytes| EntityId::from_bytes(bytes).ok())
-            .ok_or(super::documents::invalid("NOTE head document index"))?
-            .to_hex();
-        for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:"] {
-            store.sync_state.delete(txn, &format!("{prefix}{head}"))?;
-        }
-        delete_sync_prefix(store, txn, &format!("u:e:{head}:"))?;
-        store.vault_meta.delete(txn, &key)?;
-    }
-    store
-        .vault_meta
-        .delete(txn, &super::documents::head_key(*id))?;
-    for prefix in ["u:e:", "qd:e:", "ad:e:", "qn:e:", "nr:e:", "nc:e:"] {
-        delete_sync_prefix(store, txn, &format!("{prefix}{hex}:"))?;
-    }
+    NOTE_HEAD.delete(store, txn, id)?;
+    store.port_document_updates_delete(txn, own)?;
+    let key_prefix = format!("{}:", id.to_hex()).into_bytes();
+    SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
+    SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
+    SYNC_QN_E.delete_from(store, txn, &key_prefix)?;
+    NOTE_RECEIPT_BY_REQUEST.delete_from(store, txn, &key_prefix)?;
+    SYNC_NC_E.delete_from(store, txn, &key_prefix)?;
     super::pin_index::remove_citing(store, txn, *id)?;
     super::pin_index::remove_citing_requests(store, txn, *id)?;
-    let prefix = super::citation_erase::pending_prefix(*id);
-    let keys = store
-        .vault_meta
-        .prefix_iter(txn, prefix.as_bytes())?
-        .map(|row| row.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        store.vault_meta.delete(txn, &key)?;
-    }
+    super::citation_erase::NOTE_ERASE_PENDING.delete_from(store, txn, &key_prefix)?;
     Ok(())
 }

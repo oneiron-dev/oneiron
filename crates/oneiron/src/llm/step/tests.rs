@@ -1822,10 +1822,14 @@ fn memo_hit_refuses_foreign_model_provenance() -> Result<()> {
     let hash_b = request_b.canonical_hash().expect("hash");
     assert_ne!(hash_a, hash_b, "the two models are distinct durable steps");
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(
+    STEP_INDEX_FORWARD.put(
+        &vault.store,
         &mut wtxn,
-        &step_index_key(fixture.attempt_id, &hash_b),
-        claim_a.as_bytes(),
+        &StepIndexKey {
+            attempt_id: fixture.attempt_id,
+            step_hash: hash_b,
+        },
+        &claim_a,
     )?;
     wtxn.commit()?;
 

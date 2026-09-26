@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map as JsonMap, Value};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -11,9 +10,10 @@ use super::definition::{SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRec
 use super::filter::{FilterAst, MatcherSpec};
 use super::lifecycle::{next_version, validate_definition};
 use super::storage::{
-    keys, load_record_in_txn, meta_row, put_meta_row, saved_query_type_byte, store_record_in_txn,
+    PACK_MIGRATION_MAPS, REPAIRS, RepairReceipt, load_record_in_txn, migration_map_key,
+    saved_query_type_byte, store_record_in_txn,
 };
-use super::support::{canonical_json_bytes, invalid};
+use super::support::invalid;
 
 /// A pack version move that touches predicates a query reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,9 +114,10 @@ pub fn put_pack_migration_map(
     drift: &PackDrift,
     map: &PackMigrationMap,
 ) -> Result<()> {
-    let encoded = serde_json::to_vec(map)
-        .map_err(|_| Error::InvariantViolation("pack migration map encode failed"))?;
-    put_meta_row(vault, &keys::migration_map(drift), &encoded)
+    vault.with_write_txn(|wtxn| {
+        PACK_MIGRATION_MAPS.put(&vault.store, wtxn, &migration_map_key(drift), map)?;
+        Ok(())
+    })
 }
 
 /// Runs the ratified pack-drift ladder, in order.
@@ -259,20 +260,17 @@ fn record_repair_in_txn(
     now: u64,
 ) -> Result<EntityId> {
     let repair_ref = vault.store.clock.entity_id()?;
-    let mut row = JsonMap::new();
-    row.insert("query_ref".to_owned(), Value::String(query_ref.to_hex()));
-    row.insert("summary".to_owned(), Value::String(summary.to_owned()));
-    row.insert("recorded_at".to_owned(), Value::from(now));
-    row.insert(
-        "drift".to_owned(),
-        serde_json::to_value(drift)
-            .map_err(|_| Error::InvariantViolation("pack drift encode failed"))?,
-    );
-    let encoded = canonical_json_bytes(&Value::Object(row))?;
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, &keys::repair(&repair_ref), &encoded)?;
+    REPAIRS.put(
+        &vault.store,
+        wtxn,
+        &repair_ref,
+        &RepairReceipt {
+            query_ref,
+            summary: summary.to_owned(),
+            recorded_at: now,
+            drift: drift.clone(),
+        },
+    )?;
     Ok(repair_ref)
 }
 
@@ -320,10 +318,6 @@ fn rewrite_matcher(matcher: &MatcherSpec, renames: &BTreeMap<String, String>) ->
 }
 
 fn load_migration_map(vault: &Vault, drift: &PackDrift) -> Result<Option<PackMigrationMap>> {
-    let Some(raw) = meta_row(vault, &keys::migration_map(drift))? else {
-        return Ok(None);
-    };
-    serde_json::from_slice(&raw)
-        .map(Some)
-        .map_err(|_| Error::CorruptedIndex("saved query pack migration map"))
+    let rtxn = vault.store.env.read_txn()?;
+    PACK_MIGRATION_MAPS.get(&vault.store, &rtxn, &migration_map_key(drift))
 }

@@ -1,12 +1,12 @@
 //! Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay.
 
-use super::codec::{INTENT_LEDGER_PRIVATE_PREFIX, id_from_ledger_key};
-use super::store::decode_record_in_txn;
+use super::codec::id_from_ledger_key;
 #[cfg(test)]
 use super::store::{
     abandon_record, complete_record, force_sync, hash_frozen_payload, insert_pending_or_read,
     read_intent_record,
 };
+use super::store::{decode_record_in_txn, ledger_rows};
 #[cfg(test)]
 use super::types::{
     BudgetChargeMarker, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalation,
@@ -33,11 +33,7 @@ pub(crate) fn intent_recovery_entries(
 ) -> IntentLedgerResult<Vec<IntentRecoveryEntry>> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut entries = Vec::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
-    {
+    for row in ledger_rows(vault, &rtxn)? {
         let (key, value) = row?;
         entries.push(match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => IntentRecoveryEntry::Valid(record),
@@ -226,17 +222,13 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
 pub fn intent_ledger_records(vault: &Vault) -> IntentLedgerResult<IntentLedgerListing> {
     let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
     let mut listing = IntentLedgerListing::default();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
-    {
+    for row in ledger_rows(vault, &rtxn)? {
         let (key, value) = row?;
         match decode_record_in_txn(vault, &rtxn, &key, &value) {
             Ok(record) => listing.records.push(record),
             Err(error @ IntentLedgerError::InvalidRecord(_)) => {
                 listing.corrupt.push(IntentLedgerCorruptRow {
-                    key: key.to_vec().into_boxed_slice(),
+                    key: key.into_boxed_slice(),
                     error,
                 });
             }
@@ -265,11 +257,7 @@ pub(super) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
     let rows = {
         let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
         let mut rows = Vec::new();
-        for row in vault
-            .store
-            .vault_meta
-            .prefix_iter(&rtxn, INTENT_LEDGER_PRIVATE_PREFIX)?
-        {
+        for row in ledger_rows(vault, &rtxn)? {
             let (key, value) = row?;
             match decode_record_in_txn(vault, &rtxn, &key, &value) {
                 Ok(record) => rows.push(RecoveryRow::Valid(Box::new(record))),

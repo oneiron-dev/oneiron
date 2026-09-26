@@ -6,6 +6,7 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::side_table::{CodecError, RawValue};
 
 /// Current DisclosureScope body schema version.
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -285,6 +286,16 @@ pub fn decode_disclosure_scope_body(bytes: &[u8]) -> Result<DisclosureScope> {
         return Err(invalid_scope());
     }
     decode_disclosure_scope_value(&value)
+}
+
+impl RawValue for DisclosureScope {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_disclosure_scope_body(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_disclosure_scope_body(bytes)?)
+    }
 }
 
 pub(super) fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureScope> {

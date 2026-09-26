@@ -1,8 +1,8 @@
 //! Ordered workflow host pump. Completion and successor release co-commit.
 
 use super::AgentDispatcher;
-use super::widen_record::{invalid, json};
-use super::workflow_record::{WorkflowProgress, WorkflowStepResult, record_key};
+use super::widen_record::invalid;
+use super::workflow_record::{RECORD, WorkflowProgress, WorkflowStepResult};
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CompleteAttempt, FailAttempt, InterveneAttempt, SetAttemptResult,
@@ -64,10 +64,7 @@ impl AgentDispatcher<'_> {
                     now,
                 },
             )?;
-            self.vault
-                .store
-                .vault_meta
-                .put(&mut txn, &record_key(root), &json(&record)?)?;
+            RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
             txn.commit()?;
             return Ok(WorkflowProgress::Stopped(active.id));
         }
@@ -117,10 +114,7 @@ impl AgentDispatcher<'_> {
             record.active = self.enqueue_workflow_step(&mut txn, &record, ordinal + 1, now)?;
             WorkflowProgress::Advanced(record.active)
         };
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut txn, &record_key(root), &json(&record)?)?;
+        RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
         txn.commit()?;
         Ok(progress)
     }

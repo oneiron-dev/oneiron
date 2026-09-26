@@ -1,30 +1,34 @@
 //! Close the legacy ChildOf-only append door after DAG adoption.
-use super::graph::{MIGRATED, invalid, key};
+use super::graph::{MIGRATED, invalid};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{
     EntityId,
     registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN},
 };
-fn permit_key(record: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:append_in_txn:v1:", record)
-}
+
+/// Transient in-txn permit binding a legacy ChildOf-append record id to the
+/// conversation it may write.
+const APPEND_PERMITS: SideTable<EntityId, EntityId, Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_APPEND_PERMIT);
+/// Content pin of one immutable DAG record body, by record id.
+const BODY_PINS: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::CONVERSATION_DAG_BODY_PIN);
+
 pub(super) fn permit(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &EntityId,
     conversation: &EntityId,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .put(txn, &permit_key(record), conversation.as_bytes())?;
-    Ok(())
+    APPEND_PERMITS.put(store, txn, record, conversation)
 }
 pub(super) fn finish(store: &Store, txn: &mut heed::RwTxn<'_>, record: &EntityId) -> Result<()> {
-    store.vault_meta.delete(txn, &permit_key(record))?;
+    APPEND_PERMITS.delete(store, txn, record)?;
     Ok(())
 }
 /// Reached by both public edge put flavors. Received edge materialization is
@@ -48,11 +52,11 @@ pub(crate) fn validate_local_membership(
     if !is_kind(&record, ENTITY_TYPE_TURN)? || !is_kind(&conversation, ENTITY_TYPE_CONVERSATION)? {
         return Ok(());
     }
-    let marker = store.vault_meta.get(txn, &key(MIGRATED, &conversation))?;
+    let marker = MIGRATED.get(store, txn, &conversation)?;
     let Some(marker) = marker else {
         return Ok(());
     };
-    if marker.as_ref() != [1] {
+    if marker != [1] {
         return Err(Error::CorruptedIndex("conversation migration marker"));
     }
     if store
@@ -61,20 +65,15 @@ pub(crate) fn validate_local_membership(
     {
         return Ok(());
     }
-    if store
-        .vault_meta
-        .get(txn, &permit_key(&record))?
-        .is_some_and(|bytes| bytes.as_ref() == conversation.as_bytes())
+    if APPEND_PERMITS
+        .get(store, txn, &record)?
+        .is_some_and(|bound| bound == conversation)
     {
         return Ok(());
     }
     Err(invalid(
         "conversation adopted DAG; append through append_dag_record",
     ))
-}
-
-fn pin_key(id: &EntityId) -> Vec<u8> {
-    key(b"conversation_dag:body_pin:", id)
 }
 
 fn body_pin(kind: u8, occurred: crate::TimeRange, body: &[u8]) -> [u8; 32] {
@@ -96,7 +95,7 @@ pub(crate) fn guard_record_put(
     replicated: bool,
 ) -> Result<()> {
     let prior = store.port_entity_record(txn, id)?;
-    let stored_pin = store.vault_meta.get(txn, &pin_key(id))?;
+    let stored_pin = BODY_PINS.get(store, txn, id)?;
     let inferred_pin = if stored_pin.is_none() {
         if let Some(row) = prior
             .as_ref()
@@ -108,7 +107,7 @@ pub(crate) fn guard_record_put(
                 owned |= store
                     .port_entity_record(txn, &owner)?
                     .is_some_and(|row| row.entity_type == ENTITY_TYPE_CONVERSATION)
-                    && store.vault_meta.get(txn, &key(MIGRATED, &owner))?.is_some();
+                    && MIGRATED.get(store, txn, &owner)?.is_some();
             }
             (owned || record_kind(&row.body)?.is_some())
                 .then(|| body_pin(row.entity_type, row.occurred, &row.body))
@@ -118,18 +117,13 @@ pub(crate) fn guard_record_put(
     } else {
         None
     };
-    let pin = stored_pin
-        .as_deref()
-        .or(inferred_pin.as_ref().map(<[u8; 32]>::as_slice));
+    let pin = stored_pin.or(inferred_pin);
     let Some(pin) = pin else {
         if kind == ENTITY_TYPE_TURN {
             record_kind(body)?;
         }
         return Ok(());
     };
-    if pin.len() != 32 {
-        return Err(Error::CorruptedIndex("DAG body pin"));
-    }
     if !replicated || prior.is_none() || pin != body_pin(kind, occurred, body) {
         return Err(invalid("DAG records are append-only"));
     }
@@ -171,13 +165,12 @@ pub(crate) fn pin_record(
     let Some(pin) = stored_record_pin(store, txn, id)? else {
         return Ok(());
     };
-    let key = pin_key(id);
-    if let Some(prior) = store.vault_meta().get(txn, &key)? {
-        if prior.as_ref() != pin {
+    if let Some(prior) = BODY_PINS.get(store, txn, id)? {
+        if prior != pin {
             return Err(invalid("DAG records are append-only"));
         }
     } else {
-        store.vault_meta().put(txn, &key, &pin)?;
+        BODY_PINS.put(store, txn, id, &pin)?;
     }
     Ok(())
 }
@@ -189,10 +182,7 @@ fn is_dag_membership(
     conversation: &EntityId,
 ) -> Result<bool> {
     Ok(kind == EdgeKind::ChildOf
-        && store
-            .vault_meta()
-            .get(txn, &key(MIGRATED, conversation))?
-            .is_some()
+        && MIGRATED.get(store, txn, conversation)?.is_some()
         && store
             .entities()
             .get(txn, conversation.as_bytes())?
@@ -227,11 +217,10 @@ pub(crate) fn keep_membership_pin(
     if !is_dag_membership(store, txn, kind, conversation)? {
         return Ok(());
     }
-    let key = pin_key(record);
-    if store.vault_meta().get(txn, &key)?.is_none()
+    if BODY_PINS.get(store, txn, record)?.is_none()
         && let Some(pin) = stored_record_pin(store, txn, record)?
     {
-        store.vault_meta().put(txn, &key, &pin)?;
+        BODY_PINS.put(store, txn, record, &pin)?;
     }
     Ok(())
 }

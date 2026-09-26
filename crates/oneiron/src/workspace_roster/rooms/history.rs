@@ -1,79 +1,65 @@
 //! Bounded room-local history and transactional auxiliary-row cleanup.
 use super::*;
 use crate::store::Store;
-use std::ops::Bound;
 
-const HISTORY: &[u8] = b"rooms.history.v1/";
-const HEADS: &[u8] = b"rooms.heads.v1/";
-const RESPONSE: &[u8] = b"rooms.response.v1/";
 const PAGE_LIMIT: usize = 256;
 
-fn ordered_key(prefix: &[u8], room: EntityId, at: u64, turn: EntityId) -> Vec<u8> {
-    [
-        prefix,
-        room.as_bytes(),
-        at.to_be_bytes().as_slice(),
-        turn.as_bytes(),
-    ]
-    .concat()
-}
 pub(super) fn index_turn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &RoomTurn) -> Result<()> {
     let room = EntityId::from_hex(&turn.room_id)?;
     let id = EntityId::from_hex(&turn.turn_id)?;
-    store
-        .vault_meta
-        .put(txn, &ordered_key(HISTORY, room, turn.at, id), id.as_bytes())?;
+    HISTORY.put(store, txn, &(room, turn.at, id), &id)?;
     if turn.thread_of.is_none() {
-        store
-            .vault_meta
-            .put(txn, &ordered_key(HEADS, room, turn.at, id), id.as_bytes())?;
+        HEADS.put(store, txn, &(room, turn.at, id), &id)?;
     }
     Ok(())
 }
-fn stored_id(raw: &[u8]) -> Result<EntityId> {
-    EntityId::from_bytes(
-        raw.try_into()
-            .map_err(|_| Error::CorruptedIndex("room history id"))?,
-    )
-}
+/// Deletes every auxiliary row a room owns, paged in [`PAGE_LIMIT`]-sized
+/// chunks so no single collect-then-delete pass has to hold an unbounded
+/// number of keys for a room with a long history.
 pub(in crate::workspace_roster) fn delete_room_metadata(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
 ) -> Result<()> {
-    let prefix = key(HISTORY, room);
     loop {
-        let page = store
-            .vault_meta
-            .prefix_iter(txn, &prefix)?
+        let page: Vec<((EntityId, u64, EntityId), EntityId)> = HISTORY
+            .iter_from(store, txn, room.as_bytes())?
             .take(PAGE_LIMIT)
-            .map(|r| r.map(|(k, v)| (k.to_vec(), v.to_vec())))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>>>()?;
         if page.is_empty() {
             break;
         }
-        for (row_key, raw) in page {
-            let turn = stored_id(&raw)?;
-            for prefix in [TURNS, CLAIMS, RESPONSE] {
-                store.vault_meta.delete(txn, &key(prefix, turn))?;
-            }
-            store.vault_meta.delete(txn, &row_key)?;
+        for (row_key, turn) in page {
+            TURNS.delete(store, txn, &turn)?;
+            CLAIMS.delete(store, txn, &turn)?;
+            RESPONSE.delete(store, txn, &turn)?;
+            HISTORY.delete(store, txn, &row_key)?;
         }
     }
-    for prefix in [HEADS, HANDLES] {
-        loop {
-            let keys = store
-                .vault_meta
-                .prefix_iter(txn, &key(prefix, room))?
-                .take(PAGE_LIMIT)
-                .map(|r| r.map(|(k, _)| k.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            if keys.is_empty() {
-                break;
-            }
-            for key in keys {
-                store.vault_meta.delete(txn, &key)?;
-            }
+    loop {
+        let keys: Vec<(EntityId, u64, EntityId)> = HEADS
+            .iter_from(store, txn, room.as_bytes())?
+            .take(PAGE_LIMIT)
+            .map(|row| row.map(|(key, _)| key))
+            .collect::<Result<Vec<_>>>()?;
+        if keys.is_empty() {
+            break;
+        }
+        for key in &keys {
+            HEADS.delete(store, txn, key)?;
+        }
+    }
+    loop {
+        let keys: Vec<(EntityId, String)> = HANDLES
+            .iter_from(store, txn, room.as_bytes())?
+            .take(PAGE_LIMIT)
+            .map(|row| row.map(|(key, _)| key))
+            .collect::<Result<Vec<_>>>()?;
+        if keys.is_empty() {
+            break;
+        }
+        for key in &keys {
+            HANDLES.delete(store, txn, key)?;
         }
     }
     Ok(())
@@ -100,26 +86,20 @@ impl Memory<'_> {
             if turn.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));
             }
-            ordered_key(HISTORY, room, turn.at, after)
+            Some((turn.at, after))
         } else {
-            key(HISTORY, room)
+            None
         };
-        let end = [key(HISTORY, room).as_slice(), &[u8::MAX; 24]].concat();
-        let mut rows = self
-            .vault()
-            .store
-            .vault_meta
-            .range(
-                &txn,
-                &(
-                    Bound::Excluded(start.as_slice()),
-                    Bound::Included(end.as_slice()),
-                ),
-            )?
+        let mut rows = HISTORY
+            .iter_from(&self.vault().store, &txn, room.as_bytes())?
+            .skip_while(|row| match (start, row) {
+                (Some(start), Ok(((_, at, id), _))) => (*at, *id) <= start,
+                _ => false,
+            })
             .take(limit + 1)
             .map(|row| {
-                let (_, raw) = row?;
-                Ok(turn_in(self.vault(), &txn, stored_id(&raw)?)?)
+                let (_, turn_id) = row?;
+                Ok(turn_in(self.vault(), &txn, turn_id)?)
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         let has_more = rows.len() > limit;
@@ -135,22 +115,12 @@ impl Memory<'_> {
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
-        let start = key(HEADS, room);
-        let end = [start.as_slice(), &[u8::MAX; 24]].concat();
-        self.vault()
-            .store
-            .vault_meta
-            .rev_range(
-                &txn,
-                &(
-                    Bound::Included(start.as_slice()),
-                    Bound::Included(end.as_slice()),
-                ),
-            )?
+        HEADS
+            .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
             .next()
             .map(|row| {
-                let (_, raw) = row?;
-                Ok(turn_in(self.vault(), &txn, stored_id(&raw)?)?)
+                let (_, turn_id) = row?;
+                Ok(turn_in(self.vault(), &txn, turn_id)?)
             })
             .transpose()
     }

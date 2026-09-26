@@ -393,7 +393,9 @@ impl Memory<'_> {
                 break;
             }
             match self.hydrate(std::slice::from_ref(*reference)) {
-                Ok(hydrated) => views.extend(hydrated),
+                // The hydrate receipt stops at the document pack until
+                // `MemoryPack` carries one (the recall follow-on).
+                Ok(hydrated) => views.extend(hydrated.value),
                 Err(err) if err.code == MEMORY_CODE_NOT_FOUND => {
                     gaps.push(format!("document {reference:?} does not resolve"));
                 }

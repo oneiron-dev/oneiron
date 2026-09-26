@@ -18,8 +18,8 @@ use crate::outbound_grant::{
 };
 
 use super::codec::{
-    action_bound, action_value, address, key, mode_from, mode_key, mode_value, read_bound,
-    read_from, read_value,
+    AUTONOMY, action_bound, action_value, address, key, mode_from, mode_key, mode_value,
+    read_bound, read_from, read_value,
 };
 use super::invalid_autonomy;
 use super::types::{
@@ -120,7 +120,7 @@ impl Vault {
             return Err(invalid_autonomy());
         }
         let mkey = mode_key(identity, desired.relationship_context);
-        if self.store.vault_meta.get(&txn, &mkey)?.is_some() {
+        if AUTONOMY.contains(&self.store, &txn, &mkey)? {
             return self.verify_autonomy_in_txn(&txn, desired, owner, now);
         }
         let read_ref = self.put_autonomy_envelope(
@@ -354,7 +354,7 @@ impl Vault {
         self.autonomy_state(&txn, mode.clone(), self.store.clock.now_recorded_at())?;
         let key = mode_key(mode.identity_ref, mode.relationship_context);
         let value = mode_value(&mode);
-        if self.store.vault_meta.get(&txn, &key)?.is_some() {
+        if AUTONOMY.contains(&self.store, &txn, &key)? {
             let (writer, at, old) = self.autonomy_row(&txn, &key)?;
             if writer != owner.actor() || learned_at < at {
                 return Err(invalid_autonomy());

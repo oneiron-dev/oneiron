@@ -1,7 +1,13 @@
 //! Source receipts and admitted-publisher ingress beside content dedup, never in place of it.
 use super::{ForeignSkillPublisher, HubRef, SkillHubAdapter, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::skill::SkillContentHash;
 use crate::{Vault, entity_id::EntityId, error::Result, temporal::TimeRange};
+
+/// Hub-import receipt for one entity, keyed by (entity, source hub id, hash
+/// of the source ref string).
+const IMPORT_RECEIPT: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_IMPORT_RECEIPT);
 
 /// A source receipt for a Candidate import. One content holder can have many source receipts.
 /// The publisher field is engine-stamped only by the admitted-publisher adapter door.
@@ -85,15 +91,10 @@ impl Vault {
             at,
         };
         let key = import_receipt_key(entity, source);
-        if publisher.is_none() && self.store.vault_meta.get(txn, &key)?.is_some() {
+        if publisher.is_none() && IMPORT_RECEIPT.contains(&self.store, txn, &key)? {
             return Ok(());
         }
-        self.store.vault_meta.put(
-            txn,
-            &key,
-            &serde_json::to_vec(&receipt).map_err(|_| invalid("import receipt encode failed"))?,
-        )?;
-        Ok(())
+        IMPORT_RECEIPT.put(&self.store, txn, &key, &receipt)
     }
     pub fn hub_import_receipt(
         &self,
@@ -101,21 +102,15 @@ impl Vault {
         source: &HubRef,
     ) -> Result<Option<HubImportReceipt>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &import_receipt_key(entity, source))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid hub import receipt"))
-            })
-            .transpose()
+        IMPORT_RECEIPT.get(&self.store, &txn, &import_receipt_key(entity, source))
     }
 }
-fn import_receipt_key(entity: &EntityId, source: &HubRef) -> Vec<u8> {
-    let mut key = b"skill_hub/import-receipt/v1\0".to_vec();
-    key.extend_from_slice(entity.as_bytes());
-    key.extend_from_slice(source.hub_id.as_bytes());
-    key.extend_from_slice(blake3::hash(source.ref_string.as_bytes()).as_bytes());
-    key
+fn import_receipt_key(entity: &EntityId, source: &HubRef) -> (EntityId, EntityId, [u8; 32]) {
+    (
+        *entity,
+        source.hub_id,
+        *blake3::hash(source.ref_string.as_bytes()).as_bytes(),
+    )
 }
 
 fn pin_value(pin: &super::HubPin) -> Option<String> {

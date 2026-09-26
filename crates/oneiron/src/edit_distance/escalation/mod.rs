@@ -68,8 +68,8 @@ pub(crate) use self::explicit::record_explicit_ruling_in_txn;
 #[cfg(test)]
 pub(crate) use self::ledger::record_escalation_at;
 pub use self::ledger::{
-    DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, ESCALATION_STANDING_N_KEY,
-    escalation_standing_n, escalation_stats, record_escalation, set_escalation_standing_n,
+    DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, escalation_standing_n,
+    escalation_stats, record_escalation, set_escalation_standing_n,
 };
 pub use self::policy::{
     accept_standing_policy, maybe_propose_standing_policy, standing_policy_for,

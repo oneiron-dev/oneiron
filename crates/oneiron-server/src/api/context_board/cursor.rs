@@ -151,7 +151,7 @@ pub(crate) async fn advance_memories_cursor(
     pack: &oneiron::ContextPack,
     evidence: &CoreContextPackEvidence,
     read: &oneiron::claim::ScopedRead<'_>,
-) -> oneiron::Result<oneiron::MemoriesCursor> {
+) -> oneiron::Result<(oneiron::MemoriesCursor, oneiron::claim::ScopedReadReceipt)> {
     let vault = &server.vault;
     let scope_key = memories_cursor_scope_key(vault, scope_id);
     let key = memories_cursor_key(vault, scope_id, session_id);
@@ -166,10 +166,10 @@ pub(crate) async fn advance_memories_cursor(
     if let Some(base) = &pack.l2_base {
         ids.extend_from_slice(base.evidence_ids());
     }
-    observed.observe_rows(read, &ids)?;
+    let receipt = observed.observe_rows(read, &ids)?;
     let cursor = store.advance(scope_key, key, session_id, pack, evidence);
     *store.session_reads(scope_id, Some(session_id)) = observed;
-    Ok(cursor)
+    Ok((cursor, receipt))
 }
 
 fn session_key(scope_id: &str, session_id: &str) -> String {

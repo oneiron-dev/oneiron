@@ -71,7 +71,7 @@ fn crash_resume_finishes_without_duplicates() -> Result<()> {
     )?;
     assert!(halted.is_none(), "a halted run has no outcome yet");
 
-    let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
+    let journal = read_journal(&vault, &intent.onboarding_id)?
         .expect("halted run leaves a resumable journal");
     assert_eq!(journal.step, MemberOnboardingStep::ActorLinked);
     assert_eq!(journal.completed_at, None);
@@ -151,8 +151,7 @@ fn mailbox_replay_is_incomplete_without_duplicates_and_pins_starting_mode() -> R
         .expect_err("request must be refused");
     assert_eq!(second.kind(), first.kind());
     assert_eq!(census(), counts);
-    let journal = read_journal(&vault, &onboarding_key(&intent.onboarding_id))?
-        .expect("fixture value exists");
+    let journal = read_journal(&vault, &intent.onboarding_id)?.expect("fixture value exists");
     assert_eq!(journal.step, MemberOnboardingStep::CompanionBorn);
     assert_eq!(journal.completed_at, None);
     // The unfinished companion is not published in the roster.

@@ -312,10 +312,10 @@ pub(crate) async fn core_batch_short_id_hydrate(
     let valid_refs: Vec<_> = parsed
         .iter()
         .filter_map(|item| item.as_ref().ok())
-        .map(|(id, hash, mode)| (id.as_str(), *hash, *mode))
+        .map(|(id, hash, mode)| oneiron::claim::PointRead::short(id, *hash).at(*mode))
         .collect();
     let hydrated = scoped_read
-        .hydrate_short_ids_with_modes(&valid_refs)
+        .read(&valid_refs, None)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     let narrowing = hydrated.receipt;
     let mut values = hydrated.value.into_iter();
@@ -384,10 +384,14 @@ pub(crate) fn hydrate_short_id_response_with_mode(
     mode: oneiron::memory::ReadMode,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> Result<oneiron::claim::ScopedReadResult<Option<CoreHydrateResponse>>, ApiError> {
-    // The live door keeps deletion metadata. The mode-aware door preserves pins.
+    // A live read keeps deletion metadata. A pinned read preserves the pin.
     let read = scoped_read
-        .hydrate_short_id_with_mode_with_receipt(&short_id, content_hash, mode)
-        .map_err(|error| core_engine_error("core short hydrate failed", error))?;
+        .read(
+            &[oneiron::claim::PointRead::short(&short_id, content_hash).at(mode)],
+            None,
+        )
+        .map_err(|error| core_engine_error("core short hydrate failed", error))?
+        .single();
     let value = project_hydrated_short_id(
         scoped_read,
         short_id,
@@ -408,17 +412,18 @@ pub(crate) fn project_hydrated_short_id(
     short_id: String,
     content_hash: u8,
     view: View,
-    hydrated: Option<oneiron::HydratedShortId>,
-    narrowing: oneiron::claim::ScopedReadReceipt,
+    hydrated: Option<oneiron::claim::ReadRow>,
+    mut narrowing: oneiron::claim::ScopedReadReceipt,
     observations: Option<&mut oneiron::context_board::SessionReadSet>,
 ) -> Result<Option<CoreHydrateResponse>, ApiError> {
     let content_hash_hex = format!("{content_hash:02x}");
-    let Some(oneiron::HydratedShortId {
+    let Some(oneiron::claim::ReadRow {
         id,
         entity_type,
         learned_at,
         deletion,
         body,
+        ..
     }) = hydrated
     else {
         return Ok(None);
@@ -435,8 +440,8 @@ pub(crate) fn project_hydrated_short_id(
             item: None,
         }));
     };
-    if let Some(observations) = observations {
-        observations
+    if let Some(observations) = observations
+        && let Some(successor) = observations
             .observe_snapshot(
                 scoped_read,
                 id,
@@ -444,7 +449,9 @@ pub(crate) fn project_hydrated_short_id(
                 &body,
                 matches!(view, View::Full),
             )
-            .map_err(|error| core_engine_error("session body observation failed", error))?;
+            .map_err(|error| core_engine_error("session body observation failed", error))?
+    {
+        narrowing.restrict_with(&successor);
     }
     let item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
     Ok(Some(CoreHydrateResponse {

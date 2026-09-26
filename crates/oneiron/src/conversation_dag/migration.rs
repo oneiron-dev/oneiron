@@ -1,6 +1,6 @@
 //! Idempotent lazy and maintenance migration of legacy conversation turns.
 
-use super::graph::{self, MIGRATED, edge_ids, key, require_type};
+use super::graph::{self, MIGRATED, edge_ids, require_type};
 use super::writes::{set_head_in_txn, value};
 use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeKind;
@@ -19,12 +19,8 @@ pub(crate) fn migrate_in_txn(
     conversation: &EntityId,
 ) -> Result<bool> {
     require_type(&vault.store, txn, conversation, ENTITY_TYPE_CONVERSATION)?;
-    if let Some(marker) = vault
-        .store
-        .vault_meta
-        .get(txn, &key(MIGRATED, conversation))?
-    {
-        if marker.as_ref() != [1] {
+    if let Some(marker) = MIGRATED.get(&vault.store, txn, conversation)? {
+        if marker != [1] {
             return Err(Error::CorruptedIndex("conversation DAG migration marker"));
         }
         return Ok(false);
@@ -132,10 +128,7 @@ pub(crate) fn migrate_in_txn(
     if let Some((_, head)) = turns.last() {
         set_head_in_txn(vault, txn, conversation, *head)?;
     }
-    vault
-        .store
-        .vault_meta
-        .put(txn, &key(MIGRATED, conversation), &[1])?;
+    MIGRATED.put(&vault.store, txn, conversation, &[1])?;
     Ok(true)
 }
 
@@ -161,11 +154,7 @@ impl Vault {
                 let live = {
                     let txn = self.store.env.read_txn()?;
                     live_entity_row_in_txn(&self.store, &txn, id)?.is_live()
-                        && (self
-                            .store
-                            .vault_meta
-                            .get(&txn, &key(MIGRATED, id))?
-                            .is_some()
+                        && (MIGRATED.get(&self.store, &txn, id)?.is_some()
                             || !edge_ids(
                                 &self.store,
                                 &txn,

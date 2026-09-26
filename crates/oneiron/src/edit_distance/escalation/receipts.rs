@@ -3,10 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::storage::{
-    CITED_RECEIPTS_SEPARATOR, ESCALATION_KEY_PREFIX, ESCALATION_RECEIPT_PREFIX,
-    STANDING_POLICY_KEY_PREFIX, STANDING_POLICY_RECEIPT_PREFIX, StoredEscalation,
-    StoredStandingPolicy, escalation_key_id, escalation_receipt_id, escalation_row,
-    standing_policy_row,
+    CITED_RECEIPTS_SEPARATOR, ESCALATION, ESCALATION_RECEIPT_PREFIX, STANDING_POLICY,
+    STANDING_POLICY_RECEIPT_PREFIX, StoredEscalation, StoredStandingPolicy, escalation_receipt_id,
 };
 use super::types::StandingPolicyStatus;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -64,25 +62,13 @@ pub(crate) fn escalation_receipts(
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, ESCALATION_KEY_PREFIX)?
-    {
-        let (key, raw) = entry?;
-        retain_projected(
-            query,
-            &mut out,
-            escalation_receipt_record(&escalation_key_id(&key)?, &escalation_row(&raw)?),
-        );
+    for entry in ESCALATION.iter_from(&vault.store, &rtxn, &[])? {
+        let ((_, id), row) = entry?;
+        retain_projected(query, &mut out, escalation_receipt_record(&id, &row));
     }
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, STANDING_POLICY_KEY_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        for record in standing_policy_receipt_records(&standing_policy_row(&raw)?) {
+    for entry in STANDING_POLICY.iter_from(&vault.store, &rtxn, &[])? {
+        let (_, row) = entry?;
+        for record in standing_policy_receipt_records(&row) {
             retain_projected(query, &mut out, record);
         }
     }

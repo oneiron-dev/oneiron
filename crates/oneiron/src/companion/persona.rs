@@ -6,7 +6,8 @@
 use super::codec::{companion_value_from_json, companion_value_to_json, invalid_companion};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, ScopedRead, decode_claim_body,
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSubject, PointRead, ReadRow, ScopedRead,
+    ScopedReadReceipt, decode_claim_body,
 };
 use crate::error::{Error, Result};
 use crate::federation::{ScopeId, Sensitivity};
@@ -90,6 +91,9 @@ pub struct CompiledPersona {
     pub scenario: Option<EntityId>,
     pub value: JsonValue,
     pub made_by: PersonaMadeBy,
+    /// Every scoped read the projection made, folded: the changes and scenario
+    /// facts this reader could not see are counted here, never silently lost.
+    pub receipt: ScopedReadReceipt,
 }
 
 fn object(value: &JsonValue) -> Result<()> {
@@ -370,11 +374,17 @@ impl ScopedRead<'_> {
         person: &EntityId,
         scenario: Option<EntityId>,
     ) -> Result<CompiledPersona> {
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = self.get_entity_parts_with_receipt(person, None)?;
-        let (kind, baseline_at, data) = value.ok_or(Error::EntityNotFound)?;
+        let baseline = self.read(&[PointRead::id(*person)], None)?.single();
+        let mut receipt = baseline.receipt;
+        let Some(ReadRow {
+            entity_type: kind,
+            learned_at: baseline_at,
+            body: Some(data),
+            ..
+        }) = baseline.value
+        else {
+            return Err(Error::EntityNotFound);
+        };
         if kind != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(kind));
         }
@@ -385,12 +395,21 @@ impl ScopedRead<'_> {
         object(&baseline.baseline)?;
         let mut value = baseline.baseline;
         let mut changes = Vec::new();
-        for id in self.vault().claims_for_subject(person)? {
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = self.get_entity_parts_with_receipt(&id, None)?;
-            let Some((_, _, data)) = value else {
+        let claims: Vec<_> = self
+            .vault()
+            .claims_for_subject(person)?
+            .into_iter()
+            .map(PointRead::id)
+            .collect();
+        let claims = self.read(&claims, None)?;
+        receipt.restrict_with(&claims.receipt);
+        for row in claims.value.into_iter().flatten() {
+            let ReadRow {
+                id,
+                body: Some(data),
+                ..
+            } = row
+            else {
                 continue;
             };
             let body = decode_claim_body(&data, true)?;
@@ -421,21 +440,28 @@ impl ScopedRead<'_> {
             at = at.max(changed_at);
         }
         if let Some(facet) = scenario {
-            let crate::claim::ScopedReadResult {
-                value: parts,
-                receipt: _receipt,
-            } = self.get_entity_parts_with_receipt(&facet, None)?;
-            let (kind, learned_at, data) = parts.ok_or(Error::EntityNotFound)?;
+            let parts = self.read(&[PointRead::id(facet)], None)?.single();
+            receipt.restrict_with(&parts.receipt);
+            let Some(ReadRow {
+                entity_type: kind,
+                learned_at,
+                body: Some(data),
+                ..
+            }) = parts.value
+            else {
+                return Err(Error::EntityNotFound);
+            };
             if kind != ENTITY_TYPE_FACET {
                 return Err(Error::InvalidEntityType(kind));
             }
             let entries = body_fields(&data)?;
             let mask: ScenarioWire = from_value(field(&entries, SCENARIO_KEY)?)?;
+            let edges = self.edges_out(person)?;
+            receipt.restrict_with(&edges.receipt);
             if mask.schema_version != 1
                 || mask.person_ref.0 != *person
                 || field(&entries, "kind")?.as_str() != Some("scenario")
-                || !self
-                    .edges_out(person)?
+                || !edges
                     .value
                     .unwrap_or_default()
                     .iter()
@@ -457,6 +483,7 @@ impl ScopedRead<'_> {
                 process: "persona.merge-patch.v1".to_owned(),
                 at,
             },
+            receipt,
         })
     }
 }

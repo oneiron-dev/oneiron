@@ -1,10 +1,12 @@
 //! Caller-supplied index inputs retained until atomic idle publication.
 use super::RevisionRef;
-use super::storage::{key, state};
+use super::storage::state;
+use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Result};
 
-const PENDING: &[u8] = b"entity_revision:index_inputs:";
+const PENDING: SideTable<EntityId, Pending, Named> =
+    SideTable::new(&side_table::ENTITY_REVISION_PENDING_INDEX_INPUTS);
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct Inputs {
@@ -40,12 +42,15 @@ pub(crate) fn defer_index_inputs(
         inputs.vector = Some(vector.to_vec());
         inputs.pending_embedding_token = token.map(<[u8]>::to_vec);
     }
-    let bytes = rmp_serde::to_vec_named(&Pending {
-        revision: current.live,
-        inputs,
-    })
-    .map_err(|_| Error::InvariantViolation("pending index inputs encode"))?;
-    store.vault_meta.put(txn, &key(PENDING, id), &bytes)?;
+    PENDING.put(
+        store,
+        txn,
+        id,
+        &Pending {
+            revision: current.live,
+            inputs,
+        },
+    )?;
     Ok(true)
 }
 
@@ -55,14 +60,8 @@ pub(super) fn load(
     id: &EntityId,
     revision: RevisionRef,
 ) -> Result<Inputs> {
-    Ok(store
-        .vault_meta()
-        .get(txn, &key(PENDING, id))?
-        .map(|raw| {
-            rmp_serde::from_slice::<Pending>(&raw)
-                .map_err(|_| Error::CorruptedIndex("pending index inputs"))
-        })
-        .transpose()?
+    Ok(PENDING
+        .get(store, txn, id)?
         .filter(|pending| pending.revision == revision)
         .map(|pending| pending.inputs)
         .unwrap_or_default())
@@ -73,7 +72,7 @@ pub(super) fn clear(
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    store.vault_meta().delete(txn, &key(PENDING, id))?;
+    PENDING.delete(store, txn, id)?;
     Ok(())
 }
 
@@ -85,17 +84,12 @@ pub(super) fn retarget_revision(
     prior: RevisionRef,
     next: RevisionRef,
 ) -> Result<()> {
-    let key = key(PENDING, id);
-    let Some(bytes) = store.vault_meta().get(txn, &key)? else {
+    let Some(mut pending) = PENDING.get(store, txn, id)? else {
         return Ok(());
     };
-    let mut pending: Pending =
-        rmp_serde::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("pending index inputs"))?;
     if pending.revision == prior {
         pending.revision = next;
-        let bytes = rmp_serde::to_vec_named(&pending)
-            .map_err(|_| Error::InvariantViolation("pending index inputs encode"))?;
-        store.vault_meta().put(txn, &key, &bytes)?;
+        PENDING.put(store, txn, id, &pending)?;
     }
     Ok(())
 }

@@ -4,7 +4,9 @@
 //! authenticated-authority lane calls it. Upstream peers send NoteOperation.
 use super::document::{NoteDocument, invalid};
 use super::document_store::{load, persist};
+use super::sync_rows::SYNC_DS_E;
 use super::{NotePin, NoteSpanResolution};
+use crate::side_table::HexId;
 use crate::sync::transport::document_sub_tags;
 use crate::sync::{SyncSelector, SyncSelectorWorld};
 use crate::{EntityId, FederationGrantScope, Result, Vault};
@@ -84,12 +86,7 @@ pub(crate) fn import_note_from_authority(
         .map_err(|_| invalid("NOTE frame head"))?;
     let seq = u64::from_be_bytes(seq.try_into().map_err(|_| invalid("NOTE frame head"))?);
     vault.with_write_txn(|txn| {
-        if vault
-            .store
-            .sync_state
-            .get(txn, &format!("ds:e:{}", id.to_hex()))?
-            .is_none()
-        {
+        if !SYNC_DS_E.contains(&vault.store, txn, &HexId(id))? {
             return Err(invalid("unsolicited NOTE authority state"));
         }
         let previous = load(vault, txn, id)?;
@@ -122,16 +119,16 @@ pub(crate) fn import_note_from_authority(
             // compare documents of one head.
             super::documents::set_head(&vault.store, txn, id, head, seq)?;
             let next = NoteDocument::from_loro(id, staged)?;
-            let floor_key = super::citation_scrub::authority_floor_key(id);
-            if vault
-                .store
-                .vault_meta
-                .get(txn, floor_key.as_bytes())?
-                .is_some()
-            {
-                vault.store.vault_meta.put(
+            let floor_key = HexId(id);
+            if super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.contains(
+                &vault.store,
+                txn,
+                &floor_key,
+            )? {
+                super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.put(
+                    &vault.store,
                     txn,
-                    floor_key.as_bytes(),
+                    &floor_key,
                     &next.doc.oplog_vv().encode(),
                 )?;
             }
@@ -141,8 +138,9 @@ pub(crate) fn import_note_from_authority(
             }
             return persist(vault, txn, &next);
         }
-        let floor_key = super::citation_scrub::authority_floor_key(id);
-        let authority_floor = vault.store.vault_meta.get(txn, floor_key.as_bytes())?;
+        let floor_key = HexId(id);
+        let authority_floor =
+            super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.get(&vault.store, txn, &floor_key)?;
         let required = match &authority_floor {
             Some(bytes) => crate::sync::documents::storage::decode_vv(bytes)?,
             None => previous.doc.oplog_vv(),
@@ -171,7 +169,12 @@ pub(crate) fn import_note_from_authority(
             let vv = next.doc.oplog_vv().encode();
             let clean =
                 NoteDocument::load(id, &crate::sync::documents::storage::state_copy(&next.doc)?)?;
-            vault.store.vault_meta.put(txn, floor_key.as_bytes(), &vv)?;
+            super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.put(
+                &vault.store,
+                txn,
+                &floor_key,
+                &vv,
+            )?;
             clean
         } else {
             next

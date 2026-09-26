@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 use super::failure::invalid;
 use super::{
-    GIT_WIRE_DOMAIN, GIT_WIRE_RECORD_KEY_PREFIX, GIT_WIRE_SCHEMA_VERSION, GitOid,
-    GitRefExpectation, GitRefName, GitRefPublication, GitWireFailureClass, GitWireOperation,
-    GitWireRepo, GitWireRepoIdentity, ObservedGitRef,
+    GIT_WIRE_DOMAIN, GIT_WIRE_SCHEMA_VERSION, GitOid, GitRefExpectation, GitRefName,
+    GitRefPublication, GitWireFailureClass, GitWireOperation, GitWireRepo, GitWireRepoIdentity,
+    ObservedGitRef,
 };
-use crate::error::{Error, Result};
+use crate::error::Result;
 
 /// The lifecycle of a durable GitWire record. `Applied` and `Failed` are
 /// terminal and can never be overwritten.
@@ -217,20 +217,6 @@ impl GitWireCommitOutcome {
     }
 }
 
-pub(super) fn record_row_prefix(identity: GitWireRepoIdentity) -> Vec<u8> {
-    let mut key = Vec::with_capacity(GIT_WIRE_RECORD_KEY_PREFIX.len() + 66);
-    key.extend_from_slice(GIT_WIRE_RECORD_KEY_PREFIX);
-    key.extend_from_slice(identity.as_hex().as_bytes());
-    key.push(b':');
-    key
-}
-
-pub(super) fn record_row_key(identity: GitWireRepoIdentity, record_key: &[u8; 32]) -> Vec<u8> {
-    let mut key = record_row_prefix(identity);
-    key.extend_from_slice(hex_lower(record_key).as_bytes());
-    key
-}
-
 pub(super) fn ref_record_key(
     identity: GitWireRepoIdentity,
     publications: &[GitRefPublication],
@@ -403,15 +389,6 @@ pub(super) fn rejection_from_stored(stored: &StoredGitWireRecord) -> Result<GitW
         Some(GitWireFailureClass::RefMismatch) => Ok(GitWireRejection::RefMoved),
         _ => Ok(GitWireRejection::EffectUnconfirmed),
     }
-}
-
-pub(super) fn encode_record(record: &StoredGitWireRecord) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(record)
-        .map_err(|_| Error::InvariantViolation("git wire record encode failed"))
-}
-
-pub(super) fn decode_record(bytes: &[u8]) -> Result<StoredGitWireRecord> {
-    rmp_serde::from_slice(bytes).map_err(|_| invalid("git wire record row is not MessagePack"))
 }
 
 pub(super) fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {

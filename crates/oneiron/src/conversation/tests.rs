@@ -354,21 +354,46 @@ fn audience_all_of_rechecks_ledger_after_kick() {
     let audience = vault
         .scoped_read(key.clone())
         .for_audience(&[actor.entity_ref(), bob]);
-    assert!(audience.get(&early.id).unwrap().is_none());
-    assert!(audience.get(&middle.id).unwrap().is_some());
+    assert!(
+        audience
+            .read(&[crate::claim::PointRead::id(early.id)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
+    assert!(
+        audience
+            .read(&[crate::claim::PointRead::id(middle.id)], None)
+            .unwrap()
+            .single()
+            .is_some()
+    );
     assert!(
         vault
             .scoped_read(key)
             .for_audience(&[actor.entity_ref()])
-            .get(&early.id)
+            .read(&[crate::claim::PointRead::id(early.id)], None)
             .unwrap()
+            .single()
             .is_some()
     );
     vault.leave_member(room, bob, actor, 5).unwrap();
     let late = record(&vault, room, actor, 6);
     let late = vault.append_dag_record(&late).unwrap();
-    assert!(audience.get(&late.id).unwrap().is_none());
-    assert!(audience.get(&middle.id).unwrap().is_some());
+    assert!(
+        audience
+            .read(&[crate::claim::PointRead::id(late.id)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
+    assert!(
+        audience
+            .read(&[crate::claim::PointRead::id(middle.id)], None)
+            .unwrap()
+            .single()
+            .is_some()
+    );
 }
 
 #[test]
@@ -533,20 +558,31 @@ fn relationship_audience_is_all_of_and_unscoped_single_reader_is_unchanged() {
         .unwrap();
     permit_reads(&vault, &[actor.entity_ref()]);
     let key = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap();
-    let before = vault.scoped_read(key.clone()).get(&id).unwrap();
+    let before = vault
+        .scoped_read(key.clone())
+        .read(&[crate::claim::PointRead::id(id)], None)
+        .unwrap()
+        .single();
     assert!(before.is_some());
     assert_eq!(
         vault
             .scoped_read(key.clone())
             .for_audience(&[actor.entity_ref()])
-            .get(&id)
-            .unwrap(),
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single(),
         before
     );
     let group = vault
         .scoped_read(key)
         .for_audience(&[actor.entity_ref(), bob]);
-    assert!(group.get(&id).unwrap().is_none());
+    assert!(
+        group
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
     assert!(
         group
             .search_text("private relationship", 10, None)
@@ -591,23 +627,28 @@ fn membership_rows_without_their_revision_never_grant_audience_reads() {
     let reader = vault
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
-    assert!(reader.get(&row.id).unwrap().is_some());
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(row.id)], None)
+            .unwrap()
+            .single()
+            .is_some()
+    );
     for revision in [None, Some(0_u64), Some(2_u64)] {
         vault
             .with_write_txn(|txn| {
-                let k = key(b"conversation_membership:seq:v1:", room);
                 if let Some(revision) = revision {
-                    vault
-                        .store
-                        .vault_meta
-                        .put(txn, &k, &revision.to_be_bytes())?;
+                    membership::MEMBERSHIP_SEQ.put(&vault.store, txn, &room, &revision)?;
                 } else {
-                    vault.store.vault_meta.delete(txn, &k)?;
+                    membership::MEMBERSHIP_SEQ.delete(&vault.store, txn, &room)?;
                 }
                 Ok(())
             })
             .unwrap();
-        assert!(matches!(reader.get(&row.id), Err(Error::CorruptedIndex(_))));
+        assert!(matches!(
+            reader.read(&[crate::claim::PointRead::id(row.id)], None),
+            Err(Error::CorruptedIndex(_))
+        ));
         assert!(matches!(
             vault.membership_at(room, 3),
             Err(Error::CorruptedIndex(_))
@@ -717,7 +758,12 @@ fn dangling_ancestry_is_hidden_without_aborting_other_audience_results() {
         .scoped_read(crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex()).unwrap())
         .for_audience(&[actor.entity_ref()]);
     for id in hidden {
-        assert!(read.get(&id).unwrap().is_none());
+        assert!(
+            read.read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
     }
     assert_eq!(
         read.search_text("needle", 20, None)
@@ -888,7 +934,13 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
     for id in [summary, claim, record] {
-        assert!(reader.get(&id).unwrap().is_none());
+        assert!(
+            reader
+                .read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
     }
     assert!(
         reader
@@ -1047,7 +1099,12 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
         .scoped_read(crate::claim::ScopedReadActorKey::new(bob.to_hex()).unwrap())
         .for_audience(&[bob]);
     assert!(audience_admits(&vault, summary, bob).unwrap());
-    assert!(read.get(&summary).unwrap().is_none());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(summary)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
     let read_scope = crate::federation::scope_codec::encode_scope_value(
         &crate::federation::scope_codec::read_preset(),
     )
@@ -1083,11 +1140,21 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
         ordinary,
         epoch,
     ] {
-        assert!(read.get(&id).unwrap().is_some());
+        assert!(
+            read.read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_some()
+        );
     }
     vault.batch().delete(&summary).commit().unwrap();
     for id in [landed.claim, landed.record.unwrap()] {
-        assert!(read.get(&id).unwrap().is_none());
+        assert!(
+            read.read(&[crate::claim::PointRead::id(id)], None)
+                .unwrap()
+                .single()
+                .is_none()
+        );
     }
     let hits: std::collections::BTreeSet<_> = read
         .search_text("needle", 20, None)
@@ -1107,5 +1174,10 @@ fn summary_families_and_unavailable_dependencies_do_not_hide_healthy_hits() {
         )
         .unwrap_err();
     assert_eq!(error.kind(), ErrorKind::InvalidScopeSummary);
-    assert!(read.get(&malformed).unwrap().is_none());
+    assert!(
+        read.read(&[crate::claim::PointRead::id(malformed)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
 }

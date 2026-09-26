@@ -6,11 +6,45 @@ use crate::gate::{
     PolicyApprovalCeiling, dispatched_agent_effective_ceiling, resolve_policy_manifest,
 };
 use crate::memory::MemoryResult;
+use crate::side_table::{self, RawValue, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 use crate::write_envelope::WriteActor;
 
-use super::consts::TASK_CREATE_RATE_KEY_PREFIX;
 use super::create_spec::TaskCreateRateLimit;
+
+/// Per-(actor, window_seconds) create-rate window, node-local: a property of
+/// THIS machine's admission history, not of the task, so it stays in
+/// `vault_meta` and does not replicate.
+pub(super) const TASK_CREATE_RATE_WINDOWS: SideTable<(EntityId, u64), RateWindow, side_table::Raw> =
+    SideTable::new(&side_table::TASK_CREATE_RATE_WINDOW);
+
+/// One rate window's bytes: little-endian window index then little-endian
+/// count, matching the layout this row has always written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RateWindow {
+    pub(super) window: u64,
+    pub(super) count: u64,
+}
+
+impl RawValue for RateWindow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let mut out = Vec::with_capacity(16);
+        out.extend_from_slice(&self.window.to_le_bytes());
+        out.extend_from_slice(&self.count.to_le_bytes());
+        Ok(out)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let stored: [u8; 16] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
+        let (window, count) = stored.split_at(8);
+        Ok(Self {
+            window: u64::from_le_bytes(window.try_into().expect("split at 8")),
+            count: u64::from_le_bytes(count.try_into().expect("split at 8")),
+        })
+    }
+}
 
 pub(super) fn task_verb_contract(verb: AgentVerb) -> &'static str {
     verb.as_str()
@@ -50,13 +84,18 @@ pub(super) fn record_task_create(
     // value = {window, count}. A stored window other than the current one
     // resets the count, so elapsed windows overwrite the same key instead of
     // leaving a per-window residue that grows unbounded over the vault's life.
-    let key = task_create_rate_key(actor, window_seconds);
-    let count = read_window(vault, wtxn, &key, window)?;
-    let mut value = [0u8; 16];
-    value[..8].copy_from_slice(&window.to_le_bytes());
-    value[8..].copy_from_slice(&count.saturating_add(1).to_le_bytes());
-    vault.store.vault_meta.put(wtxn, key.as_slice(), &value)?;
-    Ok(count.saturating_add(1))
+    let count = read_window(vault, wtxn, actor, window_seconds, window)?;
+    let next = count.saturating_add(1);
+    TASK_CREATE_RATE_WINDOWS.put(
+        &vault.store,
+        wtxn,
+        &(actor, window_seconds),
+        &RateWindow {
+            window,
+            count: next,
+        },
+    )?;
+    Ok(next)
 }
 
 /// Fan-out admission gate on the generic create quota: refuses (without
@@ -72,8 +111,7 @@ pub(super) fn consume_create_rate_slot(
 ) -> Result<bool> {
     let window_seconds = rate_limit.window_seconds.max(1);
     let window = now / window_seconds;
-    let key = task_create_rate_key(actor, window_seconds);
-    let count = read_window(vault, wtxn, &key, window)?;
+    let count = read_window(vault, wtxn, actor, window_seconds, window)?;
     if count >= rate_limit.limit as u64 {
         return Ok(false);
     }
@@ -81,32 +119,22 @@ pub(super) fn consume_create_rate_slot(
     Ok(true)
 }
 
-fn read_window(vault: &Vault, txn: &heed::RoTxn<'_>, key: &[u8], window: u64) -> Result<u64> {
-    let Some(raw) = vault.store.vault_meta.get(txn, key)? else {
+fn read_window(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    window_seconds: u64,
+    window: u64,
+) -> Result<u64> {
+    let Some(stored) = TASK_CREATE_RATE_WINDOWS.get(&vault.store, txn, &(actor, window_seconds))?
+    else {
         return Ok(0);
     };
-    let stored: &[u8; 16] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("tasks.create.rate"))?;
-    let [stored_window, count] = stored.as_chunks::<8>().0 else {
-        return Err(Error::CorruptedIndex("tasks.create.rate"));
-    };
-    Ok(if u64::from_le_bytes(*stored_window) == window {
-        u64::from_le_bytes(*count)
+    Ok(if stored.window == window {
+        stored.count
     } else {
         0
     })
-}
-
-pub(super) fn task_create_rate_key(actor: EntityId, window_seconds: u64) -> Vec<u8> {
-    let mut key = Vec::with_capacity(
-        TASK_CREATE_RATE_KEY_PREFIX.len() + actor.as_bytes().len() + size_of::<u64>(),
-    );
-    key.extend_from_slice(TASK_CREATE_RATE_KEY_PREFIX);
-    key.extend_from_slice(actor.as_bytes());
-    key.extend_from_slice(&window_seconds.to_be_bytes());
-    key
 }
 
 /// The actor whose ceiling admitted this create, read from the replicated
@@ -147,7 +175,8 @@ impl Vault {
         read_window(
             self,
             &txn,
-            &task_create_rate_key(actor, window_seconds),
+            actor,
+            window_seconds,
             crate::unix_seconds_now() / window_seconds,
         )
     }

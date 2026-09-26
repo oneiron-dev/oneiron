@@ -5,10 +5,10 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use super::keys::{
-    BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR,
-    KEY_ANCHOR_THREAD_ID, KEY_ANCHORS, KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH,
-    KEY_MANIFEST_OPS, KEY_MANIFEST_REF, KEY_OUTCOME, KEY_PROPOSAL_REF, KEY_REASON,
-    KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_VERSION, SETTLE_VERB_CLASS, SETTLEMENT_SCHEMA_VERSION,
+    KEY_ACTOR_REF, KEY_ANCHOR_DRIFTED, KEY_ANCHOR_LOCATOR, KEY_ANCHOR_THREAD_ID, KEY_ANCHORS,
+    KEY_BEFORE_VERSION, KEY_BRIEF_REF, KEY_CONTENT_HASH, KEY_MANIFEST_OPS, KEY_MANIFEST_REF,
+    KEY_OUTCOME, KEY_PROPOSAL_REF, KEY_REASON, KEY_SCHEMA_VERSION, KEY_SETTLED_AT, KEY_VERSION,
+    SETTLE_VERB_CLASS, SETTLEMENT_SCHEMA_VERSION,
 };
 use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::anchored_annotation::{decode_locator, encode_locator};
@@ -18,33 +18,35 @@ use crate::consent::{
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
 // ---------------------------------------------------------------------------
 // Keys
 // ---------------------------------------------------------------------------
 
-pub(super) fn settlement_key(artifact_id: &EntityId, proposal_ref: &str) -> Vec<u8> {
-    let proposal_hash = blake3::hash(proposal_ref.as_bytes());
-    let mut key = Vec::with_capacity(
-        BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX.len() + ENTITY_ID_LEN + proposal_hash.as_bytes().len(),
-    );
-    key.extend_from_slice(BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX);
-    key.extend_from_slice(artifact_id.as_bytes());
-    key.extend_from_slice(proposal_hash.as_bytes());
-    key
+/// Consume-once settlement ledger row. Key: id16 + hash32(blake3 of the proposal ref).
+pub(super) const RECORD: SideTable<(EntityId, [u8; 32]), SettlementRecord, Raw> =
+    SideTable::new(&side_table::EDIT_SETTLE_RECORD);
+
+impl RawValue for SettlementRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_settlement_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_settlement_record(bytes)?)
+    }
 }
 
-pub(super) fn settlement_key_artifact_id(key: &[u8]) -> Result<EntityId> {
-    let start = BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX.len();
-    let end = start + ENTITY_ID_LEN;
-    if key.len() != end + 32 || !key.starts_with(BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX) {
-        return Err(Error::CorruptedIndex("blob artifact settlement key"));
-    }
-    let raw: [u8; ENTITY_ID_LEN] = key[start..end]
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("blob artifact settlement key"))?;
-    EntityId::from_bytes(raw).map_err(|_| Error::CorruptedIndex("blob artifact settlement key"))
+pub(super) fn settlement_key_parts(
+    artifact_id: &EntityId,
+    proposal_ref: &str,
+) -> (EntityId, [u8; 32]) {
+    (
+        *artifact_id,
+        *blake3::hash(proposal_ref.as_bytes()).as_bytes(),
+    )
 }
 
 // ---------------------------------------------------------------------------

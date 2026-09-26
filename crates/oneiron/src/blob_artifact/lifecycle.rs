@@ -7,11 +7,8 @@ use crate::error::Result;
 use crate::ppr;
 use crate::store::Store;
 
-use super::store_keys::{
-    BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_asset_ref_key, blob_artifact_asset_ref_prefix,
-    blob_artifact_head_key, blob_artifact_version_prefix,
-};
-use super::versions::{blob_artifact_asset_entity_id, decode_blob_artifact_version_record};
+use super::store_keys::{ASSET_REF, BLOB_ARTIFACT_CONTENT_HASH_LEN};
+use super::versions::{HEAD, VERSIONS, blob_artifact_asset_entity_id};
 
 /// Outcome of blob-artifact lifecycle cleanup: index flags and graph
 /// neighbors from any orphaned ASSET entities deleted with the chain, for
@@ -40,29 +37,23 @@ pub(crate) fn delete_blob_artifact_lifecycle_in_txn(
 ) -> Result<BlobArtifactLifecycleCleanup> {
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
-    let prefix = blob_artifact_version_prefix(id);
     let mut keys = Vec::new();
     let mut hashes: Vec<[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN]> = Vec::new();
-    for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
-        let (key, raw) = entry?;
-        let record = decode_blob_artifact_version_record(&raw)?;
+    for entry in VERSIONS.iter_from(store, wtxn, id.as_bytes())? {
+        let (key, record) = entry?;
         if !hashes.contains(&record.content_hash) {
             hashes.push(record.content_hash);
         }
-        keys.push(key.to_vec());
+        keys.push(key);
     }
-    store.vault_meta.delete(wtxn, &blob_artifact_head_key(id))?;
+    HEAD.delete(store, wtxn, id)?;
     for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
+        VERSIONS.delete(store, wtxn, &key)?;
     }
     for content_hash in hashes {
-        store
-            .vault_meta
-            .delete(wtxn, &blob_artifact_asset_ref_key(&content_hash, id))?;
-        let ref_prefix = blob_artifact_asset_ref_prefix(&content_hash);
-        let still_referenced = store
-            .vault_meta
-            .prefix_iter(wtxn, &ref_prefix)?
+        ASSET_REF.delete(store, wtxn, &(content_hash, *id))?;
+        let still_referenced = ASSET_REF
+            .iter_from(store, wtxn, &content_hash)?
             .next()
             .transpose()?
             .is_some();

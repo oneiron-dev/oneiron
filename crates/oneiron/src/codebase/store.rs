@@ -8,8 +8,7 @@ use super::ingest::{
 use super::repo_ref::RepoRef;
 use super::snapshot::{
     CODEBASE_CONTENT_HASH_LEN, CodebaseFileEntry, CodebaseForkHash, CodebaseScopeKey,
-    CodebaseSnapshot, CodebaseSnapshotMount, decode_codebase_snapshot, encode_codebase_snapshot,
-    validate_codebase_snapshot, write_hash_len,
+    CodebaseSnapshot, CodebaseSnapshotMount, validate_codebase_snapshot, write_hash_len,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -19,24 +18,115 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT};
-use crate::secret_snapshot::{SnapshotCustodyReport, custody_key, encode_report};
+use crate::secret_snapshot::SnapshotCustodyReport;
+use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
-const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
-
-const CODEBASE_REPO_INDEX_KEY_PREFIX: &[u8] = b"codebase:repo:v1:";
-
-const CODEBASE_PROJECT_INDEX_KEY_PREFIX: &[u8] = b"codebase:project:v1:";
-
-const CODEBASE_FORK_INDEX_KEY_PREFIX: &[u8] = b"codebase:fork:v1:";
-
-const CODEBASE_SCOPE_INDEX_KEY_PREFIX: &[u8] = b"codebase:scope:v1:";
-
 const CODEBASE_ASSET_ID_DOMAIN: &[u8] = b"oneiron:codebase-asset-entity:v1";
 
 const CODEBASE_SNAPSHOT_ID_DOMAIN: &[u8] = b"oneiron:codebase-snapshot-entity:v1";
+
+/// A codebase snapshot's file manifest, keyed by the CODE_ARTIFACT entity id it snapshots.
+const SNAPSHOTS: SideTable<EntityId, CodebaseSnapshot, Raw> =
+    SideTable::new(&side_table::CODEBASE_SNAPSHOT);
+
+/// The custody report accompanying one filtered snapshot, keyed by its fork hash. The row's
+/// codec is `Raw`: the const and key builder used to live in `secret_snapshot.rs`, but every
+/// put/get/delete call site has always been here, so the [`crate::side_table::RawValue`] impl
+/// lives beside [`SnapshotCustodyReport`] in `secret_snapshot.rs` instead (ONE-side_table).
+const CUSTODY_REPORTS: SideTable<String, SnapshotCustodyReport, Raw> =
+    SideTable::new(&side_table::SECRET_SNAPSHOT_CODEBASE_CUSTODY);
+
+/// Index from a repo reference's canonical text to the codebase snapshots recorded against it.
+const REPO_INDEX: SideTable<TextIndexKey, (), Raw> =
+    SideTable::new(&side_table::CODEBASE_REPO_INDEX);
+
+/// Index from a project id to the codebase snapshots recorded against it.
+const PROJECT_INDEX: SideTable<TextIndexKey, (), Raw> =
+    SideTable::new(&side_table::CODEBASE_PROJECT_INDEX);
+
+/// Index from a fork hash to the codebase snapshots sharing it.
+const FORK_INDEX: SideTable<HashIndexKey, (), Raw> =
+    SideTable::new(&side_table::CODEBASE_FORK_INDEX);
+
+/// Index from a codebase scope key to the snapshot and asset entities visible under it.
+const SCOPE_INDEX: SideTable<HashIndexKey, (), Raw> =
+    SideTable::new(&side_table::CODEBASE_SCOPE_INDEX);
+
+/// `<text>` + `\0` + id16 — the shape every text-keyed codebase index row (repo-ref, project id)
+/// has always spelled.
+struct TextIndexKey {
+    value: String,
+    id: EntityId,
+}
+
+impl SideKey for TextIndexKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.value.as_bytes());
+        out.push(0);
+        self.id.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
+        let (rest, id) = bytes.split_at(id_start);
+        let (&separator, value) = rest.split_last()?;
+        if separator != 0 {
+            return None;
+        }
+        Some(Self {
+            value: String::from_utf8(value.to_vec()).ok()?,
+            id: EntityId::decode_key(id)?,
+        })
+    }
+}
+
+/// `<hash32>` + `\0` + id16 — the shape every hash-keyed codebase index row (fork hash, scope
+/// key) has always spelled.
+struct HashIndexKey {
+    value: [u8; 32],
+    id: EntityId,
+}
+
+impl SideKey for HashIndexKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.value);
+        out.push(0);
+        self.id.encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
+        let (rest, id) = bytes.split_at(id_start);
+        let (&separator, value) = rest.split_last()?;
+        if separator != 0 {
+            return None;
+        }
+        Some(Self {
+            value: value.try_into().ok()?,
+            id: EntityId::decode_key(id)?,
+        })
+    }
+}
+
+/// The `EntityId` half of a codebase index key, common to every index shape.
+trait IndexRowId {
+    fn id(&self) -> EntityId;
+}
+
+impl IndexRowId for TextIndexKey {
+    fn id(&self) -> EntityId {
+        self.id
+    }
+}
+
+impl IndexRowId for HashIndexKey {
+    fn id(&self) -> EntityId {
+        self.id
+    }
+}
 
 pub(crate) fn codebase_candidate_matches_filters(
     store: &Store,
@@ -46,15 +136,21 @@ pub(crate) fn codebase_candidate_matches_filters(
     project_id: Option<&str>,
 ) -> Result<bool> {
     if let Some(repo_ref) = repo_ref {
-        let key = codebase_repo_index_key(repo_ref, id);
-        if store.vault_meta.get(rtxn, &key)?.is_none() {
+        let key = TextIndexKey {
+            value: repo_ref.canonical(),
+            id: *id,
+        };
+        if !REPO_INDEX.contains(store, rtxn, &key)? {
             return Ok(false);
         }
     }
     if let Some(project_id) = project_id {
         validate_project_id(project_id)?;
-        let key = codebase_project_index_key(project_id, id);
-        if store.vault_meta.get(rtxn, &key)?.is_none() {
+        let key = TextIndexKey {
+            value: project_id.to_owned(),
+            id: *id,
+        };
+        if !PROJECT_INDEX.contains(store, rtxn, &key)? {
             return Ok(false);
         }
     }
@@ -67,10 +163,14 @@ pub(crate) fn codebase_candidate_matches_scope_key(
     id: &EntityId,
     scope_key: &CodebaseScopeKey,
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(rtxn, &codebase_scope_index_key(scope_key, id))?
-        .is_some())
+    SCOPE_INDEX.contains(
+        store,
+        rtxn,
+        &HashIndexKey {
+            value: *scope_key,
+            id: *id,
+        },
+    )
 }
 
 pub(crate) fn delete_codebase_snapshot_in_txn(
@@ -78,36 +178,30 @@ pub(crate) fn delete_codebase_snapshot_in_txn(
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    let key = codebase_snapshot_key(id);
-    let Some(raw) = store
-        .vault_meta
-        .get(wtxn, &key)?
-        .map(|value| value.to_vec())
-    else {
-        delete_index_rows_for_id(store, wtxn, CODEBASE_SCOPE_INDEX_KEY_PREFIX, id)?;
-        return Ok(false);
-    };
-
-    match decode_codebase_snapshot(&raw) {
-        Ok(snapshot) => {
-            store.vault_meta.delete(wtxn, &key)?;
+    match SNAPSHOTS.get(store, wtxn, id) {
+        Ok(None) => {
+            delete_index_rows_for_id(SCOPE_INDEX, store, wtxn, id)?;
+            Ok(false)
+        }
+        Ok(Some(snapshot)) => {
+            SNAPSHOTS.delete(store, wtxn, id)?;
             // The sidecar is keyed by fork, so retain it while another artifact uses it.
             if !fork_has_other_snapshot(store, wtxn, &snapshot.fork_hash, id)? {
-                store
-                    .vault_meta
-                    .delete(wtxn, &custody_key(&snapshot.fork_hash))?;
+                CUSTODY_REPORTS.delete(store, wtxn, &codebase_custody_key(&snapshot.fork_hash))?;
             }
             delete_exact_index_rows_for_snapshot(store, wtxn, id, &snapshot)?;
+            Ok(true)
         }
-        Err(_) => {
-            store.vault_meta.delete(wtxn, &key)?;
-            delete_index_rows_for_id(store, wtxn, CODEBASE_REPO_INDEX_KEY_PREFIX, id)?;
-            delete_index_rows_for_id(store, wtxn, CODEBASE_PROJECT_INDEX_KEY_PREFIX, id)?;
-            delete_index_rows_for_id(store, wtxn, CODEBASE_FORK_INDEX_KEY_PREFIX, id)?;
-            delete_index_rows_for_id(store, wtxn, CODEBASE_SCOPE_INDEX_KEY_PREFIX, id)?;
+        Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_))) => {
+            SNAPSHOTS.delete(store, wtxn, id)?;
+            delete_index_rows_for_id(REPO_INDEX, store, wtxn, id)?;
+            delete_index_rows_for_id(PROJECT_INDEX, store, wtxn, id)?;
+            delete_index_rows_for_id(FORK_INDEX, store, wtxn, id)?;
+            delete_index_rows_for_id(SCOPE_INDEX, store, wtxn, id)?;
+            Ok(true)
         }
+        Err(other) => Err(other),
     }
-    Ok(true)
 }
 
 pub(crate) fn reconcile_codebase_snapshot_after_code_artifact_put(
@@ -117,23 +211,21 @@ pub(crate) fn reconcile_codebase_snapshot_after_code_artifact_put(
     old_code_artifact_body: &[u8],
     new_code_artifact_body: &[u8],
 ) -> Result<()> {
-    let key = codebase_snapshot_key(id);
-    let Some(raw) = store
-        .vault_meta
-        .get(wtxn, &key)?
-        .map(|value| value.to_vec())
-    else {
+    if !SNAPSHOTS.contains(store, wtxn, id)? {
         return Ok(());
-    };
+    }
 
     let new_repo_ref = code_artifact_repo_ref_from_body(new_code_artifact_body)?;
     let old_repo_ref = code_artifact_repo_ref_from_body(old_code_artifact_body).ok();
-    let snapshot = match decode_codebase_snapshot(&raw) {
-        Ok(snapshot) => snapshot,
-        Err(_) => {
+
+    let snapshot = match SNAPSHOTS.get(store, wtxn, id) {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return Ok(()),
+        Err(Error::Code(CodeError::InvalidCodebaseSnapshotBody(_))) => {
             delete_codebase_snapshot_in_txn(store, wtxn, id)?;
             return Ok(());
         }
+        Err(other) => return Err(other),
     };
 
     if old_repo_ref.as_ref() != Some(&new_repo_ref) || snapshot.repo_ref != new_repo_ref {
@@ -351,8 +443,10 @@ impl Vault {
         filtered_snapshot: &CodebaseSnapshot,
         custody_report: SnapshotCustodyReport,
     ) -> Result<()> {
-        let encoded = encode_codebase_snapshot(filtered_snapshot)?;
-        let custody_report = encode_report(&custody_report)?;
+        // Validate up front, matching the encode-before-touching-the-entity-record order this
+        // put has always used.
+        SNAPSHOTS.encode_value(filtered_snapshot)?;
+        CUSTODY_REPORTS.encode_value(&custody_report)?;
         let Some(raw) = self
             .store
             .port_entity_record(wtxn, code_artifact_id)?
@@ -376,28 +470,39 @@ impl Vault {
         }
 
         delete_codebase_snapshot_in_txn(&self.store, wtxn, code_artifact_id)?;
-        self.store
-            .vault_meta
-            .put(wtxn, &codebase_snapshot_key(code_artifact_id), &encoded)?;
-        self.store.vault_meta.put(
+        SNAPSHOTS.put(&self.store, wtxn, code_artifact_id, filtered_snapshot)?;
+        CUSTODY_REPORTS.put(
+            &self.store,
             wtxn,
-            &custody_key(&filtered_snapshot.fork_hash),
+            &codebase_custody_key(&filtered_snapshot.fork_hash),
             &custody_report,
         )?;
-        self.store.vault_meta.put(
+        REPO_INDEX.put(
+            &self.store,
             wtxn,
-            &codebase_repo_index_key(&filtered_snapshot.repo_ref, code_artifact_id),
-            &[],
+            &TextIndexKey {
+                value: filtered_snapshot.repo_ref.canonical(),
+                id: *code_artifact_id,
+            },
+            &(),
         )?;
-        self.store.vault_meta.put(
+        PROJECT_INDEX.put(
+            &self.store,
             wtxn,
-            &codebase_project_index_key(&filtered_snapshot.project_id, code_artifact_id),
-            &[],
+            &TextIndexKey {
+                value: filtered_snapshot.project_id.clone(),
+                id: *code_artifact_id,
+            },
+            &(),
         )?;
-        self.store.vault_meta.put(
+        FORK_INDEX.put(
+            &self.store,
             wtxn,
-            &codebase_fork_index_key(&filtered_snapshot.fork_hash, code_artifact_id),
-            &[],
+            &HashIndexKey {
+                value: filtered_snapshot.fork_hash,
+                id: *code_artifact_id,
+            },
+            &(),
         )?;
         put_scope_index_rows_for_snapshot(&self.store, wtxn, code_artifact_id, filtered_snapshot)?;
         Ok(())
@@ -408,14 +513,7 @@ impl Vault {
         code_artifact_id: &EntityId,
     ) -> Result<Option<CodebaseSnapshot>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &codebase_snapshot_key(code_artifact_id))?
-        else {
-            return Ok(None);
-        };
-        decode_codebase_snapshot(&raw).map(Some)
+        SNAPSHOTS.get(&self.store, &rtxn, code_artifact_id)
     }
 
     /// Reads the value-free custody report stored beside a filtered snapshot.
@@ -424,27 +522,28 @@ impl Vault {
         fork_hash: &CodebaseForkHash,
     ) -> Result<Option<crate::secret_snapshot::SnapshotCustodyReport>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &custody_key(fork_hash))? else {
-            return Ok(None);
-        };
-        rmp_serde::from_slice(&raw).map(Some).map_err(|_| {
-            Error::Code(CodeError::InvalidCodebaseSnapshotBody(
-                "decode custody report",
-            ))
-        })
+        CUSTODY_REPORTS.get(&self.store, &rtxn, &codebase_custody_key(fork_hash))
     }
 
     pub fn codebase_snapshots_by_repo_ref(&self, repo_ref: &RepoRef) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = codebase_repo_index_prefix(repo_ref);
-        codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
+        codebase_ids_by_index(
+            REPO_INDEX,
+            &self.store,
+            &rtxn,
+            &text_index_scan_prefix(&repo_ref.canonical()),
+        )
     }
 
     pub fn codebase_snapshots_by_project_id(&self, project_id: &str) -> Result<Vec<EntityId>> {
         validate_project_id(project_id)?;
         let rtxn = self.store.env.read_txn()?;
-        let prefix = codebase_project_index_prefix(project_id);
-        codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
+        codebase_ids_by_index(
+            PROJECT_INDEX,
+            &self.store,
+            &rtxn,
+            &text_index_scan_prefix(project_id),
+        )
     }
 
     pub fn codebase_snapshots_by_fork_hash(
@@ -452,8 +551,12 @@ impl Vault {
         fork_hash: &CodebaseForkHash,
     ) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = codebase_fork_index_prefix(fork_hash);
-        codebase_ids_by_index_prefix(&self.store, &rtxn, &prefix)
+        codebase_ids_by_index(
+            FORK_INDEX,
+            &self.store,
+            &rtxn,
+            &hash_index_scan_prefix(fork_hash),
+        )
     }
 
     pub fn mount_codebase_snapshot(
@@ -505,46 +608,22 @@ pub(crate) fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Re
     ))
 }
 
-fn codebase_snapshot_key(id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODEBASE_SNAPSHOT_KEY_PREFIX.len() + id.as_bytes().len());
-    key.extend_from_slice(CODEBASE_SNAPSHOT_KEY_PREFIX);
-    key.extend_from_slice(id.as_bytes());
-    key
+/// The `sync_state`-free hex64 key `SnapshotCustodyReport` rows have always used: the lower-case
+/// hex spelling of the snapshot's fork hash.
+fn codebase_custody_key(fork_hash: &CodebaseForkHash) -> String {
+    crate::entity_id::bytes_to_hex_lower(fork_hash)
 }
 
-fn codebase_repo_index_prefix(repo_ref: &RepoRef) -> Vec<u8> {
-    scoped_index_prefix(
-        CODEBASE_REPO_INDEX_KEY_PREFIX,
-        repo_ref.canonical().as_bytes(),
-    )
+fn text_index_scan_prefix(value: &str) -> Vec<u8> {
+    let mut out = value.as_bytes().to_vec();
+    out.push(0);
+    out
 }
 
-fn codebase_project_index_prefix(project_id: &str) -> Vec<u8> {
-    scoped_index_prefix(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes())
-}
-
-fn codebase_fork_index_prefix(fork_hash: &CodebaseForkHash) -> Vec<u8> {
-    scoped_index_prefix(CODEBASE_FORK_INDEX_KEY_PREFIX, fork_hash)
-}
-
-fn codebase_repo_index_key(repo_ref: &RepoRef, id: &EntityId) -> Vec<u8> {
-    scoped_index_key(
-        CODEBASE_REPO_INDEX_KEY_PREFIX,
-        repo_ref.canonical().as_bytes(),
-        id,
-    )
-}
-
-fn codebase_project_index_key(project_id: &str, id: &EntityId) -> Vec<u8> {
-    scoped_index_key(CODEBASE_PROJECT_INDEX_KEY_PREFIX, project_id.as_bytes(), id)
-}
-
-fn codebase_fork_index_key(fork_hash: &CodebaseForkHash, id: &EntityId) -> Vec<u8> {
-    scoped_index_key(CODEBASE_FORK_INDEX_KEY_PREFIX, fork_hash, id)
-}
-
-fn codebase_scope_index_key(scope_key: &CodebaseScopeKey, id: &EntityId) -> Vec<u8> {
-    scoped_index_key(CODEBASE_SCOPE_INDEX_KEY_PREFIX, scope_key, id)
+fn hash_index_scan_prefix(value: &[u8; 32]) -> Vec<u8> {
+    let mut out = value.to_vec();
+    out.push(0);
+    out
 }
 
 fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
@@ -562,23 +641,11 @@ fn fork_has_other_snapshot(
     fork_hash: &CodebaseForkHash,
     id: &EntityId,
 ) -> Result<bool> {
-    let prefix = codebase_fork_index_prefix(fork_hash);
-    for entry in store.vault_meta.prefix_iter(wtxn, &prefix)? {
-        let (key, _) = entry?;
-        let Some(bytes) = key.get(prefix.len()..) else {
-            return Ok(true);
-        };
-        let Ok(bytes) = bytes.try_into() else {
-            return Ok(true);
-        };
-        let Ok(other) = EntityId::from_bytes(bytes) else {
-            return Ok(true);
-        };
-        if other != *id {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let prefix = hash_index_scan_prefix(fork_hash);
+    Ok(FORK_INDEX
+        .scan_keys(store, wtxn, &prefix)?
+        .into_iter()
+        .any(|key| key.id != *id))
 }
 
 fn delete_exact_index_rows_for_snapshot(
@@ -587,23 +654,47 @@ fn delete_exact_index_rows_for_snapshot(
     id: &EntityId,
     snapshot: &CodebaseSnapshot,
 ) -> Result<()> {
-    store
-        .vault_meta
-        .delete(wtxn, &codebase_repo_index_key(&snapshot.repo_ref, id))?;
-    store
-        .vault_meta
-        .delete(wtxn, &codebase_project_index_key(&snapshot.project_id, id))?;
-    store
-        .vault_meta
-        .delete(wtxn, &codebase_fork_index_key(&snapshot.fork_hash, id))?;
-    store
-        .vault_meta
-        .delete(wtxn, &codebase_scope_index_key(&snapshot.scope_key, id))?;
+    REPO_INDEX.delete(
+        store,
+        wtxn,
+        &TextIndexKey {
+            value: snapshot.repo_ref.canonical(),
+            id: *id,
+        },
+    )?;
+    PROJECT_INDEX.delete(
+        store,
+        wtxn,
+        &TextIndexKey {
+            value: snapshot.project_id.clone(),
+            id: *id,
+        },
+    )?;
+    FORK_INDEX.delete(
+        store,
+        wtxn,
+        &HashIndexKey {
+            value: snapshot.fork_hash,
+            id: *id,
+        },
+    )?;
+    SCOPE_INDEX.delete(
+        store,
+        wtxn,
+        &HashIndexKey {
+            value: snapshot.scope_key,
+            id: *id,
+        },
+    )?;
     for entry in &snapshot.files {
         let asset_id = codebase_asset_entity_id(&entry.content_hash)?;
-        store.vault_meta.delete(
+        SCOPE_INDEX.delete(
+            store,
             wtxn,
-            &codebase_scope_index_key(&snapshot.scope_key, &asset_id),
+            &HashIndexKey {
+                value: snapshot.scope_key,
+                id: asset_id,
+            },
         )?;
     }
     Ok(())
@@ -615,78 +706,59 @@ fn put_scope_index_rows_for_snapshot(
     code_artifact_id: &EntityId,
     snapshot: &CodebaseSnapshot,
 ) -> Result<()> {
-    store.vault_meta.put(
+    SCOPE_INDEX.put(
+        store,
         wtxn,
-        &codebase_scope_index_key(&snapshot.scope_key, code_artifact_id),
-        &[],
+        &HashIndexKey {
+            value: snapshot.scope_key,
+            id: *code_artifact_id,
+        },
+        &(),
     )?;
     for entry in &snapshot.files {
         let asset_id = codebase_asset_entity_id(&entry.content_hash)?;
-        store.vault_meta.put(
+        SCOPE_INDEX.put(
+            store,
             wtxn,
-            &codebase_scope_index_key(&snapshot.scope_key, &asset_id),
-            &[],
+            &HashIndexKey {
+                value: snapshot.scope_key,
+                id: asset_id,
+            },
+            &(),
         )?;
     }
     Ok(())
 }
 
-fn scoped_index_prefix(prefix: &[u8], value: &[u8]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + value.len() + 1);
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(value);
-    key.push(0);
-    key
-}
-
-fn scoped_index_key(prefix: &[u8], value: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = scoped_index_prefix(prefix, value);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-fn delete_index_rows_for_id(
+/// Deletes every row of `table`, across every value it indexes, whose id half matches `id`. Used
+/// only when a snapshot row failed to decode, so the values it was indexed under are unknown and
+/// the whole table must be swept.
+fn delete_index_rows_for_id<K: SideKey + IndexRowId>(
+    table: SideTable<K, (), Raw>,
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    prefix: &[u8],
     id: &EntityId,
 ) -> Result<()> {
-    let mut keys = Vec::new();
-    for entry in store.vault_meta.prefix_iter(&*wtxn, prefix)? {
-        let (key, _) = entry?;
-        if key.len() >= prefix.len() + 1 + id.as_bytes().len()
-            && key.ends_with(id.as_bytes())
-            && key[key.len() - id.as_bytes().len() - 1] == 0
-        {
-            keys.push(key.to_vec());
-        }
-    }
-    for key in keys {
-        store.vault_meta.delete(wtxn, &key)?;
+    let matches: Vec<K> = table
+        .scan_keys(store, wtxn, &[])?
+        .into_iter()
+        .filter(|key| key.id() == *id)
+        .collect();
+    for key in &matches {
+        table.delete(store, wtxn, key)?;
     }
     Ok(())
 }
 
-fn codebase_ids_by_index_prefix(
+fn codebase_ids_by_index<K: SideKey + IndexRowId>(
+    table: SideTable<K, (), Raw>,
     store: &Store,
     rtxn: &RoTxn<'_>,
-    prefix: &[u8],
+    key_prefix: &[u8],
 ) -> Result<Vec<EntityId>> {
     let mut ids = Vec::new();
-    for entry in store.vault_meta.prefix_iter(rtxn, prefix)? {
-        let (key, _) = entry?;
-        let id_bytes = key
-            .get(prefix.len()..)
-            .ok_or(Error::CorruptedIndex("codebase index key"))?;
-        if id_bytes.len() != 16 {
-            return Err(Error::CorruptedIndex("codebase index key"));
-        }
-        let id = EntityId::from_bytes(
-            id_bytes
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("codebase index key"))?,
-        )
-        .map_err(|_| Error::CorruptedIndex("codebase index key"))?;
+    for key in table.scan_keys(store, rtxn, key_prefix)? {
+        let id = key.id();
         let Some(raw) = store.port_entity_record(rtxn, &id)?.map(|row| row.encode()) else {
             continue;
         };

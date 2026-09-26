@@ -1,8 +1,13 @@
 //! Submitted-byte federation merge-back and company PR staging. No personal-vault read door.
 use super::{HubPackage, package_codec::invalid};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault, entity_id::EntityId, error::Result, skill::SkillLifecycle, temporal::TimeRange,
 };
+
+/// Shared-skill merge delta computed for one candidate.
+const SHARED_DELTA: SideTable<EntityId, SharedSkillDelta, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_SHARED_DELTA);
 
 /// Both lanes offer bytes to the receiving base. Neither grants access to the sender's vault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -108,11 +113,7 @@ impl Vault {
                         .unwrap_or(0.2),
                 )
                 .apply(txn)?;
-            self.store.vault_meta.put(
-                txn,
-                &delta_key(&candidate),
-                &serde_json::to_vec(&delta).map_err(|_| invalid("shared delta encode failed"))?,
-            )?;
+            SHARED_DELTA.put(&self.store, txn, &candidate, &delta)?;
             Ok(candidate)
         })
     }
@@ -160,17 +161,6 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,
     ) -> Result<Option<SharedSkillDelta>> {
-        self.store
-            .vault_meta
-            .get(txn, &delta_key(candidate))?
-            .map(|raw| {
-                serde_json::from_slice(&raw).map_err(|_| invalid("invalid shared delta row"))
-            })
-            .transpose()
+        SHARED_DELTA.get(&self.store, txn, candidate)
     }
-}
-fn delta_key(candidate: &EntityId) -> Vec<u8> {
-    let mut key = b"skill_hub/shared-delta/v1\0".to_vec();
-    key.extend_from_slice(candidate.as_bytes());
-    key
 }

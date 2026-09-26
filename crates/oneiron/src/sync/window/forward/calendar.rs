@@ -2,10 +2,15 @@
 
 use super::RematCtx;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::{loro_support::map_for_each_value_bytes, quarantine};
 use crate::{EntityId, Error, Result};
 use std::collections::BTreeMap;
-const PENDING: &[u8] = b"calendar_origin_pending:v1:";
+
+/// Retired-EVENT-calendar reconciliation retry marker, keyed by entity id; the
+/// value is the window key to retry against.
+const CALENDAR_ORIGIN_PENDING: SideTable<EntityId, String, Raw> =
+    SideTable::new(&side_table::SYNC_CALENDAR_ORIGIN_PENDING);
 
 pub(super) fn reconcile(ctx: &RematCtx<'_>) -> Result<()> {
     let mut candidates = BTreeMap::new();
@@ -21,22 +26,13 @@ pub(super) fn reconcile(ctx: &RematCtx<'_>) -> Result<()> {
     ctx.vault.with_write_txn(|txn| {
         // A claim can arrive through a different window. Retry only pending
         // EVENTs rather than scanning every calendar row on every import.
-        for row in ctx.vault.store.vault_meta.prefix_iter(txn, PENDING)? {
-            let (key, window) = row?;
-            let id = EntityId::from_bytes(
-                key[PENDING.len()..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("calendar pending id"))?,
-            )?;
-            let window = std::str::from_utf8(&window)
-                .map_err(|_| Error::CorruptedIndex("calendar pending window"))?;
-            candidates.insert(id, window.to_owned());
+        for (id, window) in CALENDAR_ORIGIN_PENDING.scan(&ctx.vault.store, txn)? {
+            candidates.insert(id, window);
         }
         for (id, window) in &candidates {
-            let key = [PENDING, id.as_bytes()].concat();
             if crate::calendar::origin::replay_origin_bound(&ctx.vault.store, txn, *id)? {
                 // Never clear someone else's hard-delete retry marker.
-                if ctx.vault.store.vault_meta.delete(txn, &key)? {
+                if CALENDAR_ORIGIN_PENDING.delete(&ctx.vault.store, txn, id)? {
                     quarantine::clear_replay_remat_marker_in_txn(ctx.vault, txn, window, id)?;
                 }
             } else {
@@ -45,10 +41,7 @@ pub(super) fn reconcile(ctx: &RematCtx<'_>) -> Result<()> {
                     .store
                     .port_entity_record(txn, id)?
                     .ok_or(Error::EntityNotFound)?;
-                ctx.vault
-                    .store
-                    .vault_meta
-                    .put(txn, &key, window.as_bytes())?;
+                CALENDAR_ORIGIN_PENDING.put(&ctx.vault.store, txn, id, window)?;
                 quarantine::quarantine_rejected_op_in_txn(
                     ctx.vault,
                     txn,

@@ -46,10 +46,6 @@ pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
 /// bucket domain so a round hash can never collide with a partition hash).
 pub(super) const DREAMER_PARTITION_ROUND_HASH_DOMAIN: &[u8] = b"oneiron:dreamer-partition-round:v1";
 
-pub(super) const DREAMER_PRIVATE_WATERMARK_PREFIX: &[u8] = b"dreamer:watermark:v1:"; // + scope byte
-pub(super) const DREAMER_PRIVATE_CURSOR_PREFIX: &[u8] = b"dreamer:cursor:v1:"; // + scope byte + partition_hash(32)
-pub(super) const DREAMER_PRIVATE_GAP_PREFIX: &[u8] = b"dreamer:gap:v1:"; // + gap_hash(32)
-
 /// Seconds-only watermark rows (`{schema_version, last_learned_at}`): decoded
 /// as the complete-second boundary `last_turn_id = None`, never re-encoded.
 pub(super) const WATERMARK_SCHEMA_VERSION_V1: u64 = 1;

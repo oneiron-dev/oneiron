@@ -420,3 +420,97 @@ fn deleted_owners_cannot_reconstruct_retained_turns() {
         assert_eq!(vault.reconstruct_board(&sibling).unwrap(), retained);
     }
 }
+
+#[test]
+fn board_history_reads_return_their_receipt() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let owner = put(&vault, ENTITY_TYPE_PERSON, "owner");
+    let owner_key = crate::claim::ScopedReadActorKey::new(owner.to_hex()).unwrap();
+    let document = put(&vault, ENTITY_TYPE_ASSET_TEXT, "scope alpha");
+    let claim = EntityId::now();
+    vault
+        .put_claim(
+            &claim,
+            &ClaimBody::new(
+                "core.fact",
+                ClaimSubject::Entity(owner),
+                rmpv::Value::from("memory"),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            ),
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .unwrap();
+
+    // With no read grant the owner's ceiling denies every row: a turn over a
+    // plain document records, and its receipt says the read was denied.
+    let first = put(&vault, ENTITY_TYPE_TURN, "first");
+    let plain = BoardSelection {
+        allowed: BTreeSet::from([document]),
+        ..Default::default()
+    };
+    let recorded = vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: first,
+                owner,
+                at: 1,
+                selection: plain,
+            },
+            1,
+        )
+        .unwrap();
+    assert!(recorded.read_receipt.applied.deny_all);
+    assert!(
+        recorded
+            .read_receipt
+            .narrowed_axes
+            .contains(&"deny_all".to_owned())
+    );
+    assert_eq!(
+        vault.reconstruct_board(&first).unwrap().read_receipt,
+        recorded.read_receipt
+    );
+    // The same ceiling refuses a turn that pins a claim.
+    let pinned = BoardSelection {
+        pinned: BTreeSet::from([claim]),
+        ..Default::default()
+    };
+    let second = put(&vault, ENTITY_TYPE_TURN, "second");
+    assert!(matches!(
+        vault.record_board_turn(
+            &BoardTurn {
+                turn: second,
+                owner,
+                at: 2,
+                selection: pinned.clone(),
+            },
+            2,
+        ),
+        Err(BoardHistoryError::UnreadableDocument(id)) if id == claim
+    ));
+
+    // Granted, both the recording and the reconstruction return the owner's
+    // own receipt for the pinned claim they read.
+    crate::test_util::authorize_readers(&vault, &[owner.to_hex().as_str()]);
+    let granted = vault
+        .record_board_turn(
+            &BoardTurn {
+                turn: second,
+                owner,
+                at: 2,
+                selection: pinned,
+            },
+            2,
+        )
+        .unwrap();
+    let expected = vault.scoped_read(owner_key).read_receipt(None, 0).unwrap();
+    assert!(!expected.applied.deny_all);
+    assert_eq!(granted.read_receipt, expected);
+    let board = vault.reconstruct_board(&second).unwrap();
+    assert!(board.documents.contains_key(&claim));
+    assert_eq!(board.read_receipt, expected);
+}

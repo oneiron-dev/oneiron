@@ -1,8 +1,19 @@
 //! Durable semantic NOTE requests for an authority-owned document subscription.
 use super::DocumentRegistry;
 use crate::note::{NoteOperation, NoteOperationReceipt};
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::sync::transport::{decode_document, document_sub_tags, encode_document};
 use crate::{EntityId, Result};
+
+/// Durable pending semantic NOTE-operation request (`qn:e:{id}:{request_id}`).
+/// Key: raw bytes (never decoded back to id/request by this door — see
+/// `note::sync_rows::SYNC_QN_E`, the same shape).
+const QN_E: SideTable<Vec<u8>, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_QN_E);
+/// Durable applied/rejected NOTE-operation receipt (`nc:e:{id}:{request_id}`).
+/// Key: raw bytes; value: the receipt itself (see
+/// `note::sync_rows::SYNC_NC_E`, the same shape, a generic `Value` there).
+const NC_E: SideTable<Vec<u8>, NoteOperationReceipt, LegacyJson> =
+    SideTable::new(&side_table::SYNC_NC_E);
 
 impl DocumentRegistry {
     /// Queue an editor command without speculatively changing the canonical
@@ -16,12 +27,7 @@ impl DocumentRegistry {
         self.vault.with_write_txn(|txn| {
             if self.vault.get_entity_type_in_txn(txn, &id)?
                 != Some(crate::registry::ENTITY_TYPE_NOTE)
-                || self
-                    .vault
-                    .store
-                    .sync_state
-                    .get(txn, &format!("ds:e:{}", id.to_hex()))?
-                    .is_none()
+                || !super::DS_E.contains(&self.vault.store, txn, &crate::side_table::HexId(id))?
                 || self
                     .vault
                     .local_hard_delete_marker_exists_in_txn(txn, &id)?
@@ -38,13 +44,13 @@ impl DocumentRegistry {
             }
             // Also refuses soft-erased shells and malformed birth records.
             crate::note::document_birth_in_txn(&self.vault, txn, id)?;
-            let key = format!("qn:e:{}:{}", id.to_hex(), operation.request_id.to_hex());
-            if let Some(previous) = self.vault.store.sync_state.get(txn, &key)?
-                && previous.as_ref() != frame.as_slice()
+            let key = format!("{}:{}", id.to_hex(), operation.request_id.to_hex()).into_bytes();
+            if let Some(previous) = QN_E.get(&self.vault.store, txn, &key)?
+                && previous != frame
             {
                 return Err(denied());
             }
-            self.vault.store.sync_state.put(txn, &key, &frame)?;
+            QN_E.put(&self.vault.store, txn, &key, &frame)?;
             if let crate::note::NoteChange::Cite { pin } = &operation.change {
                 crate::note::track_citation_request(
                     &self.vault.store,
@@ -63,12 +69,15 @@ impl DocumentRegistry {
     pub(crate) fn pending_note_requests(&self, id: EntityId) -> Result<Vec<Vec<u8>>> {
         let txn = self.vault.store.env.read_txn()?;
         crate::note::ensure_citations_ready(&self.vault.store, &txn, id)?;
-        self.vault
-            .store
-            .sync_state
-            .prefix_iter(&txn, &format!("qn:e:{}:", id.to_hex()))?
-            .map(|row| row.map(|(_, frame)| frame.to_vec()))
-            .collect()
+        Ok(QN_E
+            .scan_from(
+                &self.vault.store,
+                &txn,
+                format!("{}:", id.to_hex()).as_bytes(),
+            )?
+            .into_iter()
+            .map(|(_, frame)| frame)
+            .collect())
     }
 
     pub(crate) fn accept_note_receipt(
@@ -77,8 +86,8 @@ impl DocumentRegistry {
         receipt: &NoteOperationReceipt,
     ) -> Result<()> {
         self.vault.with_write_txn(|txn| {
-            let key = format!("qn:e:{}:{}", id.to_hex(), receipt.request_id.to_hex());
-            let Some(frame) = self.vault.store.sync_state.get(txn, &key)? else {
+            let key = format!("{}:{}", id.to_hex(), receipt.request_id.to_hex()).into_bytes();
+            let Some(frame) = QN_E.get(&self.vault.store, txn, &key)? else {
                 return Ok(());
             };
             let request = decode_document(&frame[1..]).map_err(|_| denied())?;
@@ -104,13 +113,9 @@ impl DocumentRegistry {
                     return Err(denied());
                 }
             }
-            let bytes = serde_json::to_vec(receipt).map_err(|_| denied())?;
-            self.vault.store.sync_state.put(
-                txn,
-                &format!("nc:e:{}:{}", id.to_hex(), receipt.request_id.to_hex()),
-                &bytes,
-            )?;
-            self.vault.store.sync_state.delete(txn, &key)?;
+            let nc_key = format!("{}:{}", id.to_hex(), receipt.request_id.to_hex()).into_bytes();
+            NC_E.put(&self.vault.store, txn, &nc_key, receipt)?;
+            QN_E.delete(&self.vault.store, txn, &key)?;
             crate::note::remove_citation_request(&self.vault.store, txn, id, receipt.request_id)?;
             Ok(())
         })
@@ -125,12 +130,8 @@ impl DocumentRegistry {
     ) -> Result<Option<NoteOperationReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
         crate::note::ensure_citations_ready(&self.vault.store, &txn, id)?;
-        self.vault
-            .store
-            .sync_state
-            .get(&txn, &format!("nc:e:{}:{}", id.to_hex(), request.to_hex()))?
-            .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| denied()))
-            .transpose()
+        let key = format!("{}:{}", id.to_hex(), request.to_hex()).into_bytes();
+        NC_E.get(&self.vault.store, &txn, &key)
     }
 }
 fn denied() -> crate::Error {

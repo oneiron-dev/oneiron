@@ -6,7 +6,7 @@ use crate::store::Store;
 
 use super::SecretCustodyStatus;
 use super::codec::{decode_secret_custody_body, invalid_body};
-use super::doors::{name_index_key, read_secret_custody_in_txn, resolve_secret_ref_in_txn};
+use super::doors::{NAME_INDEX, read_secret_custody_in_txn, resolve_secret_ref_in_txn};
 
 /// Read-only planning precedes all staging: rejected replay must not leave an
 /// index behind when the caller quarantines the row and commits other writes.
@@ -17,7 +17,7 @@ pub(crate) fn plan_replicated_name_index(
     entity_type: u8,
     body: &[u8],
     replicated: bool,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<String>> {
     if !replicated || entity_type != crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
         return Ok(None);
     }
@@ -53,7 +53,7 @@ pub(crate) fn plan_replicated_name_index(
             ));
         }
     }
-    Ok(Some(name_index_key(&incoming.name)))
+    Ok(Some(incoming.name))
 }
 
 /// A remote portable record cannot widen a locally narrowed credential.
@@ -81,10 +81,10 @@ pub(crate) fn stage_replicated_name_index(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-    key: Option<Vec<u8>>,
+    name: Option<String>,
 ) -> Result<()> {
-    if let Some(key) = key {
-        store.vault_meta.put(txn, &key, id.as_bytes())?;
+    if let Some(name) = name {
+        NAME_INDEX.put(store, txn, &name, id)?;
     }
     Ok(())
 }

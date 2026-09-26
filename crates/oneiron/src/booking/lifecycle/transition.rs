@@ -9,21 +9,20 @@ use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot}
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
 use super::public_authority::booking_writer_with_publication;
 use super::storage::{
-    calendar_wrap, confirm_receipt_key, decode_row, delete_meta, encode_claim_value, encode_row,
-    engine_failure, hold_key, put_meta, read_meta, read_meta_bytes, read_receipt, read_txn,
-    refused, revision_receipt_key, write_receipt,
+    HOLD, calendar_wrap, confirm_receipt_key, encode_claim_value, engine_failure, read_receipt,
+    read_txn, refused, revision_receipt_key, write_receipt,
 };
 use super::token::{
-    HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, lease_digest, mint_raw_token,
+    HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, hold_digest, lease_digest, mint_raw_token,
     resolve_token_event, revision_token, session_digest, token_digest, write_revision_tokens,
 };
 use super::types::{
-    BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX, BookingLifecycleAttempt, BookingStatus,
-    BookingStatusValue, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
-    ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
+    BOOKING_STATUS_PREDICATE, BookingLifecycleAttempt, BookingStatus, BookingStatusValue,
+    BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec, ConfirmReceipt,
+    ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
 };
-use super::{BookingContent, CheckoutLeaseRow, LifecycleReceiptRow};
+use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::dispatch_confirm_booking_invite;
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
@@ -103,9 +102,10 @@ fn resolve_hold_expiry(
         } => {
             let digest = lease_digest(server_issued_lease);
             let rtxn = read_txn(vault)?;
-            let row: CheckoutLeaseRow =
-                read_meta(vault, &rtxn, BOOKING_TOKEN_META_PREFIX, &digest)?
-                    .ok_or_else(|| refused("checkout extension names no server-issued lease"))?;
+            let row: CheckoutLeaseRow = CHECKOUT_LEASE
+                .get(&vault.store, &rtxn, &digest)
+                .map_err(|error| engine_failure("meta read", error))?
+                .ok_or_else(|| refused("checkout extension names no server-issued lease"))?;
             if row.session_hash != session_digest(session_key) {
                 return Err(refused("checkout lease is bound to another session"));
             }
@@ -144,14 +144,16 @@ pub(crate) fn execute_hold(
         expires_at,
         checkout_lease_hash,
     };
-    let key = hold_key(&spec.session_key);
-    let encoded = encode_row(&row)?;
+    let digest = hold_digest(&spec.session_key);
     booking_writer_with_publication(
         vault,
         public_authority,
         &BookingVerbRequest::Hold(spec.clone()),
         now_utc,
-        |wtxn| put_meta(vault, wtxn, &key, &encoded),
+        |wtxn| {
+            HOLD.put(&vault.store, wtxn, &digest, &row)
+                .map_err(|error| engine_failure("meta write", error))
+        },
     )?;
     Ok(HoldReceipt {
         token,
@@ -269,15 +271,18 @@ fn confirm_in_writer(
 
     // (2) Holds are session-keyed, so a token stolen from another session finds
     // no row at all.
-    let hold_row_key = hold_key(&spec.session_key);
-    let Some(raw) = read_meta_bytes(vault, &*wtxn, &hold_row_key)? else {
+    let digest = hold_digest(&spec.session_key);
+    let Some(hold): Option<SoftHoldRow> = HOLD
+        .get(&vault.store, &*wtxn, &digest)
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
         return Err(refused("no hold exists for this session"));
     };
-    let hold: SoftHoldRow = decode_row(&raw)?;
     if !hold.is_live_at(now_utc) {
         // Opportunistic cleanup, not a scheduler: correctness already came from
         // the liveness test above.
-        delete_meta(vault, wtxn, &hold_row_key)?;
+        HOLD.delete(&vault.store, wtxn, &digest)
+            .map_err(|error| engine_failure("meta delete", error))?;
         return Err(refused("hold has expired"));
     }
     if hold.token_hash != hold_hash {
@@ -353,7 +358,8 @@ fn confirm_in_writer(
             invite_identity: None,
         },
     )?;
-    delete_meta(vault, wtxn, &hold_row_key)?;
+    HOLD.delete(&vault.store, wtxn, &digest)
+        .map_err(|error| engine_failure("meta delete", error))?;
     Ok(ConfirmOutcome::Booked(ConfirmReceipt {
         calendar: revision,
         reschedule_token,

@@ -407,11 +407,11 @@ fn create_from_text_in_txn(
 const PREDICATE_FACET_FORK_SUGGESTED: &str = "facet.fork_suggested";
 
 fn fork_links(
-    batch: crate::batch::TxnBatchBuilder<'_>,
+    batch: crate::batch::BatchBuilder<'_>,
     fork: EntityId,
     origin: EntityId,
     supersede: bool,
-) -> crate::batch::TxnBatchBuilder<'_> {
+) -> crate::batch::BatchBuilder<'_> {
     let batch = batch.edge(&fork, EdgeKind::DerivedFrom, &origin, 1.0);
     if supersede {
         batch.edge(&fork, EdgeKind::Supersedes, &origin, 1.0)

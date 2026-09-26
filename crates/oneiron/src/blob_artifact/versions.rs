@@ -20,11 +20,29 @@ use super::provenance::{
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, blob_artifact_head_key,
-    blob_artifact_version_key, blob_artifact_version_prefix, encode_value, entity_value,
+    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, encode_value, entity_value,
     hash_from_value, read_value, require_entity_type, u64_value,
 };
 use crate::error::ArtifactError;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+/// Blob artifact version record. Key: id16 (artifact) + u64be (version).
+pub(super) const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_VERSION);
+/// Blob artifact head version — the same record shape as [`VERSIONS`], keyed by artifact alone.
+/// Key: id16 (artifact).
+pub(super) const HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_HEAD);
+
+impl RawValue for BlobArtifactVersion {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_blob_artifact_version_record(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_blob_artifact_version_record(bytes)?)
+    }
+}
 
 /// One record of the append-only version chain: content hash + provenance +
 /// the `blob.version` claim id (the LEDGER event for this version).
@@ -174,8 +192,7 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?,
             None => 1,
         };
-        let version_key = blob_artifact_version_key(artifact_id, next_version);
-        if self.store.vault_meta.get(wtxn, &version_key)?.is_some() {
+        if VERSIONS.contains(&self.store, wtxn, &(*artifact_id, next_version))? {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version is already recorded",
             )));
@@ -229,11 +246,8 @@ impl Vault {
                 reason: Some("blob version appended".into()),
             },
         )?;
-        let encoded = encode_blob_artifact_version_record(&record)?;
-        self.store.vault_meta.put(wtxn, &version_key, &encoded)?;
-        self.store
-            .vault_meta
-            .put(wtxn, &blob_artifact_head_key(artifact_id), &encoded)?;
+        VERSIONS.put(&self.store, wtxn, &(*artifact_id, next_version), &record)?;
+        HEAD.put(&self.store, wtxn, artifact_id, &record)?;
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
         Ok(record)
     }
@@ -253,15 +267,13 @@ impl Vault {
         artifact_id: &EntityId,
     ) -> Result<Vec<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let prefix = blob_artifact_version_prefix(artifact_id);
         let mut versions = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&rtxn, &prefix)? {
-            let (key, raw) = entry?;
-            let record = decode_blob_artifact_version_record(&raw)?;
+        for entry in VERSIONS.iter_from(&self.store, &rtxn, artifact_id.as_bytes())? {
+            let ((_, key_version), record) = entry?;
             let expected = u64::try_from(versions.len())
                 .map_err(|_| Error::ArithmeticOverflow("blob artifact version overflow"))?
                 + 1;
-            if record.version != expected || !key.ends_with(&record.version.to_be_bytes()) {
+            if record.version != expected || key_version != record.version {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
             }
             versions.push(record);
@@ -289,14 +301,9 @@ impl Vault {
         version: u64,
     ) -> Result<Option<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &blob_artifact_version_key(artifact_id, version))?
-        else {
+        let Some(record) = VERSIONS.get(&self.store, &rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        let record = decode_blob_artifact_version_record(&raw)?;
         if record.version != version {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
@@ -330,14 +337,9 @@ impl Vault {
         artifact_id: &EntityId,
         version: u64,
     ) -> Result<Option<Vec<u8>>> {
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(rtxn, &blob_artifact_version_key(artifact_id, version))?
-        else {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
-        let record = decode_blob_artifact_version_record(&raw)?;
         read_blob_asset_in_txn(self, rtxn, &record.content_hash).map(Some)
     }
 }
@@ -476,13 +478,7 @@ pub(crate) fn read_blob_artifact_head_in_txn(
     rtxn: &RoTxn<'_>,
     artifact_id: &EntityId,
 ) -> Result<Option<BlobArtifactVersion>> {
-    let Some(raw) = store
-        .vault_meta
-        .get(rtxn, &blob_artifact_head_key(artifact_id))?
-    else {
-        return Ok(None);
-    };
-    decode_blob_artifact_version_record(&raw).map(Some)
+    HEAD.get(store, rtxn, artifact_id)
 }
 
 fn read_blob_asset_in_txn(

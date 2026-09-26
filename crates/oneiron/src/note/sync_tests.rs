@@ -802,12 +802,9 @@ mod program {
                 .is_none()
         );
         assert!(
-            vault
-                .store
-                .vault_meta
-                .get(&txn, &documents::head_key(note))
+            !documents::NOTE_HEAD
+                .contains(&vault.store, &txn, &note)
                 .expect("read erased-note head")
-                .is_none()
         );
         drop(txn);
         assert!(vault.note_text(note).is_err());

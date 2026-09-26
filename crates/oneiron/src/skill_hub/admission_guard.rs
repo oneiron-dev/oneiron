@@ -1,6 +1,7 @@
 //! Imported and hub-derived instruction authority at the single SKILL materialization door.
 use super::HubAdmissionProof;
 use super::package_codec::invalid;
+use crate::side_table::{self, Raw, SideTable, StagedRow};
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     claim::ClaimSource,
@@ -9,6 +10,15 @@ use crate::{
     skill::{SkillLifecycle, SkillRecord},
     store::Store,
 };
+
+/// Origin marker for a hub-materialized skill (imported flag, optional
+/// forked-from parent id); survives deletion so it cannot be laundered by
+/// delete/recreate.
+///
+/// The write half of this table is a [`StagedRow`] built here for
+/// [`crate::batch::put_apply::apply`] (outside this module) to commit inside
+/// its own put transaction alongside the rest of the entity write.
+const ORIGIN: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::SKILL_HUB_ORIGIN);
 
 impl crate::Vault {
     pub(in crate::skill_hub) fn admit_hub_skill_record_in_txn(
@@ -40,14 +50,6 @@ impl crate::Vault {
         )
     }
 }
-fn origin_key(id: &EntityId) -> Vec<u8> {
-    key(b"skill_hub/origin/v1\0", id)
-}
-fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
-    let mut key = prefix.to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 fn origin(record: &SkillRecord) -> Vec<u8> {
     let mut out = vec![u8::from(record.source == ClaimSource::Imported)];
     if let Some(parent) = record.forked_from {
@@ -64,13 +66,12 @@ pub(crate) fn check_hub_skill_put(
     record: &SkillRecord,
     replaces_source: bool,
     proof: Option<&HubAdmissionProof>,
-) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+) -> Result<Option<StagedRow>> {
     super::package_codec::check_source_binding_update(store, txn, id, record, replaces_source)?;
-    let key = origin_key(id);
-    let marked = store.vault_meta.get(txn, &key)?;
+    let marked = ORIGIN.get(store, txn, id)?;
     let current_origin = origin(record);
     if let Some(marked) = &marked
-        && marked.as_ref() != current_origin.as_slice()
+        && marked.as_slice() != current_origin.as_slice()
     {
         return Err(invalid(
             "hub or fork origin cannot be removed, including after deletion",
@@ -115,7 +116,10 @@ pub(crate) fn check_hub_skill_put(
             ));
         }
     }
-    Ok(marked.is_none().then_some((key, current_origin)))
+    marked
+        .is_none()
+        .then(|| ORIGIN.stage(id, &current_origin))
+        .transpose()
 }
 
 /// A local owner-authored fork is not a marketplace import. Imported ancestry
@@ -130,7 +134,7 @@ fn has_import_origin(store: &Store, txn: &heed::RoTxn<'_>, record: &SkillRecord)
         if seen.len() >= 128 || !seen.insert(id) {
             return Err(invalid("invalid skill fork ancestry"));
         }
-        if store.vault_meta.get(txn, &origin_key(&id))?.is_some() {
+        if ORIGIN.contains(store, txn, &id)? {
             return Ok(true);
         }
         let raw = store

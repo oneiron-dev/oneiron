@@ -13,8 +13,9 @@ use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 use crate::sync::client::{SyncClient, SyncEvent, SyncStatus, next_backoff};
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::parse_window_key_str;
+use crate::sync::window_rows::WINDOW_FULL_RESYNC_MARKER;
 
-use super::session::{FULL_RESYNC_MARKER_PREFIX, FullResyncMarker};
+use super::session::FullResyncMarker;
 use super::{LocalUpdate, LoopExit, SyncConnection};
 
 impl SyncConnection {
@@ -374,21 +375,21 @@ impl SyncConnection {
     }
 
     fn full_resync_markers(&self) -> Result<Vec<FullResyncMarker>, String> {
-        let keys = self
-            .manager
-            .vault()
-            .sync_state_keys_with_prefix(FULL_RESYNC_MARKER_PREFIX)
+        let vault = self.manager.vault();
+        let rtxn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
+        let keys = WINDOW_FULL_RESYNC_MARKER
+            .scan_keys(&vault.store, &rtxn, &[])
             .map_err(|e| format!("Read full-resync markers failed: {e}"))?;
         let mut markers = Vec::with_capacity(keys.len());
-        for key in keys {
-            let Some(window_key) = key.strip_prefix(FULL_RESYNC_MARKER_PREFIX) else {
-                continue;
-            };
-            if parse_window_key_str(window_key).is_none() {
-                return Err(format!("Invalid full-resync marker key: {key}"));
+        for window_key in keys {
+            if parse_window_key_str(&window_key).is_none() {
+                return Err(format!("Invalid full-resync marker key: fr:w:{window_key}"));
             }
-            let window_key = window_key.to_string();
-            markers.push(FullResyncMarker { key, window_key });
+            markers.push(FullResyncMarker { window_key });
         }
         Ok(markers)
     }
@@ -401,7 +402,7 @@ impl SyncConnection {
         vault
             .with_write_txn(|wtxn| {
                 for marker in markers {
-                    vault.store.sync_state.delete(wtxn, &marker.key)?;
+                    WINDOW_FULL_RESYNC_MARKER.delete(&vault.store, wtxn, &marker.window_key)?;
                 }
                 Ok(())
             })

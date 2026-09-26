@@ -5,7 +5,8 @@
 //! is distinct from the logical export's entity/claim transformation format.
 mod rebuild;
 mod tiers;
-use crate::{Error, Result, Vault, VaultConfig, store::DB_MANIFEST};
+use crate::side_table::{self, Named, SideTable};
+use crate::{EntityId, Error, Result, Vault, VaultConfig, store::DB_MANIFEST};
 use heed::types::Bytes;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -15,6 +16,19 @@ use std::{
 };
 pub use tiers::{StorageTier, storage_tier};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Presence-only probes for the canonical rebuild inputs behind the text and
+/// phonetic indexes; the tables themselves are owned elsewhere (`text` search
+/// and [`crate::batch::phonetic_apply`]), so only existence is checked here,
+/// never the value shape.
+const INDEX_SOURCE_TEXT: SideTable<EntityId, (), Named> =
+    SideTable::new(&side_table::INDEX_SOURCE_TEXT);
+const INDEX_SOURCE_PHONETIC: SideTable<EntityId, (), Named> =
+    SideTable::new(&side_table::BATCH_PHONETIC_INDEX_SOURCE);
+/// Log of checkpoint restore/wake/migrate events, one row per epoch. Key:
+/// `u64be(sequence)`.
+const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
+    SideTable::new(&side_table::RESTORE_EPOCH);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,9 +89,8 @@ impl Vault {
         // A pre-witness index is not silently restored as an empty search surface.
         for row in self.store.text_forward.iter(&txn)? {
             let (id, _) = row?;
-            let mut key = b"index_source:text:v1:".to_vec();
-            key.extend_from_slice(&id);
-            if self.store.vault_meta.get(&txn, &key)?.is_none() {
+            let id = EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+            if !INDEX_SOURCE_TEXT.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvalidConfig(
                     "text index lacks canonical rebuild input".into(),
                 ));
@@ -85,9 +98,8 @@ impl Vault {
         }
         for row in self.store.phonetic_forward.iter(&txn)? {
             let (id, _) = row?;
-            let mut key = b"index_source:phonetic:v1:".to_vec();
-            key.extend_from_slice(&id);
-            if self.store.vault_meta.get(&txn, &key)?.is_none() {
+            let id = EntityId::from_bytes(id.as_ref().try_into().map_err(|_| codec_error())?)?;
+            if !INDEX_SOURCE_PHONETIC.contains(&self.store, &txn, &id)? {
                 return Err(Error::InvalidConfig(
                     "phonetic index lacks canonical rebuild input".into(),
                 ));
@@ -123,8 +135,8 @@ impl Vault {
                             && (excluded.contains(&key[..16]) || excluded.contains(&key[17..]))
                     }
                     "vault_meta" => [
-                        b"index_source:text:v1:".as_slice(),
-                        b"index_source:phonetic:v1:",
+                        INDEX_SOURCE_TEXT.decl().prefix,
+                        INDEX_SOURCE_PHONETIC.decl().prefix,
                     ]
                     .iter()
                     .any(|p| key.strip_prefix(*p).is_some_and(|id| excluded.contains(id))),
@@ -259,25 +271,14 @@ impl Vault {
             reason,
         };
         vault.with_write_txn(|txn| {
-            let prefix = b"restore:epoch:v1:";
-            let sequence = match vault
-                .store
-                .vault_meta
-                .prefix_iter(txn, prefix)?
-                .last()
-                .transpose()?
-            {
+            let sequence = match RESTORE_EPOCH.iter_rev_from(&vault.store, txn, &[])?.next() {
                 None => 0,
-                Some((key, _)) => {
-                    u64::from_be_bytes(key[prefix.len()..].try_into().map_err(|_| codec_error())?)
-                        .checked_add(1)
-                        .ok_or(codec_error())?
+                Some(row) => {
+                    let (sequence, _) = row?;
+                    sequence.checked_add(1).ok_or(codec_error())?
                 }
             };
-            let mut key = prefix.to_vec();
-            key.extend_from_slice(&sequence.to_be_bytes());
-            let body = rmp_serde::to_vec_named(&epoch).map_err(|_| codec_error())?;
-            vault.store.vault_meta.put(txn, &key, &body)?;
+            RESTORE_EPOCH.put(&vault.store, txn, &sequence, &epoch)?;
             Ok(())
         })?;
         let report = RestoreReport {
@@ -291,13 +292,9 @@ impl Vault {
     pub fn restore_epochs(&self) -> Result<Vec<RestoreEpoch>> {
         let txn = self.store.env.read_txn()?;
         let mut epochs = Vec::new();
-        for row in self
-            .store
-            .vault_meta
-            .prefix_iter(&txn, b"restore:epoch:v1:")?
-        {
-            let (_, body) = row?;
-            epochs.push(rmp_serde::from_slice(&body).map_err(|_| codec_error())?);
+        for row in RESTORE_EPOCH.iter_from(&self.store, &txn, &[])? {
+            let (_, epoch) = row?;
+            epochs.push(epoch);
         }
         Ok(epochs)
     }

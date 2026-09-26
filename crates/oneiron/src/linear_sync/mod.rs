@@ -72,14 +72,15 @@ mod engine;
 mod model;
 mod storage_codec;
 
-pub use self::codec::{linear_event_digest, linear_operation_id, linear_sync_link_key};
+pub(crate) use self::codec::LINEAR_LINKS;
+pub use self::codec::{linear_event_digest, linear_operation_id};
 pub use self::engine::LinearSyncAdapter;
 pub use self::model::{
     LINEAR_ENGINE_AUTHORITATIVE_FIELDS, LINEAR_FIELD_ASSIGNEE_REF, LINEAR_FIELD_DESCRIPTION,
     LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE, LINEAR_MIRRORED_FIELDS,
-    LINEAR_SYNC_ADAPTER_ID, LINEAR_SYNC_LINK_KEY_PREFIX, LINEAR_SYNC_OPERATION_DOMAIN,
-    LINEAR_SYNC_REGISTRATION, LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource,
-    LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
+    LINEAR_SYNC_ADAPTER_ID, LINEAR_SYNC_OPERATION_DOMAIN, LINEAR_SYNC_REGISTRATION,
+    LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource, LinearEgress,
+    LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
     LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError,
     LinearSyncRegistration, LinearSyncResult, LinearTaskStore, MirroredTaskFields, TaskIssueLink,
     TaskMirrorSnapshot, WaveResult,

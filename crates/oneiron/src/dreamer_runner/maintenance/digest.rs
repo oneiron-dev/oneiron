@@ -1,12 +1,21 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-const CADENCE_KEY: &[u8] = b"settings:dreamer:proactivity:cadence:v1";
-const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v1";
-const DIGEST_PREFIX: &[u8] = b"dreamer:proactivity:digest:v1:";
+
+/// Owner-set cadence dial for the proactivity digest.
+const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
+/// Rolling proactivity-digest emission state (last_emitted timestamp, seen revisions).
+const STATE: SideTable<(), DigestState, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_STATE);
+/// One emitted proactivity digest, keyed by its content-derived id.
+const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
+    SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -52,10 +61,9 @@ impl Vault {
         if row.period_secs == 0 {
             return Err(invalid());
         }
-        let bytes = serde_json::to_vec(row).map_err(|_| invalid())?;
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            self.store.vault_meta.put(txn, CADENCE_KEY, &bytes)?;
+            CADENCE.put(&self.store, txn, &(), row)?;
             Ok(())
         })
     }
@@ -71,21 +79,15 @@ impl Vault {
         let authority = self.dreamer_authority()?.entity_ref();
         self.with_write_txn(|txn| {
             super::validate_owner_in_txn(self, txn, owner)?;
-            let cadence: ProactivityCadence = match self.store.vault_meta.get(&*txn, CADENCE_KEY)? {
-                Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| invalid())?,
+            let cadence: ProactivityCadence = match CADENCE.get(&self.store, &*txn, &())? {
+                Some(row) => row,
                 None => serde_json::from_str(include_str!("digest_defaults.json"))
                     .map_err(|_| invalid())?,
             };
             if cadence.period_secs == 0 {
                 return Err(invalid());
             }
-            let mut state: DigestState = self
-                .store
-                .vault_meta
-                .get(&*txn, STATE_KEY)?
-                .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| invalid()))
-                .transpose()?
-                .unwrap_or_default();
+            let mut state: DigestState = STATE.get(&self.store, &*txn, &())?.unwrap_or_default();
             let next = state
                 .last_emitted
                 .map(|last| last.saturating_add(cadence.period_secs));
@@ -187,27 +189,17 @@ impl Vault {
                 groups,
                 rendered,
             };
-            let bytes = serde_json::to_vec(&digest).map_err(|_| invalid())?;
-            self.store
-                .vault_meta
-                .put(txn, &[DIGEST_PREFIX, &digest.id].concat(), &bytes)?;
+            DIGEST.put(&self.store, txn, &digest.id, &digest)?;
             state.last_emitted = Some(now);
-            self.store.vault_meta.put(
-                txn,
-                STATE_KEY,
-                &serde_json::to_vec(&state).map_err(|_| invalid())?,
-            )?;
+            STATE.put(&self.store, txn, &(), &state)?;
             Ok(Some(digest))
         })
     }
     pub fn read_proactivity_digest(&self, id: [u8; 32]) -> Result<Option<ProactivityDigest>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &[DIGEST_PREFIX, &id].concat())?
-            .map(|bytes| {
-                let digest: ProactivityDigest =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        DIGEST
+            .get(&self.store, &txn, &id)?
+            .map(|digest| {
                 let identity = serde_json::to_vec(&(
                     digest.created_at,
                     &digest.groups,

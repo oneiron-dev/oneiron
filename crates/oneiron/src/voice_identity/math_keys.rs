@@ -1,14 +1,9 @@
-//! Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix invariant.
+//! Vector-math door (normalize/cosine/same-space check) and the digest helper the typed side
+//! tables' keys are built from.
 
 use sha2::{Digest, Sha256};
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
-
-use super::types::{
-    VOICE_CONSENT_KEY_PREFIX, VOICE_PRINT_KEY_PREFIX, VOICE_ROSTER_KEY_PREFIX,
-    VOICE_SAMPLE_KEY_PREFIX,
-};
 
 pub(super) fn invalid_voice(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
@@ -120,7 +115,10 @@ pub(super) fn voice_cosine_in_space(
     cosine_similarity(left, right)
 }
 
-fn digest16(domain: &[u8], value: &[u8]) -> [u8; 16] {
+/// A stable 16-byte digest of one domain-separated value, the suffix half of
+/// several side-table keys whose full identity would otherwise be unbounded
+/// text (a space id, a sample id, an event id, a session ref).
+pub(super) fn digest16(domain: &[u8], value: &[u8]) -> [u8; 16] {
     let mut hasher = Sha256::new();
     hasher.update(domain);
     hasher.update((value.len() as u64).to_be_bytes());
@@ -129,51 +127,4 @@ fn digest16(domain: &[u8], value: &[u8]) -> [u8; 16] {
     let mut out = [0_u8; 16];
     out.copy_from_slice(&digest[..16]);
     out
-}
-
-fn key_with(prefix: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + parts.iter().map(|p| p.len()).sum::<usize>());
-    key.extend_from_slice(prefix);
-    for part in parts {
-        key.extend_from_slice(part);
-    }
-    key
-}
-
-/// Prefix covering every print-family row of one subject.
-pub(super) fn voice_subject_prefix(subject: &EntityId) -> Vec<u8> {
-    key_with(VOICE_PRINT_KEY_PREFIX, &[subject.as_bytes()])
-}
-
-/// Active-space pointer row: subject -> active space digest.
-pub(super) fn voice_active_pointer_key(subject: &EntityId) -> Vec<u8> {
-    voice_subject_prefix(subject)
-}
-
-/// Print row: one centroid for one (subject, embedding space).
-pub(super) fn voice_print_key(subject: &EntityId, space_id: &str) -> Vec<u8> {
-    let digest = digest16(b"voice_identity.space", space_id.as_bytes());
-    key_with(VOICE_PRINT_KEY_PREFIX, &[subject.as_bytes(), &digest])
-}
-
-pub(super) fn voice_sample_key(subject: &EntityId, sample_id: &str) -> Vec<u8> {
-    let mut scoped = Vec::with_capacity(ENTITY_ID_LEN + sample_id.len());
-    scoped.extend_from_slice(subject.as_bytes());
-    scoped.extend_from_slice(sample_id.as_bytes());
-    let digest = digest16(b"voice_identity.sample", &scoped);
-    key_with(VOICE_SAMPLE_KEY_PREFIX, &[&digest])
-}
-
-pub(super) fn voice_consent_prefix(subject: &EntityId) -> Vec<u8> {
-    key_with(VOICE_CONSENT_KEY_PREFIX, &[subject.as_bytes()])
-}
-
-pub(super) fn voice_consent_key(subject: &EntityId, event_id: &str) -> Vec<u8> {
-    let digest = digest16(b"voice_identity.consent", event_id.as_bytes());
-    key_with(VOICE_CONSENT_KEY_PREFIX, &[subject.as_bytes(), &digest])
-}
-
-pub(super) fn voice_roster_key(voice_session_ref: &str) -> Vec<u8> {
-    let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
-    key_with(VOICE_ROSTER_KEY_PREFIX, &[&digest])
 }

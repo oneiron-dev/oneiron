@@ -5,18 +5,20 @@ use super::*;
 /// Body schema version for every record this module writes.
 pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 1;
 
-/// `vault_meta` prefix owned by the onboarding journal.
-pub const WORKSPACE_ONBOARDING_KEY_PREFIX: &[u8] = b"workspace_roster:onboarding:v1:";
+/// Idempotency journal tracking one member-onboarding request's progress
+/// through the pinned step ladder. Key: caller-supplied onboarding id.
+pub(super) const ONBOARDING: SideTable<String, OnboardingJournalRow, Raw> =
+    SideTable::new(&side_table::WORKSPACE_ONBOARDING);
 
-/// `vault_meta` prefix owned by the per-workspace preset row.
-pub const WORKSPACE_ROSTER_PRESET_KEY_PREFIX: &[u8] = b"workspace_roster:preset:v1:";
+/// Per-workspace roster preset (org, venture name, house actor/identity, house
+/// display name). Key: workspace_ref.
+pub(super) const PRESET: SideTable<String, WorkspaceRosterPreset, Raw> =
+    SideTable::new(&side_table::WORKSPACE_ROSTER_PRESET);
 
-/// `vault_meta` prefix owned by the per-member roster row.
-///
-/// Full key is `prefix ++ workspace_ref ++ 0x00 ++ member_person_hex`. The NUL
-/// separator is unambiguous because `WorkspaceRosterPreset::validate` refuses
-/// a `workspace_ref` containing one.
-pub const WORKSPACE_ROSTER_MEMBER_KEY_PREFIX: &[u8] = b"workspace_roster:member:v1:";
+/// One onboarded member's roster row (actor, optional companion
+/// person/actor/facet, identity). Key: [`RosterMemberKey`].
+pub(super) const MEMBER: SideTable<RosterMemberKey, RosterMemberRow, Raw> =
+    SideTable::new(&side_table::WORKSPACE_ROSTER_MEMBER);
 
 /// Upper bound on every caller-supplied name/reference string in this module.
 pub(super) const MAX_NAME_BYTES: usize = 256;
@@ -168,7 +170,7 @@ pub struct WorkspaceRosterEntry {
     pub display_name: String,
 }
 
-/// A member roster row as stored under [`WORKSPACE_ROSTER_MEMBER_KEY_PREFIX`].
+/// A member roster row as stored under [`MEMBER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RosterMemberRow {
     pub(super) person_ref: EntityId,
@@ -179,7 +181,46 @@ pub(super) struct RosterMemberRow {
     pub(super) identity_ref: Option<EntityId>,
 }
 
-/// A journal record as stored under [`WORKSPACE_ONBOARDING_KEY_PREFIX`].
+impl RawValue for RosterMemberRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&roster_member_value(self))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_roster_member_row(bytes)?)
+    }
+}
+
+/// The bytes after [`MEMBER`]'s declared prefix: `workspace_ref` then a NUL separator then the
+/// member person id as 32 lower-case hex characters. The NUL is unambiguous because
+/// [`WorkspaceRosterPreset::validate`] refuses a `workspace_ref` containing one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RosterMemberKey {
+    pub(super) workspace_ref: String,
+    pub(super) person_ref: EntityId,
+}
+
+impl SideKey for RosterMemberKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(self.workspace_ref.as_bytes());
+        out.push(ROSTER_KEY_SEPARATOR);
+        out.extend_from_slice(self.person_ref.to_hex().as_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let separator = bytes
+            .iter()
+            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
+        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
+        let HexId(person_ref) = HexId::decode_key(&bytes[separator + 1..])?;
+        Some(Self {
+            workspace_ref,
+            person_ref,
+        })
+    }
+}
+
+/// A journal record as stored under [`ONBOARDING`].
 ///
 /// Deliberately does NOT store outcome refs: every ref is caller-supplied, so
 /// the outcome is derivable from the intent whose digest this record pins. Two
@@ -189,4 +230,87 @@ pub(super) struct OnboardingJournal {
     pub(super) intent_digest: [u8; 32],
     pub(super) step: MemberOnboardingStep,
     pub(super) completed_at: Option<u64>,
+}
+
+/// The on-disk shape of one [`ONBOARDING`] row: the journal plus the
+/// caller-supplied onboarding id it was written under. Every row this module
+/// has ever written carries the id, so it stays on the wire type; the
+/// in-memory [`OnboardingJournal`] a caller reads back never needs to
+/// re-derive its own lookup key, so it stays off that struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OnboardingJournalRow {
+    pub(super) onboarding_id: String,
+    pub(super) intent_digest: [u8; 32],
+    pub(super) step: MemberOnboardingStep,
+    pub(super) completed_at: Option<u64>,
+}
+
+impl OnboardingJournalRow {
+    pub(super) fn into_journal(self) -> OnboardingJournal {
+        OnboardingJournal {
+            intent_digest: self.intent_digest,
+            step: self.step,
+            completed_at: self.completed_at,
+        }
+    }
+}
+
+impl RawValue for OnboardingJournalRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&Value::Map(vec![
+            (
+                Value::from("schema_version"),
+                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+            ),
+            (
+                Value::from("onboarding_id"),
+                Value::from(self.onboarding_id.as_str()),
+            ),
+            (
+                Value::from("intent_digest"),
+                Value::Binary(self.intent_digest.to_vec()),
+            ),
+            (Value::from("step"), Value::from(self.step.as_str())),
+            (
+                Value::from("completed_at"),
+                self.completed_at.map_or(Value::Nil, Value::from),
+            ),
+        ]))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let entries = decode_map(bytes)?;
+        if required(&entries, "schema_version")?.as_u64() != Some(WORKSPACE_ROSTER_SCHEMA_VERSION) {
+            return Err(invalid("onboarding journal schema_version is unsupported").into());
+        }
+        let onboarding_id = required_str(&entries, "onboarding_id")?;
+        let digest_bytes = match required(&entries, "intent_digest")? {
+            Value::Binary(bytes) => bytes.clone(),
+            _ => return Err(invalid("onboarding journal intent_digest must be binary").into()),
+        };
+        let intent_digest: [u8; 32] = digest_bytes
+            .try_into()
+            .map_err(|_| invalid("onboarding journal intent_digest must be 32 bytes"))?;
+        let step = required(&entries, "step")?
+            .as_str()
+            .and_then(MemberOnboardingStep::parse)
+            .ok_or_else(|| invalid("onboarding journal step is unrecognized"))?;
+        let completed_at = match required(&entries, "completed_at")? {
+            Value::Nil => None,
+            value => Some(
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid("onboarding journal completed_at must be a u64"))?,
+            ),
+        };
+        if (step == MemberOnboardingStep::Complete) != completed_at.is_some() {
+            return Err(invalid("onboarding journal completion fields disagree").into());
+        }
+        Ok(Self {
+            onboarding_id,
+            intent_digest,
+            step,
+            completed_at,
+        })
+    }
 }

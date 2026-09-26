@@ -1,19 +1,25 @@
 //! Scoped NOTE replacement and immutable-workflow preflight in one transaction.
 
-use super::{receipt_key, workflow};
-use crate::recovery::canonical::{CanonicalSnapshot, id, invalid, pack, parse_id};
-use crate::{
-    Vault,
-    error::Result,
-    note::{NoteFork, NoteReviewBundle},
-};
+use super::{DocKey, NOTE_FORK, NOTE_PROPOSAL_BUNDLE, NOTE_PROPOSAL_DOC, NOTE_RECEIPT, workflow};
+use crate::entity_id::EntityId;
+use crate::recovery::canonical::{CanonicalSnapshot, id, invalid};
+use crate::{Vault, error::Result, note::NoteFork};
 use loro::LoroDoc;
 use std::collections::{BTreeMap, BTreeSet};
 
 type Scope = BTreeSet<[u8; 16]>;
+
+/// One stale row this pass drops: a proposal document, or a receipt/fork/
+/// bundle row addressed by its typed table.
+enum StaleMetadata {
+    Receipt(EntityId),
+    Fork(EntityId),
+    Proposal(EntityId),
+}
+
 struct Cleanup {
-    docs: Vec<String>,
-    metadata: Vec<Vec<u8>>,
+    docs: Vec<DocKey>,
+    metadata: Vec<StaleMetadata>,
 }
 fn same_fork(previous: &NoteFork, expected: &NoteFork) -> bool {
     let mut previous = previous.clone();
@@ -54,26 +60,20 @@ fn plan(
         .iter()
         .map(|row| (row.entity_id, row.head))
         .collect();
-    let expected_docs: BTreeSet<_> = snapshot
+    let expected_docs: BTreeSet<(EntityId, EntityId)> = snapshot
         .doc_snapshots
         .iter()
         .filter(|row| !live.contains(&(row.entity_id, row.head)))
-        .map(|row| {
-            Ok(crate::note::documents::doc_key(
-                id(row.entity_id)?,
-                id(row.head)?,
-            ))
-        })
+        .map(|row| Ok((id(row.entity_id)?, id(row.head)?)))
         .collect::<Result<_>>()?;
     for owner in admitted {
         let note = id(*owner)?;
         crate::note::recovery::guard(vault, txn, note)?;
-        let prefix = format!("note_proposal_doc:v1:{}:", note.to_hex());
-        for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
-            let (key, _) = row?;
-            parse_id(&key[prefix.len()..])?;
-            if !expected_docs.contains(key.as_ref()) {
-                cleanup.docs.push(key.to_string());
+        let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
+        for key in NOTE_PROPOSAL_DOC.scan_keys(&vault.store, txn, &note_prefix)? {
+            let DocKey(_, head) = key;
+            if !expected_docs.contains(&(note, head)) {
+                cleanup.docs.push(key);
             }
         }
     }
@@ -83,28 +83,22 @@ fn plan(
         .map(|row| (row.id, row))
         .collect();
     let mut stored_receipts = BTreeMap::new();
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_receipt:v1:")?
-    {
-        let (key, raw) = row?;
-        let receipt: crate::note::NoteLandingReceipt = workflow::decode(&raw)?;
+    for (receipt_id, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
         stored_receipts.insert(receipt.id, receipt.clone());
         if !admitted.contains(receipt.note.as_bytes())
             && !receipts.contains_key(receipt.id.as_bytes())
         {
             continue;
         }
-        if key != receipt_key(*receipt.id.as_bytes()) {
+        if receipt_id != receipt.id {
             return Err(invalid("stored receipt key"));
         }
         match receipts.get(receipt.id.as_bytes()) {
-            Some(expected) if expected.receipt.as_slice() != raw.as_ref() => {
+            Some(expected) if expected.receipt != NOTE_RECEIPT.encode_value(&receipt)? => {
                 return Err(invalid("immutable head receipt divergence"));
             }
             Some(_) => {}
-            None => cleanup.metadata.push(key.to_vec()),
+            None => cleanup.metadata.push(StaleMetadata::Receipt(receipt_id)),
         }
     }
     let expected_forks: BTreeMap<_, _> = snapshot
@@ -113,12 +107,10 @@ fn plan(
         .map(|fork| (fork.fork, fork))
         .collect();
     let mut stored_forks = BTreeMap::new();
-    for row in vault.store.vault_meta.prefix_iter(txn, b"note_fork:v1:")? {
-        let (key, raw) = row?;
-        let fork: NoteFork = workflow::decode(&raw)?;
+    for (fork_id, fork) in NOTE_FORK.scan(&vault.store, txn)? {
         // Even an out-of-scope row cannot alias an admitted immutable id.
         if admitted.contains(fork.note.as_bytes()) || expected_forks.contains_key(&fork.fork) {
-            if key != workflow::fork_key(&fork) {
+            if fork_id != fork.fork {
                 return Err(invalid("stored fork key"));
             }
             match expected_forks.get(&fork.fork) {
@@ -126,7 +118,7 @@ fn plan(
                     return Err(invalid("immutable fork divergence"));
                 }
                 Some(_) => {}
-                None => cleanup.metadata.push(key.to_vec()),
+                None => cleanup.metadata.push(StaleMetadata::Fork(fork_id)),
             }
         }
         stored_forks.insert(fork.fork, fork);
@@ -141,13 +133,7 @@ fn plan(
             return Err(invalid("proposal was only partially admitted"));
         }
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_proposal:v1:")?
-    {
-        let (key, raw) = row?;
-        let mut bundle: NoteReviewBundle = workflow::decode(&raw)?;
+    for (bundle_id, mut bundle) in NOTE_PROPOSAL_BUNDLE.scan(&vault.store, txn)? {
         let mut notes = workflow::bundle_notes(&bundle);
         for fork_id in bundle
             .waiting
@@ -165,7 +151,7 @@ fn plan(
         if !notes.is_subset(admitted) {
             return Err(invalid("stored proposal crosses recovery scope"));
         }
-        if key != workflow::bundle_key(&bundle) {
+        if bundle_id != bundle.id {
             return Err(invalid("stored proposal key"));
         }
         if !(1..=256).contains(&(bundle.waiting.len() + bundle.landed.len()))
@@ -210,7 +196,7 @@ fn plan(
                     return Err(invalid("immutable proposal divergence"));
                 }
             }
-            None => cleanup.metadata.push(key.to_vec()),
+            None => cleanup.metadata.push(StaleMetadata::Proposal(bundle_id)),
         }
     }
     Ok(cleanup)
@@ -271,10 +257,20 @@ pub(crate) fn run_in_txn(
     }
     let cleanup = plan(vault, txn, snapshot, &admitted)?;
     for key in cleanup.docs {
-        vault.store.sync_state.delete(txn, &key)?;
+        NOTE_PROPOSAL_DOC.delete(&vault.store, txn, &key)?;
     }
     for key in cleanup.metadata {
-        vault.store.vault_meta.delete(txn, &key)?;
+        match key {
+            StaleMetadata::Receipt(id) => {
+                NOTE_RECEIPT.delete(&vault.store, txn, &id)?;
+            }
+            StaleMetadata::Fork(id) => {
+                NOTE_FORK.delete(&vault.store, txn, &id)?;
+            }
+            StaleMetadata::Proposal(id) => {
+                NOTE_PROPOSAL_BUNDLE.delete(&vault.store, txn, &id)?;
+            }
+        }
     }
     let heads: BTreeMap<_, _> = snapshot
         .document_heads
@@ -312,34 +308,29 @@ pub(crate) fn run_in_txn(
                 crate::note::recovery::restore(vault, txn, note, &row.text, &row.authorship)?;
             }
         } else {
-            let key = crate::note::documents::doc_key(note, id(row.head)?);
+            let key = DocKey(note, id(row.head)?);
             // Proposal equality is a text-value claim, never proof that a
             // nested Loro snapshot has no erased history. Rebuild even when
             // the current text matches; live value-equal docs remain untouched.
             let doc = crate::note::documents::proposal_value(note, &row.text)?;
-            vault
-                .store
-                .sync_state
-                .put(txn, &key, &crate::note::documents::snapshot(&doc)?)?;
+            NOTE_PROPOSAL_DOC.put(
+                &vault.store,
+                txn,
+                &key,
+                &crate::note::documents::snapshot(&doc)?,
+            )?;
         }
     }
     for receipt in &snapshot.head_move_receipts {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &receipt_key(receipt.id), &receipt.receipt)?;
+        let value: crate::note::NoteLandingReceipt =
+            rmp_serde::from_slice(&receipt.receipt).map_err(|_| invalid("head receipt"))?;
+        NOTE_RECEIPT.put(&vault.store, txn, &value.id, &value)?;
     }
     for fork in &snapshot.note_forks {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &workflow::fork_key(fork), &pack(fork)?)?;
+        NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     }
     for bundle in &snapshot.note_proposals {
-        vault
-            .store
-            .vault_meta
-            .put(txn, &workflow::bundle_key(bundle), &pack(bundle)?)?;
+        NOTE_PROPOSAL_BUNDLE.put(&vault.store, txn, &bundle.id, bundle)?;
     }
     Ok(())
 }

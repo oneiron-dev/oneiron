@@ -6,8 +6,12 @@ use super::{
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, TimeRange, Vault};
-const CREATION_KEY: &[u8] = b"shared-vault:creation:v1";
+
+/// One-time creation-time membership defaults. Key: `()` (singleton).
+const SHARED_VAULT_CREATION: SideTable<(), SharedVaultCreation, LegacyJson> =
+    SideTable::new(&side_table::SHARED_VAULT_CREATION);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,7 +77,7 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        if self.store.vault_meta.get(&txn, CREATION_KEY)?.is_some()
+        if SHARED_VAULT_CREATION.contains(&self.store, &txn, &())?
             || self
                 .store
                 .type_index
@@ -172,17 +176,12 @@ impl Vault {
             false,
             true,
         )?;
-        let bytes = serde_json::to_vec(&creation).map_err(|_| invalid("shared creation encode"))?;
-        self.store.vault_meta.put(&mut txn, CREATION_KEY, &bytes)?;
+        SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
         txn.commit()?;
         Ok(creation)
     }
     pub fn shared_vault_creation(&self) -> Result<Option<SharedVaultCreation>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, CREATION_KEY)?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid("shared creation decode")))
-            .transpose()
+        SHARED_VAULT_CREATION.get(&self.store, &txn, &())
     }
 }

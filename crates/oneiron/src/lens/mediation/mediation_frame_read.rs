@@ -278,13 +278,25 @@ impl LensRenderFrame {
         scoped_read: &ScopedRead<'_>,
         target: &LensBackingTarget,
     ) -> Result<()> {
-        if self.scoped_body(scoped_read, target.entity_id())?.is_none() {
+        // An admission check: any narrowing here refuses the whole render.
+        if self
+            .scoped_body(scoped_read, target.entity_id())?
+            .value
+            .is_none()
+        {
             return Err(Error::InvalidConfig(
                 "lens target outside frame scope".into(),
             ));
         }
         let Some(hydrated) = scoped_read
-            .hydrate_short_id(target.short_id(), target.content_hash())?
+            .read(
+                &[crate::claim::PointRead::short(
+                    target.short_id(),
+                    target.content_hash(),
+                )],
+                None,
+            )?
+            .single()
             .value
         else {
             return Err(Error::InvalidConfig(

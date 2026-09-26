@@ -5,9 +5,14 @@ use super::{
     model::*,
 };
 use crate::outbound::*;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+/// Esign outbound dispatch marker. Key: bytes32 (blake3 of the intent ref).
+const DISPATCH_MARKER: SideTable<[u8; 32], String, Raw> =
+    SideTable::new(&side_table::ESIGN_DISPATCH_MARKER);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EsignOutboundVerb {
@@ -44,10 +49,10 @@ impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
         let result = self.vault.with_write_txn(|txn| {
             let id = EntityId::from_hex(&self.command.document)?;
-            let marker = [b"esign.dispatch.v1/".as_slice(), blake3::hash(request.intent_ref.as_bytes()).as_bytes()].concat();
+            let marker = *blake3::hash(request.intent_ref.as_bytes()).as_bytes();
             let binding = request.intent.content_ref.as_deref().ok_or_else(|| invalid("missing command binding"))?;
-            if let Some(prior) = self.vault.store.vault_meta.get(txn, &marker)? {
-                if prior != binding.as_bytes() { return Err(invalid("dispatch replay binding changed")); }
+            if let Some(prior) = DISPATCH_MARKER.get(&self.vault.store, txn, &marker)? {
+                if prior != binding { return Err(invalid("dispatch replay binding changed")); }
                 return Ok(id);
             }
             if self.automated && !super::principals::automated_outbound_allowed(self.vault,txn,request.intent.on_behalf_of.as_deref())? {
@@ -69,7 +74,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 }
                 EsignOutboundVerb::Void => {
                     append(self.vault, txn, id, EsignEvent::Voided { reason: self.command.reason.clone().ok_or_else(|| invalid("void reason required"))? }, self.actor.clone(), self.now)?;
-                    self.vault.store.vault_meta.put(txn, &marker, binding.as_bytes())?;
+                    DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &binding.to_owned())?;
                     return Ok(id);
                 }
             }
@@ -84,7 +89,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 })?;
             }
             enqueue_seal(self.vault, txn, id, self.now)?;
-            self.vault.store.vault_meta.put(txn, &marker, binding.as_bytes())?;
+            DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &binding.to_owned())?;
             Ok(id)
         });
         match result {

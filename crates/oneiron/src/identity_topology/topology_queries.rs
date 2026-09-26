@@ -11,7 +11,7 @@ use crate::vault::Vault;
 
 use super::reassignment_map::reassignment_claims_for_prefix_in_txn;
 use super::stored_event::StoredIdentityOpEvent;
-use super::{REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX};
+use super::{REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX};
 
 impl Vault {
     /// Reads one type-76 ledger event record. `Ok(None)` when the id is
@@ -45,7 +45,7 @@ impl Vault {
         let mut claims = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_TARGET_META_PREFIX,
+            REASSIGNMENT_TARGET_INDEX,
             target,
             |_| true,
         )?;
@@ -73,7 +73,7 @@ impl Vault {
         let residue = reassignment_claims_for_prefix_in_txn(
             &self.store,
             &rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_none(),
         )?;
@@ -109,7 +109,7 @@ impl Vault {
         reassignment_claims_for_prefix_in_txn(
             &self.store,
             rtxn,
-            REASSIGNMENT_ORIGIN_META_PREFIX,
+            REASSIGNMENT_ORIGIN_INDEX,
             origin,
             |target| target.is_some(),
         )

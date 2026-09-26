@@ -221,10 +221,14 @@ impl Vault {
     /// and diagnostics.
     ///
     /// Production bridge code uses direct transactional access so multi-key
-    /// sync-state updates stay atomic.
+    /// sync-state updates stay atomic. `key` must fall under a declared
+    /// `side_table` `SyncState` table (see `side_table::host_declared_sync_state`):
+    /// every generic host door checks the same declaration list a bound
+    /// `SideTable` is checked against at compile time.
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_get(&self, key: &str) -> Result<Option<Vec<u8>>> {
+        crate::side_table::host_declared_sync_state(key)?;
         let rtxn = self.store.env.read_txn()?;
         Ok(self
             .store
@@ -241,6 +245,7 @@ impl Vault {
         wtxn: &heed::RwTxn<'_>,
         key: &str,
     ) -> Result<Option<Vec<u8>>> {
+        crate::side_table::host_declared_sync_state(key)?;
         Ok(self
             .store
             .sync_state
@@ -252,13 +257,13 @@ impl Vault {
     /// and diagnostics.
     ///
     /// Production bridge code uses direct transactional access so multi-key
-    /// sync-state updates stay atomic.
+    /// sync-state updates stay atomic. Refuses an undeclared key (see
+    /// [`Self::sync_state_get`]) instead of writing it.
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
         self.with_write_txn(|wtxn| {
-            self.store.sync_state.put(wtxn, key, value)?;
-            Ok(())
+            crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
         })
     }
 
@@ -271,8 +276,7 @@ impl Vault {
         key: &str,
         value: &[u8],
     ) -> Result<()> {
-        self.store.sync_state.put(wtxn, key, value)?;
-        Ok(())
+        crate::side_table::host_sync_state_put(&self.store, wtxn, key, value)
     }
 
     /// Deletes a key from the sync_state database for diagnostics and
@@ -280,17 +284,24 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
-        self.with_write_txn(|wtxn| self.store.sync_state.delete(wtxn, key))
+        self.with_write_txn(|wtxn| {
+            crate::side_table::host_sync_state_delete(&self.store, wtxn, key)
+        })
     }
 
     /// Lists all keys with the given prefix in sync_state for sync integration
     /// tests and diagnostics.
     ///
     /// Production bridge code uses direct transactional access so multi-key
-    /// sync-state updates stay atomic.
+    /// sync-state updates stay atomic. `prefix` must overlap a declared
+    /// `SyncState` table — a family prefix shorter than the declared one
+    /// (`"rm:"` over `rm:w:` and `rmp:w:`) or a single leading byte from a
+    /// whole-table diagnostic sweep are both accepted; see
+    /// [`side_table::host_declared_sync_state_scan`].
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
         let mut keys = Vec::new();
         let iter = self.store.sync_state.prefix_iter(&rtxn, prefix)?;
@@ -307,6 +318,8 @@ impl Vault {
 
     /// Stream host-owned rows while retaining the caller's write snapshot.
     /// Used to rebuild derived host indexes without losing concurrent meter facts.
+    /// `prefix` must overlap a declared `SyncState` table, the same as
+    /// [`Self::sync_state_keys_with_prefix`].
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_visit_prefix_in_write_txn<E>(
@@ -318,6 +331,7 @@ impl Vault {
     where
         E: From<Error>,
     {
+        crate::side_table::host_declared_sync_state_scan(prefix).map_err(E::from)?;
         for row in self.store.sync_state.prefix_iter(txn, prefix)? {
             let (key, value) = row?;
             visit(&key, &value)?;
@@ -345,5 +359,21 @@ impl Vault {
             rows.push((k.to_vec(), v.to_vec()));
         }
         Ok(rows)
+    }
+
+    /// The entity-put audit row count for `id`
+    /// (`ports::ChangeLogStore::port_changelog_list_by_entity`, `batch/put_apply/apply.rs`'s
+    /// `audit_entity_put_in_txn` call). Only the batch entry writes this row,
+    /// so an integration test pins that a fixture went through it by reading
+    /// this count; `ports` is crate-private, so `tests/it` needs a door.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn entity_put_audit_count_for_test(&self, id: &EntityId) -> Result<usize> {
+        use crate::ports::ChangeLogStore;
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self
+            .store
+            .port_changelog_list_by_entity(&rtxn, id, 100)?
+            .len())
     }
 }

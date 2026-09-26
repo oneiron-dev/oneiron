@@ -8,6 +8,7 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 
 use super::codec::invalid;
@@ -22,10 +23,36 @@ use super::read::{active_claims_in_txn, resolved_reliability_posterior_in_txn};
 /// `active` until a human rules on this claim.
 pub const PREDICATE_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
 
-/// `vault_meta` key of the reliability floor dial. Per-feature key const in the
-/// owning module (the `INBOX_REVIEW_DIAL_KEY` house pattern) — `settings.rs` is
-/// UI customization and owns nothing here.
+/// `vault_meta` key of the reliability floor dial. Kept as a public constant for crate
+/// consumers (re-exported from [`crate::skill_reliability`]); `FLOOR` is this module's own
+/// door onto the row and owns the read/write path below.
 pub const SKILL_RELIABILITY_FLOOR_KEY: &[u8] = b"settings:skill:v1:reliability_floor";
+
+/// The reliability floor dial. Key: ().
+const FLOOR: SideTable<(), ReliabilityFloorRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_FLOOR);
+
+/// `FLOOR`'s row: four big-endian bytes, finite and within `[0, 1]`. Any other shape is a
+/// corrupted dial rather than a silently-defaulted one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReliabilityFloorRow(f32);
+
+impl RawValue for ReliabilityFloorRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        Ok(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let bytes: [u8; 4] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("skill reliability floor"))?;
+        let floor = f32::from_be_bytes(bytes);
+        if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
+            return Err(Error::CorruptedIndex("skill reliability floor").into());
+        }
+        Ok(Self(floor))
+    }
+}
 
 /// Default reliability floor: the posterior LOWER BOUND a skill must hold to
 /// stay out of the quarantine-proposal path.
@@ -59,22 +86,9 @@ pub fn skill_reliability_floor(vault: &Vault) -> Result<f32> {
 }
 
 fn floor_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<f32> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, SKILL_RELIABILITY_FLOOR_KEY)?
-    else {
-        return Ok(DEFAULT_SKILL_RELIABILITY_FLOOR);
-    };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("skill reliability floor"))?;
-    let floor = f32::from_be_bytes(bytes);
-    if !floor.is_finite() || !(0.0..=1.0).contains(&floor) {
-        return Err(Error::CorruptedIndex("skill reliability floor"));
-    }
-    Ok(floor)
+    Ok(FLOOR
+        .get(&vault.store, rtxn, &())?
+        .map_or(DEFAULT_SKILL_RELIABILITY_FLOOR, |row| row.0))
 }
 
 /// Sets the reliability floor dial.
@@ -83,10 +97,7 @@ pub fn set_skill_reliability_floor(vault: &Vault, floor: f32) -> Result<()> {
         return Err(invalid("reliability floor must be finite in [0, 1]"));
     }
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, SKILL_RELIABILITY_FLOOR_KEY, &floor.to_be_bytes())?;
+        FLOOR.put(&vault.store, wtxn, &(), &ReliabilityFloorRow(floor))?;
         Ok(())
     })
 }

@@ -3,7 +3,7 @@
 use heed::RwTxn;
 
 use super::Store;
-use super::outbound_send_receipt::send_receipt_audit_key;
+use super::outbound_send_receipt::{SEND_RECEIPT_AUDIT, send_receipt_audit_key};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -18,13 +18,13 @@ impl Store {
         value: &[u8],
     ) -> Result<()> {
         let key = send_receipt_audit_key(task_id, receipt_id);
-        if let Some(existing) = self.vault_meta.get(wtxn, &key)? {
-            if existing.as_ref() != value {
+        if let Some(existing) = SEND_RECEIPT_AUDIT.get(self, &*wtxn, &key)? {
+            if existing != value {
                 return Err(Error::InvariantViolation("send receipt identity reused"));
             }
             return Ok(());
         }
-        self.vault_meta.put(wtxn, &key, value)?;
+        SEND_RECEIPT_AUDIT.put(self, wtxn, &key, &value.to_vec())?;
         Ok(())
     }
 }

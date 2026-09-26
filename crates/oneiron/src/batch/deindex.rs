@@ -8,7 +8,13 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
+
+/// The `gate` module's trusted-manifest-origin marker, deleted here as part
+/// of full entity deindex. Key: hex32.
+const TRUSTED_MANIFEST_ORIGIN: SideTable<HexId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
 
 pub(super) fn reject_engine_authored_delete(
     store: &Store,
@@ -204,9 +210,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::ingest::reindex_identity_hints(store, wtxn, id, None)?;
     crate::ports::reindex_named_entities(store, wtxn, id, None)?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, id)?;
-    store
-        .sync_state
-        .delete(wtxn, &crate::gate::trusted_manifest_key(id))?;
+    TRUSTED_MANIFEST_ORIGIN.delete(store, wtxn, &HexId(*id))?;
     crate::claim::remove_claim_projection_index(store, wtxn, *id)?;
     store.entities.delete(wtxn, id.as_bytes())?;
     crate::ports::audit_mutation_in_txn(

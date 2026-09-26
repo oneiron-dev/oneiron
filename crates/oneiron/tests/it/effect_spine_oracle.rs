@@ -1749,9 +1749,9 @@ fn calendar_invite_gate_and_intent_ledger_oracle() {
 // on the default feature set through exactly three doors — the targeted put,
 // the batch put, and the transaction-composable batch — and the validator
 // tests below drive all three. `Vault::put_replicated` is deliberately NOT a
-// fourth: both of its definitions are `pub(crate)` and feature-gated
-// (`sync` / `any(test, all(sync, test-hooks))`), i.e. an origin-validated
-// replay door for bytes a peer already authored, not a public write door.
+// fourth: its one definition is `pub(crate)` and feature-gated
+// (`any(sync, test)`), i.e. an origin-validated replay door for bytes a peer
+// already authored, not a public write door.
 // `one1891_put_replicated_is_not_a_fourth_write_door` pins that by source, so
 // "three doors" cannot quietly become "three doors plus a hole".
 
@@ -1779,10 +1779,9 @@ mod one1891 {
         include_str!("../../src/provider_confidence/indexes.rs");
     pub(super) const PROVIDER_CONFIDENCE_MEMO_SOURCE: &str =
         include_str!("../../src/provider_confidence/transaction_memo.rs");
-    pub(super) const BATCH_TXN_BUILDER_SOURCE: &str =
-        include_str!("../../src/batch/txn_builder.rs");
     pub(super) const BATCH_BUILDER_SOURCE: &str = concat!(
         include_str!("../../src/batch/builder/mod.rs"),
+        include_str!("../../src/batch/builder/apply.rs"),
         include_str!("../../src/batch/builder/ops.rs"),
         include_str!("../../src/batch/builder/puts.rs"),
         include_str!("../../src/batch/builder/claims.rs"),
@@ -2942,17 +2941,14 @@ fn one1891_prior_validator_is_untouched_by_the_enrichment_arm() {
     );
 }
 
-/// STRUCTURAL: `put_replicated` is not a fourth write door. Both definitions
-/// are `pub(crate)` and feature-gated, so the three doors exercised above are
+/// STRUCTURAL: `put_replicated` is not a fourth write door. Its definition is
+/// `pub(crate)` and feature-gated, so the three doors exercised above are
 /// the whole default-feature write surface for an enrichment claim — and a
 /// replicated body still meets the same validator inside `apply_put`, so this
 /// is a statement about REACH, not about a bypass.
 #[test]
 fn one1891_put_replicated_is_not_a_fourth_write_door() {
-    for (label, source) in [
-        ("txn_builder", one1891::BATCH_TXN_BUILDER_SOURCE),
-        ("builder", one1891::BATCH_BUILDER_SOURCE),
-    ] {
+    for (label, source) in [("builder", one1891::BATCH_BUILDER_SOURCE)] {
         assert!(
             !source.contains("pub fn put_replicated"),
             "{label}: put_replicated must never become public"

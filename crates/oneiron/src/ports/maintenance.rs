@@ -4,7 +4,63 @@
 //! each operation names the record field or derived cache it is allowed to change.
 use super::Transactions;
 use crate::{EntityId, error::Result};
+
+/// What an ARCH-0038 erase leaves of a record. The header is kept byte-exact either way.
+#[derive(Debug)]
+pub(crate) enum ScrubbedRecord {
+    /// SoftErase: the body goes and the header stays.
+    Shell,
+    /// An identity-topology event body re-encoded without its author stamp.
+    AuthorStampRemoved(Vec<u8>),
+}
+
 pub(crate) trait EntityStoreMaintenance: Transactions {
+    /// Replaces a record's body with what erasure leaves of it. Writes one `ChangeOp::Redact`
+    /// mutation audit row, occurring at `recorded_at`, when the stored bytes change, and returns
+    /// whether they did. Retained revisions are the caller's to remove.
+    fn port_entity_scrub(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        record: ScrubbedRecord,
+        recorded_at: u64,
+    ) -> Result<bool>;
+    /// Replaces a record's body with its entity-document pointer form. The header is kept
+    /// byte-exact; the body must be a map carrying exactly one `entity_doc_ref` string.
+    #[cfg(feature = "sync")]
+    fn port_entity_document_pointer_put(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        body: &[u8],
+    ) -> Result<()>;
+    /// Stamps a pending REDACTION_AUDIT receipt's `sweep_complete_at`, the one field a stored
+    /// receipt may change (None to Some). The envelope is kept byte-exact and the body is
+    /// validated before the put.
+    fn port_redaction_receipt_sweep_complete(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        completed_at: u64,
+    ) -> Result<()>;
+    /// Installs the header of a retained soft-delete shell, never a body. The index rows stay the
+    /// caller's.
+    #[cfg(feature = "sync")]
+    fn port_retained_shell_restore(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        header: &[u8],
+    ) -> Result<()>;
+    /// Plants record bytes as given, with no index row: for fixtures that race a divergent local
+    /// row against a replayed one, or build a store shape no write door builds at their scale.
+    #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
+    fn port_raw_record_seed(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<()>;
     fn port_contact_cache_evict(&self, txn: &mut Self::Write<'_>, id: &EntityId) -> Result<()>;
     fn port_connector_key_rewrite(
         &self,
@@ -36,6 +92,17 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     ) -> Result<()>;
 }
 pub(crate) trait EdgeStoreMaintenance: Transactions {
+    /// Plants one outgoing edge row as given, with no incoming twin, for fixtures that build a
+    /// graph shape no write door builds at their scale.
+    #[cfg(test)]
+    fn port_raw_outgoing_edge_seed(
+        &self,
+        txn: &mut Self::Write<'_>,
+        source: &EntityId,
+        kind: crate::EdgeKind,
+        target: &EntityId,
+        value: &[u8],
+    ) -> Result<()>;
     /// Revision writer has already proved endpoint, session, ancestry and cardinality laws.
     /// Return whether the caller's graph-version batch must advance.
     fn port_revision_link(

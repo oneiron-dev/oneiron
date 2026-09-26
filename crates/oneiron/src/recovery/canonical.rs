@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::document::{self, CanonicalDocument, CanonicalHead, CanonicalHeadMove};
 use super::validation;
 use super::{decode_recovery_artifact, encode_recovery_artifact};
+use crate::deletion::{HARD_DELETE_MARKER, PENDING_TOMBSTONE};
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::HexId;
 use crate::{EntityId, Vault};
 
 /// Canonical Layer-1 artifact discriminator (not a Loro snapshot).
@@ -239,23 +241,22 @@ pub fn capture_canonical_window(
     }
     let txn = vault.store.env.read_txn()?;
     // Pending delete intent is Layer 1 even when a crash preceded CRDT publication.
-    let prefix = format!("pt:{window}:");
-    for row in vault.store.sync_state.prefix_iter(&txn, &prefix)? {
-        let (key, value) = row?;
-        let entity = parse_id(&key[prefix.len()..])?;
+    let window_prefix = [window.as_bytes(), b":".as_slice()].concat();
+    for (key, value) in PENDING_TOMBSTONE.scan_from(&vault.store, &txn, &window_prefix)? {
+        let entity = *key.id.as_bytes();
         if let Some(previous) = snapshot.tombstones.iter_mut().find(|row| row.id == entity) {
             if crate::deletion::decode_tombstone_value(&previous.value).is_hard()
                 && !crate::deletion::decode_tombstone_value(&value).is_hard()
             {
                 continue;
             }
-            previous.value = value.to_vec();
             previous.deleted_at = crate::deletion::decode_tombstone_value(&value).deleted_at;
+            previous.value = value;
         } else {
             snapshot.tombstones.push(CanonicalTombstone {
                 id: entity,
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
-                value: value.to_vec(),
+                value,
             });
         }
     }
@@ -268,8 +269,7 @@ pub fn capture_canonical_window(
         .chain(snapshot.tombstones.iter().map(|row| row.id))
         .collect();
     for entity in candidates {
-        let key = format!("dt:{}", id(entity)?.to_hex());
-        if let Some(value) = vault.store.sync_state.get(&txn, &key)? {
+        if let Some(value) = HARD_DELETE_MARKER.get(&vault.store, &txn, &HexId(id(entity)?))? {
             if !crate::deletion::decode_tombstone_value(&value).is_hard() {
                 return Err(invalid("invalid hard delete marker"));
             }
@@ -277,7 +277,7 @@ pub fn capture_canonical_window(
             snapshot.tombstones.push(CanonicalTombstone {
                 id: entity,
                 deleted_at: crate::deletion::decode_tombstone_value(&value).deleted_at,
-                value: value.to_vec(),
+                value,
             });
         }
     }

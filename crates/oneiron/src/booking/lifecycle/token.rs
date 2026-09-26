@@ -4,13 +4,10 @@
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-use super::LifecycleTokenRow;
 use super::claim::read_booking_facts;
-use super::storage::{
-    decode_row, encode_row, hold_key, meta_key, put_meta, read_meta, read_meta_bytes, read_txn,
-    refused,
-};
-use super::types::{BOOKING_TOKEN_META_PREFIX, LifecycleTokenScope, SoftHoldRow};
+use super::storage::{HOLD, engine_failure, read_txn, refused};
+use super::types::{LifecycleTokenScope, SoftHoldRow};
+use super::{LifecycleTokenRow, TOKEN};
 use crate::booking::BookingError;
 use crate::{EntityId, Vault};
 
@@ -121,6 +118,11 @@ pub(super) fn session_digest(session_key: &SessionKey) -> [u8; 32] {
     digest_with(SESSION_DIGEST_DOMAIN, &session_key.0)
 }
 
+/// The persisted digest of a session's soft-hold row.
+pub(super) fn hold_digest(session_key: &SessionKey) -> [u8; 32] {
+    digest_with(HOLD_KEY_DOMAIN, &session_key.0)
+}
+
 /// Resolves a token to its EVENT, refusing a token whose recorded scope does not
 /// permit `expected`. Scope lives on the row, never in the token.
 pub(super) fn resolve_token_event(
@@ -142,7 +144,9 @@ fn read_token_row(
     rtxn: &heed::RoTxn<'_>,
     token: &OpaqueLifecycleToken,
 ) -> Result<Option<LifecycleTokenRow>, BookingError> {
-    read_meta(vault, rtxn, BOOKING_TOKEN_META_PREFIX, &token_digest(token))
+    TOKEN
+        .get(&vault.store, rtxn, &token_digest(token))
+        .map_err(|error| engine_failure("meta read", error))
 }
 
 /// Derives one revision credential from the hold token that bought the booking.
@@ -178,9 +182,14 @@ pub(super) fn write_revision_tokens(
         (&reschedule, LifecycleTokenScope::Reschedule),
         (&cancel, LifecycleTokenScope::Cancel),
     ] {
-        let encoded = encode_row(&LifecycleTokenRow { event_ref, scope })?;
-        let key = meta_key(BOOKING_TOKEN_META_PREFIX, &token_digest(token));
-        put_meta(vault, wtxn, &key, &encoded)?;
+        TOKEN
+            .put(
+                &vault.store,
+                wtxn,
+                &token_digest(token),
+                &LifecycleTokenRow { event_ref, scope },
+            )
+            .map_err(|error| engine_failure("meta write", error))?;
     }
     Ok((reschedule, cancel))
 }
@@ -191,10 +200,8 @@ pub(super) fn read_hold_row(
     session_key: &SessionKey,
 ) -> Result<Option<SoftHoldRow>, BookingError> {
     let rtxn = read_txn(vault)?;
-    let Some(raw) = read_meta_bytes(vault, &rtxn, &hold_key(session_key))? else {
-        return Ok(None);
-    };
-    decode_row(&raw).map(Some)
+    HOLD.get(&vault.store, &rtxn, &hold_digest(session_key))
+        .map_err(|error| engine_failure("meta read", error))
 }
 
 /// The page a token's booking came from.

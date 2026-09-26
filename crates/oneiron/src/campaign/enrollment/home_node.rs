@@ -2,19 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::storage::{
-    CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, from_row, invalid, pin_schema, read_meta, to_row,
-};
+use super::storage::{CAMPAIGN_ENROLLMENT_SCHEMA_VERSION, invalid, pin_schema};
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 
 // ---------------------------------------------------------------------------
 // Home-node designation
 // ---------------------------------------------------------------------------
 
-/// Campaign-local home-node designation key. Deliberately NOT the Dreamer's
-/// `dreamer:home_node_macro:v1`.
-const CAMPAIGN_HOME_NODE_META_KEY: &[u8] = b"campaign:home_node_macro:v1";
+/// Campaign-local MACRO home-node election result. Key: `()`. Deliberately
+/// NOT the Dreamer's `dreamer:home_node_macro:v1`.
+const HOME_NODE: SideTable<(), DesignationRow, LegacyJson> =
+    SideTable::new(&side_table::CAMPAIGN_HOME_NODE_MACRO);
 
 /// Candidate node signals for the campaign MACRO home-node election.
 ///
@@ -194,18 +194,12 @@ pub fn elect_campaign_home_node_designation(
     now: u64,
 ) -> Result<Option<CampaignHomeNodeDesignation>> {
     let designation = select_campaign_home_node(candidates, now)?;
-    let encoded = designation.map(encode_designation).transpose()?;
+    let row = designation.map(encode_designation);
     vault.with_write_txn(|wtxn| {
-        match encoded.as_ref() {
-            Some(bytes) => vault
-                .store
-                .vault_meta
-                .put(wtxn, CAMPAIGN_HOME_NODE_META_KEY, bytes)?,
+        match row.as_ref() {
+            Some(row) => HOME_NODE.put(&vault.store, wtxn, &(), row)?,
             None => {
-                vault
-                    .store
-                    .vault_meta
-                    .delete(wtxn, CAMPAIGN_HOME_NODE_META_KEY)?;
+                HOME_NODE.delete(&vault.store, wtxn, &())?;
             }
         }
         Ok(())
@@ -221,8 +215,10 @@ pub fn elect_campaign_home_node_designation(
 pub fn campaign_home_node_designation(
     vault: &Vault,
 ) -> Result<Option<CampaignHomeNodeDesignation>> {
-    read_meta(vault, CAMPAIGN_HOME_NODE_META_KEY)?
-        .map(|raw| decode_designation(&raw))
+    let rtxn = vault.store.env.read_txn()?;
+    HOME_NODE
+        .get(&vault.store, &rtxn, &())?
+        .map(validate_designation)
         .transpose()
 }
 
@@ -292,18 +288,17 @@ struct DesignationRow {
     elected_at: u64,
 }
 
-fn encode_designation(record: CampaignHomeNodeDesignation) -> Result<Vec<u8>> {
-    to_row(&DesignationRow {
+fn encode_designation(record: CampaignHomeNodeDesignation) -> DesignationRow {
+    DesignationRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         node_id: record.node_id,
         class: record.class.as_str().to_owned(),
         elected_at: record.elected_at,
-    })
+    }
 }
 
-pub(super) fn decode_designation(raw: &[u8]) -> Result<CampaignHomeNodeDesignation> {
+fn validate_designation(row: DesignationRow) -> Result<CampaignHomeNodeDesignation> {
     const CONTEXT: &str = "campaign home-node designation";
-    let row: DesignationRow = from_row(raw, CONTEXT)?;
     pin_schema(row.schema_version, CONTEXT)?;
     if row.node_id == 0 {
         return Err(Error::CorruptedIndex(CONTEXT));
@@ -314,4 +309,18 @@ pub(super) fn decode_designation(raw: &[u8]) -> Result<CampaignHomeNodeDesignati
         class: CampaignHomeNodeClass::parse(&row.class).ok_or(Error::CorruptedIndex(CONTEXT))?,
         elected_at: row.elected_at,
     })
+}
+
+/// Test-only whole-row decode: unlike [`validate_designation`] (fed an
+/// already-decoded row by the typed door), this exercises the SAME JSON
+/// shape rejection [`HOME_NODE`]'s codec applies, remapped to the pinned
+/// [`Error::CorruptedIndex`] so a malformed on-disk row and a malformed
+/// domain value fail identically here.
+#[cfg(test)]
+pub(super) fn decode_designation(raw: &[u8]) -> Result<CampaignHomeNodeDesignation> {
+    const CONTEXT: &str = "campaign home-node designation";
+    let row: DesignationRow = HOME_NODE
+        .decode_value(raw)
+        .map_err(|_| Error::CorruptedIndex(CONTEXT))?;
+    validate_designation(row)
 }

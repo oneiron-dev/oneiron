@@ -821,3 +821,107 @@ fn portable_card_excludes_nonpublic_relationships_and_their_claims() -> Result<(
     }
     Ok(())
 }
+
+#[test]
+fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x62)?;
+    put_claim(&vault, subject, "profile.name", "Lexi", 0.9, None)?;
+    // A card compiled for nobody reads through no audience.
+    assert!(
+        vault
+            .compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?
+            .read_receipt
+            .is_none()
+    );
+    // FOR an audience without a read grant, the name is withheld and counted.
+    let for_kenji = vault.compile_persona_snapshot(
+        &subject,
+        &PersonaSnapshotCompileOptions {
+            audience: ScopedReadActorKey::new("contact:kenji"),
+            ..PersonaSnapshotCompileOptions::default()
+        },
+    )?;
+    let receipt = for_kenji.read_receipt.expect("the audience read");
+    assert_eq!(receipt.suppressed_count, 1);
+    assert!(!for_kenji.identity_line.contains("Lexi"));
+
+    // A standing block session reads the agent's claims as its reader: a
+    // reader slip scoped to one world withholds the other world's claim.
+    let agent = put_person(&vault, 0x63)?;
+    let world = put_world(&vault, 0x64)?;
+    let elsewhere = put_world(&vault, 0x65)?;
+    let owner = vault.authenticate_owner(
+        agent,
+        &agent.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let handle = vault.open_standing_block(&owner, agent, world, "identity", 64)?;
+    for (at_world, text) in [(world, "Be concise."), (elsewhere, "Be elsewhere.")] {
+        let mut body = ClaimBody::new(
+            "companion.standing.tone",
+            ClaimSubject::Entity(agent),
+            Value::from(text),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        );
+        body.source = Some(ClaimSource::UserStated);
+        body.world = Some(at_world);
+        body.scope = Some(Value::Map(vec![(
+            Value::from("sensitivity"),
+            Value::from("public"),
+        )]));
+        // Replicated: the fixture isolates the session's read, not the gate.
+        let id = EntityId::now();
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &crate::claim::encode_claim_body(&body)?,
+            )
+            .edge(&id, crate::EdgeKind::ClaimOf, &agent, 1.0)
+            .commit()?;
+    }
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"persona receipt fixture")?;
+    let mut claims = vault.ensure_host_root_slip(&issuer)?.claims;
+    claims.slip_id = [0x66; 32];
+    claims.holder_ref = agent.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.scope = crate::federation::scope_codec::read_preset();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(world),
+    ]));
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let signature = issuer.binding_proof(&slip, b"persona-receipt")?;
+    let verified = vault.verify_capability_slip(&issuer, &slip, b"persona-receipt", &signature)?;
+    let reader = ScopedReadActorKey::from_verified_slip(&verified).expect("slip reader");
+    let session = vault.begin_standing_block_session(
+        &handle,
+        reader,
+        256,
+        64,
+        &mut crate::persona_snapshot::standing::StandingBlockCache::default(),
+    )?;
+    let compiled = String::from_utf8(session.compiled.clone()).expect("utf-8 block");
+    assert!(compiled.contains("Be concise."));
+    assert!(!compiled.contains("Be elsewhere."));
+    assert_eq!(session.read_receipt.suppressed_count, 1);
+    Ok(())
+}
+
+fn put_world(vault: &Vault, byte: u8) -> Result<EntityId> {
+    let id = EntityId::from_bytes([byte; 16])?;
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_WORLD,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"world",
+    )?;
+    Ok(id)
+}

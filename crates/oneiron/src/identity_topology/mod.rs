@@ -121,7 +121,7 @@ pub(crate) use lifecycle_state::{
 };
 pub(crate) use op_vocabulary::is_identity_topology_op_kind;
 use reassignment_map::{
-    REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX, ReassignmentContext,
+    REASSIGNMENT_ORIGIN_INDEX, REASSIGNMENT_TARGET_INDEX, ReassignmentContext,
     apply_reassignment_in_txn,
 };
 // Reached only from the sync bridge's test lane, so a plain re-export would read
@@ -131,7 +131,11 @@ pub(crate) use shell_edge_reconcile::{
     reconcile_identity_topology_for_materialized_entities_in_txn,
     reconcile_shell_edges_after_eviction_in_txn,
 };
-pub(crate) use wire_keys::{IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING, IDENTITY_TOPOLOGY_SEQ_KEY};
+// Reached only from the sync bridge's test lane, so a plain re-export would read
+// as unused in a non-sync or non-test build of the library.
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use replicated_event_validation::IDENTITY_TOPOLOGY_SEQ;
+pub(crate) use wire_keys::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING;
 use wire_keys::{
     MAX_IDENTITY_TOPOLOGY_EVENT_BODY_BYTES, MAX_IDENTITY_TOPOLOGY_EVENT_FACETS,
     MAX_IDENTITY_TOPOLOGY_EVENT_PARTICIPANTS,

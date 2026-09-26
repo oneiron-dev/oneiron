@@ -20,7 +20,6 @@ pub(crate) const ENTITY_OCCURRED_END_OFFSET: usize = 9;
 pub(crate) const ENTITY_LEARNED_AT_OFFSET: usize = 17;
 pub(crate) const ENTITY_BODY_OFFSET: usize = 25;
 pub(crate) const ENTITY_METADATA_HEADER_LEN: usize = ENTITY_BODY_OFFSET;
-pub(super) const SHORT_ID_COUNTER_LEN: usize = 8;
 pub(crate) const LONG_INTERVAL_THRESHOLD_SECS: u64 = 14 * 86_400;
 pub(super) const ERR_RAW_CLAIM_PUT_REQUIRES_ENVELOPE: &str = "raw claim put requires WriteEnvelope";
 pub(super) const ERR_RAW_NOTE_PUT_REQUIRES_AUTHOR_TAKE: &str = "raw NOTE put requires author_take";
@@ -133,17 +132,14 @@ pub(super) fn authority_observation_secs_for_write(
     wtxn: &mut RwTxn<'_>,
     candidate_secs: u64,
 ) -> Result<u64> {
-    let floor_key = crate::authority::authority_first_seen_clock_sync_key();
-    let previous_floor = store
-        .sync_state
-        .get(wtxn, floor_key)?
-        .and_then(|raw| crate::authority::decode_authority_first_seen_secs(&raw))
+    let floor_key = crate::authority::authority_first_seen_clock_key();
+    let previous_floor = crate::authority::AUTHORITY_FIRST_SEEN
+        .get(store, wtxn, &floor_key)?
         .unwrap_or(0);
     let observed_secs =
         crate::authority::authority_observation_secs(store, previous_floor, candidate_secs);
     if observed_secs != previous_floor {
-        let encoded = crate::authority::encode_authority_first_seen_secs(observed_secs);
-        store.sync_state.put(wtxn, floor_key, &encoded)?;
+        crate::authority::AUTHORITY_FIRST_SEEN.put(store, wtxn, &floor_key, &observed_secs)?;
     }
     Ok(observed_secs)
 }

@@ -13,13 +13,12 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::codec::{
-    action_from, action_value, address, array, decode, encode, id, id_value, key, number,
-    read_from, read_value,
+    AUTONOMY, AutonomyRow, action_from, action_value, address, key, read_from, read_value,
 };
 use super::invalid_autonomy;
 use super::types::{
-    CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION, ChannelIdentityActionEnvelope, MailboxReadEnvelope,
-    PREDICATE_ACTION_ENVELOPE, PREDICATE_MAILBOX_READ_ENVELOPE,
+    ChannelIdentityActionEnvelope, MailboxReadEnvelope, PREDICATE_ACTION_ENVELOPE,
+    PREDICATE_MAILBOX_READ_ENVELOPE,
 };
 
 impl Vault {
@@ -38,17 +37,10 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         key: &[u8],
     ) -> Result<(EntityId, u64, Value)> {
-        let bytes = self
-            .store
-            .vault_meta
-            .get(txn, key)?
+        let row = AUTONOMY
+            .get(&self.store, txn, &key.to_vec())?
             .ok_or_else(invalid_autonomy)?;
-        let value = decode(&bytes)?;
-        let v = array(&value, 4)?;
-        if number(&v[0])? != CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION {
-            return Err(invalid_autonomy());
-        }
-        Ok((id(&v[1])?, number(&v[2])?, v[3].clone()))
+        Ok((row.actor, row.at, row.value))
     }
 
     pub(super) fn write_autonomy_row(
@@ -59,13 +51,12 @@ impl Vault {
         at: u64,
         value: Value,
     ) -> Result<()> {
-        let bytes = encode(&Value::Array(vec![
-            Value::from(CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION),
-            id_value(actor),
-            Value::from(at),
-            value,
-        ]))?;
-        self.store.vault_meta.put(txn, key, &bytes)?;
+        AUTONOMY.put(
+            &self.store,
+            txn,
+            &key.to_vec(),
+            &AutonomyRow { actor, at, value },
+        )?;
         Ok(())
     }
 
@@ -79,7 +70,7 @@ impl Vault {
     ) -> Result<EntityId> {
         let reference = address(kind, &value)?;
         let key = key(kind, &reference.to_hex());
-        if self.store.vault_meta.get(txn, &key)?.is_some() {
+        if AUTONOMY.contains(&self.store, txn, &key)? {
             let (actor, _, old) = self.autonomy_row(txn, &key)?;
             if actor != owner.actor() || old != value {
                 return Err(invalid_autonomy());

@@ -16,8 +16,8 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::attenuation::source_content_fingerprint;
 use super::codec::record_dispatch_input;
 use super::widen_record::{
-    SliceOverride, WidenIntent, WidenLanding, WidenRecord, WidenRequest, WidenTarget, decode,
-    invalid, json, proposal_key, slice_key, widened_parent,
+    PROPOSAL_INDEX, SLICE, SliceOverride, WIDEN, WidenIntent, WidenLanding, WidenRecord,
+    WidenRequest, WidenTarget, invalid, json, validate_proposal_id, widened_parent,
 };
 use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
@@ -125,9 +125,8 @@ impl AgentDispatcher<'_> {
         };
         let parent_spec = self.effective_context_spec(parent_id, &parent)?;
         let projection = self.resolve_attempt_context(parent_id)?;
-        let key = intent.key()?;
-        if let Some(bytes) = self.vault.store.vault_meta.get(&wtxn, &key)? {
-            let record: WidenRecord = decode(&bytes)?;
+        let key_hash = intent.key_hash()?;
+        if let Some(record) = WIDEN.get(&self.vault.store, &wtxn, &key_hash)? {
             if record.version != 1 || record.request.intent != intent {
                 return Err(invalid(
                     "existing widen dedupe key names a different dispatch",
@@ -158,14 +157,14 @@ impl AgentDispatcher<'_> {
             landed: None,
         };
         let proposal = record.request.proposal()?;
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut wtxn, &key, &json(&record)?)?;
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut wtxn, &proposal_key(&proposal.proposal_id)?, &key)?;
+        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
+        validate_proposal_id(&proposal.proposal_id)?;
+        PROPOSAL_INDEX.put(
+            &self.vault.store,
+            &mut wtxn,
+            &proposal.proposal_id,
+            &WIDEN.key_bytes(&key_hash),
+        )?;
         // Same decision ledger and exact consent digest as approve_once. The
         // suggested catastrophe bound can NEVER become a standing grant.
         self.vault.store.append_gate_decision_in_txn(
@@ -209,7 +208,7 @@ impl AgentDispatcher<'_> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         // Proposal ids are content hashes, not bearer authority. Find the exact
         // saved intent by its stable index, rejecting forged or edited objects.
-        let (key, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
+        let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
         if record.request.proposal()? != *proposal {
             return Err(invalid("widen proposal differs from the stored request"));
         }
@@ -303,20 +302,18 @@ impl AgentDispatcher<'_> {
             }
             _ => return Err(invalid("widen landing unexpectedly proposed again")),
         });
-        self.vault.store.vault_meta.put(
+        SLICE.put(
+            &self.vault.store,
             &mut wtxn,
-            &slice_key(record.request.intent.parent),
-            &json(&SliceOverride {
+            &record.request.intent.parent,
+            &SliceOverride {
                 proposal_id: proposal.proposal_id.clone(),
                 board,
                 owner: owner.actor().to_hex(),
                 spec: record.request.widened_spec.clone(),
-            })?,
+            },
         )?;
-        self.vault
-            .store
-            .vault_meta
-            .put(&mut wtxn, &key, &json(&record)?)?;
+        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         Ok(outcome)
     }
@@ -325,32 +322,28 @@ impl AgentDispatcher<'_> {
         &self,
         txn: &heed::RoTxn<'_>,
         id: &str,
-    ) -> Result<(Vec<u8>, WidenRecord)> {
-        let key = self
-            .vault
-            .store
-            .vault_meta
-            .get(txn, &proposal_key(id)?)?
+    ) -> Result<([u8; 32], WidenRecord)> {
+        validate_proposal_id(id)?;
+        let full_key = PROPOSAL_INDEX
+            .get(&self.vault.store, txn, &id.to_owned())?
             .ok_or_else(|| invalid("widen proposal was not issued by this vault"))?;
-        if !key.starts_with(super::widen_record::WIDEN_PREFIX)
-            || key.len() != super::widen_record::WIDEN_PREFIX.len() + 32
-        {
+        let prefix = WIDEN.decl().prefix;
+        if !full_key.starts_with(prefix) || full_key.len() != prefix.len() + 32 {
             return Err(invalid("invalid widen intent index"));
         }
-        let bytes = self
-            .vault
-            .store
-            .vault_meta
-            .get(txn, &key)?
+        let key_hash: [u8; 32] = full_key[prefix.len()..]
+            .try_into()
+            .expect("length checked above");
+        let record = WIDEN
+            .get(&self.vault.store, txn, &key_hash)?
             .ok_or_else(|| invalid("widen proposal intent is missing"))?;
-        let record: WidenRecord = decode(&bytes)?;
         if record.version != 1
             || record.request.id()? != id
-            || record.request.intent.key()?.as_slice() != key.as_ref()
+            || record.request.intent.key_hash()? != key_hash
         {
             return Err(invalid("widen proposal index does not match its request"));
         }
-        Ok((key.to_vec(), record))
+        Ok((key_hash, record))
     }
 
     fn widen_outcome(
@@ -428,10 +421,9 @@ impl AgentDispatcher<'_> {
         input: &AgentDispatchInput,
     ) -> Result<ContextSpec> {
         let txn = self.vault.store.env.read_txn()?;
-        let Some(bytes) = self.vault.store.vault_meta.get(&txn, &slice_key(attempt))? else {
+        let Some(slice) = SLICE.get(&self.vault.store, &txn, &attempt)? else {
             return Ok(input.context_spec.clone().unwrap_or_default());
         };
-        let slice: SliceOverride = decode(&bytes)?;
         self.require_board_owner(&txn, slice.board, EntityId::from_hex(&slice.owner)?)?;
         let (_, record) = self.stored_widen_proposal(&txn, &slice.proposal_id)?;
         drop(txn);

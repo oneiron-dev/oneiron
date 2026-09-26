@@ -1,8 +1,6 @@
 //! Settle Vault transactions.
 
-use super::codec::{
-    decode_settlement_record, encode_settlement_record, settle_grant_bound, settlement_key,
-};
+use super::codec::{RECORD, settle_grant_bound, settlement_key_parts};
 use super::receipts::{
     already_settled, manifest_ref, settled_anchors_from_summary, settlement_receipt_record,
 };
@@ -49,7 +47,7 @@ impl Vault {
         self.ensure_selectable(proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
-        let key = settlement_key(artifact_id, proposal_ref);
+        let key = settlement_key_parts(artifact_id, proposal_ref);
         let manifest_hash = manifest_ref(&proposal.manifest)?;
         let manifest_ops = u64::try_from(proposal.manifest.ops.len()).unwrap_or(u64::MAX);
         let ops: Vec<ReanchorOp> = proposal
@@ -69,8 +67,8 @@ impl Vault {
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
             // Ledger acquisition BEFORE any side effect.
-            if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
-                return Err(already_settled(&decode_settlement_record(&raw)?));
+            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+                return Err(already_settled(&existing));
             }
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
@@ -103,9 +101,7 @@ impl Vault {
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
                 };
-                self.store
-                    .vault_meta
-                    .put(wtxn, &key, &encode_settlement_record(&record)?)?;
+                RECORD.put(&self.store, wtxn, &key, &record)?;
                 return Ok((base, ReanchorSummary::default(), record, Some(stranded)));
             }
             let version = self.append_blob_artifact_version_in_txn(
@@ -148,9 +144,7 @@ impl Vault {
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
             };
-            self.store
-                .vault_meta
-                .put(wtxn, &key, &encode_settlement_record(&record)?)?;
+            RECORD.put(&self.store, wtxn, &key, &record)?;
             Ok((version, reanchor, record, None))
         })?;
 
@@ -181,7 +175,7 @@ impl Vault {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
-        let key = settlement_key(artifact_id, proposal_ref);
+        let key = settlement_key_parts(artifact_id, proposal_ref);
 
         let reason = reason.trim();
         let record = SettlementRecord {
@@ -198,7 +192,7 @@ impl Vault {
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
         };
-        let encoded = encode_settlement_record(&record)?;
+        RECORD.encode_value(&record)?;
 
         // One txn: the artifact-existence check and the consume-once acquisition
         // commit together, so a discard never lands a durable ledger row for a
@@ -214,10 +208,10 @@ impl Vault {
                 ENTITY_TYPE_BLOB_ARTIFACT,
                 "settle-discard target must be a BLOB_ARTIFACT entity",
             )?;
-            if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
-                return Err(already_settled(&decode_settlement_record(&raw)?));
+            if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
+                return Err(already_settled(&existing));
             }
-            self.store.vault_meta.put(wtxn, &key, &encoded)?;
+            RECORD.put(&self.store, wtxn, &key, &record)?;
             Ok(())
         })?;
 
@@ -233,11 +227,8 @@ impl Vault {
         proposal_ref: &str,
     ) -> Result<Option<SettlementRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        let key = settlement_key(artifact_id, proposal_ref);
-        let Some(raw) = self.store.vault_meta.get(&rtxn, &key)? else {
-            return Ok(None);
-        };
-        decode_settlement_record(&raw).map(Some)
+        let key = settlement_key_parts(artifact_id, proposal_ref);
+        RECORD.get(&self.store, &rtxn, &key)
     }
 
     /// Resolves the tappable door of a *select* settle: the committed

@@ -8,7 +8,13 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, TimeRange, Vault};
+
+/// Derived-head producer binding: a digest over the claim body that produced
+/// this composite-index head, keyed by the claim id.
+const STATE_COMPOSITE_PRODUCER: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::AFFECT_STATE_COMPOSITE_PRODUCER);
 
 /// Input claims use unit-interval values. Producers own measurement, not this projection.
 pub const GOAL_VELOCITY: &str = "state.goal_velocity";
@@ -185,10 +191,8 @@ impl Vault {
             let stored = self
                 .get_claim_in_txn(txn, &id)?
                 .ok_or(Error::EntityNotFound)?;
-            let digest = blake3::hash(&crate::claim::encode_claim_body(&stored)?);
-            self.store
-                .vault_meta
-                .put(txn, &producer_key(&id), digest.as_bytes())?;
+            let digest = *blake3::hash(&crate::claim::encode_claim_body(&stored)?).as_bytes();
+            STATE_COMPOSITE_PRODUCER.put(&self.store, txn, &id, &digest)?;
             for old in previous {
                 self.supersede_claim_in_txn(txn, &id, &old, at)?;
             }
@@ -261,21 +265,16 @@ impl Vault {
 // Derived heads are local cache state, not authority asserted by a raw or
 // replicated CLAIM. Receiving vaults derive their own index from admitted inputs.
 // The identifier/digest-only binding also detects later replacement of a head.
-fn producer_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"state:composite:producer:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 fn producer_bound(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
-    let Some(stamp) = vault.store.vault_meta.get(txn, &producer_key(id))? else {
+    let Some(stamp) = STATE_COMPOSITE_PRODUCER.get(&vault.store, txn, id)? else {
         return Ok(false);
     };
-    Ok(stamp.as_ref() == blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    Ok(stamp == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
 }
 
 impl crate::memory::Memory<'_> {

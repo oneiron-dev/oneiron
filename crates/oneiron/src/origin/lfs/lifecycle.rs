@@ -1,16 +1,30 @@
 //! Last-reference byte reclamation and permanent object deletion markers.
 
-use super::store::{VAULT_LFS_REF_KEY_PREFIX, decode_lfs_object_record, lfs_object_key};
 use super::{LfsOid, chunks};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 
-pub(super) const DELETED: &[u8] = b"origin:lfs:deleted:v1:";
-pub(super) const REVERSE: &[u8] = b"origin:lfs:manifest:v1:";
-pub(super) const JOURNAL: &[u8] = b"origin:lfs:upload:v1:";
-pub(super) const GC: &[u8] = b"origin:lfs:gc:v1:";
+/// Permanent tombstone (empty marker) for one deleted LFS object id, blocking resurrection. Key:
+/// oid.
+pub(super) const DELETED: SideTable<LfsOid, (), Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_DELETED);
+
+/// Reverse pointer from an LFS manifest ASSET back to its object id. Key: asset id.
+pub(super) const REVERSE: SideTable<EntityId, LfsOid, Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_MANIFEST_REVERSE);
+
+/// Crash-recoverable heartbeat journal (oid32+timestamp8) for one in-progress streamed LFS
+/// upload. Key: owner id.
+pub(super) const JOURNAL: SideTable<EntityId, [u8; 40], Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_UPLOAD_JOURNAL);
+
+/// Queue (empty marker) of upload owners whose chunk references are pending garbage collection.
+/// Key: owner id.
+pub(super) const GC: SideTable<EntityId, (), Raw> =
+    SideTable::new(&side_table::ORIGIN_LFS_GC_QUEUE);
 
 /// Runs at the shared deindex door. Only metadata changes here. Byte reclamation
 /// runs in bounded follow-up transactions, so a multi-GiB delete cannot create
@@ -20,28 +34,15 @@ pub(crate) fn delete_lfs_lifecycle_in_txn(
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let reverse = chunks::key(REVERSE, id.as_bytes());
-    let Some(raw_oid) = store.vault_meta.get(txn, &reverse)? else {
+    let Some(oid) = REVERSE.get(store, txn, id)? else {
         return Ok(());
     };
-    let oid = LfsOid::from_bytes(
-        raw_oid
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("lfs reverse oid"))?,
-    );
-    let object_key = lfs_object_key(&oid);
-    if let Some(raw) = store.vault_meta.get(txn, &object_key)? {
-        let object = decode_lfs_object_record(oid, &raw)?;
-        store
-            .vault_meta
-            .put(txn, &chunks::key(GC, object.ref_owner.as_bytes()), &[])?;
+    if let Some(record) = super::store::OBJECTS.get(store, txn, &oid)? {
+        GC.put(store, txn, &record.ref_owner, &())?;
     }
-    store
-        .vault_meta
-        .put(txn, &chunks::key(DELETED, oid.as_bytes()), &[])?;
-    store.vault_meta.delete(txn, &object_key)?;
-    store.vault_meta.delete(txn, &reverse)?;
+    DELETED.put(store, txn, &oid, &())?;
+    super::store::OBJECTS.delete(store, txn, &oid)?;
+    REVERSE.delete(store, txn, id)?;
     // Ref attachments are reachability metadata, never authority to recreate.
     // They are omitted from reads once their OID is permanently deleted.
     Ok(())
@@ -54,10 +55,7 @@ pub(crate) fn is_lfs_chunk_asset_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    Ok(store
-        .vault_meta
-        .get(txn, &chunks::key(chunks::CHUNK_MARK, id.as_bytes()))?
-        .is_some())
+    chunks::CHUNK_MARKS.contains(store, txn, id)
 }
 
 impl Vault {
@@ -66,9 +64,7 @@ impl Vault {
     pub fn delete_lfs_object(&self, oid: LfsOid) -> Result<bool> {
         let Some(object) = self.lfs_object(oid)? else {
             self.with_write_txn(|txn| {
-                self.store
-                    .vault_meta
-                    .put(txn, &chunks::key(DELETED, oid.as_bytes()), &[])?;
+                DELETED.put(&self.store, txn, &oid, &())?;
                 Ok(())
             })?;
             return Ok(false);
@@ -87,47 +83,27 @@ impl Vault {
             return Ok(0);
         }
         self.with_write_txn(|txn| {
-            let pending = self
-                .store
-                .vault_meta
-                .prefix_iter(txn, GC)?
-                .next()
-                .transpose()?
-                .map(|(key, _)| key.to_vec());
-            let Some(gc_key) = pending else { return Ok(0) };
-            let owner = EntityId::from_bytes(
-                gc_key[GC.len()..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("lfs gc key"))?,
-            )
-            .map_err(|_| Error::CorruptedIndex("lfs gc owner"))?;
-            let prefix = chunks::key(chunks::OWNER_REF, owner.as_bytes());
-            let rows = self
-                .store
-                .vault_meta
-                .prefix_iter(txn, &prefix)?
+            let pending = GC.iter_from(&self.store, txn, &[])?.next().transpose()?;
+            let Some((owner, ())) = pending else {
+                return Ok(0);
+            };
+            let rows: Vec<(EntityId, [u8; 32])> = chunks::OWNER_REFS
+                .iter_from(&self.store, txn, owner.as_bytes())?
                 .take(budget)
-                .map(|row| row.map(|(key, _)| key.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+                .map(|row| row.map(|(key, ())| key))
+                .collect::<Result<Vec<_>>>()?;
             let mut graph = false;
             let mut vector = false;
-            for row in &rows {
-                let hash: [u8; 32] = row[prefix.len()..]
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("lfs owner reference"))?;
-                self.store.vault_meta.delete(txn, row)?;
-                self.store
-                    .vault_meta
-                    .delete(txn, &chunks::ref_key(&hash, owner))?;
-                let referenced = self
-                    .store
-                    .vault_meta
-                    .prefix_iter(txn, &chunks::key(chunks::REF_PREFIX, &hash))?
+            for (_, hash) in &rows {
+                chunks::OWNER_REFS.delete(&self.store, txn, &(owner, *hash))?;
+                chunks::CHUNK_REFS.delete(&self.store, txn, &(*hash, owner))?;
+                let referenced = chunks::CHUNK_REFS
+                    .iter_from(&self.store, txn, hash.as_slice())?
                     .next()
                     .transpose()?
                     .is_some();
                 if !referenced {
-                    let id = chunks::chunk_id(&hash)?;
+                    let id = chunks::chunk_id(hash)?;
                     let (_, had_vector, had_graph, neighbors) =
                         crate::batch::deindex_entity(&self.store, txn, &id)?;
                     graph |= had_graph;
@@ -144,7 +120,7 @@ impl Vault {
                 crate::hnsw::increment_vector_version(&self.store, txn)?;
             }
             if rows.len() < budget {
-                self.store.vault_meta.delete(txn, &gc_key)?;
+                GC.delete(&self.store, txn, &owner)?;
             }
             // Empty queue rows still count as progress, so a drain visits the next.
             Ok(rows.len().max(1))
@@ -157,24 +133,19 @@ impl Vault {
     pub fn recover_lfs_uploads_before(&self, cutoff: u64) -> Result<usize> {
         self.with_write_txn(|txn| {
             let mut rows = Vec::new();
-            for row in self.store.vault_meta.prefix_iter(txn, JOURNAL)? {
-                let (key, value) = row?;
-                if value.len() != 40 {
-                    return Err(Error::CorruptedIndex("lfs upload journal"));
-                }
+            for row in JOURNAL.iter_from(&self.store, txn, &[])? {
+                let (owner, value) = row?;
                 let stamp = u64::from_le_bytes(value[32..].try_into().expect("length checked"));
                 if stamp < cutoff {
-                    rows.push(key.to_vec());
+                    rows.push(owner);
                 }
                 if rows.len() == 128 {
                     break;
                 }
             }
-            for row in &rows {
-                self.store
-                    .vault_meta
-                    .put(txn, &chunks::key(GC, &row[JOURNAL.len()..]), &[])?;
-                self.store.vault_meta.delete(txn, row)?;
+            for owner in &rows {
+                GC.put(&self.store, txn, owner, &())?;
+                JOURNAL.delete(&self.store, txn, owner)?;
             }
             Ok(rows.len())
         })
@@ -184,29 +155,17 @@ impl Vault {
     pub fn collect_deleted_lfs_ref_rows(&self) -> Result<usize> {
         self.with_write_txn(|txn| {
             let mut rows = Vec::new();
-            for row in self
-                .store
-                .vault_meta
-                .prefix_iter(txn, VAULT_LFS_REF_KEY_PREFIX)?
-            {
+            for row in super::store::REFS.iter_from(&self.store, txn, &[])? {
                 let (key, _) = row?;
-                if key.len() < 32 {
-                    return Err(Error::CorruptedIndex("lfs ref key"));
-                }
-                if self
-                    .store
-                    .vault_meta
-                    .get(txn, &chunks::key(DELETED, &key[key.len() - 32..]))?
-                    .is_some()
-                {
-                    rows.push(key.to_vec());
+                if DELETED.contains(&self.store, txn, &key.oid)? {
+                    rows.push(key);
                 }
                 if rows.len() == 128 {
                     break;
                 }
             }
-            for row in &rows {
-                self.store.vault_meta.delete(txn, row)?;
+            for key in &rows {
+                super::store::REFS.delete(&self.store, txn, key)?;
             }
             Ok(rows.len())
         })
@@ -238,11 +197,7 @@ pub(crate) fn reject_direct_lfs_chunk_delete(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    if store
-        .vault_meta
-        .get(txn, &chunks::key(chunks::CHUNK_MARK, id.as_bytes()))?
-        .is_some()
-    {
+    if chunks::CHUNK_MARKS.contains(store, txn, id)? {
         return Err(chunks::invalid("delete the lfs object, not a shared chunk"));
     }
     Ok(())
@@ -257,13 +212,8 @@ pub(crate) fn guard_lfs_asset_put(
     entity_type: u8,
     data: &[u8],
 ) -> Result<()> {
-    let chunk_hash = store
-        .vault_meta
-        .get(txn, &chunks::key(chunks::CHUNK_MARK, id.as_bytes()))?;
-    let manifest = store
-        .vault_meta
-        .get(txn, &chunks::key(REVERSE, id.as_bytes()))?
-        .is_some();
+    let chunk_hash = chunks::CHUNK_MARKS.get(store, txn, id)?;
+    let manifest = REVERSE.contains(store, txn, id)?;
     if chunk_hash.is_none() && !manifest {
         return Ok(());
     }
@@ -278,10 +228,6 @@ pub(crate) fn guard_lfs_asset_put(
         let Some(hash) = chunk_hash.filter(|_| !manifest) else {
             return Err(Error::CorruptedIndex("lfs protected asset missing"));
         };
-        let hash: [u8; 32] = hash
-            .as_ref()
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("lfs chunk marker"))?;
         if chunks::chunk_id(&hash)? != *id {
             return Err(Error::CorruptedIndex("lfs chunk marker id"));
         }

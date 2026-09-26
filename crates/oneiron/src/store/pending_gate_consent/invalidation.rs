@@ -4,14 +4,29 @@ use heed::RwTxn;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::GateDecisionId;
 use super::Store;
-use super::keys::critical_confirm_invalidation_key;
 use super::records::{
     CRITICAL_CONFIRM_INVALIDATION_VERSION, CriticalConfirmInvalidationRecord,
     decode_critical_confirm_invalidation, encode_critical_confirm_invalidation,
 };
+
+/// Codec fixed `Raw` (see the decls.rs note): [`RawValue`] delegates to
+/// [`encode_critical_confirm_invalidation`]/[`decode_critical_confirm_invalidation`].
+const INVALIDATION: SideTable<EntityId, CriticalConfirmInvalidationRecord, Raw> =
+    SideTable::new(&side_table::CRITICAL_CONFIRM_INVALIDATION);
+
+impl RawValue for CriticalConfirmInvalidationRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_critical_confirm_invalidation(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_critical_confirm_invalidation(bytes)?)
+    }
+}
 
 impl Store {
     pub(crate) fn critical_confirm_invalidation_exists_in_txn(
@@ -19,13 +34,9 @@ impl Store {
         txn: &RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<bool> {
-        let Some(raw) = self
-            .vault_meta
-            .get(txn, &critical_confirm_invalidation_key(claim_id.as_bytes()))?
-        else {
+        let Some(record) = INVALIDATION.get(self, txn, claim_id)? else {
             return Ok(false);
         };
-        let record = decode_critical_confirm_invalidation(&raw)?;
         if record.claim_id != *claim_id.as_bytes() {
             return Err(Error::CorruptedIndex("critical confirm invalidation"));
         }
@@ -45,10 +56,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
     ) -> Result<()> {
-        self.vault_meta.delete(
-            wtxn,
-            &critical_confirm_invalidation_key(claim_id.as_bytes()),
-        )?;
+        INVALIDATION.delete(self, wtxn, claim_id)?;
         Ok(())
     }
 
@@ -65,11 +73,7 @@ impl Store {
             invalidated_decision_id,
             replacement_body_hash: *blake3::hash(replacement_body).as_bytes(),
         };
-        self.vault_meta.put(
-            wtxn,
-            &critical_confirm_invalidation_key(claim_id.as_bytes()),
-            &encode_critical_confirm_invalidation(&record)?,
-        )?;
+        INVALIDATION.put(self, wtxn, claim_id, &record)?;
         Ok(())
     }
 }

@@ -6,28 +6,59 @@ use super::types::{EscalationRuling, EscalationTrigger};
 use crate::edit_distance::delta::AmendmentDelta;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, GateError, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
 // ---------------------------------------------------------------------------
 
-/// `vault_meta` key prefix of the escalation ledger. The full key is this
-/// prefix ‖ [`scope_key`] (16 B) ‖ row id (16 B).
-///
-/// Scope-major so one scope's history is a contiguous range, and the trailing
-/// id is a UUIDv7 so key order is WRITE order. A caller-supplied `at` is data,
-/// never ordering — which is what keeps "the newest N rulings" meaningful when
-/// an ask is recorded with a backdated clock.
-pub(super) const ESCALATION_KEY_PREFIX: &[u8] = b"edit_distance/escalation/v1\0";
+/// Append-only ruled-escalation ledger row, keyed by [`scope_key`] (16 B, the
+/// leading fixed part) then row id (16 B) — scope-major so one scope's
+/// history is a contiguous range, and the trailing id is a UUIDv7 so key
+/// order is WRITE order. A caller-supplied `at` is data, never ordering —
+/// which is what keeps "the newest N rulings" meaningful when an ask is
+/// recorded with a backdated clock.
+pub(super) const ESCALATION: SideTable<(ScopeDigest, EntityId), StoredEscalation, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ESCALATION);
 
-/// `vault_meta` key prefix of the standing-policy family. The full key is this
-/// prefix ‖ [`scope_key`] (16 B) ‖ [`EscalationTrigger::key_byte`] (1 B).
-///
-/// Keyed by what the row GOVERNS rather than by its own id: "at most one
-/// standing policy per (scope, trigger)" is then a property of the keyspace
-/// instead of an invariant something has to check, and [`standing_policy_for`]
-/// — the read ES-07 runs before every ask — is a single lookup.
-pub(super) const STANDING_POLICY_KEY_PREFIX: &[u8] = b"edit_distance/escalation_policy/v1\0";
+/// Standing-policy family, keyed by what the row GOVERNS — [`ScopeTriggerKey`]
+/// — rather than by its own id: "at most one standing policy per (scope,
+/// trigger)" is then a property of the keyspace instead of an invariant
+/// something has to check, and [`standing_policy_for`] — the read ES-07 runs
+/// before every ask — is a single lookup.
+pub(super) const STANDING_POLICY: SideTable<ScopeTriggerKey, StoredStandingPolicy, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_ESCALATION_POLICY);
+
+/// The 16-byte scope digest, wrapped so it can lead the [`ESCALATION`] tuple
+/// key (`[u8; 16]` already implements `FixedSideKey`; the alias just names
+/// what the leading part IS).
+pub(super) type ScopeDigest = [u8; ENTITY_ID_LEN];
+
+/// `edit_distance/escalation_policy/v1` row key: a scope digest, then the
+/// [`EscalationTrigger`] it governs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ScopeTriggerKey {
+    pub(super) scope_digest: ScopeDigest,
+    pub(super) trigger: EscalationTrigger,
+}
+
+impl SideKey for ScopeTriggerKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.scope_digest);
+        out.push(self.trigger.key_byte());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (digest, trigger_byte) = bytes.split_at_checked(ENTITY_ID_LEN)?;
+        let [trigger_byte] = trigger_byte else {
+            return None;
+        };
+        Some(Self {
+            scope_digest: digest.try_into().ok()?,
+            trigger: EscalationTrigger::from_key_byte(*trigger_byte)?,
+        })
+    }
+}
 
 /// Receipt-id prefix of a ruled-escalation receipt — the
 /// [`is_escalation_receipt`] discriminator inside the `Gate` family.
@@ -117,43 +148,34 @@ pub(super) fn standing_policy_row(raw: &[u8]) -> Result<StoredStandingPolicy> {
     }
 }
 
+impl RawValue for StoredEscalation {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, ESCALATION_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(escalation_row(bytes)?)
+    }
+}
+
+impl RawValue for StoredStandingPolicy {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_row(self, STANDING_POLICY_ROW_LABEL)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(standing_policy_row(bytes)?)
+    }
+}
+
 /// The 16-byte storage handle of a scope.
-pub(super) fn scope_key(scope: &str) -> [u8; ENTITY_ID_LEN] {
+pub(super) fn scope_key(scope: &str) -> ScopeDigest {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SCOPE_DIGEST_DOMAIN);
     hasher.update(scope.as_bytes());
     let mut key = [0_u8; ENTITY_ID_LEN];
     key.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
     key
-}
-
-/// The ledger key range of one scope.
-pub(super) fn escalation_scope_prefix(scope: &str) -> Vec<u8> {
-    let mut key = ESCALATION_KEY_PREFIX.to_vec();
-    key.extend_from_slice(&scope_key(scope));
-    key
-}
-
-pub(super) fn escalation_key(scope: &str, id: &EntityId) -> Vec<u8> {
-    let mut key = escalation_scope_prefix(scope);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-pub(super) fn standing_policy_key(scope: &str, trigger: EscalationTrigger) -> Vec<u8> {
-    let mut key = STANDING_POLICY_KEY_PREFIX.to_vec();
-    key.extend_from_slice(&scope_key(scope));
-    key.push(trigger.key_byte());
-    key
-}
-
-/// The row id embedded in a ledger key.
-pub(super) fn escalation_key_id(key: &[u8]) -> Result<EntityId> {
-    let tail = key
-        .get(ESCALATION_KEY_PREFIX.len() + ENTITY_ID_LEN..)
-        .and_then(|tail| <[u8; ENTITY_ID_LEN]>::try_from(tail).ok())
-        .ok_or(Error::CorruptedIndex(ESCALATION_ROW_LABEL))?;
-    EntityId::from_bytes(tail).map_err(|_| Error::CorruptedIndex(ESCALATION_ROW_LABEL))
 }
 
 pub(super) fn escalation_receipt_id(id: &EntityId) -> String {

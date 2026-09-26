@@ -379,13 +379,13 @@ fn deleting_skill_cleans_index_and_stale_rows_do_not_block_import_dedup() -> Res
         SkillCapabilitySurface::default(),
     );
     let entity = vault.import_skill_from_hub(&hub_ref(HubPin::None), &imported, t(1), 2)?;
-    let key = content_hash_index_key(fixture_hash(), &entity);
+    let key = (*fixture_hash().as_bytes(), entity);
 
     assert!(vault.delete_entity(&entity)?);
 
     // A lagging index row must not resurrect the departed holder.
     let mut wtxn = vault.store.env.write_txn()?;
-    vault.store.vault_meta.put(&mut wtxn, &key, &[])?;
+    CONTENT_HASH_INDEX.put(&vault.store, &mut wtxn, &key, &())?;
     wtxn.commit()?;
 
     // Reimport must create a fresh holder and subsequently deduplicate to it.
@@ -431,14 +431,12 @@ fn open_backfills_pre_index_structured_skills() -> Result<()> {
     vault.import_skill_from_hub_with_id(&hub_ref(HubPin::None), &imported, entity, t(1), 2)?;
 
     let mut wtxn = vault.store.env.write_txn()?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, &content_hash_index_key(fixture_hash(), &entity))?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?;
+    CONTENT_HASH_INDEX.delete(
+        &vault.store,
+        &mut wtxn,
+        &(*fixture_hash().as_bytes(), entity),
+    )?;
+    SCHEMA_VERSION.delete(&vault.store, &mut wtxn, &())?;
     wtxn.commit()?;
     drop(vault);
 
@@ -485,14 +483,12 @@ fn open_backfill_is_not_capped_by_on_demand_reader_limit() -> Result<()> {
         .get(&wtxn, template_entity.as_bytes())?
         .expect("template skill")
         .to_vec();
-    vault.store.vault_meta.delete(
+    CONTENT_HASH_INDEX.delete(
+        &vault.store,
         &mut wtxn,
-        &content_hash_index_key(fixture_hash(), &template_entity),
+        &(*fixture_hash().as_bytes(), template_entity),
     )?;
-    vault
-        .store
-        .vault_meta
-        .delete(&mut wtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?;
+    SCHEMA_VERSION.delete(&vault.store, &mut wtxn, &())?;
 
     let mut last_entity = template_entity;
     for index in 0..MAX_HUB_SKILL_SCAN_ENTRIES {
@@ -517,20 +513,14 @@ fn open_backfill_is_not_capped_by_on_demand_reader_limit() -> Result<()> {
     let vault = Vault::open(&path, crate::VaultConfig::default())?;
     let rtxn = vault.store.env.read_txn()?;
     assert_eq!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, CONTENT_HASH_INDEX_SCHEMA_VERSION_KEY)?
-            .as_deref(),
+        SCHEMA_VERSION.get(&vault.store, &rtxn, &())?.as_deref(),
         Some(&[CONTENT_HASH_INDEX_SCHEMA_VERSION][..])
     );
-    assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &content_hash_index_key(fixture_hash(), &last_entity))?
-            .is_some()
-    );
+    assert!(CONTENT_HASH_INDEX.contains(
+        &vault.store,
+        &rtxn,
+        &(*fixture_hash().as_bytes(), last_entity)
+    )?);
     Ok(())
 }
 

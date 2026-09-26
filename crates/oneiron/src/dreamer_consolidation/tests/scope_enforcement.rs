@@ -1136,3 +1136,70 @@ fn admitted_branch_does_not_infer_read_authority_from_its_queue() -> Result<()> 
     );
     Ok(())
 }
+
+/// Captures the sealed write's folded read receipt.
+#[derive(Default)]
+struct ReceiptSink {
+    receipt: Option<crate::claim::ScopedReadReceipt>,
+}
+
+impl ConsolidationSink for ReceiptSink {
+    fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        self.receipt = Some(write.read_receipt().clone());
+        Ok(())
+    }
+
+    fn accept(&mut self, _candidates: Vec<PromotionCandidate>) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x4D, &[("user", "a receipted source")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let subject = EntityId::now();
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
+    // A private diary about the subject: stored, never the Dreamer's to read.
+    let author = EntityId::now();
+    vault.put_entity(&author, ENTITY_TYPE_PERSON, occurred(1), 1, b"author")?;
+    let diary = EntityId::now();
+    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+        kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
+        author_ref: author,
+        markdown: "private graph evidence".to_owned(),
+        source_revision_ref: [1; 16],
+    })?;
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
+            .edge(&diary, EdgeKind::About, &subject, 1.0)
+            .apply(txn)
+    })?;
+    let branch = BranchResources::open(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+    )?;
+    let mut output = candidate(subject, "profile.name", "name", None);
+    output.evidence_turn_refs = turns;
+    derive_id(&mut output, attempt.status.attempt.id)?;
+    // The graph signal reads the subject's sources as the Dreamer: the diary
+    // is withheld, so it neither counts toward fan-in nor goes unreported.
+    let (fan_in, _, _) = branch.candidate_signals(branch.scope(), &output)?;
+    assert_eq!(fan_in, 0);
+    let mut sink = ReceiptSink::default();
+    branch.accept(branch.scope(), &mut sink, vec![output])?;
+    let receipt = sink.receipt.expect("the sealed write carries its reads");
+    assert_eq!(receipt.suppressed_count, 1);
+    assert!(receipt.narrowed_axes.contains(&"row_authority".to_owned()));
+    Ok(())
+}

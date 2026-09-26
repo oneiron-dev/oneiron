@@ -2,13 +2,20 @@
 //! Checkpoints are verified hints, never substitute trust roots; raw history is retained.
 use super::history_transfer::history_in_txn;
 use super::*;
+use crate::side_table::{self, Raw, SideTable};
 use crate::{Vault, error::Result};
 use rmpv::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 pub const AUTHORITY_CHECKPOINT_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v1";
-const HEAD: &[u8] = b"authority.checkpoint.head.v1";
+
+/// Content hash of the current head of the local authority-checkpoint chain. Key: ().
+const CHECKPOINT_HEAD: SideTable<(), AuthorityEntryHash, Raw> =
+    SideTable::new(&side_table::AUTHORITY_CHECKPOINT_HEAD);
+/// One durable, quorum-signed authority checkpoint (hand-rolled MessagePack map). Key: hash32.
+const CHECKPOINT_ROW: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+    SideTable::new(&side_table::AUTHORITY_CHECKPOINT_ROW);
 
 /// A signed roster summary at a closed authority-history horizon.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,12 +216,6 @@ pub fn decode_authority_checkpoint(bytes: &[u8]) -> Result<AuthorityCheckpoint> 
 pub fn authority_checkpoint_hash(checkpoint: &AuthorityCheckpoint) -> Result<AuthorityEntryHash> {
     Ok(*blake3::hash(&encode_authority_checkpoint(checkpoint)?).as_bytes())
 }
-fn key(hash: &AuthorityEntryHash) -> Vec<u8> {
-    let mut key = b"authority.checkpoint.v1.".to_vec();
-    key.extend_from_slice(hash);
-    key
-}
-
 impl Vault {
     fn checkpoint_fold(
         &self,
@@ -234,21 +235,17 @@ impl Vault {
             {
                 return Err(invalid_authority());
             }
-            if let Some(bytes) = self
-                .store
-                .sync_state
-                .get(txn, authority_first_seen_sync_key(hash).as_str())?
-                && let Some(time) = decode_authority_first_seen_secs(&bytes)
-            {
+            if let Some(time) = AUTHORITY_FIRST_SEEN.get_lenient(
+                &self.store,
+                txn,
+                &authority_first_seen_sidecar_key(hash),
+            )? {
                 seen.insert(*hash, time);
             }
             entries.push(entry.clone());
         }
-        let floor = self
-            .store
-            .sync_state
-            .get(txn, authority_first_seen_clock_sync_key())?
-            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        let floor = AUTHORITY_FIRST_SEEN
+            .get_lenient(&self.store, txn, &authority_first_seen_clock_key())?
             .unwrap_or(0);
         let now =
             authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
@@ -322,10 +319,8 @@ impl Vault {
             }
             self.verify_checkpoint_one(txn, &current)?;
             for hash in &current.parent_hashes {
-                let bytes = self
-                    .store
-                    .vault_meta
-                    .get(txn, &key(hash))?
+                let bytes = CHECKPOINT_ROW
+                    .get(&self.store, txn, hash)?
                     .ok_or_else(invalid_authority)?;
                 let parent = decode_authority_checkpoint(&bytes)?;
                 if authority_checkpoint_hash(&parent)? != *hash
@@ -362,22 +357,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let history = history_in_txn(self, &txn)?;
-        let head = self
-            .store
-            .vault_meta
-            .get(&txn, HEAD)?
-            .map(std::borrow::Cow::into_owned);
-        let parent_hashes = head
-            .as_ref()
-            .map(|bytes| {
-                bytes
-                    .as_slice()
-                    .try_into()
-                    .map(|hash| vec![hash])
-                    .map_err(|_| invalid_authority())
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let head: Option<AuthorityEntryHash> = CHECKPOINT_HEAD.get(&self.store, &txn, &())?;
+        let parent_hashes = head.map_or_else(Vec::new, |hash| vec![hash]);
         signer_keys.sort();
         signer_keys.dedup();
         let mut checkpoint = AuthorityCheckpoint {
@@ -402,20 +383,14 @@ impl Vault {
             signature.signature = sign(&signature.public_key, &transcript)?;
         }
         let mut txn = self.store.env.write_txn()?;
-        if self
-            .store
-            .vault_meta
-            .get(&txn, HEAD)?
-            .map(std::borrow::Cow::into_owned)
-            != head
-        {
+        if CHECKPOINT_HEAD.get(&self.store, &txn, &())? != head {
             return Err(invalid_authority());
         }
         self.verify_checkpoint_chain(&txn, &checkpoint)?;
         let hash = authority_checkpoint_hash(&checkpoint)?;
         let bytes = encode_authority_checkpoint(&checkpoint)?;
-        self.store.vault_meta.put(&mut txn, &key(&hash), &bytes)?;
-        self.store.vault_meta.put(&mut txn, HEAD, &hash)?;
+        CHECKPOINT_ROW.put(&self.store, &mut txn, &hash, &bytes)?;
+        CHECKPOINT_HEAD.put(&self.store, &mut txn, &(), &hash)?;
         txn.commit()?;
         Ok(checkpoint)
     }
@@ -425,7 +400,7 @@ impl Vault {
         hash: &AuthorityEntryHash,
     ) -> Result<Option<AuthorityCheckpoint>> {
         let txn = self.store.env.read_txn()?;
-        let Some(bytes) = self.store.vault_meta.get(&txn, &key(hash))? else {
+        let Some(bytes) = CHECKPOINT_ROW.get(&self.store, &txn, hash)? else {
             return Ok(None);
         };
         let checkpoint = decode_authority_checkpoint(&bytes)?;

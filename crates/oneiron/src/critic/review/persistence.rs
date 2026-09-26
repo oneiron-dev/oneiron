@@ -1,5 +1,22 @@
 //! Transactional review bundles. Every public claim goes through the write gate.
 use super::*;
+use crate::side_table::{self, Named, Raw, SideTable};
+
+/// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
+/// identity tuple. Key: hash32.
+const RESULT: SideTable<[u8; 32], StoredReview, Named> =
+    SideTable::new(&side_table::CRITIC_REVIEW_RESULT);
+
+/// Index from a review verdict claim id back to its [`RESULT`] row key: the exact bytes
+/// [`RESULT::key_bytes`](SideTable::key_bytes) gives for the hash, unchanged since before the
+/// typed door. Key: id16.
+const RESULT_ID: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CRITIC_REVIEW_RESULT_ID);
+
+/// Blake3 stamp of a written claim body, used to detect a review verdict claim edited outside its
+/// producer. Key: id16.
+const CLAIM_TRUST: SideTable<EntityId, [u8; 32], Raw> =
+    SideTable::new(&side_table::CRITIC_REVIEW_CLAIM_TRUST);
 
 pub(super) fn persist_review(
     vault: &Vault,
@@ -21,15 +38,16 @@ pub(super) fn persist_review(
             if artifact.out_of_scope {
                 continue;
             }
-            let key = critique_artifact_key(artifact.branch_attempt, &artifact.artifact_id)?;
-            let encoded = rmp_serde::to_vec_named(artifact)
-                .map_err(|_| invalid_critic_config("review artifact encode"))?;
-            if let Some(held) = vault.store.vault_meta.get(txn, &key)?
-                && held != encoded
+            let key = CritiqueArtifactKey {
+                branch_attempt: artifact.branch_attempt,
+                artifact_id: artifact.artifact_id.clone(),
+            };
+            if let Some(held) = CRITIQUE_ARTIFACT.get(&vault.store, txn, &key)?
+                && held != *artifact
             {
                 return Err(invalid_critic_config("review artifact id already used"));
             }
-            vault.store.vault_meta.put(txn, &key, &encoded)?;
+            CRITIQUE_ARTIFACT.put(&vault.store, txn, &key, artifact)?;
         }
         let id = EntityId::now();
         let mut body = ClaimBody::new(
@@ -71,16 +89,9 @@ pub(super) fn persist_review(
             triage: triage.clone(),
             artifacts: artifacts.to_vec(),
         };
-        let bytes = rmp_serde::to_vec_named(&stored)
-            .map_err(|_| invalid_critic_config("review result encode"))?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &review_key(request)?, &bytes)?;
-        vault
-            .store
-            .vault_meta
-            .put(txn, &result_id_key(&id), &review_key(request)?)?;
+        let hash = review_identity_hash(request)?;
+        RESULT.put(&vault.store, txn, &hash, &stored)?;
+        RESULT_ID.put(&vault.store, txn, &id, &RESULT.key_bytes(&hash))?;
         Ok(result)
     })
 }
@@ -132,10 +143,7 @@ pub(super) fn write_claim(
         .get_claim_in_txn(txn, id)?
         .ok_or(Error::EntityNotFound)?;
     let digest = blake3::hash(&crate::claim::encode_claim_body(&stored)?);
-    vault
-        .store
-        .vault_meta
-        .put(txn, &trusted_key(id), digest.as_bytes())?;
+    CLAIM_TRUST.put(&vault.store, txn, id, digest.as_bytes())?;
     Ok(())
 }
 
@@ -199,7 +207,8 @@ struct StoredReview {
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
 }
-fn review_key(request: &ReviewRequest) -> Result<Vec<u8>> {
+/// The [`RESULT`] table's key: a blake3 hash of the review request's identity tuple.
+fn review_identity_hash(request: &ReviewRequest) -> Result<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(&(
         request.target.to_hex(),
         request.kind,
@@ -211,20 +220,16 @@ fn review_key(request: &ReviewRequest) -> Result<Vec<u8>> {
         request.auto_resolve_threshold,
     ))
     .map_err(|_| invalid_critic_config("review identity encode"))?;
-    let mut key = b"review:result:v1:".to_vec();
-    key.extend_from_slice(blake3::hash(&bytes).as_bytes());
-    Ok(key)
+    Ok(*blake3::hash(&bytes).as_bytes())
 }
 pub(super) fn cached_review(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     request: &ReviewRequest,
 ) -> Result<Option<ReviewResult>> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &review_key(request)?)? else {
+    let Some(stored) = RESULT.get(&vault.store, txn, &review_identity_hash(request)?)? else {
         return Ok(None);
     };
-    let stored: StoredReview =
-        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("review result"))?;
     let id = EntityId::from_hex(&stored.verdict)?;
     let body = vault
         .get_claim_in_txn(txn, &id)?
@@ -240,11 +245,6 @@ pub(super) fn cached_review(
         artifacts: stored.artifacts,
     }))
 }
-fn trusted_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"review:claim:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
 pub(super) fn trusted_claim(
@@ -253,35 +253,28 @@ pub(super) fn trusted_claim(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
-    let Some(held) = vault.store.vault_meta.get(txn, &trusted_key(id))? else {
+    let Some(held) = CLAIM_TRUST.get(&vault.store, txn, id)? else {
         return Ok(false);
     };
-    Ok(held.as_ref() == blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
+    Ok(held == *blake3::hash(&crate::claim::encode_claim_body(body)?).as_bytes())
 }
 
-fn result_id_key(id: &EntityId) -> Vec<u8> {
-    let mut key = b"review:result_id:v1:".to_vec();
-    key.extend_from_slice(id.as_bytes());
-    key
-}
 pub(super) fn persisted_artifact(
     vault: &Vault,
     verdict: &EntityId,
     artifact_id: &str,
 ) -> Result<CritiqueArtifact> {
     let txn = vault.store.env.read_txn()?;
-    let key = vault
-        .store
-        .vault_meta
-        .get(&txn, &result_id_key(verdict))?
+    let pointer = RESULT_ID
+        .get(&vault.store, &txn, verdict)?
         .ok_or(Error::EntityNotFound)?;
-    let raw = vault
-        .store
-        .vault_meta
-        .get(&txn, &key)?
+    let hash: [u8; 32] = pointer
+        .strip_prefix(RESULT.decl().prefix)
+        .and_then(|hash| hash.try_into().ok())
         .ok_or(Error::EntityNotFound)?;
-    let stored: StoredReview =
-        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("review result"))?;
+    let stored = RESULT
+        .get(&vault.store, &txn, &hash)?
+        .ok_or(Error::EntityNotFound)?;
     if stored.verdict != verdict.to_hex() {
         return Err(Error::CorruptedIndex("review result identity"));
     }

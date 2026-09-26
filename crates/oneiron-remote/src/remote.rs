@@ -53,6 +53,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(serde::Deserialize)]
 struct ApiErrorEnvelope {
     error: ApiErrorBody,
+    /// The receipt of the read that answered, beside the error it explains.
+    #[serde(default)]
+    narrowing: Option<oneiron::claim::ScopedReadReceipt>,
 }
 
 /// `{code, message, requestId, suggestions}`.
@@ -611,6 +614,7 @@ fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         suggestions,
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: envelope.narrowing.map(Box::new),
     })
 }
 

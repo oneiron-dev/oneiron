@@ -7,13 +7,20 @@ use super::{
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, CompleteAttempt, SetAttemptResult,
 };
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 use oneiron_seal::{PadesProfile, PdfSealEngine, SealError, SealRequest, VerifyReport};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-const CANONICAL: &[u8] = b"esign.sealed.v1/";
-const RESULT: &[u8] = b"esign.seal_result.v1/";
+
+/// Sealed document manifest. Key: id16 (document).
+pub(super) const CANONICAL: SideTable<EntityId, SealedDocument, LegacyJson> =
+    SideTable::new(&side_table::ESIGN_SEALED_DOCUMENT);
+/// Completed seal attempt result. Key: id16 (attempt id — `AttemptId`, not `EntityId`, but the
+/// same raw 16 bytes).
+const RESULT: SideTable<[u8; 16], SealedDocument, LegacyJson> =
+    SideTable::new(&side_table::ESIGN_SEAL_RESULT);
 #[derive(Debug, thiserror::Error)]
 pub enum EsignSealError {
     #[error(transparent)]
@@ -63,11 +70,7 @@ fn live_attempt(vault: &Vault, txn: &heed::RoTxn<'_>, attempt: &AttemptRecord) -
 impl Vault {
     pub fn sealed_esign_document(&self, document: EntityId) -> Result<Option<SealedDocument>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &[CANONICAL, document.as_bytes()].concat())?
-            .map(|v| serde_json::from_slice(&v).map_err(|_| invalid("sealed manifest")))
-            .transpose()
+        CANONICAL.get(&self.store, &txn, &document)
     }
     /// Async backend work is outside the writer lock. Immutable original
     /// versions are always used, including for owner-authorized reseals.
@@ -85,12 +88,9 @@ impl Vault {
                 .try_into()
                 .map_err(|_| invalid("seal attempt payload"))?,
         )?;
-        let result_key = [RESULT, attempt.id.as_bytes()].concat();
         let (state, rows, originals, images) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            if let Some(bytes) = self.store.vault_meta.get(&txn, &result_key)? {
-                let sealed: SealedDocument =
-                    serde_json::from_slice(&bytes).map_err(|_| invalid("seal result"))?;
+            if let Some(sealed) = RESULT.get(&self.store, &txn, attempt.id.as_bytes())? {
                 if sealed.document != document.to_hex()
                     || attempt.kind != super::ESIGN_SEAL_ATTEMPT_KIND
                 {
@@ -122,19 +122,15 @@ impl Vault {
                     if images.contains_key(image_ref) {
                         continue;
                     }
-                    if self
-                        .store
-                        .vault_meta
-                        .get(
-                            &txn,
-                            &super::signature_image::image_binding_key(
-                                document,
-                                &value.recipient,
-                                image_ref,
-                            ),
-                        )?
-                        .is_none()
-                    {
+                    if !super::signature_image::BINDINGS.contains(
+                        &self.store,
+                        &txn,
+                        &super::signature_image::image_binding_key(
+                            document,
+                            &value.recipient,
+                            image_ref,
+                        ),
+                    )? {
                         return Err(invalid("signature image binding").into());
                     }
                     let bytes = self
@@ -277,11 +273,8 @@ impl Vault {
                 },
                 now,
             )?;
-            let bytes = serde_json::to_vec(&manifest).map_err(|_| invalid("sealed manifest"))?;
-            self.store
-                .vault_meta
-                .put(txn, &[CANONICAL, document.as_bytes()].concat(), &bytes)?;
-            self.store.vault_meta.put(txn, &result_key, &bytes)?;
+            CANONICAL.put(&self.store, txn, &document, &manifest)?;
+            RESULT.put(&self.store, txn, attempt.id.as_bytes(), &manifest)?;
             let queue = AttemptQueue::new(self);
             let owner = attempt
                 .lease_owner

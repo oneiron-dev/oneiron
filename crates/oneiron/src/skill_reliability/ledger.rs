@@ -5,23 +5,59 @@ use rmpv::Value;
 use crate::Vault;
 use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::receipt::ReceiptRecord;
+use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::skill::SkillRecord;
 
 use super::codec::{
-    ENTITY_ID_LEN, KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid,
-    map_entry, map_u64,
+    KEY_AT, KEY_SCHEMA_VERSION, KEY_WIN, decode_value, encode_value, invalid, map_entry, map_u64,
 };
 use super::posterior::{SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior, count_weight};
 use super::read::read_skill;
 
-/// `skill_reliability:outcome:v1:` + skill id (16 B) + receipt id (UTF-8).
+/// Durable per-(skill, receipt) attributed-outcome ledger. Key: id16(skill) + string(receipt).
 ///
 /// The receipt id in the KEY is what makes the projector idempotent: an outcome
 /// already recorded re-writes its own row instead of incrementing a counter, so
 /// re-running a pass over the same judgments cannot double-count.
-const OUTCOME_PREFIX: &[u8] = b"skill_reliability:outcome:v1:";
+pub(super) const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
+
+/// [`OUTCOME`]'s row: the byte layout [`record_outcome_in_txn`] has always spelled. `at` is
+/// carried for round-trip fidelity only — no reader decodes it back out today.
+pub(super) struct OutcomeRow {
+    pub(super) win: bool,
+    at: u64,
+}
+
+impl RawValue for OutcomeRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
+        let row = Value::Map(vec![
+            (
+                Value::from(KEY_SCHEMA_VERSION),
+                Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
+            ),
+            (Value::from(KEY_WIN), Value::Boolean(self.win)),
+            (Value::from(KEY_AT), Value::from(self.at)),
+        ]);
+        Ok(encode_value(&row)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
+        let value = decode_value(bytes)?;
+        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+            return Err(invalid("unsupported skill reliability outcome schema").into());
+        }
+        let win = map_entry(&value, KEY_WIN)
+            .and_then(Value::as_bool)
+            .ok_or(invalid("skill reliability outcome is missing win"))?;
+        Ok(Self {
+            win,
+            at: map_u64(&value, KEY_AT).unwrap_or(0),
+        })
+    }
+}
 
 /// Terminal attempt state that credits a contributing win
 /// (`AttemptState::Completed`'s wire string, as stamped on the pack receipt).
@@ -121,37 +157,15 @@ pub(super) fn record_outcome_in_txn(
     if receipt_ref.is_empty() {
         return Err(invalid("a reliability outcome must cite a receipt"));
     }
-    let key = outcome_key(skill, receipt_ref);
+    let key = (*skill, receipt_ref.to_owned());
     if win
-        && let Some(existing) = vault.store.vault_meta.get(wtxn, &key)?
-        && !decode_outcome_win(&existing)?
+        && let Some(existing) = OUTCOME.get(&vault.store, wtxn, &key)?
+        && !existing.win
     {
         return Ok(());
     }
-    let row = Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(SKILL_RELIABILITY_SCHEMA_VERSION),
-        ),
-        (Value::from(KEY_WIN), Value::Boolean(win)),
-        (Value::from(KEY_AT), Value::from(at)),
-    ]);
-    let encoded = encode_value(&row)?;
-    vault.store.vault_meta.put(wtxn, &key, &encoded)?;
+    OUTCOME.put(&vault.store, wtxn, &key, &OutcomeRow { win, at })?;
     Ok(())
-}
-
-fn outcome_prefix(skill: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(OUTCOME_PREFIX.len() + ENTITY_ID_LEN);
-    key.extend_from_slice(OUTCOME_PREFIX);
-    key.extend_from_slice(skill.as_bytes());
-    key
-}
-
-pub(super) fn outcome_key(skill: &EntityId, receipt_ref: &str) -> Vec<u8> {
-    let mut key = outcome_prefix(skill);
-    key.extend_from_slice(receipt_ref.as_bytes());
-    key
 }
 
 /// Attributed-outcome counts for one skill, plus the citation trace.
@@ -190,7 +204,7 @@ impl OutcomeTally {
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key.
+/// Storage errors; a typed side-table row error on a malformed outcome key.
 pub(crate) fn attributed_outcome_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -212,24 +226,18 @@ pub(crate) fn attributed_outcome_receipts(
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on a non-UTF-8 outcome key; body
-/// errors on an undecodable outcome row.
+/// Storage errors; a typed side-table row error on a malformed outcome key or an
+/// undecodable outcome row.
 pub(crate) fn attributed_outcome_results(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<Vec<(String, bool)>> {
-    let prefix = outcome_prefix(skill);
-    let mut outcomes = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, raw) = row?;
-        let receipt = key
-            .get(prefix.len()..)
-            .and_then(|suffix| std::str::from_utf8(suffix).ok())
-            .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
-        outcomes.push((receipt.to_owned(), decode_outcome_win(&raw)?));
-    }
-    Ok(outcomes)
+    Ok(OUTCOME
+        .scan_from(&vault.store, rtxn, skill.as_bytes())?
+        .into_iter()
+        .map(|((_, receipt), row)| (receipt, row.win))
+        .collect())
 }
 
 pub(super) fn tally_outcomes(
@@ -237,33 +245,17 @@ pub(super) fn tally_outcomes(
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
 ) -> Result<OutcomeTally> {
-    let prefix = outcome_prefix(skill);
     let mut tally = OutcomeTally::default();
-    for row in vault.store.vault_meta.prefix_iter(rtxn, &prefix)? {
-        let (key, raw) = row?;
-        let receipt = key
-            .get(prefix.len()..)
-            .and_then(|suffix| std::str::from_utf8(suffix).ok())
-            .ok_or(Error::CorruptedIndex("skill reliability outcome key"))?;
-        if decode_outcome_win(&raw)? {
+    for ((_, receipt), row) in OUTCOME.scan_from(&vault.store, rtxn, skill.as_bytes())? {
+        if row.win {
             tally.wins = tally.wins.saturating_add(1);
         } else {
             tally.losses = tally.losses.saturating_add(1);
         }
-        tally.cited.push(receipt.to_owned());
+        tally.cited.push(receipt);
         if tally.cited.len() > SKILL_RELIABILITY_MAX_CITED_RECEIPTS {
             tally.cited.remove(0);
         }
     }
     Ok(tally)
-}
-
-fn decode_outcome_win(raw: &[u8]) -> Result<bool> {
-    let value = decode_value(raw)?;
-    if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
-        return Err(invalid("unsupported skill reliability outcome schema"));
-    }
-    map_entry(&value, KEY_WIN)
-        .and_then(Value::as_bool)
-        .ok_or(invalid("skill reliability outcome is missing win"))
 }

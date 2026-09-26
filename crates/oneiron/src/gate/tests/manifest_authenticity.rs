@@ -418,7 +418,8 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
     let reads = |principal: &str| -> Result<bool> {
         Ok(vault
             .scoped_read(ScopedReadActorKey::new(principal).expect("principal key"))
-            .get(&subject)?
+            .read(&[crate::claim::PointRead::id(subject)], None)?
+            .single()
             .value
             .is_some())
     };

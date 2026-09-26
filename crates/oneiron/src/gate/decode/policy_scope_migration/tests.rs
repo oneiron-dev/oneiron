@@ -128,7 +128,8 @@ fn effect_outcome(vault: &Vault, channel: &str) -> Result<GateOutcome> {
 fn reader(vault: &Vault, actor: &str, id: &crate::EntityId) -> Result<bool> {
     Ok(vault
         .scoped_read(ScopedReadActorKey::new(actor).expect("actor"))
-        .get(id)?
+        .read(&[crate::claim::PointRead::id(*id)], None)?
+        .single()
         .is_some())
 }
 

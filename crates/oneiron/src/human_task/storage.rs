@@ -5,20 +5,27 @@ use rmpv::Value;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::model::{
     HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupStage, HumanTaskFollowupRecord,
     HumanTaskWaitBinding,
 };
 
-pub(super) const HUMAN_TASK_FOLLOWUP_KEY_PREFIX: &[u8] = b"human_task.followup.v1\0";
+/// The follow-up cursor for one TASK, keyed by the task's own id.
+pub(super) const FOLLOWUPS: SideTable<EntityId, HumanTaskFollowupRecord, Raw> =
+    SideTable::new(&side_table::HUMAN_TASK_FOLLOWUP);
 
-const HUMAN_TASK_WAIT_KEY_PREFIX: &[u8] = b"human_task.wait.v1\0";
+/// One C9 wait binding, keyed by the task's own id.
+pub(super) const WAIT_BINDINGS: SideTable<EntityId, HumanTaskWaitBinding, Raw> =
+    SideTable::new(&side_table::HUMAN_TASK_WAIT_BINDING);
 
 /// Records which response event already produced a signal for one wait, so a
 /// re-delivered response returns the first signal instead of re-driving the
-/// trap state machine.
-const HUMAN_TASK_WAIT_SIGNAL_KEY_PREFIX: &[u8] = b"human_task.wait.signal.v1\0";
+/// trap state machine. Keyed by the trap claim id; value is
+/// `(signal_ref, surface_event_ref)`.
+pub(super) const WAIT_SIGNALS: SideTable<EntityId, (EntityId, EntityId), Raw> =
+    SideTable::new(&side_table::HUMAN_TASK_WAIT_SIGNAL);
 
 const KEY_SCHEMA_VERSION: &str = "schema_version";
 
@@ -54,25 +61,6 @@ const KEY_SURFACE_EVENT_REF: &str = "surface_event_ref";
 pub(super) const KEY_PARTY_KEY: &str = "party_key";
 
 // ── storage ─────────────────────────────────────────────────────────────────
-
-fn prefixed_key(prefix: &[u8], id: EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(prefix.len() + id.as_bytes().len());
-    key.extend_from_slice(prefix);
-    key.extend_from_slice(id.as_bytes());
-    key
-}
-
-pub(super) fn followup_key(task_ref: EntityId) -> Vec<u8> {
-    prefixed_key(HUMAN_TASK_FOLLOWUP_KEY_PREFIX, task_ref)
-}
-
-pub(super) fn wait_binding_key(task_ref: EntityId) -> Vec<u8> {
-    prefixed_key(HUMAN_TASK_WAIT_KEY_PREFIX, task_ref)
-}
-
-pub(super) fn wait_signal_key(trap_claim_id: EntityId) -> Vec<u8> {
-    prefixed_key(HUMAN_TASK_WAIT_SIGNAL_KEY_PREFIX, trap_claim_id)
-}
 
 fn encoded(entries: Vec<(Value, Value)>) -> Vec<u8> {
     let mut bytes = Vec::new();
@@ -125,12 +113,8 @@ fn decode_u64(entries: &[(Value, Value)], key: &str, what: &'static str) -> Resu
         .ok_or(Error::CorruptedIndex(what))
 }
 
-pub(super) fn put_followup_record_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    record: &HumanTaskFollowupRecord,
-) -> Result<()> {
-    let body = encoded(vec![
+fn followup_record_body(record: &HumanTaskFollowupRecord) -> Vec<u8> {
+    encoded(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(record.schema_version),
@@ -161,11 +145,25 @@ pub(super) fn put_followup_record_in_txn(
             Value::from(KEY_COMPLETED_AT),
             optional_u64_value(record.completed_at),
         ),
-    ]);
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, followup_key(record.task_ref).as_slice(), &body)?;
+    ])
+}
+
+impl RawValue for HumanTaskFollowupRecord {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(followup_record_body(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_followup_record(bytes)?)
+    }
+}
+
+pub(super) fn put_followup_record_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &HumanTaskFollowupRecord,
+) -> Result<()> {
+    FOLLOWUPS.put(&vault.store, wtxn, &record.task_ref, record)?;
     Ok(())
 }
 
@@ -174,17 +172,10 @@ pub(super) fn followup_record_in_txn(
     rtxn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> Result<Option<HumanTaskFollowupRecord>> {
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(rtxn, followup_key(task_ref).as_slice())?
-    else {
-        return Ok(None);
-    };
-    decode_followup_record(raw.as_ref()).map(Some)
+    FOLLOWUPS.get(&vault.store, rtxn, &task_ref)
 }
 
-pub(super) fn decode_followup_record(raw: &[u8]) -> Result<HumanTaskFollowupRecord> {
+fn decode_followup_record(raw: &[u8]) -> Result<HumanTaskFollowupRecord> {
     const WHAT: &str = "human_task.followup row";
     let entries = decode_map(raw, WHAT)?;
     let schema_version = u8::try_from(decode_u64(&entries, KEY_SCHEMA_VERSION, WHAT)?)
@@ -213,12 +204,8 @@ pub(super) fn decode_followup_record(raw: &[u8]) -> Result<HumanTaskFollowupReco
     })
 }
 
-pub(super) fn put_wait_binding_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    binding: &HumanTaskWaitBinding,
-) -> Result<()> {
-    let body = encoded(vec![
+fn wait_binding_body(binding: &HumanTaskWaitBinding) -> Vec<u8> {
+    encoded(vec![
         (Value::from(KEY_TASK_REF), entity_value(binding.task_ref)),
         (
             Value::from(KEY_RESPONDER_REF),
@@ -233,15 +220,29 @@ pub(super) fn put_wait_binding_in_txn(
             Value::Binary(binding.step_hash.to_vec()),
         ),
         (Value::from(KEY_IS_ACTIVE), Value::from(binding.is_active)),
-    ]);
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, wait_binding_key(binding.task_ref).as_slice(), &body)?;
+    ])
+}
+
+impl RawValue for HumanTaskWaitBinding {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(wait_binding_body(self))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_wait_binding(bytes)?)
+    }
+}
+
+pub(super) fn put_wait_binding_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    binding: &HumanTaskWaitBinding,
+) -> Result<()> {
+    WAIT_BINDINGS.put(&vault.store, wtxn, &binding.task_ref, binding)?;
     Ok(())
 }
 
-pub(super) fn decode_wait_binding(raw: &[u8]) -> Result<HumanTaskWaitBinding> {
+fn decode_wait_binding(raw: &[u8]) -> Result<HumanTaskWaitBinding> {
     const WHAT: &str = "human_task.wait row";
     let entries = decode_map(raw, WHAT)?;
     let Some(Value::Binary(step_hash)) = field(&entries, KEY_STEP_HASH) else {
@@ -263,6 +264,35 @@ pub(super) fn decode_wait_binding(raw: &[u8]) -> Result<HumanTaskWaitBinding> {
     })
 }
 
+fn wait_signal_body(signal_ref: EntityId, surface_event_ref: EntityId) -> Vec<u8> {
+    encoded(vec![
+        (Value::from(KEY_SIGNAL_REF), entity_value(signal_ref)),
+        (
+            Value::from(KEY_SURFACE_EVENT_REF),
+            entity_value(surface_event_ref),
+        ),
+    ])
+}
+
+fn decode_wait_signal(raw: &[u8]) -> Result<(EntityId, EntityId)> {
+    const WHAT: &str = "human_task.wait.signal row";
+    let entries = decode_map(raw, WHAT)?;
+    Ok((
+        decode_entity(&entries, KEY_SIGNAL_REF, WHAT)?,
+        decode_entity(&entries, KEY_SURFACE_EVENT_REF, WHAT)?,
+    ))
+}
+
+impl RawValue for (EntityId, EntityId) {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(wait_signal_body(self.0, self.1))
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_wait_signal(bytes)?)
+    }
+}
+
 pub(super) fn put_wait_signal_marker_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -270,17 +300,12 @@ pub(super) fn put_wait_signal_marker_in_txn(
     signal_ref: EntityId,
     surface_event_ref: EntityId,
 ) -> Result<()> {
-    let body = encoded(vec![
-        (Value::from(KEY_SIGNAL_REF), entity_value(signal_ref)),
-        (
-            Value::from(KEY_SURFACE_EVENT_REF),
-            entity_value(surface_event_ref),
-        ),
-    ]);
-    vault
-        .store
-        .vault_meta
-        .put(wtxn, wait_signal_key(trap_claim_id).as_slice(), &body)?;
+    WAIT_SIGNALS.put(
+        &vault.store,
+        wtxn,
+        &trap_claim_id,
+        &(signal_ref, surface_event_ref),
+    )?;
     Ok(())
 }
 
@@ -288,18 +313,6 @@ pub(super) fn wait_signal_marker(
     vault: &Vault,
     trap_claim_id: EntityId,
 ) -> Result<Option<(EntityId, EntityId)>> {
-    const WHAT: &str = "human_task.wait.signal row";
     let rtxn = vault.store.env.read_txn()?;
-    let Some(raw) = vault
-        .store
-        .vault_meta
-        .get(&rtxn, wait_signal_key(trap_claim_id).as_slice())?
-    else {
-        return Ok(None);
-    };
-    let entries = decode_map(raw.as_ref(), WHAT)?;
-    Ok(Some((
-        decode_entity(&entries, KEY_SIGNAL_REF, WHAT)?,
-        decode_entity(&entries, KEY_SURFACE_EVENT_REF, WHAT)?,
-    )))
+    WAIT_SIGNALS.get(&vault.store, &rtxn, &trap_claim_id)
 }

@@ -422,13 +422,9 @@ pub fn skill_edit_cycle_cap(vault: &Vault) -> Result<u32> {
 }
 
 pub(super) fn cycle_cap_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Result<u32> {
-    let Some(raw) = vault.store.vault_meta.get(rtxn, SKILL_EDIT_CYCLE_CAP_KEY)? else {
+    let Some(bytes) = SKILL_EDIT_CYCLE_CAP.get(&vault.store, rtxn, &())? else {
         return Ok(DEFAULT_SKILL_EDIT_CYCLE_CAP);
     };
-    let bytes: [u8; 4] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("skill edit cycle cap"))?;
     Ok(u32::from_be_bytes(bytes))
 }
 
@@ -446,10 +442,7 @@ pub fn set_skill_edit_cycle_cap(vault: &Vault, cap: u32) -> Result<()> {
         ));
     }
     vault.with_write_txn(|wtxn| {
-        vault
-            .store
-            .vault_meta
-            .put(wtxn, SKILL_EDIT_CYCLE_CAP_KEY, &cap.to_be_bytes())?;
+        SKILL_EDIT_CYCLE_CAP.put(&vault.store, wtxn, &(), &cap.to_be_bytes())?;
         Ok(())
     })
 }

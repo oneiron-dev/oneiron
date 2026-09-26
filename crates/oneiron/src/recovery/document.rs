@@ -12,9 +12,47 @@ use loro::{LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-use super::canonical::{CanonicalSnapshot, id, invalid, pack, parse_id};
+#[cfg(feature = "sync")]
+use super::canonical::parse_id;
+use super::canonical::{CanonicalSnapshot, id, invalid, pack};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
+use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
+
+/// Durable head-move (merge/switch/reject) receipt. Key: id16(receipt id).
+pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
+    SideTable::new(&side_table::NOTE_RECEIPT);
+/// Durable NOTE fork/proposal-basis row. Key: id16(fork id).
+pub(super) const NOTE_FORK: SideTable<EntityId, NoteFork, Named> =
+    SideTable::new(&side_table::NOTE_FORK);
+/// Durable NOTE proposal bundle. Key: id16(bundle id).
+pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
+/// Loro snapshot bytes of a proposal (non-live) NOTE document head. Key:
+/// hex32(note) ":" hex32(head).
+pub(super) const NOTE_PROPOSAL_DOC: SideTable<DocKey, Vec<u8>, Raw> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_DOC);
+
+/// [`NOTE_PROPOSAL_DOC`]'s key: the owning note, then the proposal head, each
+/// 32 lower-case hex characters, colon-joined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct DocKey(pub(super) EntityId, pub(super) EntityId);
+
+impl SideKey for DocKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        HexId(self.0).encode_into(out);
+        out.push(b':');
+        HexId(self.1).encode_into(out);
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (note, rest) = bytes.split_at_checked(32)?;
+        let head = rest.strip_prefix(b":")?;
+        Some(Self(HexId::decode_key(note)?.0, HexId::decode_key(head)?.0))
+    }
+}
 
 /// A format-independent current document snapshot, without retired text or op history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,9 +105,6 @@ impl CanonicalHeadMove {
 fn hex(value: [u8; 16]) -> String {
     value.iter().map(|byte| format!("{byte:02x}")).collect()
 }
-pub(super) fn receipt_key(receipt: [u8; 16]) -> Vec<u8> {
-    [b"note_receipt:v1:".as_slice(), &receipt].concat()
-}
 
 pub(super) fn capture(
     vault: &Vault,
@@ -111,10 +146,10 @@ pub(super) fn capture(
             entity_id: entity.id,
             head: *live_head.as_bytes(),
         });
-        let prefix = format!("note_proposal_doc:v1:{}:", note.to_hex());
-        for row in vault.store.sync_state.prefix_iter(txn, &prefix)? {
-            let (key, bytes) = row?;
-            let head = parse_id(&key[prefix.len()..])?;
+        let note_prefix = [note.to_hex().as_bytes(), b":".as_slice()].concat();
+        for row in NOTE_PROPOSAL_DOC.scan_from(&vault.store, txn, &note_prefix)? {
+            let (DocKey(_, head), bytes) = row;
+            let head = *head.as_bytes();
             if head == *live_head.as_bytes() {
                 continue;
             }
@@ -129,23 +164,16 @@ pub(super) fn capture(
             )?);
         }
     }
-    for row in vault
-        .store
-        .vault_meta
-        .prefix_iter(txn, b"note_receipt:v1:")?
-    {
-        let (key, raw) = row?;
-        let receipt: crate::note::NoteLandingReceipt =
-            rmp_serde::from_slice(&raw).map_err(|_| invalid("stored receipt"))?;
+    for (receipt_id, receipt) in NOTE_RECEIPT.scan(&vault.store, txn)? {
         if ids.contains(receipt.note.as_bytes()) {
+            if receipt_id != receipt.id {
+                return Err(invalid("stored receipt key"));
+            }
             let value = CanonicalHeadMove {
                 id: *receipt.id.as_bytes(),
                 entity_id: *receipt.note.as_bytes(),
-                receipt: raw.to_vec(),
+                receipt: NOTE_RECEIPT.encode_value(&receipt)?,
             };
-            if key != receipt_key(value.id) {
-                return Err(invalid("stored receipt key"));
-            }
             value.decode()?;
             snapshot.head_move_receipts.push(value);
         }

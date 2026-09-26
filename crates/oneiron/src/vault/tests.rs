@@ -1295,3 +1295,95 @@ fn featureless_open_refuses_existing_entity_document_planes() -> Result<()> {
     ));
     Ok(())
 }
+
+/// A code-memory pull is an actor's scoped read: the result carries the
+/// receipt of that read, and a payload the actor may not see is counted.
+#[test]
+fn actor_memory_search_returns_its_receipt() -> Result<()> {
+    use crate::code_memory::{
+        AttachCodeMemory, CodeMemoryAnchor, CodeMemoryLocator, CodeMemoryPayloadRef,
+        CodeMemoryPullRequest, CodeMemoryRevision, CodeMemorySlotName, CodeMemorySlotValue,
+    };
+    use crate::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON};
+    use rmpv::Value;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    let at = 1_780_000_000;
+    let range = TimeRange { start: at, end: at };
+    let (symbol, author, subject) = (entity(0x71), entity(0x72), entity(0x73));
+    vault.put_entity(&symbol, ENTITY_TYPE_CODE_SYMBOL, range, at, b"x")?;
+    vault.put_entity(&author, ENTITY_TYPE_PERSON, range, at, b"x")?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, range, at, b"x")?;
+    let receipt = vault
+        .memory(author, crate::EdgeActorClass::Human)
+        .author_take(crate::note::TakeTarget::Subject(subject), "fixture take")
+        .expect("mint a NOTE through the author_take door");
+    let note = crate::EntityId::from_hex(&receipt.id_hex)?;
+    vault.attach_code_memory(AttachCodeMemory {
+        anchor: CodeMemoryAnchor {
+            symbol_id: symbol,
+            locator: CodeMemoryLocator {
+                path_at_revision: "src/a.rs".to_owned(),
+                revision: CodeMemoryRevision::Commit("9d561405a81ffbf2".to_owned()),
+                validity: range,
+            },
+        },
+        slot: CodeMemorySlotName::new("interface.contract")?,
+        value: CodeMemorySlotValue {
+            payload: CodeMemoryPayloadRef::NoteEntity(note),
+            actor_id: author,
+            valid_time: range,
+            recorded_at: at,
+            content_hash: [0x07; 32],
+            provenance_claim_id: author,
+        },
+    })?;
+    // One reader may see symbols and notes; the other, symbols only.
+    let grant = |actor_ref: &str, bands: &[u8]| -> Result<Value> {
+        let mut scope = crate::federation::scope_codec::read_preset();
+        scope.bands = crate::federation::ScopeAxis::Some(bands.iter().copied().collect());
+        Ok(Value::Map(vec![
+            ("actor_ref".into(), actor_ref.into()),
+            ("effector".into(), "core:read".into()),
+            (
+                "scope".into(),
+                crate::federation::scope_codec::encode_scope_value(&scope)?,
+            ),
+            ("receipt_required".into(), Value::Boolean(false)),
+        ]))
+    };
+    let manifest = Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "actor-memory-receipt".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), Value::Map(Vec::new())),
+        ("rules".into(), Value::Array(Vec::new())),
+        ("actor_ceilings".into(), Value::Array(Vec::new())),
+        (
+            "scoped_grants".into(),
+            Value::Array(vec![
+                grant("note-reader", &[ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_NOTE])?,
+                grant("symbol-reader", &[ENTITY_TYPE_CODE_SYMBOL])?,
+            ]),
+        ),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encodes");
+    crate::test_util::put_policy_manifest_bytes(&vault, entity(0x74), &bytes)?;
+
+    let request = CodeMemoryPullRequest::new(vec![symbol]);
+    let key = |actor_ref: &str| crate::claim::ScopedReadActorKey::new(actor_ref).unwrap();
+    let permitted = vault.pull_code_memory(key("note-reader"), request.clone())?;
+    assert_eq!(permitted.notes.len(), 1);
+    assert_eq!(permitted.read_receipt.suppressed_count, 0);
+    let narrowed = vault.pull_code_memory(key("symbol-reader"), request)?;
+    assert!(narrowed.notes.is_empty());
+    assert_eq!(narrowed.read_receipt.suppressed_count, 1);
+    assert!(
+        narrowed
+            .read_receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+    Ok(())
+}

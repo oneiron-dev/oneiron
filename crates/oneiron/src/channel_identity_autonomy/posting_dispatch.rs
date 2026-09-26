@@ -1,4 +1,5 @@
 //! Space presentation frozen on the normal outbound gate/ledger/transport path.
+use super::codec::AUTONOMY;
 use super::space_posting::head_key;
 use super::{GroupPostingPreset, SpacePostingMode, invalid_autonomy};
 use crate::error::Result;
@@ -53,12 +54,7 @@ impl Vault {
         if target.trim().is_empty() || target.len() > 512 || target.chars().any(char::is_control) {
             return Ok(None);
         }
-        if self
-            .store
-            .vault_meta
-            .get(txn, &head_key(identity, target)?)?
-            .is_none()
-        {
+        if !AUTONOMY.contains(&self.store, txn, &head_key(identity, target)?)? {
             return Ok(None);
         }
         let state = self.posting_state_in_txn(txn, identity, target)?;

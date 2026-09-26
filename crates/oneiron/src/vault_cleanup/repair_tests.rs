@@ -104,16 +104,12 @@ fn replaced_person_revision_is_not_an_extraction_candidate() {
 fn missing_corrupt_or_non_machine_provenance_fails_closed() {
     let (_tmp, vault) = temp_vault();
     let person = mint_person(&vault, ClaimSource::Generated);
-    let key = prefixed_key(b"vault_cleanup.extraction_person.v1:", &person);
     let original = {
         let rtxn = vault.store.env.read_txn().expect("read txn");
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, &key)
+        person_provenance::EXTRACTION_PERSON
+            .get(&vault.store, &rtxn, &person)
             .expect("evidence")
             .expect("present")
-            .to_vec()
     };
     let mut human = original[..32].to_vec();
     human.extend_from_slice(b"user_stated");
@@ -122,7 +118,7 @@ fn missing_corrupt_or_non_machine_provenance_fails_closed() {
     for evidence in [Vec::new(), vec![0; 31], vec![255; 40], human, unknown] {
         vault
             .with_write_txn(|txn| {
-                vault.store.vault_meta.put(txn, &key, &evidence)?;
+                person_provenance::EXTRACTION_PERSON.put(&vault.store, txn, &person, &evidence)?;
                 Ok(())
             })
             .expect("corrupt provenance");
@@ -130,7 +126,7 @@ fn missing_corrupt_or_non_machine_provenance_fails_closed() {
     }
     vault
         .with_write_txn(|txn| {
-            vault.store.vault_meta.delete(txn, &key)?;
+            person_provenance::EXTRACTION_PERSON.delete(&vault.store, txn, &person)?;
             Ok(())
         })
         .expect("remove provenance");
@@ -212,17 +208,13 @@ fn aborting_accept_rolls_back_archives_digest_and_proposal_consumption() {
         assert_eq!(accepted.archived.len(), 2);
         assert!(vault.archive_tombstone_in_txn(txn, &person)?.is_some());
         assert!(
-            vault
-                .store
-                .vault_meta
-                .get(txn, &digest_key(&accepted.digest))?
+            codec_receipts::DIGEST
+                .get(&vault.store, txn, &accepted.digest)?
                 .is_some()
         );
         assert!(
-            vault
-                .store
-                .vault_meta
-                .get(txn, &proposal_key(&proposal))?
+            codec_receipts::PROPOSAL
+                .get(&vault.store, txn, &proposal)?
                 .is_none()
         );
         Err(Error::CorruptedIndex("abort accept fixture"))
@@ -271,10 +263,8 @@ fn auto_decision_reads_posture_in_txn_and_rolls_back_with_its_digest() {
         assert_eq!(report.posture, CleanupPosture::AutoWithDigest);
         assert_eq!(report.archived, vec![person]);
         assert!(
-            vault
-                .store
-                .vault_meta
-                .get(txn, &digest_key(&report.digest.expect("digest")))?
+            codec_receipts::DIGEST
+                .get(&vault.store, txn, &report.digest.expect("digest"))?
                 .is_some()
         );
         Err(Error::CorruptedIndex("abort auto fixture"))

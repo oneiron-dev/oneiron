@@ -939,7 +939,7 @@ fn corrupt_scope_row_fails_closed_to_absence_clamp_not_error() -> Result<()> {
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vault_meta.put(
             &mut wtxn,
-            &disclosure_scope_meta_key(&contact_id),
+            &DISCLOSURE_SCOPES.key_bytes(&contact_id),
             b"not a msgpack scope body",
         )?;
         wtxn.commit()?;

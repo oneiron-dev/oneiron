@@ -2,7 +2,7 @@
 
 use heed::RwTxn;
 
-use super::EntityMetadataHeader;
+use super::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, ErrorKind, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
@@ -109,4 +109,24 @@ pub(super) fn validate_local_skill_create(
         )));
     }
     Ok(())
+}
+
+pub(super) fn decode_previous_skill_record(
+    old_type: u8,
+    old_record: &[u8],
+) -> Result<Option<crate::skill::SkillRecord>> {
+    if old_type != ENTITY_TYPE_SKILL {
+        return Ok(None);
+    }
+    let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
+    match crate::skill::decode_skill_record(prior_body) {
+        Ok(record) => Ok(Some(record)),
+        Err(error)
+            if error.kind() == ErrorKind::InvalidSkillBody
+                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
 }

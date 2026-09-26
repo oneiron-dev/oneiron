@@ -235,3 +235,65 @@ fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -
     assert!(read.compile_persona(&person, None).is_err());
     Ok(())
 }
+
+#[test]
+fn companion_persona_reads_keep_their_receipts() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let issuer = HostSlipIssuer::from_secret(b"persona receipt fixture")?;
+    let proof = vault.verified_host_root_slip(&issuer)?;
+    let read = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"",
+    )?;
+    vault.put_persona_baseline(&person, &json!({"tone":"neutral"}), 2)?;
+    let approved = change(
+        &vault,
+        person,
+        json!({"tone":"calm"}),
+        3,
+        ClaimLifecycleStatus::Active,
+    )?;
+    // A stored change still awaiting approval is never this reader's to see.
+    let mut pending = vault.get_claim(&approved)?.unwrap();
+    pending.approval = ClaimApprovalStatus::Proposed;
+    pending.value = PersonaChange {
+        patch: json!({"tone":"not yet approved"}),
+        made_by: PersonaMadeBy {
+            inputs: vec![person],
+            process: "test.pending".to_owned(),
+            at: 4,
+        },
+    }
+    .to_claim_value()?;
+    replay_change(&vault, &EntityId::now(), &pending, 4)?;
+
+    let compiled = read.compile_persona(&person, None)?;
+    assert_eq!(compiled.value, json!({"tone":"calm"}));
+    assert_eq!(compiled.made_by.inputs, vec![person, approved]);
+    assert_eq!(compiled.receipt.suppressed_count, 1);
+    assert!(
+        compiled
+            .receipt
+            .narrowed_axes
+            .contains(&"row_authority".to_owned())
+    );
+    // The scenario read folds into the same receipt.
+    let facet = EntityId::now();
+    vault.put_persona_scenario(
+        &person,
+        &facet,
+        &json!({"tone":"scenario"}),
+        Sensitivity::Private,
+        5,
+    )?;
+    let scenario = read.compile_persona(&person, Some(facet))?;
+    assert_eq!(scenario.value, json!({"tone":"scenario"}));
+    assert_eq!(scenario.receipt.suppressed_count, 1);
+    Ok(())
+}

@@ -2,21 +2,23 @@
 
 use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{
-    ArtifactTaintState, decode_taint_refs_row, encode_taint_refs_row, taint_state_for_refs_in_txn,
-    validate_taint_refs,
+    ArtifactTaintState, taint_state_for_refs_in_txn, validate_taint_refs,
 };
 use crate::session_overlay::RouteTarget;
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
-use super::super::codec::{
-    decode_code_run_replay_record, encode_code_run_replay_record, validate_raw_output,
-};
+use super::super::codec::validate_raw_output;
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord};
 use super::super::support::invalid_code_run_replay;
 
-const CODE_RUN_REPLAY_RECORD_KEY_PREFIX: &[u8] = b"code_run:replay:v1:";
+/// The replay record of one run, keyed by run id.
+pub(super) const REPLAY_RECORDS: SideTable<EntityId, CodeRunReplayRecord, Raw> =
+    SideTable::new(&side_table::CODE_RUN_REPLAY);
 
-const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
+/// Raw output bytes, keyed by their deterministic content handle.
+pub(super) const RAW_OUTPUTS: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
 /// SECRET-04 (ONE-1922): the FORWARD taint sidecar of one raw-output row.
 ///
@@ -25,10 +27,32 @@ const CODE_RUN_RAW_OUTPUT_KEY_PREFIX: &[u8] = b"code_run:raw_output:v1:";
 /// metadata, so a framing change there would break every stored output. The
 /// sidecar is keyed by the SAME handle, written in the SAME transaction, and
 /// absent for the overwhelmingly common untainted run.
-const CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX: &[u8] = b"code_run:raw_output:taint:v1:";
+const RAW_OUTPUT_TAINTS: SideTable<String, Vec<SecretTaintRef>, Raw> =
+    SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT_TAINT);
 
-/// Replay-adjacent, NODE-LOCAL per-model wire-heal tally (ONE-1929).
-const CODE_RUN_MODEL_HEAL_COUNT_PREFIX: &[u8] = b"code_run:heal_count:v1:";
+/// Replay-adjacent, NODE-LOCAL per-model wire-heal tally (ONE-1929), keyed by
+/// the VALIDATED model id, so two model ids can never share a row.
+pub(super) const MODEL_HEAL_COUNTS: SideTable<String, HealCount, Raw> =
+    SideTable::new(&side_table::CODE_RUN_HEAL_COUNT);
+
+/// One model's heal tally: eight big-endian bytes. Any other length is a
+/// corrupted LOCAL row, reported through the existing typed error rather than
+/// a new class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct HealCount(pub(super) u64);
+
+impl RawValue for HealCount {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(self.0.to_be_bytes().to_vec())
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let bytes: [u8; 8] = bytes
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("code-run model heal count row"))?;
+        Ok(Self(u64::from_be_bytes(bytes)))
+    }
+}
 
 /// How many durable executor turns one model needed wire healing for.
 ///
@@ -44,13 +68,8 @@ pub struct CodeRunModelHealCount {
 impl Vault {
     /// Persists the replay record for `record.run_id`.
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
-        let encoded = encode_code_run_replay_record(record)?;
         let mut wtxn = self.store.env.write_txn()?;
-        self.store.vault_meta.put(
-            &mut wtxn,
-            &code_run_replay_record_key(&record.run_id),
-            &encoded,
-        )?;
+        REPLAY_RECORDS.put(&self.store, &mut wtxn, &record.run_id, record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -74,44 +93,26 @@ impl Vault {
         expected: Option<CodeRunReplayGeneration>,
         healed_model: Option<&ModelId>,
     ) -> Result<CodeRunReplayGeneration> {
-        let encoded = encode_code_run_replay_record(record)?;
+        REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        let replay_key = code_run_replay_record_key(&record.run_id);
         let mut wtxn = self.store.env.write_txn()?;
-        let current = self
-            .store
-            .vault_meta
-            .get(&wtxn, &replay_key)?
-            .map(|raw| decode_code_run_replay_record(&raw))
-            .transpose()?;
-        let current_generation = current
-            .as_ref()
-            .map(CodeRunReplayRecord::generation)
-            .transpose()?;
-        if current_generation != expected {
-            return Err(Error::ConcurrentWrite(
-                "code-run replay record changed; retry executor",
-            ));
-        }
+        let current = REPLAY_RECORDS.get(&self.store, &wtxn, &record.run_id)?;
+        replay_generation_matches(current.as_ref(), expected)?;
         let next_heal_count = healed_model
             .map(|model| {
-                let key = code_run_model_heal_count_key(model);
-                let current = decode_code_run_model_heal_count(
-                    self.store.vault_meta.get(&wtxn, &key)?.as_deref(),
-                )?;
+                let key = model.as_str().to_owned();
+                let current = MODEL_HEAL_COUNTS
+                    .get(&self.store, &wtxn, &key)?
+                    .map_or(0, |count| count.0);
                 let next = current
                     .checked_add(1)
                     .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
                 Ok::<_, Error>((key, next))
             })
             .transpose()?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &replay_key, &encoded)?;
+        REPLAY_RECORDS.put(&self.store, &mut wtxn, &record.run_id, record)?;
         if let Some((key, count)) = next_heal_count {
-            self.store
-                .vault_meta
-                .put(&mut wtxn, &key, &count.to_be_bytes()[..])?;
+            MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
         }
         wtxn.commit()?;
         Ok(next_generation)
@@ -123,11 +124,7 @@ impl Vault {
         run_id: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&rtxn, &code_run_replay_record_key(run_id))?
-            .map(|raw| decode_code_run_replay_record(&raw))
-            .transpose()
+        REPLAY_RECORDS.get(&self.store, &rtxn, run_id)
     }
 
     /// Stores raw output bytes under a deterministic content handle.
@@ -140,9 +137,7 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &raw.to_vec())?;
         Ok(wtxn.commit()?)
     }
 
@@ -180,19 +175,12 @@ impl Vault {
         validate_taint_refs(taint_refs)?;
 
         let mut wtxn = self.store.env.write_txn()?;
-        let taint_key = code_run_raw_output_taint_key(output);
         if taint_refs.is_empty() {
-            self.store.vault_meta.delete(&mut wtxn, &taint_key)?;
+            RAW_OUTPUT_TAINTS.delete(&self.store, &mut wtxn, &output.handle)?;
         } else {
-            self.store.vault_meta.put(
-                &mut wtxn,
-                &taint_key,
-                &encode_taint_refs_row(taint_refs)?,
-            )?;
+            RAW_OUTPUT_TAINTS.put(&self.store, &mut wtxn, &output.handle, &taint_refs.to_vec())?;
         }
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        RAW_OUTPUTS.put(&self.store, &mut wtxn, &output.handle, &raw.to_vec())?;
         Ok(wtxn.commit()?)
     }
 
@@ -203,14 +191,9 @@ impl Vault {
         output: &CodeRunRawOutput,
     ) -> Result<Vec<SecretTaintRef>> {
         let rtxn = self.store.env.read_txn()?;
-        match self
-            .store
-            .vault_meta
-            .get(&rtxn, &code_run_raw_output_taint_key(output))?
-        {
-            Some(raw) => decode_taint_refs_row(&raw),
-            None => Ok(Vec::new()),
-        }
+        Ok(RAW_OUTPUT_TAINTS
+            .get(&self.store, &rtxn, &output.handle)?
+            .unwrap_or_default())
     }
 
     /// The READ-TIME taint state of one raw output (ARCH-0069 S7, amended).
@@ -226,14 +209,9 @@ impl Vault {
         output: &CodeRunRawOutput,
     ) -> Result<ArtifactTaintState> {
         let rtxn = self.store.env.read_txn()?;
-        let refs = match self
-            .store
-            .vault_meta
-            .get(&rtxn, &code_run_raw_output_taint_key(output))?
-        {
-            Some(raw) => decode_taint_refs_row(&raw)?,
-            None => Vec::new(),
-        };
+        let refs = RAW_OUTPUT_TAINTS
+            .get(&self.store, &rtxn, &output.handle)?
+            .unwrap_or_default();
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
     }
 
@@ -244,19 +222,18 @@ impl Vault {
         &self,
         model: &ModelId,
     ) -> Result<CodeRunModelHealCount> {
-        let key = code_run_model_heal_count_key(model);
+        let key = model.as_str().to_owned();
         let mut wtxn = self.store.env.write_txn()?;
-        let current =
-            decode_code_run_model_heal_count(self.store.vault_meta.get(&wtxn, &key)?.as_deref())?;
+        let current = MODEL_HEAL_COUNTS
+            .get(&self.store, &wtxn, &key)?
+            .map_or(0, |count| count.0);
         let healed_turns = current
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
-        self.store
-            .vault_meta
-            .put(&mut wtxn, &key, &healed_turns.to_be_bytes()[..])?;
+        MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(healed_turns))?;
         wtxn.commit()?;
         Ok(CodeRunModelHealCount {
-            model_id: model.as_str().to_owned(),
+            model_id: key,
             healed_turns,
         })
     }
@@ -268,12 +245,9 @@ impl Vault {
     /// lint under `-D warnings`.
     pub fn code_run_model_heal_count(&self, model: &ModelId) -> Result<CodeRunModelHealCount> {
         let rtxn = self.store.env.read_txn()?;
-        let healed_turns = decode_code_run_model_heal_count(
-            self.store
-                .vault_meta
-                .get(&rtxn, &code_run_model_heal_count_key(model))?
-                .as_deref(),
-        )?;
+        let healed_turns = MODEL_HEAL_COUNTS
+            .get(&self.store, &rtxn, &model.as_str().to_owned())?
+            .map_or(0, |count| count.0);
         Ok(CodeRunModelHealCount {
             model_id: model.as_str().to_owned(),
             healed_turns,
@@ -284,12 +258,7 @@ impl Vault {
     pub fn get_code_run_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let rtxn = self.store.env.read_txn()?;
-        let Some(raw) = self
-            .store
-            .vault_meta
-            .get(&rtxn, &code_run_raw_output_key(output))?
-            .map(|value| value.to_vec())
-        else {
+        let Some(raw) = RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)? else {
             return Ok(None);
         };
         let expected = CodeRunRawOutput::from_bytes(output.path.clone(), &raw)?;
@@ -302,65 +271,11 @@ impl Vault {
     }
 }
 
-pub(super) fn code_run_replay_record_key(run_id: &EntityId) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODE_RUN_REPLAY_RECORD_KEY_PREFIX.len() + 16);
-    key.extend_from_slice(CODE_RUN_REPLAY_RECORD_KEY_PREFIX);
-    key.extend_from_slice(run_id.as_bytes());
-    key
-}
-
-pub(super) fn code_run_raw_output_key(output: &CodeRunRawOutput) -> Vec<u8> {
-    let mut key = Vec::with_capacity(CODE_RUN_RAW_OUTPUT_KEY_PREFIX.len() + output.handle.len());
-    key.extend_from_slice(CODE_RUN_RAW_OUTPUT_KEY_PREFIX);
-    key.extend_from_slice(output.handle.as_bytes());
-    key
-}
-
-/// The taint sidecar key for one raw-output handle.
-///
-/// Note the prefixes do not nest ambiguously: `code_run:raw_output:v1:` and
-/// `code_run:raw_output:taint:v1:` are disjoint because the handle follows a
-/// terminating `:` in both, so a prefix scan of one never sees the other.
-fn code_run_raw_output_taint_key(output: &CodeRunRawOutput) -> Vec<u8> {
-    let mut key =
-        Vec::with_capacity(CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX.len() + output.handle.len());
-    key.extend_from_slice(CODE_RUN_RAW_OUTPUT_TAINT_KEY_PREFIX);
-    key.extend_from_slice(output.handle.as_bytes());
-    key
-}
-
-/// The heal-tally key: the fixed prefix followed by the VALIDATED model id
-/// bytes, so two model ids can never share a row.
-pub(super) fn code_run_model_heal_count_key(model: &ModelId) -> Vec<u8> {
-    let model = model.as_str().as_bytes();
-    let mut key = Vec::with_capacity(CODE_RUN_MODEL_HEAL_COUNT_PREFIX.len() + model.len());
-    key.extend_from_slice(CODE_RUN_MODEL_HEAL_COUNT_PREFIX);
-    key.extend_from_slice(model);
-    key
-}
-
-/// An absent row is zero; any other length is a corrupted LOCAL row, reported
-/// through the existing typed error rather than a new class.
-pub(super) fn decode_code_run_model_heal_count(raw: Option<&[u8]>) -> Result<u64> {
-    let Some(raw) = raw else {
-        return Ok(0);
-    };
-    let bytes: [u8; 8] = raw
-        .try_into()
-        .map_err(|_| Error::CorruptedIndex("code-run model heal count row"))?;
-    Ok(u64::from_be_bytes(bytes))
-}
-
 pub(super) fn replay_generation_matches(
-    current: Option<&[u8]>,
+    current: Option<&CodeRunReplayRecord>,
     expected: Option<CodeRunReplayGeneration>,
 ) -> Result<()> {
-    let stored = current
-        .map(decode_code_run_replay_record)
-        .transpose()?
-        .as_ref()
-        .map(CodeRunReplayRecord::generation)
-        .transpose()?;
+    let stored = current.map(CodeRunReplayRecord::generation).transpose()?;
     if stored == expected {
         return Ok(());
     }
@@ -369,15 +284,15 @@ pub(super) fn replay_generation_matches(
     ))
 }
 
-/// Advances the contribution owned by `target` and returns both its encoded
-/// next value and the additive overlay + base total.
+/// Advances the contribution owned by `target` and returns both its next
+/// value and the additive overlay + base total.
 pub(super) fn next_additive_heal_count(
-    base: Option<&[u8]>,
-    overlay: Option<&[u8]>,
+    base: Option<HealCount>,
+    overlay: Option<HealCount>,
     target: RouteTarget,
-) -> Result<(Vec<u8>, u64)> {
-    let base = decode_code_run_model_heal_count(base)?;
-    let overlay = decode_code_run_model_heal_count(overlay)?;
+) -> Result<(HealCount, u64)> {
+    let base = base.map_or(0, |count| count.0);
+    let overlay = overlay.map_or(0, |count| count.0);
     let (base, overlay, next) = match target {
         RouteTarget::Discard => {
             return Err(Error::InvariantViolation(
@@ -400,5 +315,5 @@ pub(super) fn next_additive_heal_count(
     let total = base
         .checked_add(overlay)
         .ok_or(Error::ArithmeticOverflow("code-run model heal count"))?;
-    Ok((next.to_be_bytes().to_vec(), total))
+    Ok((HealCount(next), total))
 }

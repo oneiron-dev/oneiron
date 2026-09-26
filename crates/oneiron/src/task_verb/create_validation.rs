@@ -342,6 +342,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         suggestions: vec![suggestion.to_owned()],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     }
 }
 

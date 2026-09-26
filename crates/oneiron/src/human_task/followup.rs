@@ -28,8 +28,7 @@ use super::model::{
     HumanTaskResult, NativeHumanRoute, REBUILD_PAGE, REMINDER_AFTER_SECONDS,
 };
 use super::storage::{
-    HUMAN_TASK_FOLLOWUP_KEY_PREFIX, KEY_PARTY_KEY, decode_followup_record, followup_record_in_txn,
-    put_followup_record_in_txn,
+    FOLLOWUPS, KEY_PARTY_KEY, followup_record_in_txn, put_followup_record_in_txn,
 };
 
 // ── native-human resolution ─────────────────────────────────────────────────
@@ -241,16 +240,11 @@ pub fn human_followup_record(
 /// Every follow-up cursor on this replica, task order.
 pub fn human_followup_records(vault: &Vault) -> Result<Vec<HumanTaskFollowupRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut records = Vec::new();
-    for entry in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, HUMAN_TASK_FOLLOWUP_KEY_PREFIX)?
-    {
-        let (_, raw) = entry?;
-        records.push(decode_followup_record(raw.as_ref())?);
-    }
-    Ok(records)
+    Ok(FOLLOWUPS
+        .scan(&vault.store, &rtxn)?
+        .into_iter()
+        .map(|(_, record)| record)
+        .collect())
 }
 
 /// Drives the human follow-up cursors: no job, no queue row, no closed-string

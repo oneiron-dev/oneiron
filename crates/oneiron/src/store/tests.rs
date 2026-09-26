@@ -3376,7 +3376,7 @@ fn short_id_aliases_add_no_named_database_and_no_abi_bump() -> Result<()> {
         vault
             .store
             .vault_meta
-            .prefix_iter(&rtxn, SHORT_ID_ALIAS_KEY_PREFIX)?
+            .prefix_iter(&rtxn, crate::side_table::SHORT_ID_ALIAS.prefix)?
             .count()
             == 1,
         "the alias must be a vault_meta row under its versioned prefix"

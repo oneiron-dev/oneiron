@@ -112,13 +112,7 @@ impl Memory<'_> {
         let admitted: MessageStreamResult<()> =
             self.vault
                 .try_with_write_txn(|txn| -> MessageStreamResult<()> {
-                    if self
-                        .vault
-                        .store
-                        .vault_meta
-                        .get(txn, &storage::key(storage::ACTIVE, id))?
-                        .is_some()
-                    {
+                    if storage::ACTIVE.contains(&self.vault.store, txn, &id)? {
                         return Err(MessageStreamError::StreamAlreadyActive(id));
                     }
                     state.base = committed_text(self.vault, txn, &state.seed)?.unwrap_or_default();
@@ -162,12 +156,7 @@ impl Memory<'_> {
                             "system stream requires an existing turn",
                         ));
                     }
-                    let bytes = storage::encode(&state.seed)?;
-                    self.vault.store.vault_meta.put(
-                        txn,
-                        &storage::key(storage::ACTIVE, id),
-                        &bytes,
-                    )?;
+                    storage::ACTIVE.put(&self.vault.store, txn, &id, &state.seed)?;
                     Ok(())
                 });
         if let Err(error) = admitted {

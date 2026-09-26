@@ -8,12 +8,16 @@ use super::loro_support::{
 };
 use super::schema::create_window_doc;
 use super::types::WindowKey;
-use super::{merge_persisted_state_into_doc, persist_window_doc_in_txn, write_window_svf_in_txn};
+use super::{
+    merge_persisted_state_into_doc, persist_window_doc_in_txn,
+    prune_subsumed_window_updates_in_txn, write_window_svf_in_txn,
+};
 
 use crate::Vault;
-use crate::deletion::{PENDING_TOMBSTONE_PREFIX, decode_tombstone_value};
+use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::sync::window_rows::{PENDING_TOMBSTONE, WINDOW_FULL_RESYNC_MARKER, WINDOW_UPDATE};
 use loro::{CommitOptions, LoroDoc};
 
 /// Applies one tombstone (raw v2/legacy wire value) to a window doc IN
@@ -157,19 +161,17 @@ pub fn replay_pending_tombstones(
     doc: &LoroDoc,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    let prefix = format!("{PENDING_TOMBSTONE_PREFIX}{window_key}:");
-    let mut markers: Vec<(String, EntityId, Vec<u8>)> = Vec::new();
+    let mut markers: Vec<(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)> = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
-        for entry in iter {
-            let (k, v) = entry?;
-            let hex = &k[prefix.len()..];
-            match EntityId::from_hex(hex) {
-                Ok(id) => markers.push((k.to_string(), id, v.to_vec())),
-                Err(_) => {
+        for entry in
+            PENDING_TOMBSTONE.iter_from(&vault.store, &rtxn, format!("{window_key}:").as_bytes())?
+        {
+            match entry {
+                Ok((key, value)) => markers.push((key, value)),
+                Err(error) => {
                     tracing::warn!(
-                        marker = %k,
+                        %error,
                         "pt replay: malformed pending-tombstone marker left in place"
                     );
                 }
@@ -186,11 +188,11 @@ pub fn replay_pending_tombstones(
     let merged_update_keys = merge_persisted_state_into_doc(vault, doc, window_key)?;
     let any_hard = markers
         .iter()
-        .any(|(_, _, value)| decode_tombstone_value(value).is_hard());
+        .any(|(_, value)| decode_tombstone_value(value).is_hard());
 
     let vv_before = doc.oplog_vv();
-    for (_, id, value) in &markers {
-        apply_tombstone_to_window_doc(doc, id, value)?;
+    for (key, value) in &markers {
+        apply_tombstone_to_window_doc(doc, &key.id, value)?;
     }
     // Bridge origin: local LMDB already reflects the delete (the marker was
     // written in the purge/scrub txn itself), so Observer B must not re-run
@@ -209,11 +211,13 @@ pub fn replay_pending_tombstones(
         persist_window_doc_in_txn(vault, wtxn, window_key, &snapshot, &vv)?;
         if any_hard {
             crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, window_key.as_str())?;
-            for update_key in &merged_update_keys {
-                vault.store.sync_state.delete(wtxn, update_key)?;
-            }
-            let fr_key = format!("fr:w:{window_key}");
-            vault.store.sync_state.put(wtxn, &fr_key, &[1_u8])?;
+            prune_subsumed_window_updates_in_txn(vault, wtxn, window_key, &merged_update_keys)?;
+            WINDOW_FULL_RESYNC_MARKER.put(
+                &vault.store,
+                wtxn,
+                &window_key.as_str().to_owned(),
+                &[1u8],
+            )?;
         }
         if let Some(update) = &delete_update {
             crate::sync::queue::push_delete_bearing_in_txn(
@@ -223,8 +227,8 @@ pub fn replay_pending_tombstones(
                 update,
             )?;
         }
-        for (marker_key, _, _) in &markers {
-            vault.store.sync_state.delete(wtxn, marker_key)?;
+        for (key, _) in &markers {
+            PENDING_TOMBSTONE.delete(&vault.store, wtxn, key)?;
         }
         // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:
         // rows above; the soft branch kept them. Either way freshness is
@@ -252,9 +256,7 @@ pub fn rebuild_window_from_updates(
 ) -> Result<LoroDoc> {
     let doc = create_window_doc(user_id, key);
     let rtxn = vault.store.env.read_txn()?;
-    let prefix = format!("u:w:{key}:");
-    let iter = vault.store.sync_state.prefix_iter(&rtxn, &prefix)?;
-    for entry in iter {
+    for entry in WINDOW_UPDATE.iter_from(&vault.store, &rtxn, format!("{key}:").as_bytes())? {
         let (_k, v) = entry?;
         import_doc(&doc, &v)?;
     }

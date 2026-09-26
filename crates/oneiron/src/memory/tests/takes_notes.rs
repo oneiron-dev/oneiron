@@ -71,6 +71,7 @@ fn two_actor_divergent_takes() {
         let view = facade_for(&vault, ada)
             .get_entity(&note.to_hex())
             .expect("get")
+            .value
             .expect("note view");
         assert_eq!(view.kind, "NOTE");
     }
@@ -100,6 +101,7 @@ fn take_never_mutates_claim() {
     let before_ref = facade
         .get_entity(&claim_hex)
         .expect("get")
+        .value
         .expect("claim view")
         .short_ref;
     let before_out: Vec<_> = vault
@@ -137,6 +139,7 @@ fn take_never_mutates_claim() {
         facade
             .get_entity(&claim_hex)
             .expect("get")
+            .value
             .expect("claim view")
             .short_ref,
         before_ref,
@@ -586,19 +589,32 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         claims.actor_class = Some("human".into());
         vault.mint_capability_slip(&issuer, claims).unwrap()
     };
-    let read_key = |slip: &crate::authority::CapabilitySlip| {
+    let proof_of = |slip: &crate::authority::CapabilitySlip| {
         let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
-        let proof = vault
+        vault
             .verify_capability_slip(&issuer, slip, b"diary-read", &signature)
-            .unwrap();
-        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+            .unwrap()
+    };
+    let read_key = |slip: &crate::authority::CapabilitySlip| {
+        ScopedReadActorKey::from_verified_slip(&proof_of(slip)).unwrap()
     };
     let owner_slip = mint_actor(owner);
+    let other_slip = mint_actor(other);
     let owner_read = vault.scoped_read(read_key(&owner_slip));
-    let other_read = vault.scoped_read(read_key(&mint_actor(other)));
+    let other_read = vault.scoped_read(read_key(&other_slip));
+    // The vault is rooted now, so neither actor is an unbound owner: each
+    // facade reads under the credential its actor holds.
+    let owner_memory = facade_for(&vault, owner).with_read_proof(&proof_of(&owner_slip));
+    let other_memory = facade_for(&vault, other).with_read_proof(&proof_of(&other_slip));
     let unproven =
         vault.scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "human").unwrap());
-    assert!(unproven.get(&id).unwrap().is_none());
+    assert!(
+        unproven
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
     let mut narrowed = owner_slip;
     narrowed
         .attenuate(crate::authority::SlipCaveat {
@@ -607,38 +623,48 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
         })
         .unwrap();
     let limited = vault.scoped_read(read_key(&narrowed));
-    assert!(limited.get(&id).unwrap().is_none());
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = limited.get_entity_parts_with_receipt(&id, None).unwrap();
-    assert!(value.is_none());
+    assert!(
+        limited
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
     assert!(limited.memory_timeline(&id).unwrap().records.is_empty());
     assert_eq!(
-        crate::note::decode_note_body(&owner_read.get(&id).expect("read").value.expect("body"))
-            .expect("decode"),
+        crate::note::decode_note_body(
+            &owner_read
+                .read(&[crate::claim::PointRead::id(id)], None)
+                .expect("read")
+                .single()
+                .value
+                .and_then(|row| row.body)
+                .expect("body")
+        )
+        .expect("decode"),
         body
     );
-    assert!(other_read.get(&id).expect("read").is_none());
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = other_read
-        .get_entity_parts_with_receipt(&id, None)
-        .expect("parts");
-    assert!(value.is_none());
+    assert!(
+        other_read
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .expect("read")
+            .single()
+            .is_none()
+    );
     let (short, hash) =
         crate::entity_id::parse_short_ref_syntax(&receipt.entity_ref).expect("short ref");
     assert!(
         owner_read
-            .hydrate_short_id(short, hash)
+            .read(&[crate::claim::PointRead::short(short, hash)], None)
             .expect("owner hydrate")
+            .single()
             .is_some()
     );
     assert!(
         other_read
-            .hydrate_short_id(short, hash)
+            .read(&[crate::claim::PointRead::short(short, hash)], None)
             .expect("other hydrate")
+            .single()
             .is_none()
     );
     assert!(
@@ -649,25 +675,43 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .is_empty()
     );
     assert!(other_read.edges_out(&id).expect("edges").is_none());
-    assert!(limited.hydrate_short_id(short, hash).unwrap().is_none());
+    assert!(
+        limited
+            .read(&[crate::claim::PointRead::short(short, hash)], None)
+            .unwrap()
+            .single()
+            .is_none()
+    );
     let classless = vault.scoped_read(ScopedReadActorKey::new(owner.to_hex()).expect("key"));
-    assert!(classless.get(&id).expect("class required").is_none());
+    assert!(
+        classless
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .expect("class required")
+            .single()
+            .is_none()
+    );
     let wrong_class = vault
         .scoped_read(ScopedReadActorKey::with_actor_class(owner.to_hex(), "system").expect("key"));
-    assert!(wrong_class.get(&id).expect("class bound").is_none());
+    assert!(
+        wrong_class
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .expect("class bound")
+            .single()
+            .is_none()
+    );
     let pin = vault.pin_entity_revision(&id).expect("pin diary");
     for mode in [
         crate::vault::ReadMode::Live,
         crate::vault::ReadMode::Indexed,
         crate::vault::ReadMode::Pinned(pin),
     ] {
-        let crate::claim::ScopedReadResult {
-            value,
-            receipt: _receipt,
-        } = owner_read
-            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
-            .expect("owner frontier read");
-        let (_, _, bytes) = value.expect("owner diary");
+        let bytes = owner_read
+            .read(&[crate::claim::PointRead::id(id).at(mode)], None)
+            .expect("owner frontier read")
+            .single()
+            .value
+            .and_then(|row| row.body)
+            .expect("owner diary");
         assert_eq!(crate::note::decode_note_body(&bytes).expect("note"), body);
         assert!(
             owner_memory
@@ -689,20 +733,16 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             MEMORY_CODE_NOT_FOUND,
         );
         for reader in [&other_read, &classless, &wrong_class] {
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = reader
-                .get_entity_parts_with_mode_with_receipt(&id, mode, None)
+            let withheld = reader
+                .read(
+                    &[
+                        crate::claim::PointRead::id(id).at(mode),
+                        crate::claim::PointRead::short(short, hash).at(mode),
+                    ],
+                    None,
+                )
                 .expect("scoped frontier");
-            assert!(value.is_none());
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = reader
-                .hydrate_short_id_with_mode_with_receipt(short, hash, mode)
-                .expect("scoped hydrate");
-            assert!(value.is_none());
+            assert_eq!(withheld.value, vec![None, None]);
         }
     }
 
@@ -859,11 +899,18 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             Ok(())
         })
         .expect("archive marker");
-    assert!(owner_read.get(&id).expect("archived read").is_none());
     assert!(
         owner_read
-            .hydrate_short_id(short, hash)
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .expect("archived read")
+            .single()
+            .is_none()
+    );
+    assert!(
+        owner_read
+            .read(&[crate::claim::PointRead::short(short, hash)], None)
             .expect("archived hydrate")
+            .single()
             .is_none()
     );
     assert!(
@@ -889,7 +936,13 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     vault
         .delete_entity_with_reason(&owner, crate::deletion::DeleteReason::UserDelete)
         .expect("soft delete owner");
-    assert!(owner_read.get(&id).expect("deleted author read").is_none());
+    assert!(
+        owner_read
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .expect("deleted author read")
+            .single()
+            .is_none()
+    );
 }
 
 #[test]
@@ -1010,12 +1063,18 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
         (&owner_key, vec![], false),
     ] {
         let read = vault.scoped_read(key.clone()).for_audience(&audience);
-        let point = read.get(&id).unwrap();
+        let point = read
+            .read(&[crate::claim::PointRead::id(id)], None)
+            .unwrap()
+            .single();
         assert_eq!(point.value.is_some(), allowed);
         assert_eq!(point.receipt.suppressed_count, usize::from(!allowed));
         assert_eq!(read.is_entity_readable(&id).unwrap(), allowed);
         assert_eq!(
-            read.hydrate_short_id(short, hash).unwrap().is_some(),
+            read.read(&[crate::claim::PointRead::short(short, hash)], None)
+                .unwrap()
+                .single()
+                .is_some(),
             allowed
         );
     }
@@ -1060,30 +1119,36 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
     // Scoped reads need logged proof; an asserted actor key alone reads nothing.
     let issuer = crate::authority::HostSlipIssuer::from_secret(b"versioned notes fixture").unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
-    let read_key = |actor: EntityId| {
+    let proof_of = |actor: EntityId| {
         let mut claims = root.claims.clone();
         claims.slip_id = *blake3::hash(actor.as_bytes()).as_bytes();
         claims.holder_ref = actor.to_hex();
         claims.actor_class = Some("human".into());
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"versioned-notes").unwrap();
-        let proof = vault
+        vault
             .verify_capability_slip(&issuer, &slip, b"versioned-notes", &signature)
-            .unwrap();
-        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
+            .unwrap()
     };
-    let owner_read = vault.scoped_read(read_key(owner));
-    let other_read = vault.scoped_read(read_key(other));
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = other_read
-        .get_entity_parts_with_mode_with_receipt(&public_id, ReadMode::Live, None)
+    let (owner_proof, other_proof) = (proof_of(owner), proof_of(other));
+    let owner_read =
+        vault.scoped_read(ScopedReadActorKey::from_verified_slip(&owner_proof).unwrap());
+    let other_read =
+        vault.scoped_read(ScopedReadActorKey::from_verified_slip(&other_proof).unwrap());
+    let live = other_read
+        .read(
+            &[crate::claim::PointRead::id(public_id).at(ReadMode::Live)],
+            None,
+        )
+        .unwrap()
+        .single()
+        .value
+        .and_then(|row| row.body)
         .unwrap();
-    let (_, _, live) = value.unwrap();
     assert_eq!(crate::note::decode_note_body(&live).unwrap(), public_body);
-    let owner_memory = facade_for(&vault, owner);
-    let other_memory = facade_for(&vault, other);
+    // The rooted vault's facades read under each actor's credential.
+    let owner_memory = facade_for(&vault, owner).with_read_proof(&owner_proof);
+    let other_memory = facade_for(&vault, other).with_read_proof(&other_proof);
     for mode in [ReadMode::Indexed, ReadMode::Pinned(pin)] {
         assert!(
             other_memory
@@ -1098,14 +1163,10 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
                 .is_some()
         );
         let denied = other_read
-            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
-            .unwrap();
+            .read(&[crate::claim::PointRead::id(id).at(mode)], None)
+            .unwrap()
+            .single();
         assert!(denied.value.is_none());
-        assert_eq!(denied.receipt.suppressed_count, 1);
-        let denied = other_read
-            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
-            .unwrap();
-        assert!(denied.value[0].is_none());
         assert_eq!(denied.receipt.suppressed_count, 1);
         assert!(
             denied
@@ -1115,15 +1176,11 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
                 .any(|axis| axis == "row_authority")
         );
         let permitted = owner_read
-            .get_entities_parts_with_modes_with_receipt(&[(id, mode)], None)
-            .unwrap();
-        assert!(permitted.value[0].is_some());
+            .read(&[crate::claim::PointRead::id(id).at(mode)], None)
+            .unwrap()
+            .single();
         assert_eq!(permitted.receipt.suppressed_count, 0);
-        let permitted = owner_read
-            .get_entity_parts_with_mode_with_receipt(&id, mode, None)
-            .unwrap();
-        assert_eq!(permitted.receipt.suppressed_count, 0);
-        let (_, _, bytes) = permitted.value.unwrap();
+        let bytes = permitted.value.and_then(|row| row.body).unwrap();
         assert_eq!(crate::note::decode_note_body(&bytes).unwrap(), private_body);
     }
 

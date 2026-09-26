@@ -39,7 +39,7 @@ fn missing_companion_is_rejected_before_any_effect_and_does_not_burn_the_intent(
             Error::InvalidClaimBody("every onboarded principal requires a quiz-named companion")
         ));
         assert_eq!(onboarding_rows(&vault)?, before);
-        assert!(read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.is_none());
+        assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
         assert!(
             vault
                 .workspace_roster(&intent.workspace.workspace_ref, AT)?
@@ -83,7 +83,6 @@ fn missing_companion_cannot_pass_the_step_roster_or_journal_doors() -> Result<()
     assert!(
         write_journal(
             &vault,
-            &onboarding_key(&intent.onboarding_id),
             &intent,
             &OnboardingJournal {
                 intent_digest: intent_digest(&intent)?,
@@ -139,7 +138,7 @@ fn a_companion_cannot_be_reused_for_a_second_principal() -> Result<()> {
         Error::InvalidClaimBody("companion person already belongs to a different principal")
     ));
     assert_eq!(onboarding_rows(&vault)?, before);
-    assert!(read_journal(&vault, &onboarding_key(&second.onboarding_id))?.is_none());
+    assert!(read_journal(&vault, &second.onboarding_id)?.is_none());
     assert_eq!(
         vault
             .workspace_roster(&first.workspace.workspace_ref, AT)?

@@ -1,10 +1,15 @@
 //! Grant-routed fork bundles, atomic verdicts and durable head-move receipts.
 
 use super::NoteProgramEdit;
-use super::documents::{NoteDocument, invalid, live_doc, load_doc, load_head, store_doc};
+use super::documents::{
+    NOTE_PROPOSAL_DOC, NoteDocument, invalid, live_doc, load_doc, load_head, store_doc,
+};
+use super::side_keys::HexPair;
+use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
+use crate::side_table::{self, HexId, Named, SideTable};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
@@ -59,36 +64,16 @@ pub struct NoteReviewBundle {
     pub landed: Vec<NoteLandingReceipt>,
     pub explainer: String,
 }
-fn fork_key(fork: EntityId) -> Vec<u8> {
-    [b"note_fork:v1:".as_slice(), fork.as_bytes()].concat()
-}
-fn bundle_key(id: EntityId) -> Vec<u8> {
-    [b"note_proposal:v1:".as_slice(), id.as_bytes()].concat()
-}
-fn put<T: Serialize>(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    key: &[u8],
-    value: &T,
-) -> Result<()> {
-    vault.store.vault_meta.put(
-        txn,
-        key,
-        &rmp_serde::to_vec_named(value).map_err(|_| invalid("proposal encode"))?,
-    )
-}
-fn get<T: serde::de::DeserializeOwned>(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    key: &[u8],
-) -> Result<T> {
-    let bytes = vault
-        .store
-        .vault_meta
-        .get(txn, key)?
-        .ok_or(invalid("missing proposal record"))?;
-    rmp_serde::from_slice(&bytes).map_err(|_| invalid("proposal decode"))
-}
+/// Recorded NOTE fork awaiting review/decision.
+pub(super) const NOTE_FORK: SideTable<EntityId, NoteFork, Named> =
+    SideTable::new(&side_table::NOTE_FORK);
+/// Durable head-move (merge/switch/reject) receipt.
+pub(super) const NOTE_RECEIPT: SideTable<EntityId, NoteLandingReceipt, Named> =
+    SideTable::new(&side_table::NOTE_RECEIPT);
+/// Review bundle grouping several fork proposals under one shared explainer.
+pub(super) const NOTE_PROPOSAL_BUNDLE: SideTable<EntityId, NoteReviewBundle, Named> =
+    SideTable::new(&side_table::NOTE_PROPOSAL_BUNDLE);
+
 pub(super) fn remember_fork(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -108,7 +93,7 @@ pub(super) fn remember_fork(
         proposal: None,
         decided: false,
     };
-    put(vault, txn, &fork_key(fork.head), &record)
+    NOTE_FORK.put(&vault.store, txn, &fork.head, &record)
 }
 
 /// One resolver for both direct edits and proposal routing. Owner authority
@@ -187,14 +172,16 @@ impl Vault {
                     explainer: explainer.to_owned(),
                 };
                 for id in forks {
-                    let mut fork: NoteFork = get(self, txn, &fork_key(*id))?;
+                    let mut fork: NoteFork = NOTE_FORK
+                        .get(&self.store, txn, id)?
+                        .ok_or_else(|| invalid("missing proposal record"))?;
                     if fork.proposal.is_some() || fork.decided || fork.actor != actor.entity_ref() {
                         return Err(
                             invalid("fork already assigned or belongs to another actor").into()
                         );
                     }
                     fork.proposal = Some(bundle.id);
-                    put(self, txn, &fork_key(*id), &fork)?;
+                    NOTE_FORK.put(&self.store, txn, id, &fork)?;
                     if !fork.rewrite && grant_allows(self, txn, fork.note, actor)? {
                         if let Some(receipt) =
                             land(self, txn, &mut fork, NoteVerdict::Merge, actor)?
@@ -207,14 +194,16 @@ impl Vault {
                         bundle.waiting.push(fork);
                     }
                 }
-                put(self, txn, &bundle_key(bundle.id), &bundle)?;
+                NOTE_PROPOSAL_BUNDLE.put(&self.store, txn, &bundle.id, &bundle)?;
                 Ok(bundle)
             })
             .inspect(|bundle| self.notify_landed(bundle))
     }
     pub fn note_proposal(&self, id: EntityId) -> Result<NoteReviewBundle> {
         let txn = self.store.env.read_txn()?;
-        get(self, &txn, &bundle_key(id))
+        NOTE_PROPOSAL_BUNDLE
+            .get(&self.store, &txn, &id)?
+            .ok_or_else(|| invalid("missing proposal record"))
     }
     pub fn review_note_proposal(
         &self,
@@ -224,7 +213,9 @@ impl Vault {
     ) -> MemoryResult<NoteReviewBundle> {
         self.memory(actor.entity_ref(), actor.actor_class())
             .with_verified_actor_write_txn(|txn| {
-                let mut bundle: NoteReviewBundle = get(self, txn, &bundle_key(id))?;
+                let mut bundle: NoteReviewBundle = NOTE_PROPOSAL_BUNDLE
+                    .get(&self.store, txn, &id)?
+                    .ok_or_else(|| invalid("missing proposal record"))?;
                 for fork in &mut bundle.waiting {
                     if !grant_allows(self, txn, fork.note, actor)? {
                         return Err(invalid("no grant to accept this fork").into());
@@ -234,7 +225,7 @@ impl Vault {
                     }
                 }
                 bundle.waiting.retain(|fork| !fork.decided);
-                put(self, txn, &bundle_key(id), &bundle)?;
+                NOTE_PROPOSAL_BUNDLE.put(&self.store, txn, &id, &bundle)?;
                 Ok(bundle)
             })
             .inspect(|bundle| self.notify_landed(bundle))
@@ -338,12 +329,7 @@ fn land(
     // A switch moves the head pointer to the fork, whose document becomes
     // the NOTE's text plane. The previous head's document is never deleted.
     let head = if verdict == NoteVerdict::Switch {
-        if vault
-            .store
-            .sync_state
-            .get(txn, &format!("ds:e:{}", fork.note.to_hex()))?
-            .is_some()
-        {
+        if SYNC_DS_E.contains(&vault.store, txn, &HexId(fork.note))? {
             return Err(invalid(
                 "replica NOTE head moves require authenticated authority",
             ));
@@ -357,15 +343,16 @@ fn land(
         super::document_store::persist(vault, txn, &doc)?;
         fork.fork
     } else {
-        vault
-            .store
-            .sync_state
-            .delete(txn, &super::documents::doc_key(fork.note, fork.fork))?;
+        NOTE_PROPOSAL_DOC.delete(
+            &vault.store,
+            txn,
+            &HexPair(HexId(fork.note), HexId(fork.fork)),
+        )?;
         current.head
     };
     fork.decided = true;
     fork.recovery_merge = None;
-    put(vault, txn, &fork_key(fork.fork), fork)?;
+    NOTE_FORK.put(&vault.store, txn, &fork.fork, fork)?;
     let receipt = NoteLandingReceipt {
         id: vault.store.clock.entity_id()?,
         note: fork.note,
@@ -376,12 +363,7 @@ fn land(
         actor: actor.entity_ref(),
         at: mutation_recorded_at,
     };
-    put(
-        vault,
-        txn,
-        &[b"note_receipt:v1:".as_slice(), receipt.id.as_bytes()].concat(),
-        &receipt,
-    )?;
+    NOTE_RECEIPT.put(&vault.store, txn, &receipt.id, &receipt)?;
     Ok(Some(receipt))
 }
 

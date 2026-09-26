@@ -3420,12 +3420,9 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
     }
     let rtxn = vault.store.env.read_txn().unwrap();
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, crate::identity_topology::IDENTITY_TOPOLOGY_SEQ_KEY,)
-            .unwrap()
-            .is_none(),
+        !crate::identity_topology::IDENTITY_TOPOLOGY_SEQ
+            .contains(&vault.store, &rtxn, &())
+            .unwrap(),
         "rejected shapes must not advance the topology clock"
     );
     drop(rtxn);
@@ -3552,12 +3549,9 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
     );
     let rtxn = vault.store.env.read_txn().unwrap();
     assert!(
-        vault
-            .store
-            .vault_meta
-            .get(&rtxn, crate::identity_topology::IDENTITY_TOPOLOGY_SEQ_KEY,)
-            .unwrap()
-            .is_none(),
+        !crate::identity_topology::IDENTITY_TOPOLOGY_SEQ
+            .contains(&vault.store, &rtxn, &())
+            .unwrap(),
         "actor mismatch must not advance the topology clock"
     );
     drop(rtxn);

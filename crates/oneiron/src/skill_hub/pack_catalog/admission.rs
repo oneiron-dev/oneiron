@@ -3,6 +3,7 @@ use super::{
     PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackKind, PackQualification,
     PackQualifier, PackSource, invalid,
 };
+use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts, UndoFidelity},
@@ -12,12 +13,13 @@ use crate::{
 };
 use heed::RoTxn;
 
-fn install_key(name: &str) -> Vec<u8> {
-    [b"pack.install.v1/".as_slice(), name.as_bytes()].concat()
-}
-fn predicate_key(name: &str) -> Vec<u8> {
-    [b"pack.predicate.v1/".as_slice(), name.as_bytes()].concat()
-}
+/// Installed knowledge-pack receipt, keyed by pack name.
+const PACK_INSTALL: SideTable<String, PackInstallReceipt, LegacyJson> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_INSTALL);
+/// Index from a claim predicate name to the pack name that owns it
+/// (exclusivity check).
+const PACK_PREDICATE: SideTable<String, String, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_PACK_PREDICATE);
 
 impl Vault {
     pub fn prepare_pack_install(
@@ -73,8 +75,8 @@ impl Vault {
             // No nested write transaction: catalog, interning, candidates and spend co-commit.
             self.install_pack_kinds_in_txn(txn, &identities)?;
             for predicate in &source.manifest.predicates {
-                if let Some(prior) = self.store.vault_meta.get(txn, &predicate_key(predicate))?
-                    && prior.as_ref() != source.manifest.name.as_bytes()
+                if let Some(prior) = PACK_PREDICATE.get(&self.store, txn, predicate)?
+                    && prior != source.manifest.name
                 {
                     return Err(invalid("predicate name owned by another pack"));
                 }
@@ -82,17 +84,11 @@ impl Vault {
             let old = self.installed_pack_in_txn(txn, &source.manifest.name)?;
             if let Some(old) = old {
                 for predicate in old.predicates {
-                    self.store
-                        .vault_meta
-                        .delete(txn, &predicate_key(&predicate))?;
+                    PACK_PREDICATE.delete(&self.store, txn, &predicate)?;
                 }
             }
             for predicate in &source.manifest.predicates {
-                self.store.vault_meta.put(
-                    txn,
-                    &predicate_key(predicate),
-                    source.manifest.name.as_bytes(),
-                )?;
+                PACK_PREDICATE.put(&self.store, txn, predicate, &source.manifest.name)?;
             }
             let at = crate::unix_seconds_now();
             let candidates = self.import_pack_skills_in_txn(txn, &source, at)?;
@@ -112,11 +108,7 @@ impl Vault {
                 candidate_skills: candidates.into_iter().map(|id| id.to_hex()).collect(),
                 installed_at: at,
             };
-            let bytes =
-                serde_json::to_vec(&receipt).map_err(|_| invalid("pack receipt encoding"))?;
-            self.store
-                .vault_meta
-                .put(txn, &install_key(&source.manifest.name), &bytes)?;
+            PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
@@ -127,13 +119,11 @@ impl Vault {
     }
     pub fn pack_for_predicate(&self, name: &str) -> Result<Option<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&txn, &predicate_key(name))? else {
+        let Some(pack) = PACK_PREDICATE.get(&self.store, &txn, &name.to_owned())? else {
             return Ok(None);
         };
-        let pack =
-            std::str::from_utf8(&raw).map_err(|_| invalid("pack predicate catalog corrupt"))?;
         let installed = self
-            .installed_pack_in_txn(&txn, pack)?
+            .installed_pack_in_txn(&txn, &pack)?
             .ok_or_else(|| invalid("pack predicate has no installation"))?;
         if !installed.predicates.iter().any(|p| p == name) {
             return Err(invalid("pack predicate catalog disagrees"));
@@ -145,12 +135,9 @@ impl Vault {
         txn: &RoTxn<'_>,
         name: &str,
     ) -> Result<Option<PackInstallReceipt>> {
-        self.store
-            .vault_meta
-            .get(txn, &install_key(name))?
-            .map(|raw| {
-                let receipt: PackInstallReceipt = serde_json::from_slice(&raw)
-                    .map_err(|_| invalid("pack install catalog corrupt"))?;
+        PACK_INSTALL
+            .get(&self.store, txn, &name.to_owned())?
+            .map(|receipt| {
                 if receipt.pack_name != name {
                     return Err(invalid("pack install name mismatch"));
                 }

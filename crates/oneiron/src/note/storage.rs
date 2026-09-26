@@ -1,5 +1,6 @@
 //! Canonical entity-document carriers shared by local NOTE edits and sync.
 use super::documents::invalid;
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
 use crate::{EntityId, Result, Vault};
 use loro::{ExportMode, LoroDoc};
 
@@ -26,8 +27,7 @@ pub(super) fn load_seeded(
 ) -> Result<LoroDoc> {
     // A NOTE's text plane is its head's document.
     let slot = super::documents::head_in(store, txn, id)?.0;
-    let hex = slot.to_hex();
-    let doc = match store.sync_state.get(txn, &format!("d:e:{hex}"))? {
+    let doc = match store.port_document_row(txn, DocumentSlot::of(slot), DocumentRow::Snapshot)? {
         Some(bytes) => {
             let doc = LoroDoc::new();
             import_complete(&doc, &bytes)?;
@@ -36,14 +36,11 @@ pub(super) fn load_seeded(
         None if slot == id => birth()?,
         None => return Err(invalid("NOTE head document missing")),
     };
-    let prefix = format!("u:e:{hex}:");
-    for row in store.sync_state.prefix_iter(txn, &prefix)? {
-        let (key, bytes) = row?;
-        let seq = &key[prefix.len()..];
-        if seq.len() != 8 || u32::from_str_radix(seq, 16).is_err() {
+    for update in store.port_document_updates(txn, DocumentSlot::of(slot))? {
+        if !matches!(update.seq, Some(UpdateSeq::Sequence(_))) {
             return Err(invalid("invalid canonical document update key"));
         }
-        import_complete(&doc, &bytes)?;
+        import_complete(&doc, &update.bytes)?;
     }
     Ok(doc)
 }
@@ -65,37 +62,20 @@ pub(crate) fn snapshot(
     doc: &LoroDoc,
     shallow: bool,
 ) -> Result<()> {
-    let hex = slot(vault, txn, id)?.to_hex();
+    let document = DocumentSlot::of(slot(vault, txn, id)?);
     let bytes = if shallow {
         state_copy(doc)?
     } else {
         doc.export(ExportMode::Snapshot)
             .map_err(|_| invalid("canonical document snapshot"))?
     };
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("d:e:{hex}"), &bytes)?;
-    vault
-        .store
-        .sync_state
-        .put(txn, &format!("sv:e:{hex}"), &doc.oplog_vv().encode())?;
+    let store = &vault.store;
+    store.port_document_snapshot_put(txn, document, &bytes)?;
+    store.port_document_state_vector_put(txn, document, &doc.oplog_vv().encode())?;
     if shallow {
-        vault
-            .store
-            .sync_state
-            .put(txn, &format!("ssv:e:{hex}"), &doc.oplog_vv().encode())?;
+        store.port_document_shallow_since_put(txn, document, &doc.oplog_vv().encode())?;
     }
-    let keys = vault
-        .store
-        .sync_state
-        .prefix_iter(txn, &format!("u:e:{hex}:"))?
-        .map(|r| r.map(|(k, _)| k.to_string()))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for key in keys {
-        vault.store.sync_state.delete(txn, &key)?;
-    }
-    Ok(())
+    store.port_document_updates_delete(txn, document)
 }
 
 /// The document slot of `id`: its head's document for a NOTE, else its own.

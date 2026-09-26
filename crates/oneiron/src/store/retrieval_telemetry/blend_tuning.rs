@@ -5,33 +5,47 @@ use std::collections::BTreeMap;
 use heed::RoTxn;
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{Store, active_write_txn_depth};
 
-use super::run_store::{
-    RETRIEVAL_RUN_KEY_PREFIX, decode_retrieval_run, retrieval_outcomes_for_run_in_txn,
-    retrieval_run_id_from_key, retrieval_run_provisional_key, retrieval_run_upper_bound,
-};
+use super::run_store::{RETRIEVAL_RUN, retrieval_outcomes_for_run_in_txn};
 use super::types::{
     RETRIEVAL_BLEND_TUNER_ALGORITHM, RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION, RetrievalBlendSignal,
     RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalOutcomeRecord, RetrievalRunRecord, RetrievalSignal,
 };
 
+/// Kept as a standalone constant (not just `TABLE.decl().prefix`) because
+/// `store::tests` plants raw rows at this exact key.
+#[cfg(test)]
 pub(in crate::store) const RETRIEVAL_BLEND_WEIGHT_TABLE_KEY: &[u8] =
     b"retr_blend_weights:v0:active";
+
+/// Codec fixed `Raw` (see the decls.rs note): decode also re-normalizes the
+/// weights and vets provenance, so [`RawValue`] delegates to the module's own
+/// `encode_retrieval_blend_weight_table`/`decode_retrieval_blend_weight_table`.
+const TABLE: SideTable<(), RetrievalBlendWeightTableEntry, Raw> =
+    SideTable::new(&side_table::RETRIEVAL_BLEND_WEIGHTS_ACTIVE);
+
+impl RawValue for RetrievalBlendWeightTableEntry {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_retrieval_blend_weight_table(self)?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        Ok(decode_retrieval_blend_weight_table(bytes)?)
+    }
+}
 
 impl Store {
     pub(crate) fn retrieval_blend_weight_table_in_txn(
         &self,
         rtxn: &RoTxn<'_>,
     ) -> Result<RetrievalBlendWeightTableEntry> {
-        let Some(value) = self
-            .vault_meta
-            .get(rtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY)?
-        else {
+        let Some(entry) = TABLE.get(self, rtxn, &())? else {
             return Ok(RetrievalBlendWeightTableEntry::bootstrap());
         };
-        decode_retrieval_blend_weight_table(&value)
+        Ok(entry)
     }
 
     pub fn retrieval_blend_weight_table(&self) -> Result<RetrievalBlendWeightTableEntry> {
@@ -56,33 +70,17 @@ impl Store {
 
         let rtxn = self.env.read_txn()?;
         let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
-        let upper = retrieval_run_upper_bound();
         let mut gradient = [0.0_f64; 4];
         let mut reward_count = 0_usize;
         let mut component_count = 0_usize;
         let mut data_window = RetrievalBlendWeightDataWindow::default();
 
         let mut accepted_runs = 0_usize;
-        for row in self.vault_meta.rev_range(
-            &rtxn,
-            &(
-                std::ops::Bound::Included(RETRIEVAL_RUN_KEY_PREFIX),
-                std::ops::Bound::Excluded(upper.as_slice()),
-            ),
-        )? {
-            let (key, value) = row?;
-            if !key.starts_with(RETRIEVAL_RUN_KEY_PREFIX) {
-                break;
-            }
-            let run_id = retrieval_run_id_from_key(&key)?;
-            if self
-                .vault_meta
-                .get(&rtxn, &retrieval_run_provisional_key(run_id))?
-                .is_some()
-            {
+        for row in RETRIEVAL_RUN.iter_rev_from(self, &rtxn, &[])? {
+            let (run_id, record) = row?;
+            if super::run_store::RETRIEVAL_RUN_PROVISIONAL.contains(self, &rtxn, &run_id)? {
                 continue;
             }
-            let record = decode_retrieval_run(&value)?;
             if record.run_id != run_id {
                 return Err(Error::CorruptedIndex("retrieval run telemetry"));
             }
@@ -91,7 +89,7 @@ impl Store {
             }
             accepted_runs += 1;
 
-            let outcomes = retrieval_outcomes_for_run_in_txn(&self.vault_meta, &rtxn, run_id)?;
+            let outcomes = retrieval_outcomes_for_run_in_txn(self, &rtxn, run_id)?;
             let run_reward_count_before = reward_count;
             let run_candidate_count_before = data_window.candidate_count;
             for outcome in outcomes.iter().filter(|outcome| outcome.reward.is_some()) {
@@ -186,10 +184,8 @@ impl Store {
     ) -> Result<()> {
         vet_retrieval_blend_weight_table_entry(entry)
             .map_err(|_| Error::InvalidConfig("invalid retrieval blend weight table".to_owned()))?;
-        let value = encode_retrieval_blend_weight_table(entry)?;
         let mut wtxn = self.env.write_txn()?;
-        self.vault_meta
-            .put(&mut wtxn, RETRIEVAL_BLEND_WEIGHT_TABLE_KEY, &value)?;
+        TABLE.put(self, &mut wtxn, &(), entry)?;
         wtxn.commit()?;
         Ok(())
     }

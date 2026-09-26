@@ -1,5 +1,6 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
 use super::{AutoCheckOutcome, LlmRequest, ModelId, ModelLocality, ModelTierRef};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -7,8 +8,13 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
-const MANIFEST_KEY: &[u8] = b"llm:manifest:v2";
-const ROUTES_KEY: &[u8] = b"llm:resident_routes:v1";
+
+/// The vault's pinned model-role manifest. Key: ().
+const MANIFEST: SideTable<(), ModelManifest, LegacyJson> =
+    SideTable::new(&side_table::LLM_MANIFEST);
+/// Per-vault narrow-only resident route overrides. Key: ().
+const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJson> =
+    SideTable::new(&side_table::LLM_RESIDENT_ROUTES);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
@@ -226,21 +232,19 @@ impl ModelManifest {
     }
 }
 pub(crate) fn read_manifest(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Option<ModelManifest>> {
-    store
-        .vault_meta
-        .get(txn, MANIFEST_KEY)?
-        .map(|bytes| ModelManifest::from_json(&bytes))
-        .transpose()
+    let Some(manifest) = MANIFEST.get(store, txn, &())? else {
+        return Ok(None);
+    };
+    manifest.validate()?;
+    Ok(Some(manifest))
 }
 impl Vault {
     pub fn set_model_manifest(&self, manifest: &ModelManifest) -> Result<()> {
         manifest.validate()?;
         let mut txn = self.store.env.write_txn()?;
         // A tighter owner pin clears stale resident routes atomically.
-        self.store.vault_meta.delete(&mut txn, ROUTES_KEY)?;
-        let bytes =
-            serde_json::to_vec(manifest).map_err(|e| Error::InvalidConfig(e.to_string()))?;
-        self.store.vault_meta.put(&mut txn, MANIFEST_KEY, &bytes)?;
+        RESIDENT_ROUTES.delete(&self.store, &mut txn, &())?;
+        MANIFEST.put(&self.store, &mut txn, &(), manifest)?;
         txn.commit()?;
         Ok(())
     }
@@ -263,8 +267,7 @@ impl Vault {
         }
         let mut routes = read_routes(&self.store, &txn)?;
         routes.insert(slot, route);
-        let bytes = serde_json::to_vec(&routes).map_err(|e| Error::InvalidConfig(e.to_string()))?;
-        self.store.vault_meta.put(&mut txn, ROUTES_KEY, &bytes)?;
+        RESIDENT_ROUTES.put(&self.store, &mut txn, &(), &routes)?;
         txn.commit()?;
         Ok(())
     }
@@ -278,14 +281,7 @@ impl Vault {
     }
 }
 fn read_routes(store: &Store, txn: &heed::RoTxn<'_>) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
-    store
-        .vault_meta
-        .get(txn, ROUTES_KEY)?
-        .map(|bytes| {
-            serde_json::from_slice(&bytes).map_err(|e| Error::InvalidConfig(e.to_string()))
-        })
-        .transpose()
-        .map(Option::unwrap_or_default)
+    Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
 }
 
 /// A calibrated check can only hold. Shadow emits a receipt reason without holding.

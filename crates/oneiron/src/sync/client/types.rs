@@ -119,16 +119,12 @@ pub enum EphemeralChangeOrigin {
 
 /// Root doc snapshot row (ARCH-0023b key table: server-write-only
 /// `meta.windows`; client persists what it imported).
+///
+/// Production reads and writes go through the typed `ROOT_SNAPSHOT` table
+/// (`crate::sync::window_rows`); this raw string stays only for this
+/// module's own tests.
+#[cfg(test)]
 pub(super) const KEY_ROOT_DOC: &str = "d:root";
-
-/// Root doc state vector row (StateVector V1 encoded).
-pub(super) const KEY_ROOT_SV: &str = "sv:root";
-
-/// Root state-vector freshness flag (1 = fresh, 0 = stale).
-pub(super) const KEY_ROOT_SVF: &str = "svf:root";
-
-/// Pending root update rows applied on top of `d:root` at startup (step 1).
-pub(super) const ROOT_UPDATE_PREFIX: &str = "u:root:";
 
 /// This device's CRDT client id (u64 LE, 8 bytes) — minted once, stable per
 /// install. The mint lives in `crate::identity` (ONE-1140, OD-2); this
@@ -137,6 +133,10 @@ pub(super) const ROOT_UPDATE_PREFIX: &str = "u:root:";
 pub(super) const KEY_CLIENT_ID: &str = "m:client_id";
 
 /// Last successful sync timestamp (u64 LE, 8 bytes).
+///
+/// Production goes through the typed `LAST_SYNC` table
+/// (`crate::sync::window_rows`); this stays only for this module's tests.
+#[cfg(test)]
 pub(super) const KEY_LAST_SYNC: &str = "m:last_sync";
 
 /// `svf:*` byte meaning "the persisted `sv:*` reflects the full doc state".

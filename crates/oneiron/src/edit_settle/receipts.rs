@@ -2,12 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use super::codec::{corrupt, decode_settlement_record, settlement_key_artifact_id};
+use super::codec::{RECORD, corrupt};
 use super::keys::{
-    BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX, FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES,
-    FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION, FIELD_BRIEF_REF, FIELD_CONTENT_HASH,
-    FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF, FIELD_PROPOSAL_REF, FIELD_REASON, FIELD_RUN_REF,
-    FIELD_VERSION,
+    FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
+    FIELD_BRIEF_REF, FIELD_CONTENT_HASH, FIELD_MANIFEST_OPS, FIELD_MANIFEST_REF,
+    FIELD_PROPOSAL_REF, FIELD_REASON, FIELD_RUN_REF, FIELD_VERSION,
 };
 use super::records::{SettleOutcomeKind, SettledAnchor, SettlementRecord};
 use crate::Vault;
@@ -26,18 +25,11 @@ use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for (scanned, entry) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&rtxn, BLOB_ARTIFACT_SETTLEMENT_KEY_PREFIX)?
-        .enumerate()
-    {
+    for (scanned, entry) in RECORD.iter_from(&vault.store, &rtxn, &[])?.enumerate() {
         if scanned >= crate::receipt::MAX_RECEIPT_QUERY_SCAN {
             break;
         }
-        let (key, raw) = entry?;
-        let artifact_id = settlement_key_artifact_id(&key)?;
-        let record = decode_settlement_record(&raw)?;
+        let ((artifact_id, _), record) = entry?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
         if query.matches(&receipt) {
             out.push(receipt);

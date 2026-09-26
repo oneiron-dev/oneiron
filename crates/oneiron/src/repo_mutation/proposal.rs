@@ -2,7 +2,7 @@
 use std::collections::BTreeSet;
 
 use super::git::{canonical_repo_ref_for_root, git_common_dir, resolve_mutable_repo_root};
-use super::oplog::{repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
+use super::oplog::{SNAPSHOT, repo_mutation_repo_key_hash, repo_mutation_snapshot_key};
 use super::queue::validate_operation;
 use super::snapshot::capture_repo_snapshot;
 use super::support::now_millis;
@@ -21,11 +21,53 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::lock_repository;
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-const PREFIX: &[u8] = b"repo_mutation:proposal:v1:";
-const OP_PREFIX: &[u8] = b"repo_mutation:proposal_op:v1:";
+/// Durable per-operation code proposal. Key: id16.
+pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
+    SideTable::new(&side_table::REPO_MUTATION_PROPOSAL);
+/// Binds one queued operation (repo, seq) back to the proposal id that
+/// authorized it. Key: string (repo key hash, hex64) + u64 (seq, big-endian).
+const PROPOSAL_OP: SideTable<OpKey, EntityId, Raw> =
+    SideTable::new(&side_table::REPO_MUTATION_PROPOSAL_OP);
+
+/// [`PROPOSAL_OP`]'s key: a repo key hash (fixed 64 lower-case hex characters)
+/// and a sequence number, joined by a literal `:` exactly as the hand-spelled
+/// key did.
+struct OpKey {
+    repo_key_hash: [u8; 64],
+    seq: u64,
+}
+
+impl SideKey for OpKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.repo_key_hash);
+        out.push(b':');
+        out.extend_from_slice(&self.seq.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (head, rest) = bytes.split_at_checked(64)?;
+        let (colon, seq_bytes) = rest.split_at_checked(1)?;
+        if colon != b":" {
+            return None;
+        }
+        let mut repo_key_hash = [0_u8; 64];
+        repo_key_hash.copy_from_slice(head);
+        Some(Self {
+            repo_key_hash,
+            seq: u64::from_be_bytes(seq_bytes.try_into().ok()?),
+        })
+    }
+}
+
+fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
+    let mut repo_key_hash = [0_u8; 64];
+    repo_key_hash.copy_from_slice(repo_mutation_repo_key_hash(repo).as_bytes());
+    OpKey { repo_key_hash, seq }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepoProposalStatus {
@@ -77,25 +119,8 @@ pub enum RepoProposalOperation {
 pub(super) fn invalid(reason: &'static str) -> Error {
     Error::Code(CodeError::InvalidRepoMutationRecord(reason))
 }
-pub(super) fn key(id: EntityId) -> Vec<u8> {
-    [PREFIX, id.as_bytes()].concat()
-}
-fn op_key(repo: &RepoRef, seq: u64) -> Vec<u8> {
-    [
-        OP_PREFIX,
-        repo_mutation_repo_key_hash(repo).as_bytes(),
-        b":",
-        &seq.to_be_bytes(),
-    ]
-    .concat()
-}
-pub(super) fn decode(bytes: &[u8]) -> Result<RepoProposal> {
-    rmp_serde::from_slice(bytes).map_err(|_| invalid("invalid repository proposal"))
-}
 pub(super) fn store(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &RepoProposal) -> Result<()> {
-    let bytes = rmp_serde::to_vec_named(row).map_err(|_| invalid("proposal encoding failed"))?;
-    vault.store.vault_meta.put(txn, &key(row.id), &bytes)?;
-    Ok(())
+    PROPOSAL.put(&vault.store, txn, &row.id, row)
 }
 impl RepoProposal {
     /// File writes preserve the mode committed by the reviewed pre-action fork.
@@ -111,15 +136,18 @@ impl RepoProposal {
             return Err(invalid("reviewed file belongs to another document"));
         }
         let txn = vault.store.env.read_txn()?;
-        let raw = vault
-            .store
-            .vault_meta
-            .get(&txn, &repo_mutation_snapshot_key(self.pre_action_fork_hash))?
+        let snapshot = SNAPSHOT
+            .get(
+                &vault.store,
+                &txn,
+                &repo_mutation_snapshot_key(self.pre_action_fork_hash),
+            )?
             .ok_or(Error::EntityNotFound)?;
+        let raw = SNAPSHOT.encode_value(&snapshot)?;
         if *blake3::hash(&raw).as_bytes() != self.pre_action_fork_hash {
             return Err(Error::CorruptedIndex("reviewed fork hash mismatch"));
         }
-        let snapshot = super::snapshot::decode_snapshot(&raw)?;
+        let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;
         match snapshot
             .entries
             .iter()
@@ -360,20 +388,20 @@ impl Vault {
             return Err(Error::EntityNotFound);
         }
         put_journal_claim(self, &mut txn, row.id, actor, &body, row.created_at)?;
-        self.store
-            .vault_meta
-            .put(&mut txn, &repo_mutation_snapshot_key(fork), &snapshot)?;
+        let snapshot_row = SNAPSHOT.decode_value(&snapshot)?;
+        SNAPSHOT.put(
+            &self.store,
+            &mut txn,
+            &repo_mutation_snapshot_key(fork),
+            &snapshot_row,
+        )?;
         store(self, &mut txn, &row)?;
         txn.commit()?;
         Ok(row)
     }
     pub fn repo_proposal(&self, id: EntityId) -> Result<Option<RepoProposal>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .map(|raw| decode(&raw))
-            .transpose()
+        PROPOSAL.get(&self.store, &txn, &id)
     }
     /// Records one authenticated host critic identity. A critic cannot rewrite its vote.
     pub fn review_repo_proposal(
@@ -383,12 +411,9 @@ impl Vault {
         critique: CritiqueArtifact,
     ) -> Result<RepoProposal> {
         let mut txn = self.store.env.write_txn()?;
-        let raw = self
-            .store
-            .vault_meta
-            .get(&txn, &key(id))?
+        let mut row = PROPOSAL
+            .get(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
-        let mut row = decode(&raw)?;
         if row.status != RepoProposalStatus::Proposed
             || critic == row.actor
             || critique.provenance.critic_ref != critic.to_hex()
@@ -427,13 +452,9 @@ impl Vault {
         let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
         self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
         let mut txn = self.store.env.write_txn()?;
-        let mut row = decode(
-            &self
-                .store
-                .vault_meta
-                .get(&txn, &key(id))?
-                .ok_or(Error::EntityNotFound)?,
-        )?;
+        let mut row = PROPOSAL
+            .get(&self.store, &txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }
@@ -527,22 +548,15 @@ pub(super) fn bind_prepared(
     let Some(id) = id else {
         return Ok(());
     };
-    let mut row = decode(
-        &vault
-            .store
-            .vault_meta
-            .get(txn, &key(id))?
-            .ok_or(Error::EntityNotFound)?,
-    )?;
+    let mut row = PROPOSAL
+        .get(&vault.store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
     if row.operation_seq.is_some() || row.status != RepoProposalStatus::Approved {
         return Err(invalid("proposal already consumed"));
     }
     row.operation_seq = Some(seq);
     store(vault, txn, &row)?;
-    vault
-        .store
-        .vault_meta
-        .put(txn, &op_key(repo, seq), id.as_bytes())?;
+    PROPOSAL_OP.put(&vault.store, txn, &op_key(repo, seq), &id)?;
     Ok(())
 }
 pub(super) fn for_operation(
@@ -551,21 +565,12 @@ pub(super) fn for_operation(
     seq: u64,
 ) -> Result<Option<RepoProposal>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(raw) = vault.store.vault_meta.get(&txn, &op_key(repo, seq))? else {
+    let Some(id) = PROPOSAL_OP.get(&vault.store, &txn, &op_key(repo, seq))? else {
         return Ok(None);
     };
-    let id = EntityId::from_bytes(
-        raw.as_ref()
-            .try_into()
-            .map_err(|_| invalid("proposal operation index corrupt"))?,
-    )?;
-    let row = decode(
-        &vault
-            .store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .ok_or(Error::EntityNotFound)?,
-    )?;
+    let row = PROPOSAL
+        .get(&vault.store, &txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
     if row.id != id || row.operation_seq != Some(seq) || RepoRef::parse(&row.repo)? != *repo {
         return Err(invalid("proposal operation binding differs"));
     }
@@ -579,21 +584,12 @@ pub(super) fn finish(
     seq: u64,
     status: RepoMutationStatus,
 ) -> Result<()> {
-    let Some(raw) = vault.store.vault_meta.get(txn, &op_key(repo, seq))? else {
+    let Some(id) = PROPOSAL_OP.get(&vault.store, txn, &op_key(repo, seq))? else {
         return Ok(());
     };
-    let id = EntityId::from_bytes(
-        raw.as_ref()
-            .try_into()
-            .map_err(|_| invalid("proposal operation index corrupt"))?,
-    )?;
-    let mut row = decode(
-        &vault
-            .store
-            .vault_meta
-            .get(txn, &key(id))?
-            .ok_or(Error::EntityNotFound)?,
-    )?;
+    let mut row = PROPOSAL
+        .get(&vault.store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
     row.status = match status {
         RepoMutationStatus::Applied => RepoProposalStatus::Applied,
         RepoMutationStatus::Failed => RepoProposalStatus::Failed,
@@ -630,17 +626,11 @@ pub(super) fn proposal_snapshot_recorded(
     hash: RepoForkHash,
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    for (count, entry) in vault
-        .store
-        .vault_meta
-        .prefix_iter(&txn, PREFIX)?
-        .enumerate()
-    {
+    for (count, entry) in PROPOSAL.iter_from(&vault.store, &txn, &[])?.enumerate() {
         if count >= 100_000 {
             return Err(Error::IndexOverflow("repository proposals"));
         }
-        let (_, raw) = entry?;
-        let row = decode(&raw)?;
+        let (_, row) = entry?;
         if repo_mutation_repo_key_hash(&RepoRef::parse(&row.repo)?)
             == repo_mutation_repo_key_hash(repo)
             && row.pre_action_fork_hash == hash

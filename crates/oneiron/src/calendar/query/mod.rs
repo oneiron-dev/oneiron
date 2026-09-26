@@ -30,6 +30,7 @@ mod requests;
 mod service;
 
 pub use self::facts::CalendarRead;
+pub(in crate::calendar) use self::facts::receipted;
 pub(crate) use self::facts::visit_calendar_events;
 pub use self::requests::{
     CalendarEventView, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest, CalendarSel,

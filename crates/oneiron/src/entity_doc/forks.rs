@@ -1,9 +1,11 @@
 //! Durable divergences, entity-bound grant admission and atomic fork-set settlement.
 
 use super::document::decode_frontier;
+use super::side_keys::HexPair;
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{ArtifactError, Error, Result};
+use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -101,18 +103,19 @@ pub struct TextReceipt {
     pub after: Vec<u8>,
 }
 
-fn bundle_key(id: &EntityId) -> String {
-    format!("entity_doc:v1:proposal:{}", id.to_hex())
-}
-fn fork_key(id: &str) -> String {
-    format!("entity_doc:v1:fork:{id}")
-}
-fn fork_snapshot(id: &str) -> String {
-    format!("entity_doc:v1:fork_snapshot:{id}")
-}
-pub(super) fn receipt_prefix(entity: &EntityId) -> String {
-    format!("entity_doc:v1:receipt:{}:", entity.to_hex())
-}
+/// Durable identity/provenance/status of one open or settled document fork.
+const ENTITY_DOC_FORK: SideTable<String, ForkRecord, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_FORK);
+/// Shallow Loro snapshot of a fork's diverged content at its opening base.
+const ENTITY_DOC_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::ENTITY_DOC_FORK_SNAPSHOT);
+/// Review bundle of every fork opened under one text-edit proposal.
+const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
+/// Durable settlement receipt for one fork's merge/switch/reject verdict,
+/// keyed by entity then receipt id.
+const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
+    SideTable::new(&side_table::ENTITY_DOC_RECEIPT);
 
 pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<()> {
     storage::require_live(&vault.store, txn, &actor.entity_ref())?;
@@ -315,24 +318,18 @@ impl Vault {
     /// row and base; it cannot shift the first fork's opening frontier.
     pub fn entity_text_fork(&self, fork: &EntityId) -> Result<Option<ForkRecord>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .sync_state
-            .get(&txn, &fork_key(&fork.to_hex()))?
-            .map(|raw| storage::decode(&raw))
-            .transpose()
+        ENTITY_DOC_FORK.get(&self.store, &txn, &fork.to_hex())
     }
 
     /// Reads retained fork output, including the full text of a timed-out update.
     pub fn entity_text_fork_text(&self, fork: &EntityId) -> Result<Option<String>> {
         let txn = self.store.env.read_txn()?;
-        let Some(row) = self.store.sync_state.get(&txn, &fork_key(&fork.to_hex()))? else {
+        let Some(row) = ENTITY_DOC_FORK.get(&self.store, &txn, &fork.to_hex())? else {
             return Ok(None);
         };
-        let row: ForkRecord = storage::decode(&row)?;
         storage::require_live(&self.store, &txn, &EntityId::from_hex(&row.entity)?)?;
-        self.store
-            .sync_state
-            .get(&txn, &fork_snapshot(&fork.to_hex()))?
+        ENTITY_DOC_FORK_SNAPSHOT
+            .get(&self.store, &txn, &fork.to_hex())?
             .map(|raw| EntityDoc::from_snapshot(&raw).map(|doc| doc.text()))
             .transpose()
     }
@@ -372,9 +369,7 @@ impl Vault {
             }
             let mut bundle = read_bundle(&self.store, txn, proposal)?;
             bundle.settled = true;
-            self.store
-                .sync_state
-                .put(txn, &bundle_key(proposal), &storage::encode(&bundle)?)?;
+            ENTITY_DOC_PROPOSAL_BUNDLE.put(&self.store, txn, &proposal.to_hex(), &bundle)?;
             Ok(bundle)
         })?;
         registry.clear();
@@ -393,12 +388,9 @@ pub(super) fn read_bundle(
     txn: &RoTxn<'_>,
     proposal: &EntityId,
 ) -> Result<ProposalBundle> {
-    storage::decode(
-        &store
-            .sync_state
-            .get(txn, &bundle_key(proposal))?
-            .ok_or(Error::EntityNotFound)?,
-    )
+    ENTITY_DOC_PROPOSAL_BUNDLE
+        .get(store, txn, &proposal.to_hex())?
+        .ok_or(Error::EntityNotFound)
 }
 
 #[expect(
@@ -416,9 +408,9 @@ pub(super) fn retain_fork(
     status: ForkStatus,
     at: u64,
 ) -> Result<()> {
-    let key = bundle_key(&proposal);
-    let mut bundle = match vault.store.sync_state.get(txn, &key)? {
-        Some(raw) => storage::decode::<ProposalBundle>(&raw)?,
+    let key = proposal.to_hex();
+    let mut bundle = match ENTITY_DOC_PROPOSAL_BUNDLE.get(&vault.store, txn, &key)? {
+        Some(bundle) => bundle,
         None => ProposalBundle {
             proposal: proposal.to_hex(),
             author: req.actor.entity_ref().to_hex(),
@@ -443,21 +435,16 @@ pub(super) fn retain_fork(
         rewrite: req.rewrite.is_some(),
         status,
     };
-    vault
-        .store
-        .sync_state
-        .put(txn, &fork_key(&id.to_hex()), &storage::encode(&record)?)?;
+    ENTITY_DOC_FORK.put(&vault.store, txn, &id.to_hex(), &record)?;
     // A fork is its own shallow document, not a second complete history copy.
-    vault.store.sync_state.put(
+    ENTITY_DOC_FORK_SNAPSHOT.put(
+        &vault.store,
         txn,
-        &fork_snapshot(&id.to_hex()),
+        &id.to_hex(),
         &doc.shallow_snapshot(&req.base)?,
     )?;
     bundle.forks.push(record);
-    vault
-        .store
-        .sync_state
-        .put(txn, &key, &storage::encode(&bundle)?)?;
+    ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;
     Ok(())
 }
 
@@ -489,13 +476,9 @@ fn settle_one(
     actor: WriteActor,
     at: u64,
 ) -> Result<()> {
-    let mut record: ForkRecord = storage::decode(
-        &vault
-            .store
-            .sync_state
-            .get(txn, &fork_key(fork_id))?
-            .ok_or(Error::EntityNotFound)?,
-    )?;
+    let mut record = ENTITY_DOC_FORK
+        .get(&vault.store, txn, &fork_id.to_owned())?
+        .ok_or(Error::EntityNotFound)?;
     if record.status != ForkStatus::Pending {
         return Err(Error::Artifact(ArtifactError::EditProposalAlreadySettled {
             outcome: "settled",
@@ -512,10 +495,8 @@ fn settle_one(
         }
         SettleVerb::Merge => {
             let fork = EntityDoc::from_snapshot(
-                &vault
-                    .store
-                    .sync_state
-                    .get(txn, &fork_snapshot(fork_id))?
+                &ENTITY_DOC_FORK_SNAPSHOT
+                    .get(&vault.store, txn, &fork_id.to_owned())?
                     .ok_or(Error::EntityNotFound)?,
             )?;
             let vv = live.doc.oplog_vv();
@@ -531,10 +512,8 @@ fn settle_one(
                 return Err(Error::Artifact(ArtifactError::EditProposalStale));
             }
             let fork = EntityDoc::from_snapshot(
-                &vault
-                    .store
-                    .sync_state
-                    .get(txn, &fork_snapshot(fork_id))?
+                &ENTITY_DOC_FORK_SNAPSHOT
+                    .get(&vault.store, txn, &fork_id.to_owned())?
                     .ok_or(Error::EntityNotFound)?,
             )?;
             // The retained fork is shallow at its base. Import only its ops into
@@ -549,14 +528,8 @@ fn settle_one(
             live.frontier()
         }
     };
-    vault
-        .store
-        .sync_state
-        .put(txn, &fork_key(fork_id), &storage::encode(&record)?)?;
-    vault
-        .store
-        .sync_state
-        .delete(txn, &fork_snapshot(fork_id))?;
+    ENTITY_DOC_FORK.put(&vault.store, txn, &fork_id.to_owned(), &record)?;
+    ENTITY_DOC_FORK_SNAPSHOT.delete(&vault.store, txn, &fork_id.to_owned())?;
     let proposal = EntityId::from_hex(&record.proposal)?;
     let mut bundle = read_bundle(&vault.store, txn, &proposal)?;
     let slot = bundle
@@ -565,10 +538,7 @@ fn settle_one(
         .find(|f| f.fork == record.fork)
         .ok_or(Error::CorruptedIndex("fork absent from proposal"))?;
     *slot = record.clone();
-    vault
-        .store
-        .sync_state
-        .put(txn, &bundle_key(&proposal), &storage::encode(&bundle)?)?;
+    ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &proposal.to_hex(), &bundle)?;
     write_receipt(
         vault,
         txn,
@@ -600,8 +570,9 @@ pub(super) fn write_receipt(
     before: &[u8],
     after: &[u8],
 ) -> Result<TextReceipt> {
+    let receipt_id = EntityId::now();
     let receipt = TextReceipt {
-        receipt: EntityId::now().to_hex(),
+        receipt: receipt_id.to_hex(),
         proposal: proposal.to_hex(),
         fork: fork.to_hex(),
         entity: entity.to_hex(),
@@ -611,10 +582,11 @@ pub(super) fn write_receipt(
         before: before.to_vec(),
         after: after.to_vec(),
     };
-    vault.store.sync_state.put(
+    ENTITY_DOC_RECEIPT.put(
+        &vault.store,
         txn,
-        &format!("{}{}", receipt_prefix(&entity), receipt.receipt),
-        &storage::encode(&receipt)?,
+        &HexPair(HexId(entity), HexId(receipt_id)),
+        &receipt,
     )?;
     Ok(receipt)
 }
@@ -624,14 +596,11 @@ pub(super) fn receipts(
     txn: &RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Vec<TextReceipt>> {
-    store
-        .sync_state
-        .prefix_iter(txn, &receipt_prefix(entity))?
-        .map(|row| {
-            let (_, bytes) = row?;
-            storage::decode(&bytes)
-        })
-        .collect()
+    Ok(ENTITY_DOC_RECEIPT
+        .scan_from(store, txn, format!("{}:", entity.to_hex()).as_bytes())?
+        .into_iter()
+        .map(|(_, receipt)| receipt)
+        .collect())
 }
 
 pub(super) fn all_forks(
@@ -640,9 +609,7 @@ pub(super) fn all_forks(
     entity: &EntityId,
 ) -> Result<Vec<ForkRecord>> {
     let mut forks = Vec::new();
-    for row in store.sync_state.prefix_iter(txn, "entity_doc:v1:fork:")? {
-        let (_, bytes) = row?;
-        let fork: ForkRecord = storage::decode(&bytes)?;
+    for (_, fork) in ENTITY_DOC_FORK.scan(store, txn)? {
         if fork.entity == entity.to_hex() {
             forks.push(fork);
         }
@@ -652,14 +619,12 @@ pub(super) fn all_forks(
 
 pub(super) fn erase_forks(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     for fork in all_forks(store, txn, entity)? {
-        store.sync_state.delete(txn, &fork_snapshot(&fork.fork))?;
-        store.sync_state.delete(txn, &fork_key(&fork.fork))?;
+        ENTITY_DOC_FORK_SNAPSHOT.delete(store, txn, &fork.fork)?;
+        ENTITY_DOC_FORK.delete(store, txn, &fork.fork)?;
         let id = EntityId::from_hex(&fork.proposal)?;
         let mut bundle = read_bundle(store, txn, &id)?;
         bundle.forks.retain(|row| row.entity != entity.to_hex());
-        store
-            .sync_state
-            .put(txn, &bundle_key(&id), &storage::encode(&bundle)?)?;
+        ENTITY_DOC_PROPOSAL_BUNDLE.put(store, txn, &id.to_hex(), &bundle)?;
     }
     Ok(())
 }

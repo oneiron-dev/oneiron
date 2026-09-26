@@ -23,9 +23,7 @@ mod txn;
 #[cfg(test)]
 mod tests;
 
-pub use self::accounting::{
-    CONNECTOR_KEY_MAX_DISPATCH_BATCH, CONNECTOR_KEY_SEND_ADMIT_PREFIX, ConnectorKeySendAdmission,
-};
+pub use self::accounting::{CONNECTOR_KEY_MAX_DISPATCH_BATCH, ConnectorKeySendAdmission};
 pub use self::charter::{CompiledCharter, ConnectorCharterCompileIssue, compile_connector_charter};
 pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
@@ -44,10 +42,7 @@ pub use self::record::{
     ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
     EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter,
 };
-pub use self::txn::{
-    CONNECTOR_CATALOG_NAME_INDEX_PREFIX, CONNECTOR_KEY_GENERATION_LOG_PREFIX,
-    ConnectorKeyGeneration,
-};
+pub use self::txn::ConnectorKeyGeneration;
 
 pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
@@ -72,7 +67,7 @@ pub(crate) use self::txn::rewrite_connector_key_in_txn;
 // module through `use super::*`; after the directory split the seam re-imports
 // them so the sibling `tests.rs` resolves exactly as it did inline.
 #[cfg(test)]
-use self::accounting::{connector_key_send_admit_key, connector_key_settle_event_key};
+use self::accounting::{SEND_ADMIT, SETTLE_EVENT};
 #[cfg(test)]
 use self::charter::charter_stamped_aggregate;
 #[cfg(test)]
@@ -82,7 +77,7 @@ use self::meter::{
 #[cfg(test)]
 use self::record::validate_compiled_policy;
 #[cfg(test)]
-use self::txn::{connector_catalog_name_index_key, connector_key_generation_key};
+use self::txn::{CATALOG_NAME_INDEX, GENERATION_LOG};
 
 #[cfg(test)]
 use crate::Vault;

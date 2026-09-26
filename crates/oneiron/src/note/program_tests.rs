@@ -436,6 +436,7 @@ fn agent_facade_and_pack_project_live_document_text() {
             memory
                 .get_entity(&receipt.id_hex)
                 .unwrap()
+                .value
                 .unwrap()
                 .body
                 .unwrap()["markdown"],

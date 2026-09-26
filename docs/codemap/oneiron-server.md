@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/facade_verbs.rs` | src | L | 23 crate-vis | — | Facade-backed MCP verb executors |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 9 crate-vis | — | — |
-| `src/api/mcp_gateway/tasks_response.rs` | src | m | 8 crate-vis | — | Tasks verb and response shaping |
+| `src/api/mcp_gateway/tasks_response.rs` | src | m | 9 crate-vis | — | Tasks verb and response shaping |
 | `src/api/memory.rs` | src | m | 15 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | m | 19 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |

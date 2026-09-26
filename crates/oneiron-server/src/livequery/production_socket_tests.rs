@@ -155,10 +155,16 @@ async fn barrier(socket: &mut Socket) {
         json!({"method":"hydrate","requestId":7,"params":{"refs":[]}}),
     )
     .await;
+    let reply = app(socket, TAG_RPC).await;
+    assert_eq!(reply["requestId"], 7);
+    assert_eq!(reply["last"], true);
     assert_eq!(
-        app(socket, TAG_RPC).await,
-        json!({"requestId":7,"result":[],"last":true})
+        reply["result"]["value"],
+        json!([]),
+        "an empty hydrate still answers with its receipt"
     );
+    assert!(reply["result"]["narrowing"].is_object());
+    assert_eq!(reply.as_object().map(serde_json::Map::len), Some(3));
 }
 
 async fn revoked_close(socket: &mut Socket) {
@@ -207,21 +213,19 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     let read = app(&mut socket, TAG_RPC).await;
     assert_eq!(read["requestId"], 7);
     assert_eq!(read["last"], true);
-    assert_eq!(read["result"][0]["body"]["content"], "solar panel initial");
+    assert_eq!(
+        read["result"]["value"][0]["body"]["content"],
+        "solar panel initial"
+    );
+    assert!(read["result"]["narrowing"].is_object());
     open(&mut socket, 7, "solar", Value::Null).await;
     let initial = app(&mut socket, TAG_SUB).await;
     assert_snapshot(&initial, 7, 1);
-    let message = f
-        .server
-        .vault()
-        .memory(
-            oneiron::EntityId::from_hex(ACTOR).unwrap(),
-            oneiron::EdgeActorClass::Human,
-        )
-        .get_entity(&witnessed.message_short_ids[0])
-        .unwrap()
-        .unwrap();
-    let message_id = oneiron::EntityId::from_hex(&message.id_hex).unwrap();
+    // The server's vault is rooted and ACTOR holds no owner binding, so an
+    // uncredentialed facade read of the row is grant-bound; resolve the ref.
+    let message_id =
+        oneiron::memory::resolve_entity_ref(f.server.vault(), &witnessed.message_short_ids[0])
+            .unwrap();
     let revision = f
         .server
         .vault()
@@ -238,7 +242,10 @@ async fn production_socket_reads_and_subscribes_then_receives_materialized_engin
     .await;
     let pinned = app(&mut socket, TAG_RPC).await;
     assert_eq!(pinned["requestId"], 8);
-    assert_eq!(pinned["result"][0]["body"], read["result"][0]["body"]);
+    assert_eq!(
+        pinned["result"]["value"][0]["body"],
+        read["result"]["value"][0]["body"]
+    );
     ack(&mut socket, 7, &initial["cursor"]).await;
     barrier(&mut socket).await;
     witness(&f.server, "solar panel update");
@@ -259,7 +266,7 @@ async fn production_read_socket_closes_after_bound_jti_revocation() {
     )
     .await;
     let read = app(&mut socket, TAG_RPC).await;
-    assert_eq!(read["result"][0]["id_hex"], ACTOR);
+    assert_eq!(read["result"]["value"][0]["id_hex"], ACTOR);
     assert_eq!(read["last"], true);
     // Revoke the BOUND credential: each class mints a distinct slip, so
     // revoking a sibling class must not close this socket.

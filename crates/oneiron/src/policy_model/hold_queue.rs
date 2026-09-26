@@ -4,9 +4,24 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RelayError};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{Result, Vault};
 use serde::{Deserialize, Serialize};
 const PREFIX: &str = "policy-hold:v1:";
+
+/// The device-local moderation queue, keyed by the hex digest after `PREFIX`
+/// (the `queue_ref`/`reference` strings this module hands callers keep the
+/// full prefixed spelling; this table's key is only the suffix after it).
+const HOLD_QUEUE: SideTable<String, HeldPolicyItem, LegacyJson> =
+    SideTable::new(&side_table::POLICY_HOLD_QUEUE);
+
+/// The table key for a `queue_ref`/`reference` string, which always carries `PREFIX`.
+fn hold_key(reference: &str) -> String {
+    reference
+        .strip_prefix(PREFIX)
+        .unwrap_or(reference)
+        .to_owned()
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeldPolicyItem {
     pub queue_ref: String,
@@ -66,12 +81,7 @@ impl Vault {
             .and_then(|row| row.human.clone())
             .ok_or(Error::Relay(RelayError::PolicyVerdictNotInForce))?;
         // Reclassifying the same caller/content/frontier cannot erase a human ruling.
-        if self
-            .store
-            .vault_meta
-            .get(txn, queue_ref.as_bytes())?
-            .is_some()
-        {
+        if HOLD_QUEUE.contains(&self.store, txn, &hold_key(&queue_ref))? {
             return Ok(queue_ref);
         }
         let item = HeldPolicyItem {
@@ -94,9 +104,7 @@ impl Vault {
             bytes.len(),
             self.config.map_size / 16,
         )?;
-        self.store
-            .vault_meta
-            .put(txn, queue_ref.as_bytes(), &bytes)?;
+        HOLD_QUEUE.put(&self.store, txn, &hold_key(&queue_ref), &item)?;
         Ok(queue_ref)
     }
     pub(super) fn policy_hold_for_verdict(
@@ -111,25 +119,16 @@ impl Vault {
             return Ok(None);
         };
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, key.as_bytes())?
-            .map(|bytes| {
-                serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("policy hold"))
-            })
-            .transpose()
+        HOLD_QUEUE.get(&self.store, &txn, &hold_key(&key))
     }
     pub fn policy_holds(&self, limit: usize) -> Result<Vec<HeldPolicyItem>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .prefix_iter(&txn, PREFIX.as_bytes())?
+        Ok(HOLD_QUEUE
+            .scan(&self.store, &txn)?
+            .into_iter()
             .take(limit)
-            .map(|row| {
-                let (_, bytes) = row?;
-                serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("policy hold"))
-            })
-            .collect()
+            .map(|(_, item)| item)
+            .collect())
     }
     /// Record a later human ruling. This never sends content or turns a stale verdict into a permit.
     pub fn resolve_policy_hold(
@@ -143,13 +142,9 @@ impl Vault {
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let bytes = self
-            .store
-            .vault_meta
-            .get(&txn, reference.as_bytes())?
+        let mut item = HOLD_QUEUE
+            .get(&self.store, &txn, &hold_key(reference))?
             .ok_or(Error::CorruptedIndex("missing policy hold"))?;
-        let mut item: HeldPolicyItem =
-            serde_json::from_slice(&bytes).map_err(|_| Error::CorruptedIndex("policy hold"))?;
         if item.human != owner.principal_ref() || item.resolution.is_some() {
             return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
@@ -159,12 +154,7 @@ impl Vault {
             return Err(Error::Relay(RelayError::PolicyVerdictNotInForce));
         }
         item.resolution = Some(resolution);
-        self.store.vault_meta.put(
-            &mut txn,
-            reference.as_bytes(),
-            &serde_json::to_vec(&item)
-                .map_err(|_| Error::CorruptedIndex("policy hold encoding"))?,
-        )?;
+        HOLD_QUEUE.put(&self.store, &mut txn, &hold_key(reference), &item)?;
         self.store.append_gate_decision_in_txn(
             &mut txn,
             &crate::store::GateDecisionRecord {
@@ -212,22 +202,20 @@ impl Vault {
             let frontier =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
             let mut keys = Vec::new();
-            for row in self.store.vault_meta.prefix_iter(txn, PREFIX.as_bytes())? {
+            for row in HOLD_QUEUE.iter_from(&self.store, txn, &[])? {
                 if keys.len() >= limit {
                     break;
                 }
-                let (key, bytes) = row?;
-                let item: HeldPolicyItem = serde_json::from_slice(&bytes)
-                    .map_err(|_| Error::CorruptedIndex("policy hold"))?;
+                let (key, item) = row?;
                 if item.human == owner.principal_ref()
                     && item.held_at < held_before
                     && (item.resolution.is_some() || item.policy_frontier != frontier)
                 {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
             }
             for key in &keys {
-                self.store.vault_meta.delete(txn, key)?;
+                HOLD_QUEUE.delete(&self.store, txn, key)?;
             }
             Ok(keys.len())
         })

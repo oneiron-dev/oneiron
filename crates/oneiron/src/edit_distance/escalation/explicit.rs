@@ -4,9 +4,8 @@
 //! proposal. It uses the same ledger, standing-policy schema and cap comparison.
 
 use super::storage::{
-    ESCALATION_ROW_LABEL, ROW_VERSION, STANDING_POLICY_ROW_LABEL, StoredEscalation,
-    StoredStandingPolicy, encode_row, escalation_key, escalation_receipt_id, normalized_scope,
-    ruling_parts, standing_policy_key,
+    ESCALATION, ROW_VERSION, STANDING_POLICY, ScopeTriggerKey, StoredEscalation,
+    StoredStandingPolicy, escalation_receipt_id, normalized_scope, ruling_parts, scope_key,
 };
 use super::{EscalationReceipt, EscalationRuling, EscalationTrigger};
 use crate::Vault;
@@ -56,11 +55,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
         budget_band: receipt.budget_band,
         at,
     };
-    vault.store.vault_meta.put(
-        txn,
-        &escalation_key(&scope, &id),
-        &encode_row(&row, ESCALATION_ROW_LABEL)?,
-    )?;
+    ESCALATION.put(&vault.store, txn, &(scope_key(&scope), id), &row)?;
     if remember {
         let policy = StoredStandingPolicy {
             v: ROW_VERSION,
@@ -74,11 +69,11 @@ pub(crate) fn record_explicit_ruling_in_txn(
             proposed_at: at,
             accepted_at: Some(at),
         };
-        vault.store.vault_meta.put(
-            txn,
-            &standing_policy_key(&scope, receipt.trigger),
-            &encode_row(&policy, STANDING_POLICY_ROW_LABEL)?,
-        )?;
+        let key = ScopeTriggerKey {
+            scope_digest: scope_key(&scope),
+            trigger: receipt.trigger,
+        };
+        STANDING_POLICY.put(&vault.store, txn, &key, &policy)?;
     }
     Ok(())
 }

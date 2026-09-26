@@ -139,32 +139,25 @@ impl Vault {
 
     fn backfill_authority_first_seen_sidecars(&self) -> Result<()> {
         let rtxn = self.store.env.read_txn()?;
-        let already_backfilled = self
-            .store
-            .sync_state
-            .get(&rtxn, authority_first_seen_backfill_sync_key())?
-            .is_some();
+        let already_backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
+            &self.store,
+            &rtxn,
+            &authority_first_seen_backfill_key(),
+        )?;
         drop(rtxn);
         if already_backfilled {
             return Ok(());
         }
 
         self.with_write_txn(|wtxn| {
-            if self
-                .store
-                .sync_state
-                .get(wtxn, authority_first_seen_backfill_sync_key())?
-                .is_some()
-            {
+            let backfill_key = authority_first_seen_backfill_key();
+            if AUTHORITY_FIRST_SEEN_BACKFILLED.contains(&self.store, wtxn, &backfill_key)? {
                 return Ok(());
             }
 
-            let floor_key = authority_first_seen_clock_sync_key();
-            let previous_floor = self
-                .store
-                .sync_state
-                .get(wtxn, floor_key)?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            let floor_key = authority_first_seen_clock_key();
+            let previous_floor = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
                 .unwrap_or(0);
             let observed_floor = authority_observation_secs(
                 &self.store,
@@ -172,8 +165,7 @@ impl Vault {
                 self.store.clock.now_recorded_at(),
             );
             if observed_floor != previous_floor {
-                let encoded = encode_authority_first_seen_secs(observed_floor);
-                self.store.sync_state.put(wtxn, floor_key, &encoded)?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &observed_floor)?;
             }
 
             let mut missing_sidecars = Vec::new();
@@ -195,13 +187,8 @@ impl Vault {
                 let authority_entry =
                     decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 let hash = authority_entry_hash(&authority_entry)?;
-                let sidecar_key = authority_first_seen_sync_key(&hash);
-                if self
-                    .store
-                    .sync_state
-                    .get(wtxn, sidecar_key.as_str())?
-                    .is_none()
-                {
+                let sidecar_key = authority_first_seen_sidecar_key(&hash);
+                if !AUTHORITY_FIRST_SEEN.contains(&self.store, wtxn, &sidecar_key)? {
                     // fix-leg 4: the persisted value is THIS vault's local
                     // observation time, never `header.learned_at`. The header
                     // field is entity metadata written by whichever peer
@@ -217,21 +204,14 @@ impl Vault {
                     // already-imported widen serves its full delay from HERE
                     // rather than from a claim, which delays a legitimate
                     // legacy widen once and never skips one.
-                    missing_sidecars.push((
-                        sidecar_key,
-                        encode_authority_first_seen_secs(observed_floor),
-                    ));
+                    missing_sidecars.push((sidecar_key, observed_floor));
                 }
             }
             for (sidecar_key, first_seen) in missing_sidecars {
-                self.store
-                    .sync_state
-                    .put(wtxn, sidecar_key.as_str(), &first_seen)?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &sidecar_key, &first_seen)?;
             }
 
-            self.store
-                .sync_state
-                .put(wtxn, authority_first_seen_backfill_sync_key(), &[1])?;
+            AUTHORITY_FIRST_SEEN_BACKFILLED.put(&self.store, wtxn, &backfill_key, &[1])?;
             Ok(())
         })
     }
@@ -251,11 +231,8 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut entries = Vec::new();
         let mut first_seen_at_secs = std::collections::BTreeMap::new();
-        let previous_floor = self
-            .store
-            .sync_state
-            .get(&rtxn, authority_first_seen_clock_sync_key())?
-            .and_then(|raw| decode_authority_first_seen_secs(&raw))
+        let previous_floor = AUTHORITY_FIRST_SEEN
+            .get_lenient(&self.store, &rtxn, &authority_first_seen_clock_key())?
             .unwrap_or(0);
         for entry in self
             .store
@@ -274,12 +251,11 @@ impl Vault {
             }
             let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             let hash = authority_entry_hash(&entry)?;
-            if let Some(first_seen) = self
-                .store
-                .sync_state
-                .get(&rtxn, authority_first_seen_sync_key(&hash).as_str())?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
-            {
+            if let Some(first_seen) = AUTHORITY_FIRST_SEEN.get_lenient(
+                &self.store,
+                &rtxn,
+                &authority_first_seen_sidecar_key(&hash),
+            )? {
                 first_seen_at_secs.insert(hash, first_seen);
             }
             entries.push(entry);
@@ -289,11 +265,9 @@ impl Vault {
         let observations = authority_local_observations_in_txn(&self.store, &rtxn, &entries)?;
         drop(rtxn);
         let now_secs = self.with_write_txn(|wtxn| {
-            let previous_floor = self
-                .store
-                .sync_state
-                .get(wtxn, authority_first_seen_clock_sync_key())?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
+            let floor_key = authority_first_seen_clock_key();
+            let previous_floor = AUTHORITY_FIRST_SEEN
+                .get_lenient(&self.store, wtxn, &floor_key)?
                 .unwrap_or(previous_floor);
             let now_secs = authority_observation_secs(
                 &self.store,
@@ -301,10 +275,7 @@ impl Vault {
                 self.store.clock.now_recorded_at(),
             );
             if now_secs != previous_floor {
-                let encoded = encode_authority_first_seen_secs(now_secs);
-                self.store
-                    .sync_state
-                    .put(wtxn, authority_first_seen_clock_sync_key(), &encoded)?;
+                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now_secs)?;
             }
             Ok(now_secs)
         })?;

@@ -1,12 +1,14 @@
 //! Node-local time-held symbol declarations and atomic queue ordering.
 
 use crate::error::{Error, Result};
+use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-const PREFIX: &[u8] = b"tasks.symbol_lease.v1/";
+const LEASES: SideTable<EntityId, SymbolLease, LegacyJson> =
+    SideTable::new(&side_table::TASK_SYMBOL_LEASE);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,15 +30,8 @@ pub enum SymbolLeaseOutcome {
     },
 }
 
-fn key(task: EntityId) -> Vec<u8> {
-    [PREFIX, task.as_bytes()].concat()
-}
 fn load(store: &Store, txn: &heed::RoTxn<'_>, task: EntityId) -> Result<Option<SymbolLease>> {
-    store
-        .vault_meta
-        .get(txn, &key(task))?
-        .map(|raw| serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("symbol lease")))
-        .transpose()
+    LEASES.get(store, txn, &task)
 }
 fn save(
     store: &Store,
@@ -44,10 +39,7 @@ fn save(
     task: EntityId,
     lease: &SymbolLease,
 ) -> Result<()> {
-    let raw = serde_json::to_vec(lease)
-        .map_err(|_| Error::InvariantViolation("symbol lease encoding"))?;
-    store.vault_meta.put(txn, &key(task), &raw)?;
-    Ok(())
+    LEASES.put(store, txn, &task, lease)
 }
 fn blockers(
     store: &Store,
@@ -57,10 +49,7 @@ fn blockers(
     now: u64,
 ) -> Result<Vec<EntityId>> {
     let mut blocked = Vec::new();
-    for row in store.vault_meta.prefix_iter(txn, PREFIX)? {
-        let (_, raw) = row?;
-        let lease: SymbolLease =
-            serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("symbol lease"))?;
+    for (_, lease) in LEASES.scan(store, txn)? {
         let other = EntityId::from_hex(&lease.task_ref)?;
         if other != task
             && lease.held
@@ -158,7 +147,7 @@ impl Vault {
                     "symbol lease holder mismatch".to_owned(),
                 ));
             }
-            self.store.vault_meta.delete(txn, &key(task))
+            LEASES.delete(&self.store, txn, &task)
         })
     }
 
@@ -167,15 +156,7 @@ impl Vault {
     pub fn expire_symbol_leases(&self, now: u64) -> Result<Vec<EntityId>> {
         self.with_write_txn(|txn| {
             let mut expired = Vec::new();
-            let rows = self
-                .store
-                .vault_meta
-                .prefix_iter(txn, PREFIX)?
-                .map(|row| row.map(|(_, raw)| raw.to_vec()))
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            for raw in rows {
-                let mut lease: SymbolLease = serde_json::from_slice(&raw)
-                    .map_err(|_| Error::CorruptedIndex("symbol lease"))?;
+            for (_, mut lease) in LEASES.scan(&self.store, txn)? {
                 if lease.held && lease.expires_at <= now {
                     let task = EntityId::from_hex(&lease.task_ref)?;
                     lease.held = false;
@@ -226,6 +207,6 @@ pub(crate) fn forget_symbols(
     txn: &mut heed::RwTxn<'_>,
     task: EntityId,
 ) -> Result<()> {
-    store.vault_meta.delete(txn, &key(task))?;
+    LEASES.delete(store, txn, &task)?;
     Ok(())
 }
