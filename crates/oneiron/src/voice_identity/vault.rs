@@ -26,6 +26,26 @@ use super::types::{
     VoiceSessionRosterV1, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
 
+/// An event ID names one immutable decision. Both consent doors use this
+/// compare in the same transaction as the write (and any hard deletion).
+fn put_consent_event_once(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    data: &[u8],
+) -> Result<()> {
+    match store.vault_meta.get(txn, key)? {
+        Some(existing) if existing.as_ref() == data => Ok(()),
+        Some(_) => Err(invalid_voice(
+            "voice consent event id already names another decision",
+        )),
+        None => {
+            store.vault_meta.put(txn, key, data)?;
+            Ok(())
+        }
+    }
+}
+
 impl Vault {
     /// Appends one consent or withdrawal decision to the private consent log.
     ///
@@ -33,12 +53,20 @@ impl Vault {
     /// and its evidence refs. It grants no owner authority, no outbound
     /// permission, and no disclosure widening, and it never carries a vector.
     pub fn record_voice_consent(&self, event: &VoiceConsentEventV1) -> Result<()> {
+        if event.state == VoiceConsentState::Withdrawn {
+            self.withdraw_voice_consent(&VoiceWithdrawalRequest {
+                event_id: event.event_id.clone(),
+                subject_ref: event.subject_ref,
+                recorded_by_ref: event.recorded_by_ref,
+                occurred_at: event.occurred_at,
+                purposes: event.purposes.clone(),
+                basis: event.basis.clone(),
+            })?;
+            return Ok(());
+        }
         let data = encode_consent_event(event)?;
         let key = voice_consent_key(&event.subject_ref, &event.event_id);
-        self.with_write_txn(|wtxn| {
-            self.store.vault_meta.put(wtxn, &key, &data)?;
-            Ok(())
-        })
+        self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, &key, &data))
     }
 
     /// Builds (or rebuilds) one subject's active voice print.
@@ -116,9 +144,11 @@ impl Vault {
                 sample_ids: sample_ids.clone(),
                 sample_languages: sample_languages.clone(),
                 calibration,
-                created_at: previous.map_or(request.requested_at, |prior| prior.created_at),
+                created_at: previous
+                    .as_ref()
+                    .map_or(request.requested_at, |prior| prior.created_at),
                 updated_at: request.requested_at,
-                delete_after: None,
+                delete_after: previous.and_then(|prior| prior.delete_after),
             };
             let body = encode_print_record(&record)?;
             store.vault_meta.put(
@@ -371,9 +401,8 @@ impl Vault {
         let store = &self.store;
         let subject = request.subject_ref;
         let tally = self.with_write_txn(|wtxn| {
-            let tally = delete_voice_biometrics_in_txn(store, wtxn, &subject)?;
-            store.vault_meta.put(wtxn, &consent_key, &body)?;
-            Ok(tally)
+            put_consent_event_once(store, wtxn, &consent_key, &body)?;
+            delete_voice_biometrics_in_txn(store, wtxn, &subject)
         })?;
 
         Ok(VoiceWithdrawalReceipt {

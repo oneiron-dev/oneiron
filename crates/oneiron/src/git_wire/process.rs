@@ -36,12 +36,65 @@ pub(super) fn spawn_git(
     stdin_payload: Option<&[u8]>,
 ) -> Result<GitWireProcessOutput> {
     let repo_root = repo_root.canonicalize()?;
+    // `git init` has no repository configuration to inspect. The empty argv is
+    // used only by the test-only bounded-process probes; no production caller
+    // passes it. Every other git child must refuse executable filter drivers
+    // before the operation can read .gitattributes and run one.
+    if !args.is_empty()
+        && args
+            .first()
+            .is_some_and(|arg| arg.as_os_str() != std::ffi::OsStr::new("init"))
+    {
+        reject_repository_filter_commands(process_env, &repo_root)?;
+    }
+    spawn_git_inner(process_env, &repo_root, args, stdin_payload)
+}
+
+fn reject_repository_filter_commands(
+    process_env: &GitWireProcessEnv,
+    repo_root: &Path,
+) -> Result<()> {
+    // `--includes` considers local and per-worktree includeIf entries;
+    // system/global config is already disabled by the pinned child baseline.
+    // Git has no wildcard override for filter.<driver>.process/clean/smudge,
+    // so an arbitrary driver must fail closed, not be enumerated from a
+    // possibly changing .gitattributes file.
+    let args = [
+        "config",
+        "--includes",
+        "--null",
+        "--name-only",
+        "--get-regexp",
+        r"^filter\..*\.(clean|smudge|process)$",
+    ]
+    .map(OsString::from);
+    let probe = spawn_git_inner(process_env, repo_root, &args, None)?;
+    if probe.exit_code == Some(1) && !probe.timed_out && !probe.truncated && probe.stdout.is_empty()
+    {
+        return Ok(());
+    }
+    if probe.success && !probe.stdout.is_empty() {
+        return Err(super::failure::invalid(
+            "repository-configured git filter commands are forbidden",
+        ));
+    }
+    Err(super::failure::invalid(
+        "unable to verify repository git filter configuration",
+    ))
+}
+
+fn spawn_git_inner(
+    process_env: &GitWireProcessEnv,
+    repo_root: &Path,
+    args: &[OsString],
+    stdin_payload: Option<&[u8]>,
+) -> Result<GitWireProcessOutput> {
     // A removed repository must not fall back to an unrelated ancestor. Git
     // excludes the ceiling itself; the working directory is still inspected.
-    let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(&repo_root)])
+    let ceiling = std::env::join_paths([repo_root.parent().unwrap_or(repo_root)])
         .map_err(|_| super::failure::invalid("git repository ceiling is not representable"))?;
     let mut command = Command::new(process_env.git_binary.as_os_str());
-    command.arg("-C").arg(&repo_root).args(args);
+    command.arg("-C").arg(repo_root).args(args);
     command.env_clear();
     for (key, value) in child_env(process_env) {
         command.env(key, value);

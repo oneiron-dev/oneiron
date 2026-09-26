@@ -317,6 +317,50 @@ fn git_wire_ignores_hostile_repository_configuration() {
 
 #[cfg(unix)]
 #[test]
+fn git_wire_refuses_repository_filter_before_staging_a_file() {
+    use std::io::Write;
+
+    let repo = init_repo();
+    let program_dir = tempfile::tempdir().expect("filter fixture");
+    let marker = program_dir.path().join("filter-executed");
+    let filter = program_dir.path().join("clean-filter");
+    write_executable(
+        &filter,
+        &format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    );
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=untrusted\n",
+    )
+    .expect("write attributes");
+    let mut config = fs::OpenOptions::new()
+        .append(true)
+        .open(repo.path().join(".git/config"))
+        .expect("open repository config");
+    writeln!(
+        config,
+        "\n[filter \"untrusted\"]\n  clean = {}",
+        filter.display()
+    )
+    .expect("configure clean filter");
+    fs::write(repo.path().join("README.md"), "changed\n").expect("change input");
+
+    let args = ["add", "--", "README.md"].map(str::to_owned);
+    let refused = run_bridged_git_argv(repo.path(), &args);
+    assert!(
+        matches!(
+            refused,
+            Err(crate::error::Error::Code(
+                CodeError::InvalidRepoMutationRecord(_)
+            ))
+        ),
+        "repository filter configuration must fail closed before git add"
+    );
+    assert!(!marker.exists(), "the filter command must never execute");
+}
+
+#[cfg(unix)]
+#[test]
 fn git_wire_bounds_child_runtime_and_output() {
     let dir = tempfile::tempdir().expect("fake git dir");
     let slow = dir.path().join("slow-git");
