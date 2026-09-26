@@ -528,6 +528,7 @@
       "AgentScope",
       "CompactionOwnership",
       "ContextBudgetSplit",
+      "DreamingMode",
       "McpRef",
       "MemoryProfile"
      ],
@@ -535,9 +536,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 44,
-      "enum": 3,
-      "fn": 13,
+      "crate-vis": 46,
+      "enum": 4,
+      "fn": 17,
       "struct": 4
      }
     },
@@ -31025,13 +31026,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/presence_diagnostics.rs",
+     "purpose": "Typed per-row presence read failures for the bounded TASKS projection",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/presence_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -34787,7 +34798,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
