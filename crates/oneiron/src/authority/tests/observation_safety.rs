@@ -269,6 +269,39 @@ fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
 }
 
 #[test]
+fn warm_authority_cache_rechecks_changed_observation_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let (entries, _revoked_key, actor) = stale_approval_fixture();
+    for entry in &entries {
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
+            .unwrap();
+    }
+    authority_observation_secs(&vault.store, 1_100, 0);
+    let txn = vault.store.env.read_txn().unwrap();
+    let warm = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert!(actor_binding_is_active(&warm, &actor, "human"));
+    drop(txn);
+    vault
+        .set_authority_observation_policy(AuthorityObservationPolicy {
+            stale_roster_window_secs: 10,
+            ..AuthorityObservationPolicy::default()
+        })
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let changed = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert_eq!(changed.generation(), warm.generation());
+    assert!(!actor_binding_is_active(&changed, &actor, "human"));
+    drop(txn);
+    assert!(!actor_binding_is_active(
+        &vault.authority_fold().unwrap(),
+        &actor,
+        "human"
+    ));
+}
+
+#[test]
 fn authority_replay_admits_every_row_and_raises_one_typed_peer_check() {
     let dir = tempfile::tempdir().unwrap();
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();

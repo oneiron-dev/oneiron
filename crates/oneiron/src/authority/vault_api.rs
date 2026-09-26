@@ -270,85 +270,8 @@ impl Vault {
             Ok(())
         })?;
         let rtxn = self.store.env.read_txn()?;
-        match self.authority_view_readonly_in_txn(&rtxn) {
-            Err(error) if is_corrupt_first_seen_sidecar(&error) => {
-                drop(rtxn);
-                self.authority_fold_full_fallback()
-            }
-            result => result.map(|view| (*view).clone()),
-        }
-    }
-
-    fn authority_fold_full_fallback(&self) -> Result<AuthorityFold> {
-        self.backfill_authority_first_seen_sidecars()?;
-        let rtxn = self.store.env.read_txn()?;
-        let mut entries = Vec::new();
-        let mut first_seen_at_secs = std::collections::BTreeMap::new();
-        let previous_floor = self
-            .store
-            .sync_state
-            .get(&rtxn, authority_first_seen_clock_sync_key())?
-            .and_then(|raw| decode_authority_first_seen_secs(&raw))
-            .unwrap_or(0);
-        for entry in self
-            .store
-            .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_AUTHORITY_LOG, None)?
-        {
-            let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(&rtxn, &id)?
-                .map(|row| row.encode())
-                .ok_or(Error::CorruptedIndex("type index row without entity"))?;
-            let header =
-                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-            if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
-                return Err(Error::CorruptedIndex("type index row kind mismatch"));
-            }
-            let entry = decode_authority_log_entry_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            let hash = authority_entry_hash(&entry)?;
-            if let Some(first_seen) = self
-                .store
-                .sync_state
-                .get(&rtxn, authority_first_seen_sync_key(&hash).as_str())?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
-            {
-                first_seen_at_secs.insert(hash, first_seen);
-            }
-            entries.push(entry);
-        }
-        let peer_consent_roots =
-            crate::federation::admitted_peer_consent_roots_in_txn(self, &rtxn)?;
-        let observations = authority_local_observations_in_txn(&self.store, &rtxn, &entries)?;
-        drop(rtxn);
-        let now_secs = self.with_write_txn(|wtxn| {
-            let previous_floor = self
-                .store
-                .sync_state
-                .get(wtxn, authority_first_seen_clock_sync_key())?
-                .and_then(|raw| decode_authority_first_seen_secs(&raw))
-                .unwrap_or(previous_floor);
-            let now_secs = authority_observation_secs(
-                &self.store,
-                previous_floor,
-                self.store.clock.now_recorded_at(),
-            );
-            if now_secs != previous_floor {
-                let encoded = encode_authority_first_seen_secs(now_secs);
-                self.store
-                    .sync_state
-                    .put(wtxn, authority_first_seen_clock_sync_key(), &encoded)?;
-            }
-            Ok(now_secs)
-        })?;
-        Ok(fold_authority_log_with_local_observations_and_posture(
-            &entries,
-            &first_seen_at_secs,
-            now_secs,
-            &peer_consent_roots,
-            &observations,
-            self.privacy_posture(),
-        ))
+        self.authority_view_readonly_in_txn(&rtxn)
+            .map(|view| (*view).clone())
     }
 
     pub(crate) fn authority_fold_readonly_in_txn(

@@ -2235,7 +2235,9 @@
      "notable": [],
      "path": "src/authority/tests/readonly_fold.rs",
      "purpose": "Readonly fold against full fold under clock skew and sidecars",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -2298,7 +2300,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",

@@ -17,6 +17,19 @@ use crate::store::{MODEL_ID_KEY, validate_embedding_model_id};
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
+/// Generic sync diagnostics may not edit the inputs to an authority fold.
+/// Authority-owned writers use their own validated doors and advance the
+/// snapshot generation in the same transaction as their row changes.
+#[cfg(feature = "sync")]
+fn check_generic_sync_state_key(key: &str) -> Result<()> {
+    if key.starts_with("authlog:") || key.starts_with("peerauth:") {
+        return Err(Error::InvalidConfig(
+            "authority-owned sync_state key requires its authority door".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 impl Vault {
     // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
     // was removed — both sync replay surfaces now route through the
@@ -256,6 +269,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        check_generic_sync_state_key(key)?;
         self.with_write_txn(|wtxn| {
             self.store.sync_state.put(wtxn, key, value)?;
             Ok(())
@@ -271,6 +285,7 @@ impl Vault {
         key: &str,
         value: &[u8],
     ) -> Result<()> {
+        check_generic_sync_state_key(key)?;
         self.store.sync_state.put(wtxn, key, value)?;
         Ok(())
     }
@@ -280,6 +295,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
+        check_generic_sync_state_key(key)?;
         self.with_write_txn(|wtxn| self.store.sync_state.delete(wtxn, key))
     }
 
