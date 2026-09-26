@@ -2,8 +2,12 @@ name: Wire quickstart
 
 # ONE-1441: install the shipped four-call SDK surface, then prove parity
 # through the real facade fixture. No publication or upload occurs here.
+# Scoped (owner 2026-09-26): PRs and main pushes run this only when the SDKs, bindings or wire fixtures change;
+# engine, server and build-file changes are covered by the nightly run.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '30 18 * * *'
   pull_request:
     branches: [main]
     # `ready_for_review` so a draft that becomes ready gets its first run
@@ -18,17 +22,12 @@ on:
       - "crates/oneiron-py/**"
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
-      - "crates/oneiron-server/**"
-      - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
       - ".github/workflows/wire-quickstart.yml"
   push:
     branches: [main]
@@ -41,17 +40,12 @@ on:
       - "crates/oneiron-py/**"
       - "crates/oneiron-remote/**"
       - "crates/oneiron-napi/**"
-      - "crates/oneiron-server/**"
-      - "crates/oneiron/**"
       - "scripts/wire-test-server.sh"
       - "scripts/tests/test_wire_quickstart.py"
       - "scripts/tests/test_wire_key_value.py"
       - "scripts/tests/test_wire_workflow.py"
       - "scripts/code-sandbox/**"
       - "scripts/tests/test_sandbox_wit.*"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "rust-toolchain.toml"
       - ".github/workflows/wire-quickstart.yml"
 
 permissions:

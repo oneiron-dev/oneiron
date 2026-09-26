@@ -30,20 +30,18 @@ def trigger_paths(event):
 
 
 @pytest.mark.parametrize("event", ["pull_request", "push"])
-def test_wire_filters_cover_the_whole_core_crate(event):
+def test_wire_runs_on_sdk_changes_and_nightly_for_the_engine(event):
     paths = trigger_paths(event)
-    assert "crates/oneiron/**" in paths
     for changed in [
-        "crates/oneiron/Cargo.toml",
-        "crates/oneiron/src/gate/evaluate.rs",
-        "crates/oneiron/src/store/admission.rs",
-        "crates/oneiron/src/batch/apply.rs",
-        "crates/oneiron/src/memory/witness.rs",
-        "Cargo.toml",
-        "Cargo.lock",
+        "packages/oneiron/src/index.ts",
+        "crates/oneiron-napi/src/lib.rs",
+        "crates/oneiron-remote/src/lib.rs",
         "scripts/tests/test_wire_workflow.py",
     ]:
         assert any(fnmatchcase(changed, pattern) for pattern in paths), changed
+    for engine in ["crates/oneiron/src/gate/evaluate.rs", "crates/oneiron-server/src/lib.rs", "Cargo.lock"]:
+        assert not any(fnmatchcase(engine, pattern) for pattern in paths), engine
+    assert "    - cron: '30 18 * * *'" in WORKFLOW.read_text().splitlines()
 
 
 @pytest.mark.parametrize("failed_build", [0, 1, 2], ids=["metadata-stop", "server-fails", "provisioner-fails"])
