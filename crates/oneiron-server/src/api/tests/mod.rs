@@ -856,8 +856,19 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
-        .expect("disclosure scope");
+    // Six-axis disclosure clearances have no per-record allowlist. These
+    // fixtures distinguish a granted read scope from a denied one; tests for
+    // individual private records mark them Tier A separately.
+    let scope = oneiron::disclosure::DisclosureScope::new(
+        if entities.is_empty() {
+            oneiron::federation::Scope::default()
+        } else {
+            oneiron::federation::Scope::top()
+        },
+        "party planning",
+        100,
+    )
+    .expect("disclosure scope");
     server
         .vault
         .set_counterparty_disclosure_scope(&contact_id, &scope)

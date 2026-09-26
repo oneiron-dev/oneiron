@@ -100,6 +100,31 @@ pub enum RoomClaimOutcome {
 }
 
 impl Vault {
+    /// Resolve the audience of a room from its owning substrate. Project home
+    /// rooms derive membership from the PROJECT roster, not from the ordinary
+    /// Conversation membership ledger. Validate that reciprocal projection
+    /// before using it; other Conversations keep their ledger-based audience.
+    pub fn room_audience_members(&self, room: EntityId) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        if self
+            .store
+            .vault_meta
+            .get(
+                &txn,
+                &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
+            )?
+            .is_some()
+        {
+            return room_in(self, &txn, room)?
+                .member_ids
+                .iter()
+                .map(|id| EntityId::from_hex(id))
+                .collect();
+        }
+        drop(txn);
+        self.members(room)
+    }
+
     /// Host roster configuration, not a user message. A platform handle maps
     /// to exactly one present actor. The mapping never creates grants.
     pub fn bind_room_handle(&self, room: EntityId, handle: &str, actor: EntityId) -> Result<()> {

@@ -11,10 +11,10 @@ use crate::error::ApiError;
 /// Resolves the effective interlocutor set for a core context-pack request
 /// (OF-365 ILD-1, design §11).
 ///
-/// Returns `None` exactly when no interlocutors block was supplied on an
-/// owner-grade credential: that request/response pair stays byte-identical to
-/// pre-ILD behavior. In every other case the resolved set is echoed as
-/// stamps on the response.
+/// Returns `None` exactly when no interlocutors block AND no room was
+/// supplied on an owner-grade credential: that request/response pair stays
+/// byte-identical to pre-ILD behavior. Room reads always receive the roster
+/// clamp; the resolved set is echoed as stamps on the response.
 ///
 /// Owner-grade is `CoreAuth::is_owner_grade` — un-narrowed on BOTH axes. A
 /// delegated token narrowed by scope alone is NOT owner-grade, so it takes
@@ -24,8 +24,9 @@ pub(crate) fn resolve_core_interlocutor_set(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     controls: Option<&CoreInterlocutorControls>,
+    room_members: Option<&[oneiron::EntityId]>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
-    if controls.is_none() && auth.is_owner_grade() {
+    if controls.is_none() && room_members.is_none() && auth.is_owner_grade() {
         return Ok(None);
     }
 
@@ -49,6 +50,31 @@ pub(crate) fn resolve_core_interlocutor_set(
             parties.push(core_interlocutor_party_input(party, index)?);
         }
         voice_session_ref = controls.voice_session_ref.clone();
+    }
+
+    // Membership is durable; it is not evidence of physical presence. Include
+    // every member conservatively, so an omitted or spoofed wire party cannot
+    // remove a room participant from the disclosure meet. A person maps to a
+    // contact dial only through a unique About link; ambiguous/missing links
+    // remain unknown and therefore grant no absent-owner clearance.
+    if let Some(members) = room_members {
+        for member in members {
+            let contacts = vault
+                .sources(
+                    member,
+                    oneiron::EdgeKind::About,
+                    Some(oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT),
+                )
+                .map_err(|error| core_engine_error("room contact resolution failed", error))?;
+            parties.push(if contacts.len() == 1 {
+                oneiron::InterlocutorPartyInput::ContactRef(contacts[0])
+            } else {
+                oneiron::InterlocutorPartyInput::UnknownLabel {
+                    label: member.to_hex(),
+                    claimed_owner: false,
+                }
+            });
+        }
     }
 
     // Merge-always (RATIFY-20260710 R8): on principal_ref auth the implicit
@@ -84,7 +110,10 @@ pub(crate) fn resolve_core_interlocutor_set(
     // itself away. `owner_present == Some(true)` was already rejected above
     // for non-owner-grade auth, so the `&&` here is the belt to that
     // suspenders — a narrowed credential can only ever resolve to `false`.
-    let owner_session = auth.is_owner_grade() && owner_present.unwrap_or(true);
+    // A room's roster cannot prove presence. The embedder must explicitly
+    // assert owner presence on an owner-grade credential; absent assertion
+    // never promotes an in-room assembly to Supervised or OwnerAlone.
+    let owner_session = auth.is_owner_grade() && owner_present.unwrap_or(room_members.is_none());
     let input = oneiron::InterlocutorResolutionInput {
         owner_session,
         parties,

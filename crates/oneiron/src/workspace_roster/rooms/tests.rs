@@ -52,6 +52,9 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     spec.roster.extend([a.to_hex(), b.to_hex()]);
     vault.put_project(project, &spec, 1)?;
     let room = EntityId::from_hex(&spec.home_room)?;
+    assert_eq!(vault.room_audience_members(room)?, vec![owner, a, b]);
+    // The ordinary Conversation ledger is not the PROJECT roster source.
+    assert!(vault.members(room)?.is_empty());
     vault.bind_room_handle(room, "@companion", a)?;
     let user = vault.memory(owner, EdgeActorClass::Human);
     let first = vault.memory(a, EdgeActorClass::Agent);
