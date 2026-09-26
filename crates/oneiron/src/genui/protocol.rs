@@ -4,7 +4,10 @@ use super::consent_cards::{BundleApproveCard, ConsentAskCard};
 use super::consent_eval::{ConsentActionKind, append_eirispec_actions};
 use super::project_proposal::ProjectProposalCard;
 use super::receipt_view::ReceiptViewComponent;
-use crate::lens::GeneratedLens;
+use crate::lens::{
+    GENERATED_UI_SEGMENT_CONTENT_TYPE, GeneratedLens, GeneratedUiCatalog, GeneratedUiPrimitive,
+    GeneratedUiSurfaceCapabilities, LENS_ATOM_KIT_VERSION,
+};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -136,7 +139,7 @@ impl Of336Component {
         let tree = match adapter {
             Of336SurfaceAdapter::EiriSpecCareRegister => self.render_eirispec(),
             Of336SurfaceAdapter::DashboardAtomKitAudit => self.render_atom_kit()?,
-            Of336SurfaceAdapter::McpUi => self.render_mcp_ui(),
+            Of336SurfaceAdapter::McpUi => self.render_mcp_ui()?,
         };
         Ok(Of336RenderedComponent {
             protocol_version: OF336_PROTOCOL_VERSION,
@@ -285,8 +288,30 @@ impl Of336Component {
         })
     }
 
-    fn render_mcp_ui(&self) -> Value {
-        json!({
+    fn render_mcp_ui(&self) -> Result<Value> {
+        if let Self::ProjectProposal(component) = self {
+            // Foreign hosts consume the existing generic segment envelope. Lower
+            // unsupported Sheet/Receipt nodes to text while retaining the one
+            // declared self.ui action; no project-specific renderer is needed.
+            let surface = GeneratedUiSurfaceCapabilities::new(
+                GeneratedUiCatalog::LensAtomKit,
+                LENS_ATOM_KIT_VERSION,
+                vec![
+                    GeneratedUiPrimitive::TextBlock,
+                    GeneratedUiPrimitive::SelfUi,
+                ],
+            );
+            let segments = component
+                .generated_ui_card()?
+                .segments_for_surface(&surface)?;
+            return Ok(json!({
+                "mime_type": GENERATED_UI_SEGMENT_CONTENT_TYPE,
+                "component_id": component.card_id,
+                "fallback_text": component.fallback_text(),
+                "segments": segments
+            }));
+        }
+        Ok(json!({
             "mime_type": OF336_MCP_UI_MIME,
             "component": self.kind().as_str(),
             "component_id": self.component_id(),
@@ -296,8 +321,8 @@ impl Of336Component {
                 Self::ReceiptView(component) => json!(component),
                 Self::ConsentAsk(component) => json!(component),
                 Self::BundleApprove(component) => json!(component),
-                Self::ProjectProposal(component) => json!(component),
+                Self::ProjectProposal(_) => unreachable!("proposal uses the generic envelope"),
             }
-        })
+        }))
     }
 }

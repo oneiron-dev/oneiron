@@ -7,7 +7,10 @@ use super::consent_eval::{
 };
 use super::protocol::Of336ActionDescriptor;
 use crate::consent::AuthenticatedOwner;
-use crate::lens::{CollectionAtom, LensAtom, LensNode, ReceiptAtom};
+use crate::lens::{
+    CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
+    GeneratedUiCard, LensAtom, LensNode, LensRenderId, ReceiptAtom, SelfUiActionId,
+};
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -36,7 +39,7 @@ pub struct ProjectProposalPicks {
 /// A proposal is not authority. Only the host-held card and an authenticated owner
 /// may produce an intent; the project writer must still enforce its own gate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "ProjectProposalCardWire", deny_unknown_fields)]
 pub struct ProjectProposalCard {
     pub card_id: String,
     pub principal_ref: String,
@@ -49,6 +52,38 @@ pub struct ProjectProposalCard {
     pub budget_share_bps: u16,
     /// Vault-base skill refs to fork into the new project at mint time.
     pub starting_skill_refs: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectProposalCardWire {
+    card_id: String,
+    principal_ref: String,
+    source_message_ref: String,
+    goal: ProjectGoalDraft,
+    leader_agent_def_ref: String,
+    board_human_refs: Vec<String>,
+    budget_share_bps: u16,
+    starting_skill_refs: Vec<String>,
+}
+
+impl TryFrom<ProjectProposalCardWire> for ProjectProposalCard {
+    type Error = Error;
+
+    fn try_from(wire: ProjectProposalCardWire) -> Result<Self> {
+        let card = Self {
+            card_id: wire.card_id,
+            principal_ref: wire.principal_ref,
+            source_message_ref: wire.source_message_ref,
+            goal: wire.goal,
+            leader_agent_def_ref: wire.leader_agent_def_ref,
+            board_human_refs: wire.board_human_refs,
+            budget_share_bps: wire.budget_share_bps,
+            starting_skill_refs: wire.starting_skill_refs,
+        };
+        card.validate()?;
+        Ok(card)
+    }
 }
 
 /// A validated trigger, not a project row or permission to write one.
@@ -102,6 +137,15 @@ impl ProjectProposalCard {
             non_empty(name, value.clone())?;
             lens_text(value.clone())?;
         }
+        LensRenderId::new(self.card_id.clone())?;
+        for (name, reference) in [
+            ("card_id", &self.card_id),
+            ("principal_ref", &self.principal_ref),
+            ("source_message_ref", &self.source_message_ref),
+            ("leader_agent_def_ref", &self.leader_agent_def_ref),
+        ] {
+            ensure_canonical_ref(name, reference)?;
+        }
         if self.goal.axes.is_empty() || self.board_human_refs.is_empty() {
             return Err(Error::InvalidConfig(
                 "project proposal requires goal axes and board humans".to_owned(),
@@ -126,6 +170,9 @@ impl ProjectProposalCard {
             for value in refs {
                 non_empty(name, value.clone())?;
                 lens_text(value.clone())?;
+                if name != "goal axes" {
+                    ensure_canonical_ref(name, value)?;
+                }
                 if !unique.insert(value) {
                     return Err(Error::InvalidConfig(format!(
                         "project proposal {name} contains duplicate entries"
@@ -142,6 +189,9 @@ impl ProjectProposalCard {
         ] {
             lens_text(refs.join(", "))?;
         }
+        // Unsupported primitives compile from node fallbacks, not the outer
+        // Of336RenderedComponent fallback. Keep that complete and bounded.
+        lens_text(self.fallback_text())?;
         Ok(())
     }
 
@@ -193,6 +243,32 @@ impl ProjectProposalCard {
         )
     }
 
+    /// Expand the named proposal into the existing atom-kit envelope. No new
+    /// project-specific primitive or foreign renderer is required.
+    pub(super) fn generated_ui_card(&self) -> Result<GeneratedUiCard> {
+        self.validate()?;
+        let root = self.atom_kit_root()?;
+        let button = root
+            .children
+            .last()
+            .expect("proposal always has one action");
+        let LensAtom::SelfUi(control) = &button.atom else {
+            unreachable!("the proposal action is a self.ui button");
+        };
+        let declaration = GeneratedUiActionDeclaration {
+            element_id: button.id.clone(),
+            action_id: SelfUiActionId::new(PROJECT_PROPOSAL_MINT_ACTION_ID)?,
+            tier: GeneratedUiActionTier::DeterministicTool,
+            action: control.action().clone(),
+        };
+        GeneratedUiCard::interactive(
+            LensRenderId::new(self.card_id.clone())?,
+            GeneratedLens::new(root)?,
+            vec![declaration],
+            Default::default(),
+        )
+    }
+
     pub(super) fn atom_kit_root(&self) -> Result<LensNode> {
         let mut root = LensNode::new(
             atom_id("project-proposal-root")?,
@@ -201,7 +277,7 @@ impl ProjectProposalCard {
                 rows: Vec::new(),
             }),
         );
-        root.children.push(LensNode::new(
+        root.children.push(LensNode::with_fallback_text(
             atom_id("project-proposal-fields")?,
             LensAtom::Receipt(ReceiptAtom {
                 title: lens_text(&self.goal.goal)?,
@@ -216,9 +292,21 @@ impl ProjectProposalCard {
                 ],
                 seal: None,
             }),
+            lens_text(self.fallback_text())?,
         ));
         root.children
             .push(action_button_node(self.actions().remove(0))?);
         Ok(root)
     }
+}
+
+/// A ref must agree byte-for-byte with the store-authenticated principal or
+/// downstream ID resolver; prose is deliberately not normalized here.
+fn ensure_canonical_ref(name: &str, reference: &str) -> Result<()> {
+    if reference != reference.trim() {
+        return Err(Error::InvalidConfig(format!(
+            "project proposal {name} must not have surrounding whitespace"
+        )));
+    }
+    Ok(())
 }

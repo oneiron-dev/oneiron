@@ -17003,7 +17003,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectGoalDraft",
@@ -17015,7 +17015,7 @@
      "purpose": "Typed project proposal and owner-confirmed, write-free mint intent (OF-501)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 4
      }
@@ -17074,7 +17074,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/genui/tests/project_proposal.rs",

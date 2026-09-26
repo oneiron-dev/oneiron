@@ -69,17 +69,19 @@ fn project_proposal_renders_stably_on_all_surfaces() -> Result<()> {
             );
         } else if adapter == Of336SurfaceAdapter::McpUi {
             assert_eq!(
-                rendered.tree["props"]["starting_skill_refs"][0],
-                "skill:search"
+                rendered.tree["mime_type"],
+                crate::lens::GENERATED_UI_SEGMENT_CONTENT_TYPE
             );
+            assert!(rendered.tree.get("component").is_none());
+            assert!(rendered.tree["segments"].is_array());
         }
     }
     assert_eq!(
         digests,
         [
             "f18b926354b0dfb94c1bb2501ea3bd49a2c0bd9682e14340e4b97a5e830eb436",
-            "29bdef8efb086b10d7332922f469fb8d757f650a33a92a45d6abdd8f95dddaba",
-            "8820c2b4c2fef83d2e6201238936ef0368fd7415a1a2b8dfd9f24191e2346973",
+            "f4e0ddebba2cfe272de40e3f51730a7ce0228c6d3ce89a8e611db064bf5449e4",
+            "6b73ea879b2897a908e30815ca09332b6683d038d050feae57478c44346b1e8e",
         ],
         "adapter wire bytes changed"
     );
@@ -183,6 +185,143 @@ fn invalid_card_contents_fail_closed_on_render_and_tap() -> Result<()> {
     assert!(
         card.validate().is_err(),
         "joined Atom Kit text must fit too"
+    );
+    Ok(())
+}
+
+#[test]
+fn mcp_ui_consumes_generic_lowered_segments_with_declared_action() -> Result<()> {
+    let card = fixture_card()?;
+    let foreign =
+        Of336Component::ProjectProposal(card.clone()).render(Of336SurfaceAdapter::McpUi)?;
+    let segments: Vec<crate::lens::GeneratedUiSegment> =
+        serde_json::from_value(foreign.tree["segments"].clone())
+            .expect("existing segment wire decodes");
+    let render = crate::lens::GeneratedUiRender::from_segments(&segments)?;
+    assert_eq!(render.card_id.as_str(), card.card_id);
+    assert_eq!(render.actions.len(), 1);
+    assert_eq!(
+        render.actions[0].action_id.as_str(),
+        PROJECT_PROPOSAL_MINT_ACTION_ID
+    );
+    assert_eq!(render.actions[0].element_id.as_str(), "action-mint_project");
+    assert_eq!(
+        render.actions[0].tier,
+        crate::lens::GeneratedUiActionTier::DeterministicTool
+    );
+    assert_eq!(
+        render.actions[0].action.command.as_str(),
+        "project_mint_intent"
+    );
+    let button = render
+        .nodes
+        .iter()
+        .find(|node| node.id.as_str() == "action-mint_project")
+        .expect("action node exists in lowered tree");
+    assert!(matches!(button.atom, crate::lens::LensAtom::SelfUi(_)));
+    assert!(render.nodes.iter().all(|node| matches!(
+        node.atom,
+        crate::lens::LensAtom::SelfUi(_) | crate::lens::LensAtom::TextBlock(_)
+    )));
+    assert_eq!(foreign.tree["fallback_text"], card.fallback_text());
+    Ok(())
+}
+
+#[test]
+fn unsupported_receipt_lowers_to_complete_project_details() -> Result<()> {
+    let card = fixture_card()?;
+    let text = card
+        .generated_ui_card()?
+        .render_for_surface(&crate::lens::GeneratedUiSurfaceCapabilities::text_only())?;
+    assert!(
+        text.actions.is_empty(),
+        "a text-only surface cannot offer a button"
+    );
+    let fields = text
+        .nodes
+        .iter()
+        .find(|node| node.id.as_str() == "project-proposal-fields")
+        .expect("fields node survives lowering");
+    let crate::lens::LensAtom::TextBlock(atom) = &fields.atom else {
+        panic!("unsupported Receipt must lower to text");
+    };
+    let lowered = atom.fallback_text();
+    assert_eq!(lowered, fields.fallback_text.as_str());
+    for value in [
+        "Build a research index",
+        "Find evidence faster",
+        "coverage",
+        "freshness",
+        "agent-def:research-lead",
+        "person:owner",
+        "person:reviewer",
+        "1250",
+        "skill:search",
+        "skill:review",
+        "message:conversation-7:turn-2",
+    ] {
+        assert!(lowered.contains(value), "text lowering omitted {value}");
+    }
+    Ok(())
+}
+
+#[test]
+fn padded_principal_is_rejected_at_constructor_decode_and_render() -> Result<()> {
+    let (_dir, _vault, owner) = owner_context();
+    let mut card = fixture_card()?;
+    let valid_wire = serde_json::to_value(&card).expect("card serializes");
+    assert_eq!(
+        serde_json::from_value::<ProjectProposalCard>(valid_wire).expect("valid card decodes"),
+        card
+    );
+    card.principal_ref = " owner ".to_owned();
+    let padded_wire = serde_json::to_value(&card).expect("padded card serializes");
+    assert!(serde_json::from_value::<ProjectProposalCard>(padded_wire).is_err());
+    assert!(
+        Of336Component::ProjectProposal(card.clone())
+            .render(Of336SurfaceAdapter::McpUi)
+            .is_err()
+    );
+    assert!(
+        card.evaluate_action(
+            &request(
+                PROJECT_PROPOSAL_MINT_ACTION_ID,
+                ConsentActionKind::ProjectMint,
+                "owner"
+            )?,
+            &owner
+        )
+        .is_err()
+    );
+    assert!(
+        ProjectProposalCard::new(
+            card.card_id.clone(),
+            " owner ",
+            card.source_message_ref.clone(),
+            card.goal.clone(),
+            ProjectProposalPicks {
+                leader_agent_def_ref: card.leader_agent_def_ref.clone(),
+                board_human_refs: card.board_human_refs.clone(),
+                budget_share_bps: card.budget_share_bps,
+                starting_skill_refs: card.starting_skill_refs.clone(),
+            }
+        )
+        .is_err()
+    );
+    card.board_human_refs[0] = " person:owner ".to_owned();
+    assert!(card.validate().is_err());
+    let good = fixture_card()?;
+    assert_eq!(
+        good.evaluate_action(
+            &request(
+                PROJECT_PROPOSAL_MINT_ACTION_ID,
+                ConsentActionKind::ProjectMint,
+                "owner"
+            )?,
+            &owner
+        )?
+        .principal_ref,
+        "owner"
     );
     Ok(())
 }
