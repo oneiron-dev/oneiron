@@ -10187,7 +10187,7 @@
      "purpose": "—",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 33,
       "struct": 7
@@ -12532,19 +12532,19 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "DisclosureScope",
       "DisclosureScopeStatus"
      ],
      "path": "src/disclosure/scope_codec.rs",
-     "purpose": "DisclosureScope type with canonical msgpack codec and key validation",
+     "purpose": "Contact clearance envelope and canonical six-axis Scope codec",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 7,
       "enum": 1,
-      "fn": 8,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -18766,7 +18766,7 @@
      "purpose": "Regen request and outcome decision path over behavior fingerprints",
      "surface": {
       "enum": 2,
-      "fn": 13,
+      "fn": 14,
       "struct": 3,
       "trait": 1
      }
@@ -18841,6 +18841,20 @@
      "surface": {
       "fn": 6,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensIntentRecord"
+     ],
+     "path": "src/lens/intent.rs",
+     "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
+     "surface": {
+      "const": 1,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -18952,7 +18966,7 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -19001,6 +19015,14 @@
      "notable": [],
      "path": "src/lens/tests/instrument.rs",
      "purpose": "End-to-end Instrument safety and WorldSet read confinement",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/intent.rs",
+     "purpose": "Vault intent survives reload and drives the upgrade behavior-diff gate",
      "surface": {}
     },
     {
@@ -21879,7 +21901,7 @@
      "purpose": "Canonical BLAKE3 chunk manifests and vault-private FastCDC parameters",
      "surface": {
       "const": 3,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 3
      }
@@ -21902,7 +21924,7 @@
      "path": "src/origin/lfs/mod.rs",
      "purpose": "Vault-scoped FastCDC/BLAKE3 object plane over ordinary ASSET storage",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -27983,7 +28005,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -34321,8 +34343,8 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 37,
-     "impl_vault": false,
+     "files": 39,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Closed generated-lens atom vocabulary"
@@ -34904,8 +34926,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
@@ -36683,6 +36705,48 @@
    "purpose": "Linux microVM guest agent and an unprivileged protocol conformance adapter",
    "source_files": 7,
    "test_files": 2
+  },
+  "oneiron-image-comfyui": {
+   "files": [
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ComfyModelShim",
+      "ComfyOptions",
+      "ComfyUiBackend",
+      "ComfyWorkflow",
+      "InputField"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Self-hosted ComfyUI image adapter",
+     "surface": {
+      "fn": 1,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/stub_server.rs",
+     "purpose": "Stub HTTP peer checks the actual ComfyUI wire rather than a mocked transport",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "lib": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Self-hosted ComfyUI image adapter"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Self-hosted ComfyUI image adapter",
+   "source_files": 1,
+   "test_files": 1
   },
   "oneiron-llm-anthropic": {
    "files": [
