@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 pub enum PackKind {
     Capability,
     Connector,
+    Agent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +100,7 @@ impl PackManifest {
         let kind = match required("kind")?.as_str() {
             "capability" => PackKind::Capability,
             "connector" => PackKind::Connector,
+            "agent" => PackKind::Agent,
             _ => return Err(invalid("unsupported pack kind")),
         };
         let adapter = fields

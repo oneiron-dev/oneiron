@@ -6,7 +6,7 @@ mod source;
 
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
-pub use source::PackSource;
+pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
     source: &PackSource,
@@ -29,8 +29,8 @@ mod admission_types;
 mod bundled_skills;
 mod schema;
 pub use admission_types::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
-    PackRuntimeRecipe,
+    PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk, PackInstallDisposition,
+    PackInstallReceipt, PackInstallStatus, PackPermissions,
 };
 #[cfg(test)]
 mod admission_tests;

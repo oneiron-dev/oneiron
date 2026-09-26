@@ -27816,7 +27816,7 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27967,17 +27967,17 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
-     "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
+     "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
       "fn": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -27988,17 +27988,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PackCandidateReason",
+      "PackFitPolicy",
+      "PackFitVerdict",
       "PackInstallAsk",
       "PackInstallDisposition",
       "PackInstallReceipt",
-      "PackQualification",
-      "PackQualifier",
-      "PackRuntimeRecipe"
+      "PackInstallStatus",
+      "PackPermissions"
      ],
      "path": "src/skill_hub/pack_catalog/admission_types.rs",
-     "purpose": "Source-bound qualification, owner asks, and inert installation receipts",
+     "purpose": "Source-bound post-fit decisions and install receipts; install never grants authority",
      "surface": {
-      "enum": 1,
+      "enum": 3,
       "fn": 5,
       "struct": 4,
       "trait": 1
@@ -28009,9 +28011,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
-     "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
+     "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28076,13 +28078,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PackSection",
       "PackSource"
      ],
      "path": "src/skill_hub/pack_catalog/source.rs",
      "purpose": "Validated exact source trees",
      "surface": {
-      "fn": 5,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -28100,9 +28103,10 @@
       "PackSourceAdapter"
      ],
      "path": "src/skill_hub/pack_catalog/transport.rs",
-     "purpose": "Generic Git/HTTP source fetch composes with inert pack staging, never install",
+     "purpose": "Generic Git/HTTP source fetch composes with the post-fit pack install door",
      "surface": {
-      "fn": 1,
+      "crate-vis": 2,
+      "fn": 2,
       "trait": 1
      }
     },

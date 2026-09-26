@@ -433,3 +433,125 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> Result<()> {
+    use super::pack_catalog::{
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
+    };
+    struct Fit;
+    impl PackFitPolicy for Fit {
+        fn evaluate(
+            &self,
+            source: &PackSource,
+            permissions: &PackPermissions,
+        ) -> Result<PackFitVerdict> {
+            assert_eq!(source.manifest().name, "alice.mail");
+            assert_eq!(permissions.grants, ["mail.read"]);
+            Ok(PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: true,
+            })
+        }
+    }
+    let tree = vec![
+        HubFile::new("PACK.md", b"---\nname: alice.mail\ndescription: fixture\nversion: 1\nkind: connector\nadapter: built-in:email\ngrants: [\"mail.read\"]\n---\nExact connector source\n"),
+        HubFile::new("skills/compose/SKILL.md", b"---\nname: alice.compose\ndescription: compose\nversion: 1\n---\nWrite a reply\n"),
+    ];
+    let source = PackSource::from_files(tree.clone())?;
+    let repository = tempfile::tempdir()?;
+    git(repository.path(), &["init", "--quiet"]);
+    populate(repository.path(), &tree);
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-qm", "pack"]);
+    let commit = git(repository.path(), &["rev-parse", "HEAD"]);
+    let hub_id = EntityId::now();
+    let endpoint = repository.path().to_str().expect("utf8 repo");
+    let adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &commit)?;
+    let reference = HubRef::new(hub_id, "skills/example", HubPin::Commit(commit))?;
+    let mut config = crate::VaultConfig::device();
+    config.dimensions = 4;
+    config.map_size = 16 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
+    let owner_id = EntityId::now();
+    let at = crate::temporal::TimeRange { start: 4, end: 4 };
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at,
+        4,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:git-pack",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.configure_skill_hub(
+        &owner,
+        &hub_id,
+        &SkillHubRecord::new(
+            SkillHubKind::Git,
+            endpoint,
+            SkillHubTrustTier::Community,
+            HubSyncPolicy::PinnedCommit,
+        )?,
+        at,
+        4,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:git-pack", hub_id)?;
+    let PackInstallDisposition::Installed(receipt) =
+        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4)?
+    else {
+        panic!("post-fit connector");
+    };
+    assert_eq!(receipt.content_hash, source.content_hash().to_hex());
+    assert_eq!(receipt.hub_ref, "skills/example");
+    assert_eq!(receipt.pin_type, "content_hash");
+    assert_eq!(receipt.permissions.grants, ["mail.read"]);
+    assert_eq!(receipt.skills.len(), 1);
+    let skill = EntityId::from_hex(&receipt.skills[0])?;
+    let skill_record = vault.get_skill_record(&skill)?.expect("bundled skill");
+    assert_eq!(
+        skill_record.lifecycle_status,
+        crate::skill::SkillLifecycle::Active
+    );
+    let skill_source = HubRef::new(
+        hub_id,
+        "skills/example/skills/compose",
+        HubPin::ContentHash(skill_record.content_hash.expect("hashed skill").to_hex()),
+    )?;
+    let skill_receipt = vault
+        .hub_import_receipt(&skill, &skill_source)?
+        .expect("hub source receipt");
+    assert_eq!(
+        skill_receipt.publisher.as_deref(),
+        Some(publisher.identity())
+    );
+    assert_eq!(
+        skill_receipt.content_hash,
+        skill_record.content_hash.unwrap().to_hex()
+    );
+    let standalone = files("alice.plain", "1", "plain knowledge");
+    for file in &standalone {
+        let path = repository.path().join("skills/plain").join(&file.path);
+        std::fs::create_dir_all(path.parent().expect("file parent"))?;
+        std::fs::write(path, &file.content)?;
+    }
+    git(repository.path(), &["add", "."]);
+    git(repository.path(), &["commit", "-qm", "skill"]);
+    let new_commit = git(repository.path(), &["rev-parse", "HEAD"]);
+    let new_adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &new_commit)?;
+    let skill_ref = HubRef::new(hub_id, "skills/plain", HubPin::Commit(new_commit))?;
+    let plain = vault.import_skill_from_adapter(&new_adapter, &skill_ref, at, 5)?;
+    assert_eq!(
+        vault
+            .get_skill_record(&plain)?
+            .expect("plain skill")
+            .lifecycle_status,
+        crate::skill::SkillLifecycle::Candidate
+    );
+    Ok(())
+}

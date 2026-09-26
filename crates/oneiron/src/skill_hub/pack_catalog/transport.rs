@@ -1,5 +1,5 @@
-//! Generic Git/HTTP source fetch composes with inert pack staging, never install.
-use super::{PackSource, invalid};
+//! Generic Git/HTTP source fetch composes with the post-fit pack install door.
+use super::{PackFitPolicy, PackInstallDisposition, PackSource, invalid};
 use crate::{
     Vault,
     entity_id::EntityId,
@@ -11,7 +11,7 @@ pub trait PackSourceAdapter: SkillHubAdapter {
     fn fetch_pack_source(&self, reference: &HubRef) -> Result<PackSource>;
 }
 impl Vault {
-    /// The returned byte-pinned reference is ready for the human install ask.
+    /// The returned byte-pinned reference is ready for the post-fit install.
     /// A fetch neither activates the adapter nor issues its requested grants.
     pub fn fetch_pack_from_adapter<A: PackSourceAdapter>(
         &self,
@@ -47,7 +47,48 @@ impl Vault {
                 return Err(invalid("hub changed during pack fetch"));
             }
             let id = self.stage_pack_source_in_txn(txn, &source, occurred, learned_at)?;
+            self.record_pack_fetch_in_txn(txn, &id, &pinned, publisher)?;
             Ok((id, pinned))
         })
     }
+    /// Only this configured-adapter fetch door records a source/publisher alias.
+    pub(super) fn record_pack_fetch_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source_id: &EntityId,
+        pinned: &HubRef,
+        publisher: &ForeignSkillPublisher,
+    ) -> Result<()> {
+        let key = source_hub_alias_key(source_id, pinned)?;
+        let value = serde_json::to_vec(&(publisher.identity(), publisher.grant_ref()))
+            .map_err(|_| invalid("pack publisher receipt encoding"))?;
+        self.store.vault_meta.put(txn, &key, &value)?;
+        Ok(())
+    }
+    /// Fetch, pin, evaluate fit and install by the same immutable source hash.
+    /// Source staging may remain as inert evidence if the fit policy refuses.
+    pub fn install_pack_from_adapter<A: PackSourceAdapter>(
+        &self,
+        adapter: &A,
+        reference: &HubRef,
+        publisher: &ForeignSkillPublisher,
+        policy: &dyn PackFitPolicy,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<PackInstallDisposition> {
+        let (source_id, pinned) =
+            self.fetch_pack_from_adapter(adapter, reference, publisher, occurred, learned_at)?;
+        let ask = self.prepare_pack_install(source_id, &pinned, publisher, policy)?;
+        self.install_pack(&ask)
+    }
+}
+
+/// A source can carry multiple pinned hub aliases; no alias is minted by local staging.
+pub(super) fn source_hub_alias_key(source_id: &EntityId, pinned: &HubRef) -> Result<Vec<u8>> {
+    let bytes =
+        serde_json::to_vec(&pinned.to_value()?).map_err(|_| invalid("pack hub source encoding"))?;
+    let mut key = b"pack.source-alias.v1/".to_vec();
+    key.extend_from_slice(source_id.as_bytes());
+    key.extend_from_slice(blake3::hash(&bytes).as_bytes());
+    Ok(key)
 }
