@@ -617,3 +617,69 @@ fn generic_propose_lane_counts_authenticated_actor_and_asks_once_without_rate_re
     assert_eq!(check.proposal_ref, format!("claim:{}", id(0x66).to_hex()));
     assert!(vault.proposal_submission_check(&other).unwrap().is_none());
 }
+
+#[test]
+fn changed_same_id_proposals_are_new_submissions_but_exact_retries_are_not() {
+    let (_dir, vault) = open_vault();
+    let policy_id = crate::gate::default_policy_manifest_id().unwrap();
+    let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(
+        vault.get(&policy_id).unwrap().unwrap(),
+    ))
+    .unwrap();
+    let Value::Map(entries) = &mut manifest else {
+        panic!("manifest map")
+    };
+    entries.push((Value::from("proposal_check_threshold"), Value::from(2)));
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).unwrap();
+    crate::test_util::put_policy_manifest_bytes(&vault, policy_id, &bytes).unwrap();
+
+    let actor = put_person(&vault, 0x71);
+    let subject = put_person(&vault, 0x72);
+    let claim = id(0x73);
+    let proposal_ref = format!("claim:{}", claim.to_hex());
+    let memory = facade_for(&vault, actor);
+    for (submission, value) in [(1, "A"), (2, "B"), (3, "C"), (3, "C"), (4, "A")] {
+        let mut input = claim_input(
+            "profile.name",
+            &subject,
+            "user_stated",
+            serde_json::json!(value),
+        );
+        input.id = Some(claim.to_hex());
+        assert_eq!(memory.claim_propose(&input).unwrap().approval, "proposed");
+        assert_eq!(
+            vault.get_claim(&claim).unwrap().unwrap().approval,
+            ClaimApprovalStatus::Proposed
+        );
+        let latest = vault
+            .proposal_submission_receipt(&actor, &proposal_ref)
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest.count, submission);
+        for count in 1..=submission {
+            let historical = vault
+                .proposal_submission_receipt_at(&actor, count)
+                .unwrap()
+                .unwrap();
+            assert_eq!(historical.count, count);
+            assert_eq!(historical.proposal_ref, proposal_ref);
+        }
+        assert!(
+            vault
+                .proposal_submission_receipt_at(&actor, submission + 1)
+                .unwrap()
+                .is_none()
+        );
+        let check = vault.proposal_submission_check(&actor).unwrap();
+        if submission < 3 {
+            assert!(check.is_none());
+        } else {
+            let check = check.unwrap();
+            assert_eq!(check.actor, actor.to_hex());
+            assert_eq!(check.count, 3);
+            assert_eq!(check.threshold, 2);
+            assert_eq!(check.proposal_ref, proposal_ref);
+        }
+    }
+}

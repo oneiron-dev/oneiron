@@ -428,6 +428,7 @@ impl HealerRegistration<'_> {
                 actor,
                 &format!("healer:{}", proposal_id.to_hex()),
                 threshold,
+                true,
             )?;
             Ok(())
         })?;

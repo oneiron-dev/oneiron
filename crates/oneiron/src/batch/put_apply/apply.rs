@@ -616,9 +616,9 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
-    // Count only an authenticated local actor's new proposed claim identity.
-    // Replays and envelope-less system puts cannot be assigned to an actor;
-    // same-id writes reuse the submission receipt rather than counting twice.
+    // Count authenticated local Proposed submissions, including changed bodies
+    // under an actor-owned claim ID. An exact same-body retry is not new.
+    // Replays and envelope-less system puts cannot be assigned to an actor.
     if !replicated
         && decoded_claim_body
             .as_ref()
@@ -635,6 +635,7 @@ pub(in crate::batch) fn apply_put(
             envelope.actor().entity_ref(),
             &format!("claim:{}", id.to_hex()),
             threshold,
+            body_changed,
         )?;
     }
     if entity_type == ENTITY_TYPE_TASK {

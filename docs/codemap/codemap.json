@@ -16605,7 +16605,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },

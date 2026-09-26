@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 pub(crate) const DEFAULT_PROPOSAL_CHECK_THRESHOLD: u64 = 1_000_000;
 const COUNT: &[u8] = b"proposal:actor_count:v1:";
 const RECEIPT: &[u8] = b"proposal:submission:v1:";
+const HISTORY: &[u8] = b"proposal:receipt:v1:";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalSubmissionCheck {
@@ -47,9 +48,13 @@ fn count_key(actor: &EntityId) -> Vec<u8> {
 fn receipt_key(actor: &EntityId, proposal_ref: &str) -> Vec<u8> {
     [RECEIPT, actor.as_bytes(), b":", proposal_ref.as_bytes()].concat()
 }
+fn history_key(actor: &EntityId, count: u64) -> Vec<u8> {
+    [HISTORY, actor.as_bytes(), b":", &count.to_be_bytes()].concat()
+}
 
 /// Runs in the proposal's write transaction, after its admission checks. A
-/// retry of the same proposal identity does not count twice; a rolled-back
+/// unchanged retry of the same proposal identity does not count twice. Each
+/// changed body counts again, with an immutable receipt; a rolled-back
 /// proposal cannot leave a counter, question, or receipt behind.
 pub(crate) fn observe_submission_in_txn(
     store: &Store,
@@ -57,6 +62,7 @@ pub(crate) fn observe_submission_in_txn(
     actor: EntityId,
     proposal_ref: &str,
     threshold: u64,
+    revision_changed: bool,
 ) -> Result<()> {
     let rk = receipt_key(&actor, proposal_ref);
     if let Some(raw) = store.vault_meta.get(txn, &rk)? {
@@ -66,7 +72,9 @@ pub(crate) fn observe_submission_in_txn(
                 "proposal submission receipt identity",
             ));
         }
-        return Ok(());
+        if !revision_changed {
+            return Ok(());
+        }
     }
     let ck = count_key(&actor);
     let mut counter: ActorCount = store
@@ -84,15 +92,18 @@ pub(crate) fn observe_submission_in_txn(
             proposal_ref: proposal_ref.to_owned(),
         });
     }
-    store.vault_meta.put(
-        txn,
-        &rk,
-        &encode(&ProposalSubmissionReceipt {
-            actor: actor.to_hex(),
-            proposal_ref: proposal_ref.to_owned(),
-            count: counter.count,
-        })?,
-    )?;
+    let receipt = ProposalSubmissionReceipt {
+        actor: actor.to_hex(),
+        proposal_ref: proposal_ref.to_owned(),
+        count: counter.count,
+    };
+    let encoded = encode(&receipt)?;
+    // The identity key is only the latest receipt. Never rewrite history when
+    // a changed submission reuses an actor-owned claim ID.
+    store
+        .vault_meta
+        .put(txn, &history_key(&actor, counter.count), &encoded)?;
+    store.vault_meta.put(txn, &rk, &encoded)?;
     store.vault_meta.put(txn, &ck, &encode(&counter)?)?;
     Ok(())
 }
@@ -114,7 +125,7 @@ impl Vault {
         Ok(row.and_then(|row| row.check))
     }
 
-    /// A committed proposal's accounting receipt, keyed by actor and engine id.
+    /// Latest accounting receipt for this actor and proposal identity.
     pub fn proposal_submission_receipt(
         &self,
         actor: &EntityId,
@@ -124,6 +135,20 @@ impl Vault {
         self.store
             .vault_meta
             .get(&txn, &receipt_key(actor, proposal_ref))?
+            .map(|raw| decode(&raw))
+            .transpose()
+    }
+
+    /// Immutable accounting receipt at this actor's submission count.
+    pub fn proposal_submission_receipt_at(
+        &self,
+        actor: &EntityId,
+        count: u64,
+    ) -> Result<Option<ProposalSubmissionReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        self.store
+            .vault_meta
+            .get(&txn, &history_key(actor, count))?
             .map(|raw| decode(&raw))
             .transpose()
     }
@@ -139,16 +164,16 @@ mod tests {
         let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
         let first = EntityId::now();
         let second = EntityId::now();
-        for (actor, reference) in [
-            (first, "claim:one"),
-            (first, "claim:one"),
-            (second, "claim:one"),
-            (first, "claim:two"),
-            (first, "claim:three"),
+        for (actor, reference, changed) in [
+            (first, "claim:one", true),
+            (first, "claim:one", false),
+            (second, "claim:one", true),
+            (first, "claim:two", true),
+            (first, "claim:three", true),
         ] {
             vault
                 .with_write_txn(|txn| {
-                    observe_submission_in_txn(&vault.store, txn, actor, reference, 1)
+                    observe_submission_in_txn(&vault.store, txn, actor, reference, 1, changed)
                 })
                 .unwrap();
         }
