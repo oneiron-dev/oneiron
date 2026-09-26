@@ -872,8 +872,8 @@ fn recall_with_a_host_window_ignores_the_query_range() {
         .retrieval_effort(Effort::Medium, &[])
         .run()
         .expect("host-window pack");
-    let older_id = facade.get_entity(&older).unwrap().unwrap().id_hex;
-    let newer_id = facade.get_entity(&newer).unwrap().unwrap().id_hex;
+    let older_id = facade.get_entity(&older).unwrap().value.unwrap().id_hex;
+    let newer_id = facade.get_entity(&newer).unwrap().value.unwrap().id_hex;
     let ids: Vec<String> = pack.results.iter().map(|item| item.id.to_hex()).collect();
     assert!(
         ids.contains(&older_id),
