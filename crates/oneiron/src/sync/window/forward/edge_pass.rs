@@ -136,7 +136,14 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         return Ok(EdgeRematOutcome::Deferred);
                     }
                 }
-                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind) {
+                if let Err(reserved) = crate::edge::validate_public_edge_kind(kind)
+                    && !matches!(
+                        kind,
+                        crate::edge::EdgeKind::Parent
+                            | crate::edge::EdgeKind::SpawnedBy
+                            | crate::edge::EdgeKind::RepliesTo
+                    )
+                {
                     let mandated_at = vault
                         .identity_topology_mandated_shell_edge_in_txn(&*wtxn, &src, kind, &tgt)?;
                     let door_echo = mandated_at.is_some_and(|at| {
@@ -160,6 +167,21 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 let tgt_exists = vault.store.entities.get(&*wtxn, tgt.as_bytes())?.is_some();
                 if !src_exists || !tgt_exists {
                     return Ok(EdgeRematOutcome::Deferred);
+                }
+                if matches!(
+                    kind,
+                    crate::edge::EdgeKind::Parent
+                        | crate::edge::EdgeKind::SpawnedBy
+                        | crate::edge::EdgeKind::RepliesTo
+                ) {
+                    crate::conversation_dag::validate_received_edge(
+                        &vault.store,
+                        &*wtxn,
+                        src,
+                        kind,
+                        tgt,
+                        decoded,
+                    )?;
                 }
 
                 // ONE-1645 replay door for the FacetOf type table. The batch

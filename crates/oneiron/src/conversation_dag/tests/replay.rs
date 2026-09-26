@@ -343,3 +343,158 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
         .unwrap();
     assert!(vault.get(&id).unwrap().is_none());
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn received_parent_survives_public_window_replay_and_adoption() {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(room, None, true, actor))
+        .unwrap()
+        .id;
+    let second = source
+        .append_dag_record(&input(room, Some(first), true, actor))
+        .unwrap()
+        .id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-regression", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    let edge_key = crate::sync::bridge::format_edge_key(&second, EdgeKind::Parent, &first);
+    assert!(doc.get_map("edges").get(&edge_key).is_some());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+
+    // The live-delta replay door must admit the same exported edge. Remove
+    // and replay it with Observer B attached rather than bypassing the guard.
+    let edges = doc.get_map("edges");
+    let value = crate::sync::loro_support::map_get_bytes(&edges, &edge_key).unwrap();
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    let _subscription =
+        crate::sync::bridge::register_observer_b(&doc, &peer, &materializer, key.as_str());
+    edges.delete(&edge_key).unwrap();
+    doc.commit();
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    crate::sync::loro_support::map_insert_bytes(&edges, &edge_key, &value).unwrap();
+    doc.commit();
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+
+    // A peer-controlled RepliesTo row without the source body's reply_to
+    // pointer is not a DAG door's side effect, even with valid TURN endpoints.
+    let forged_reply = crate::sync::bridge::format_edge_key(&second, EdgeKind::RepliesTo, &first);
+    crate::sync::loro_support::map_insert_bytes(&edges, &forged_reply, &value).unwrap();
+    doc.commit();
+    assert!(
+        !peer
+            .edge_exists(&second, EdgeKind::RepliesTo, &first)
+            .unwrap()
+    );
+
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(!report.conversation_dags_skipped_invalid.contains(&room));
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
+    let (_dir, source, _unused, actor) = fixture();
+    let delayed = EntityId::from_bytes([1; 16]).unwrap();
+    let healthy = EntityId::from_bytes([254; 16]).unwrap();
+    source
+        .create_conversation(
+            delayed,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let first = source
+        .append_dag_record(&input(delayed, None, true, actor))
+        .unwrap()
+        .id;
+    let session = source.spawn_dag_sub_session(&first, actor).unwrap();
+    let mut worker_input = input(delayed, Some(first), false, actor);
+    worker_input.session = Some(session);
+    let worker = source.append_dag_record(&worker_input).unwrap().id;
+    let key = crate::sync::types::WindowKey::new("1970-01");
+    let doc = crate::sync::schema::create_window_doc("dag-regression", &key);
+    crate::sync::window::reverse_rematerialize(&source, &doc, &key).unwrap();
+    assert!(doc.get_map("entities").get(&worker.to_hex()).is_some());
+    assert!(doc.get_map("entities").get(&session.to_hex()).is_none());
+    let dir = tempfile::tempdir().unwrap();
+    let peer = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &doc,
+        &crate::sync::bridge::Materializer::new(),
+        &key,
+    )
+    .unwrap();
+    assert!(peer.get(&worker).unwrap().is_some());
+    assert!(peer.get(&session).unwrap().is_none());
+    let root = EntityId::now();
+    peer.batch()
+        .put(
+            &healthy,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("legacy"))
+        .edge_checked(&root, &healthy, 1.0)
+        .commit()
+        .unwrap();
+    let report = peer.maintain().migrate_conversation_dags().run().unwrap();
+    assert!(report.conversation_dags_skipped_invalid.contains(&delayed));
+    assert_eq!(report.conversation_dags_migrated, 1);
+    assert!(!peer.migrate_conversation_dag(&healthy).unwrap());
+    assert!(peer.get(&worker).unwrap().is_some());
+    assert!(peer.get(&session).unwrap().is_none());
+
+    // Skipping did not set the migration marker: the SESSION and its
+    // SpawnedBy edge can arrive in their later window and adoption can retry.
+    let raw = source.get_raw_unsealed(&session).unwrap().unwrap();
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    let later_key = crate::sync::types::WindowKey::from_timestamp(header.learned_at);
+    let later_doc = crate::sync::schema::create_window_doc("dag-session", &later_key);
+    crate::sync::window::reverse_rematerialize(&source, &later_doc, &later_key).unwrap();
+    assert!(
+        later_doc
+            .get_map("entities")
+            .get(&session.to_hex())
+            .is_some()
+    );
+    crate::sync::window::forward_rematerialize(
+        &peer,
+        &later_doc,
+        &crate::sync::bridge::Materializer::new(),
+        &later_key,
+    )
+    .unwrap();
+    assert!(peer.migrate_conversation_dag(&delayed).unwrap());
+}

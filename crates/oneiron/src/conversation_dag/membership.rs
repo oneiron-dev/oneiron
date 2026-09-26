@@ -82,7 +82,15 @@ pub(super) fn restore(vault: &Vault, txn: &mut heed::RwTxn<'_>, turn: EntityId) 
         return Ok(());
     }
     if let Some(session) = carrier(&row.body)? {
-        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
+        // A received TURN may precede its SESSION. Defer only that missing
+        // dependency for this conversation; never mask a storage/read error.
+        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION).map_err(|error| {
+            if matches!(error, crate::error::Error::EntityNotFound) {
+                invalid("received DAG session has not arrived")
+            } else {
+                error
+            }
+        })?;
         if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &turn)?
             .is_some_and(|old| old != session)
         {

@@ -164,7 +164,12 @@ pub(super) fn materialize_edges_from_delta(
                     // missing mandate or peer-chosen bytes remain a
                     // quarantine-and-continue rejection; no reserved edge
                     // lands merely because hydration ran first.
-                    if let Some(reserved) = &reserved_rejection {
+                    if let Some(reserved) = &reserved_rejection
+                        && !matches!(
+                            kind,
+                            EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
+                        )
+                    {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
                         )?;
@@ -260,6 +265,28 @@ pub(super) fn materialize_edges_from_delta(
                                 buf,
                             )?;
                             continue;
+                        }
+                    }
+
+                    // A received DAG door's structural edge is not a raw local
+                    // edge write. Check its value and live endpoint types only
+                    // after hydration; adoption checks the whole graph.
+                    if matches!(
+                        kind,
+                        EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
+                    ) {
+                        match crate::conversation_dag::validate_received_edge(
+                            &vault.store, &*wtxn, src, kind, tgt, decoded,
+                        ) {
+                            Ok(()) => {}
+                            Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
+                                quarantine_rejected_op_in_txn(
+                                    vault, wtxn, window_key, QuarantineContainer::Edges,
+                                    key, &rejected, buf,
+                                )?;
+                                continue;
+                            }
+                            Err(local) => return Err(local),
                         }
                     }
 
