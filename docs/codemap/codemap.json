@@ -27974,7 +27974,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
      "surface": {
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -27989,6 +27989,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PackCodeAutoInstall",
       "PackInstallAsk",
       "PackInstallDisposition",
       "PackInstallReceipt",
@@ -27999,7 +28000,7 @@
      "path": "src/skill_hub/pack_catalog/admission_types.rs",
      "purpose": "Source-bound qualification, owner asks, and inert installation receipts",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "fn": 5,
       "struct": 4,
       "trait": 1
@@ -28060,7 +28061,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -28072,6 +28073,29 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackScriptGrant",
+      "PackScriptOutcome",
+      "PackScriptRun"
+     ],
+     "path": "src/skill_hub/pack_catalog/script_runtime.rs",
+     "purpose": "Foreign pack scripts run only through the existing propose-only code-mode VM",
+     "surface": {
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/script_runtime/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34694,7 +34718,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 47,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,8 +34923,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

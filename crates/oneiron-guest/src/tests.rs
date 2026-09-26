@@ -341,3 +341,95 @@ fn repeated_snapshot_and_whole_file_replacement_preserve_other_files() {
         b"same"
     );
 }
+
+/// The checked-in foreign QuickJS component executes real JS in the same
+/// unprivileged guest protocol used inside the isolated production VM. This
+/// proves language behavior, not a Firecracker/KVM boot.
+#[test]
+fn foreign_quickjs_pack_script_reads_only_snapshot_and_emits_typed_output() {
+    const COMPONENT: &[u8] =
+        include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
+    let (_temp, root) = scratch();
+    let (mut host, guest) = UnixStream::pair().expect("socketpair");
+    host.set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("timeout");
+    guest
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("timeout");
+    let worker = std::thread::spawn(move || serve_localtest(guest, &root));
+    assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
+    let script = include_str!("../../oneiron/tests/fixtures/echo_pack/scripts/adapter.js");
+    let mut first = start(COMPONENT.len());
+    first["source"] = script.into();
+    put(&mut host, first);
+    for (index, bytes) in COMPONENT.chunks(256 * 1024).enumerate() {
+        put(
+            &mut host,
+            json!({"type":"component", "offset":index*256*1024,"bytes":bytes}),
+        );
+    }
+    let input: Value = serde_json::from_slice(include_bytes!(
+        "../../oneiron/tests/fixtures/echo_pack/scripts/input.json"
+    ))
+    .unwrap();
+    put(
+        &mut host,
+        json!({"type":"file","path":"/mnt/workspace/scripts/input.json",
+        "bytes":serde_json::to_vec(&input).unwrap()}),
+    );
+    put(&mut host, json!({"type":"ready"}));
+    let first_reply = get(&mut host);
+    if first_reply["type"] == "finish" {
+        panic!(
+            "guest refused before credential: {first_reply:?}; {:?}",
+            worker.join().expect("guest thread")
+        );
+    }
+    assert_eq!(
+        first_reply,
+        json!({"type":"credential_read","handle":"email-token",
+        "operation":"metadata","scheme":"https","host":"api.example.com"})
+    );
+    put(&mut host, json!({"type":"receipt","accepted":true}));
+    let proposed = get(&mut host);
+    assert_eq!(proposed["type"], "write");
+    assert_eq!(proposed["path"], "/mnt/workspace/adapter-output.json");
+    let bytes: Vec<u8> = serde_json::from_value(proposed["bytes"].clone()).unwrap();
+    let output: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(output["inbound"][0], input);
+    assert_eq!(output["verbs"][0]["verb"], "send");
+    assert_eq!(output["events"][0]["event_kind"], "arrived");
+    put(&mut host, json!({"type":"receipt","accepted":true}));
+    assert_eq!(get(&mut host), json!({"type":"finish","status":0}));
+    worker
+        .join()
+        .expect("guest thread")
+        .expect("real JS completed");
+}
+
+#[test]
+fn foreign_quickjs_refuses_read_outside_manifest_without_output() {
+    const COMPONENT: &[u8] =
+        include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
+    let (_temp, root) = scratch();
+    let (mut host, guest) = UnixStream::pair().expect("socketpair");
+    host.set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("timeout");
+    guest
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .expect("timeout");
+    let worker = std::thread::spawn(move || serve_localtest(guest, &root));
+    assert_eq!(get(&mut host), json!({"type":"hello","version":1}));
+    let mut first = start(COMPONENT.len());
+    first["source"] = "await sandbox.fs.read_file('/mnt/workspace/undeclared.txt'); propose.file('/mnt/workspace/adapter-output.json',[1]);".into();
+    put(&mut host, first);
+    for (index, bytes) in COMPONENT.chunks(256 * 1024).enumerate() {
+        put(
+            &mut host,
+            json!({"type":"component", "offset":index*256*1024,"bytes":bytes}),
+        );
+    }
+    put(&mut host, json!({"type":"ready"}));
+    assert_eq!(get(&mut host), json!({"type":"finish","status":1}));
+    assert!(worker.join().expect("guest thread").is_err());
+}

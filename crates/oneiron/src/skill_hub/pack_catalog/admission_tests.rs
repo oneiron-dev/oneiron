@@ -258,3 +258,42 @@ fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()
     assert_eq!(vault.get_pack_source(&id)?, Some(source));
     Ok(())
 }
+
+#[test]
+fn script_install_refuses_a_runtime_other_than_the_code_mode_interpreter() -> Result<()> {
+    struct WrongCodeRecipe;
+    impl PackQualifier for WrongCodeRecipe {
+        fn qualify(&self, source: &PackSource) -> Result<PackQualification> {
+            let mut report = Qualification {
+                runtime: true,
+                passed: true,
+            }
+            .qualify(source)?;
+            report.runtime.as_mut().unwrap().runtime_id = "unrelated-runtime".into();
+            Ok(report)
+        }
+    }
+    let source = PackSource::from_files(vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../tests/fixtures/echo_pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/adapter.js",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/adapter.js").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/input.json",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/input.json").to_vec(),
+        ),
+    ])?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &WrongCodeRecipe)
+            .is_err()
+    );
+    assert!(vault.installed_pack("fixture.echo")?.is_none());
+    Ok(())
+}

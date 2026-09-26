@@ -1,7 +1,7 @@
 //! Human-gated installation of exact pack source; requested powers stay inert.
 use super::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackKind, PackQualification,
-    PackQualifier, PackSource, invalid,
+    PackCodeAutoInstall, PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackKind,
+    PackQualification, PackQualifier, PackSource, invalid,
 };
 use crate::{
     Vault,
@@ -61,6 +61,30 @@ impl Vault {
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
     }
+    /// Auto-import entry: code stays Candidate while the host's tested
+    /// sandbox switch is off. Once on, it follows the ordinary qualification,
+    /// rules and consent door; the switch cannot turn a requested power into
+    /// a grant or bypass an irreversible install ask.
+    pub fn auto_install_pack(
+        &self,
+        ask: &PackInstallAsk,
+        code: PackCodeAutoInstall,
+    ) -> Result<PackInstallDisposition> {
+        let txn = self.store.env.read_txn()?;
+        let source = self.check_pack_install_ask(&txn, ask)?;
+        if code == PackCodeAutoInstall::Disabled
+            && (matches!(source.manifest.adapter, Some(super::PackAdapter::Script(_)))
+                || source
+                    .files
+                    .iter()
+                    .any(|file| file.path.starts_with("scripts/")))
+        {
+            return Ok(PackInstallDisposition::CodeCandidate(Box::new(ask.clone())));
+        }
+        drop(txn);
+        self.install_pack(ask)
+    }
+
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
@@ -246,6 +270,13 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
             return Err(invalid("runtime recipe does not bind declared adapter"));
         }
         crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
+        if matches!(runtime.adapter, super::PackAdapter::Script(_))
+            && runtime.runtime_id != crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME
+        {
+            return Err(invalid(
+                "script adapter requires the code-mode QuickJS runtime",
+            ));
+        }
         crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
     }
     Ok(())

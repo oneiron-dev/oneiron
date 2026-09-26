@@ -3,8 +3,18 @@ use super::{PackAdapter, PackManifest, PackSource};
 use crate::skill_hub::{ForeignSkillPublisher, HubAskSurface, HubRef};
 use crate::{consent::EffectDigest, entity_id::EntityId, error::Result};
 
-/// Host callback executes its real qualification suite over these exact files.
-/// There is no built-in passing verdict. The result grants no execution rights.
+/// Host-owned switch for automatic code import. Default off until the
+/// provisioned foreign sandbox suite passes. This is never read from PACK.md.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PackCodeAutoInstall {
+    #[default]
+    Disabled,
+    EnabledAfterSandboxTests,
+}
+
+/// Host callback qualifies these exact files. A code-running qualification step
+/// must use the foreign code-mode sandbox under the object's grant, never a
+/// host interpreter. No built-in passing verdict or execution right exists.
 pub trait PackQualifier {
     fn qualify(&self, source: &PackSource) -> Result<PackQualification>;
 }
@@ -26,7 +36,7 @@ pub struct PackRuntimeRecipe {
     pub runtime_id: String,
     pub runtime_hash: String,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackInstallAsk {
     pub(super) source_id: EntityId,
     pub(super) hub: HubRef,
@@ -78,6 +88,9 @@ pub struct PackInstallReceipt {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {
+    /// Auto-import of code while its host sandbox switch is off. The same
+    /// immutable ask is the permission card; no grant or runtime is active.
+    CodeCandidate(Box<PackInstallAsk>),
     PendingConsent,
     Installed(Box<PackInstallReceipt>),
 }

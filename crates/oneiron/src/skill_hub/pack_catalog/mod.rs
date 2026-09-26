@@ -28,10 +28,12 @@ mod admission;
 mod admission_types;
 mod bundled_skills;
 mod schema;
+mod script_runtime;
 pub use admission_types::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
-    PackRuntimeRecipe,
+    PackCodeAutoInstall, PackInstallAsk, PackInstallDisposition, PackInstallReceipt,
+    PackQualification, PackQualifier, PackRuntimeRecipe,
 };
+pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]
 mod admission_tests;
 
