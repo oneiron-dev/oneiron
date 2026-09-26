@@ -284,6 +284,32 @@ fn fixture_session(plan: &ModelRunPlan, backend: FixtureBackend) -> ModelSession
 }
 
 #[test]
+fn shipped_chroma_plan_uses_the_same_pinned_answerer_and_retrieval_card() {
+    let plan: ModelRunPlan = serde_json::from_str(include_str!(
+        "../../../fixtures/beam_measure.chroma.example.json"
+    ))
+    .unwrap();
+    plan.validate().unwrap();
+    let manifest = crate::beam::runner::parse_manifest_json(include_str!(
+        "../../../fixtures/beam_measure.run.json"
+    ))
+    .unwrap();
+    let chroma = plan.chroma.as_ref().unwrap();
+    assert_eq!(chroma.retrieval_k, 5);
+    assert!(
+        manifest
+            .competitors
+            .iter()
+            .any(|competitor| competitor.arm == ArmKind::VanillaRag
+                && competitor.competitor_id == chroma.card_id)
+    );
+    assert_eq!(
+        plan.answerers[0].model.model_id,
+        plan.answerers[1].model.model_id
+    );
+}
+
+#[test]
 fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolation() {
     let mut plan = shipped_plan();
     let mock = crate::beam::chroma::tests::support::MockChroma::start(plan.efforts.len());
@@ -316,6 +342,20 @@ fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolatio
     );
     assert!(report.retrieval_cards.contains_key("vanilla-rag"));
     assert!(!report.citations.appendix.is_empty());
+    assert!(
+        report
+            .citations
+            .published_baseline_cards
+            .iter()
+            .any(|row| row.card_id == "honcho-beam-100k-nugget-mean-v1")
+    );
+    assert!(
+        report
+            .citations
+            .published_baseline_cards
+            .iter()
+            .any(|row| row.card_id == "beam-paper-10m-rag-llama4-maverick-v1")
+    );
     let corpus: serde_json::Value =
         serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
     let expected_context = format!("{}\n", corpus["corpus"][0]["text"].as_str().unwrap());
@@ -344,6 +384,13 @@ fn measured_chroma_and_deterministic_arms_keep_cards_citations_and_gold_isolatio
     assert_eq!(wire["chroma_card_id"], "vanilla-rag");
     assert!(wire["retrieval_cards"]["deterministic-context-pack"].is_object());
     assert!(wire["citations"]["appendix"].is_array());
+    assert!(
+        wire["citations"]["published_baseline_cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["card_id"] == "beam-paper-10m-rag-llama4-maverick-v1")
+    );
 }
 
 #[test]

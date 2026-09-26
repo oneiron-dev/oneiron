@@ -26,7 +26,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/beam/chroma/tests/support.rs` | test | s | 3 crate-vis | — | — |
-| `src/beam/citations.rs` | src | s | 3 crate-vis | — | Evidence-backed per-number citations |
+| `src/beam/citations.rs` | src | s | 4 crate-vis | — | Evidence-backed per-number citations |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
 | `src/beam/comparability.rs` | src | s | 9 crate-vis | — | Seven independent comparability axes and per-number publication decisions |
 | `src/beam/corpus_clock.rs` | src | s | 1 crate-vis | — | Dataset valid-time admission |

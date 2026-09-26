@@ -1,0 +1,67 @@
+{
+  "scope": "fixture-only; real Chroma HTTP, synthetic model/judge; not a public BEAM accuracy, latency, or cost comparison",
+  "source_revision_at_run": "c4fe25644a4ea1a35c0ac0bdcbea7a995dcb195c",
+  "source_state": "ONE-2180 changes uncommitted during run; see this change for producing source",
+  "date_utc": "2026-09-26T21:53:46Z",
+  "runtime": {
+    "chroma": "1.4.4 via uvx chromadb",
+    "model": "synthetic local HTTP fixture, not GPT-4.1",
+    "model_script_sha256": "49ba0ad9e3d5b9785658da18e863a6f8b10ec20acae46cd3c4cb272bbd2a7719",
+    "fixture_sha256": "13fef8a23aea3427ef2d4580e1612110ec657c46165c9ea2c00223d2bf805833",
+    "plan_sha256": "33efeb28ed317a3edf8bbc3156c16b4b7629109ffac0477dc2aeb184a0f3bd5d",
+    "citation_corpus_sha256": "2d3c03c72d4a80d70544576f0b47595f721edcefe65efb53d55e4d424b1f11ea",
+    "raw_report_sha256": "0d19e27b3a52fb22af0eeadfcfb6ea0c526a03ce7f3666e3580697a939ed64e4"
+  },
+  "retrieval_card_ids": [
+    "deterministic-context-pack",
+    "vanilla-rag"
+  ],
+  "chroma_card_id": "vanilla-rag",
+  "question_count": 1,
+  "observed_fixture_points": [
+    {
+      "arm": "deterministic",
+      "effort": "light",
+      "fixture_judge_score": 1.0,
+      "query_elapsed_us": 15221
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "light",
+      "fixture_judge_score": 1.0,
+      "query_elapsed_us": 7825
+    },
+    {
+      "arm": "deterministic",
+      "effort": "medium",
+      "fixture_judge_score": 1.0,
+      "query_elapsed_us": 4630
+    },
+    {
+      "arm": "vanilla_rag",
+      "effort": "medium",
+      "fixture_judge_score": 1.0,
+      "query_elapsed_us": 2115
+    }
+  ],
+  "warning": "All answers were constant tulip and all synthetic judge votes were 1; these scores cannot measure retrieval accuracy. Timings include local stub traffic and are not matched vector-DB benchmarks. Example prices are not real billing.",
+  "cited_published_reference_rows": [
+    {
+      "card_id": "beam-paper-10m-rag-llama4-maverick-v1",
+      "disposition": "walled-appendix",
+      "value": 0.249,
+      "benchmark": "BEAM",
+      "tier": "10M",
+      "source": "arXiv 2510.27246"
+    },
+    {
+      "card_id": "honcho-beam-100k-nugget-mean-v1",
+      "disposition": "walled-appendix",
+      "value": 0.63,
+      "benchmark": "BEAM",
+      "tier": "100K",
+      "source": "honcho.dev/evals (Dec 2025), via ARCH corpus"
+    }
+  ],
+  "vector_infra_status": "No citable vector-DB recall/latency/cost rows exist in evidence: docs mirror has zero Chroma/Milvus/Qdrant/Weaviate/Pinecone/FAISS recall/latency numbers; engine perf harness measures Oneiron only. V1 ships the measured-triple schema with zero carded rows. Cost-framing-only when rows arrive; never folded into accuracy."
+}
