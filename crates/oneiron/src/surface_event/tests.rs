@@ -1,3 +1,4 @@
+use super::handoff::{SurfaceEventKey, surface_event_dedupe_key};
 use super::*;
 use crate::channel_identity::{
     CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
@@ -324,6 +325,29 @@ fn interaction_actions_decode_and_route_to_observed_source_enrichment() {
     assert_eq!(
         SurfaceEventAction::Message.dispatch_route(),
         SurfaceEventDispatchRoute::ActorSelf
+    );
+}
+
+#[test]
+fn surface_event_dedupe_key_uses_all_tuple_fields_without_boundary_collisions() {
+    let key = |channel, receiving, correlation_id| {
+        surface_event_dedupe_key(SurfaceEventKey {
+            channel,
+            receiving,
+            correlation_id,
+        })
+    };
+    let base = key("email", "identity-1", "provider-id");
+
+    assert!(base.starts_with("sev:v2:"));
+    assert_eq!(base.len(), "sev:v2:".len() + 64);
+    assert_ne!(base, key("slack", "identity-1", "provider-id"));
+    assert_ne!(base, key("email", "identity-2", "provider-id"));
+    assert_ne!(base, key("email", "identity-1", "other-id"));
+    assert_ne!(
+        key("email\0identity", "other", "provider-id"),
+        key("email", "identity\0other", "provider-id"),
+        "length framing distinguishes NUL-containing tuple members"
     );
 }
 
@@ -675,6 +699,87 @@ fn surface_event_once_per_correlation_survives_terminal_state() -> Result<()> {
 }
 
 #[test]
+fn reused_correlation_id_on_another_receiving_identity_is_admitted() -> Result<()> {
+    let (_dir, vault, _) = admitting_vault("first@example.com", 0x82, 0x83);
+    let second_identity_ref = entity(0x84);
+    vault.create_channel_identity(
+        &second_identity_ref,
+        &identity(
+            "second@example.com",
+            entity(0x85),
+            ChannelIdentityState::Active,
+        ),
+    )?;
+
+    let correlation_id = "provider-reused-id";
+    let first = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_500,
+        )?,
+    );
+    let second = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "second@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_501,
+        )?,
+    );
+
+    assert!(!first.replayed);
+    assert!(
+        !second.replayed,
+        "another receiving identity is not a replay"
+    );
+    assert_ne!(first.attempt_ref, second.attempt_ref);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
+
+    let records = AttemptQueue::new(&vault).list()?;
+    let rows = records
+        .iter()
+        .filter(|record| record.kind == SURFACE_EVENT_ATTEMPT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 2);
+    let expected_run_id = surface_event_run_id(correlation_id);
+    assert!(
+        rows.iter()
+            .all(|row| row.run_id.as_deref() == Some(expected_run_id.as_str()))
+    );
+    assert_ne!(rows[0].dedupe_key, rows[1].dedupe_key);
+
+    // Same tuple still replays to its own row after another identity has used
+    // the same public correlation id.
+    let first_replay = accepted(
+        vault.enqueue_inbound_surface_event(
+            input(
+                "first@example.com",
+                SurfaceCounterpartyStamp::unknown("email:sender@example.com"),
+            )
+            .with_correlation_id(correlation_id),
+            1_800_001_502,
+        )?,
+    );
+    assert!(first_replay.replayed);
+    assert_eq!(first_replay.attempt_ref, first.attempt_ref);
+    assert_eq!(surface_event_attempt_rows(&vault), 2);
+
+    // The public status route remains correlation-only and therefore fails
+    // closed when that id names more than one admitted identity tuple.
+    assert!(matches!(
+        vault.surface_event_handoff_status(correlation_id),
+        Err(Error::CorruptedIndex("surface event correlation run"))
+    ));
+    Ok(())
+}
+
+#[test]
 fn concurrent_submissions_of_one_correlation_id_produce_one_attempt() -> Result<()> {
     let (_dir, vault, _) = admitting_vault("race@example.com", 0x25, 0x65);
     let submit = || {
@@ -812,9 +917,17 @@ fn surface_event_retry_mints_a_fresh_attempt() -> Result<()> {
         Some(ack.attempt_ref)
     );
     assert_eq!(row.payload, payload_before);
-    assert_eq!(row.dedupe_key.as_deref(), Some("evt-retry@example.com"));
     assert_eq!(row.run_id.as_deref(), Some("evt-retry@example.com"));
     let decoded = decode_surface_event_attempt_payload(&row.payload)?;
+    let expected_dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &decoded.event.channel,
+        receiving: &decoded.event.receiving_identity_ref,
+        correlation_id: &decoded.event.correlation_id,
+    });
+    assert_eq!(
+        row.dedupe_key.as_deref(),
+        Some(expected_dedupe_key.as_str())
+    );
     assert_eq!(decoded.dispatch_idempotency_key, "evt-retry@example.com");
     assert_eq!(decoded.event.correlation_id, "evt-retry@example.com");
 
@@ -920,8 +1033,13 @@ fn long_provider_correlation_id_is_admitted_under_a_digested_run_id() -> Result<
     let expected_run_id = surface_event_run_id(&correlation_id);
     assert!(expected_run_id.starts_with("sha256:"));
     assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
-    // Both queue indexes are keyed by the one bounded derivation.
-    assert_eq!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
+    // The run id remains correlation-based; the dedupe key has its own scope.
+    assert!(
+        row.dedupe_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("sev:v2:"))
+    );
+    assert_ne!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
 
     // Replay derives the same attempt rather than rejecting on length.
     let replayed = accepted(submit(1_800_005_100)?);
@@ -960,17 +1078,27 @@ fn correlation_id_beyond_the_dedupe_cap_is_admitted_and_replays_once() -> Result
     assert!(!ack.replayed);
     assert_eq!(ack.state, SurfaceEventHandoffState::Queued);
 
-    // One bounded derivation keys both the run index and the dedupe index.
+    // The run id remains bounded and correlation-based while the typed dedupe
+    // tuple has its own bounded digest.
     let row = sole_attempt(&vault);
-    let expected_key = surface_event_run_id(&correlation_id);
-    assert!(expected_key.starts_with("sha256:"));
-    assert!(expected_key.len() <= 128);
-    assert_eq!(row.run_id.as_deref(), Some(expected_key.as_str()));
-    assert_eq!(row.dedupe_key.as_deref(), Some(expected_key.as_str()));
+    let expected_run_id = surface_event_run_id(&correlation_id);
+    assert!(expected_run_id.starts_with("sha256:"));
+    assert!(expected_run_id.len() <= 128);
+    assert_eq!(row.run_id.as_deref(), Some(expected_run_id.as_str()));
 
     // The raw provider id survives verbatim on the durable envelope and on the
     // downstream idempotency key.
     let decoded = decode_surface_event_attempt_payload(&row.payload)?;
+    let expected_dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &decoded.event.channel,
+        receiving: &decoded.event.receiving_identity_ref,
+        correlation_id: &decoded.event.correlation_id,
+    });
+    assert_eq!(
+        row.dedupe_key.as_deref(),
+        Some(expected_dedupe_key.as_str())
+    );
+    assert_ne!(row.dedupe_key.as_deref(), Some(expected_run_id.as_str()));
     assert_eq!(decoded.event.correlation_id, correlation_id);
     assert_eq!(decoded.dispatch_idempotency_key, correlation_id);
 
