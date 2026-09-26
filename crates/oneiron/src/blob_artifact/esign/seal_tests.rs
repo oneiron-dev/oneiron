@@ -149,6 +149,7 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         }],
         fields: vec![],
         full_trail_appendix: true,
+        lifecycle: None,
     };
     let actor = EsignAuditActor {
         actor: owner.to_hex(),
@@ -210,6 +211,18 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     let sealed = run(vault.seal_esign_attempt(&attempt, &engine, PadesProfile::BaselineB, url))?;
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Completed);
     assert!(vault.verify_esign_item(id, 0, &engine)?.valid);
+    let notices = AttemptQueue::new(&vault).list()?;
+    let completion = notices
+        .iter()
+        .filter(|a| a.kind == "esign.delivery")
+        .map(|a| serde_json::from_slice::<serde_json::Value>(&a.payload))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    assert_eq!(completion.len(), 1);
+    assert_eq!(completion[0]["transition"], "completed");
+    assert_eq!(
+        completion[0]["sealed_items"][0]["sealed_artifact"],
+        sealed.items[0].sealed_artifact
+    );
     let sealed_bytes = vault
         .read_blob_artifact_version(&EntityId::from_hex(&sealed.items[0].sealed_artifact)?, 1)?
         .unwrap();

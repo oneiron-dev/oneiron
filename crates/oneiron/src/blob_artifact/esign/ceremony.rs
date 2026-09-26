@@ -209,7 +209,7 @@ impl Vault {
                     {
                         return Ok(SigningOutcome::HumanActionRequired);
                     }
-                    append(
+                    let advanced = append(
                         self,
                         txn,
                         document,
@@ -219,6 +219,27 @@ impl Vault {
                         },
                         actor,
                         now,
+                    )?;
+                    let promoted = advanced
+                        .recipients
+                        .iter()
+                        .filter(|(id, progress)| {
+                            progress.signing == SigningStatus::Ready
+                                && state.recipients[*id].signing != SigningStatus::Ready
+                        })
+                        .map(|(id, _)| id.clone())
+                        .collect::<Vec<_>>();
+                    super::lifecycle::notify(
+                        self,
+                        txn,
+                        document,
+                        &advanced,
+                        "pending",
+                        &promoted,
+                        super::lifecycle::NoticeTrigger {
+                            dispatch_ref: None,
+                            now,
+                        },
                     )?;
                     enqueue_seal(self, txn, document, now)?;
                     return Ok(SigningOutcome::AwaitingSeal);

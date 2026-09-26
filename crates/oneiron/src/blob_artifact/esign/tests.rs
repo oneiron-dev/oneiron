@@ -51,6 +51,7 @@ fn document(artifact: EntityId) -> EsignDocument {
             meta: FieldMeta::Text { max_bytes: 50 },
         }],
         full_trail_appendix: true,
+        lifecycle: None,
     }
 }
 fn original_pdf() -> &'static [u8] {
@@ -621,6 +622,107 @@ fn outbound_gate_and_resend_count_are_not_bypassable() -> Result<()> {
 }
 
 #[test]
+fn lifecycle_sweep_uses_gate_and_claims_each_due_recipient_once() -> Result<()> {
+    let (_dir, vault, id, doc, owner) = ceremony_setup()?;
+    let rules = EsignLifecycleRules {
+        expiry_after_seconds: 3600,
+        first_reminder_after_seconds: 1,
+        repeat_reminder_every_seconds: 2,
+        reminder_cap_seconds: 60,
+        notices: EsignNoticeSwitches::default(),
+    };
+    let mut policy_doc = doc.clone();
+    policy_doc.lifecycle = Some(rules);
+    event(
+        &vault,
+        id,
+        EsignEvent::Drafted {
+            document: policy_doc,
+        },
+        crate::unix_seconds_now(),
+    )?;
+    vault.issue_esign_capabilities(&owner, id)?;
+    let command = EsignOutboundCommand {
+        document: id.to_hex(),
+        recipient_count: 2,
+        verb: EsignOutboundVerb::SendForSignature,
+        reason: None,
+    };
+    let sent = vault
+        .dispatch_esign(
+            send_request(id, owner.actor(), command.verb, "lifecycle-send"),
+            &command,
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        sent.outcome,
+        crate::outbound::OutboundDispatchOutcome::DeliveredToChannel
+    );
+    let sent_at = vault.esign_audit(id)?.last().unwrap().at;
+    let due = |at| {
+        vault.sweep_esign_reminders(&[id], at, |id, recipient, rung| {
+            let mut req = send_request(
+                id,
+                owner.actor(),
+                EsignOutboundVerb::Remind,
+                &format!("lifecycle-remind-{}-{rung}", recipient.id),
+            );
+            req.occurred_at = at;
+            req
+        })
+    };
+    assert_eq!(due(sent_at).unwrap(), 0);
+    assert_eq!(due(sent_at + 1).unwrap(), 1);
+    assert_eq!(due(sent_at + 1).unwrap(), 0);
+    assert_eq!(vault.esign_document(id)?.reminders.len(), 1);
+    assert_eq!(due(sent_at + 3).unwrap(), 1);
+    let deliveries = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    let notices = deliveries
+        .iter()
+        .filter(|a| a.kind == "esign.delivery")
+        .map(|a| serde_json::from_slice::<serde_json::Value>(&a.payload))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|v| v["transition"] == "reminder")
+            .count(),
+        2
+    );
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|v| v["transition"] == "invite")
+            .count(),
+        doc.recipients.len()
+    );
+    assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at)?, 1);
+    assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at + 1)?, 0);
+    assert_eq!(due(doc.expires_at).unwrap(), 0);
+    assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
+    assert!(vault.esign_document(id)?.sealed_sha256.is_empty());
+    assert_eq!(
+        vault.esign_audit(id)?.last().unwrap().event,
+        EsignEvent::Expired
+    );
+    let queued = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    assert!(queued.iter().all(|a| a.kind != ESIGN_SEAL_ATTEMPT_KIND));
+    assert_eq!(
+        queued
+            .iter()
+            .filter(|a| a.kind == "esign.delivery"
+                && serde_json::from_slice::<serde_json::Value>(&a.payload)
+                    .is_ok_and(|v| v["transition"] == "expiry"))
+            .count(),
+        doc.recipients.len()
+    );
+    Ok(())
+}
+
+#[test]
 fn send_autonomy_never_inherits_the_sign_action_dial() -> Result<()> {
     let (_dir, vault, _id, _doc, owner) = ceremony_setup()?;
     for (autonomy, allowed) in [
@@ -880,10 +982,11 @@ fn seal_backstop_obeys_both_time_bounds_and_expiry_stays_unsealed() -> Result<()
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Expired);
     assert!(vault.esign_document(id)?.sealed_sha256.is_empty());
     assert_eq!(vault.sweep_esign_seals(&[id], doc.expires_at + 900)?, 0);
-    assert!(
-        crate::attempt_queue::AttemptQueue::new(&vault)
-            .list()?
-            .is_empty()
+    let queued = crate::attempt_queue::AttemptQueue::new(&vault).list()?;
+    assert!(queued.iter().all(|a| a.kind != ESIGN_SEAL_ATTEMPT_KIND));
+    assert_eq!(
+        queued.iter().filter(|a| a.kind == "esign.delivery").count(),
+        doc.recipients.len()
     );
     Ok(())
 }

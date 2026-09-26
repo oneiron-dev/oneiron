@@ -33,6 +33,9 @@ impl EsignState {
             rejection: None,
             sealed_sha256: vec![],
             reseal_pending: false,
+            reminders: Default::default(),
+            sent_at: None,
+            reminder_at: Default::default(),
         })
     }
     fn has_actionable_recipient(&self) -> bool {
@@ -123,6 +126,7 @@ impl EsignState {
                     return Err(invalid("document cannot be sent"));
                 }
                 self.status = DocumentStatus::Pending;
+                self.sent_at = Some(now);
                 for r in self.recipients.values_mut() {
                     r.delivery = DeliveryStatus::Sent;
                 }
@@ -215,6 +219,13 @@ impl EsignState {
                     return Err(invalid("document has not expired"));
                 }
                 self.status = DocumentStatus::Expired;
+            }
+            EsignEvent::Reminded { recipient, rung } => {
+                if self.next_reminder(recipient, now)? != Some(*rung) {
+                    return Err(invalid("reminder is not due"));
+                }
+                self.reminders.insert((recipient.clone(), *rung));
+                self.reminder_at.insert(recipient.clone(), now);
             }
             EsignEvent::Sealed {
                 rejected,

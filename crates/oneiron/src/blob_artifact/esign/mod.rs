@@ -2,7 +2,11 @@
 mod field_admission;
 mod fold;
 mod ledger;
+mod lifecycle;
 mod model;
+pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
+#[cfg(test)]
+mod lifecycle_tests;
 #[cfg(test)]
 mod tests;
 pub(crate) use ledger::{reject_event_delete, validate_event_claim};

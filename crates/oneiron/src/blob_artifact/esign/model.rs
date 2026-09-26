@@ -110,6 +110,9 @@ pub struct EsignDocument {
     pub recipients: Vec<EsignRecipient>,
     pub fields: Vec<EsignField>,
     pub full_trail_appendix: bool,
+    /// Frozen pack timing and per-document notice switches, carried by the draft claim.
+    #[serde(default)]
+    pub lifecycle: Option<super::EsignLifecycleRules>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,6 +169,10 @@ pub enum EsignEvent {
         reason: String,
     },
     Expired,
+    Reminded {
+        recipient: String,
+        rung: u32,
+    },
     /// Authored only after native verification succeeds for every sealed item.
     Sealed {
         rejected: bool,
@@ -187,6 +194,7 @@ impl EsignEvent {
             Self::Declined { .. } => "esign.declined",
             Self::Voided { .. } => "esign.voided",
             Self::Expired => "esign.expired",
+            Self::Reminded { .. } => "esign.reminded",
             Self::Sealed {
                 rejected: false, ..
             } => "esign.completed",
@@ -214,6 +222,9 @@ pub struct EsignState {
     pub rejection: Option<String>,
     pub sealed_sha256: Vec<[u8; 32]>,
     pub reseal_pending: bool,
+    pub reminders: BTreeSet<(String, u32)>,
+    pub(super) sent_at: Option<u64>,
+    pub(super) reminder_at: BTreeMap<String, u64>,
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -237,6 +248,9 @@ pub(super) fn validate_document(doc: &EsignDocument, now: u64) -> Result<()> {
         || doc.expires_at <= now
     {
         return Err(invalid("invalid document bounds"));
+    }
+    if let Some(rules) = &doc.lifecycle {
+        rules.validate()?;
     }
     let mut items = BTreeSet::new();
     for item in &doc.items {

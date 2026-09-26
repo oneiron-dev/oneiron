@@ -3448,6 +3448,29 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignLifecycleRules",
+      "EsignNoticeSwitches"
+     ],
+     "path": "src/blob_artifact/esign/lifecycle.rs",
+     "purpose": "Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/lifecycle_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3456,7 +3479,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -3492,7 +3515,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignOutboundCommand",
@@ -3501,6 +3524,7 @@
      "path": "src/blob_artifact/esign/outbound.rs",
      "purpose": "SGN-02 uses the ordinary OF-327 gate and durable intent ledger",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -33804,7 +33828,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 38,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,8 +35048,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
-   "test_files": 710
+   "source_files": 2069,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [
