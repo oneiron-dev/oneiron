@@ -2,6 +2,8 @@
 
 mod codec;
 pub mod questions;
+mod seat;
 mod types;
 
+pub use seat::*;
 pub use types::*;
