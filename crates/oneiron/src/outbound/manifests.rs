@@ -173,7 +173,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "react",
                     "setMessageReaction",
-                    json!({"chat_id": "integer|string", "message_id": "integer", "reaction": [{"type": "emoji", "emoji": "string"}]}),
+                    json!({"chat_id": "integer|string", "message_id": "integer", "reaction": [{"type": "emoji", "emoji": "string"}], "emoji_vocabulary": "chat_available_reactions"}),
                     OutboundInterruptionClass::Ambient,
                     OutboundDeliverySemanticsKind::ReactionTarget,
                     Some("provider-defined message reaction window"),
@@ -216,7 +216,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "react",
                     "reactions.add",
-                    json!({"channel": "channel_id", "timestamp": "message_ts", "name": "emoji_name"}),
+                    json!({"channel": "channel_id", "timestamp": "message_ts", "name": "emoji_name", "emoji_vocabulary": "workspace_unicode_and_custom_names"}),
                     OutboundInterruptionClass::Ambient,
                     OutboundDeliverySemanticsKind::ReactionTarget,
                     None,
@@ -271,7 +271,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "react",
                     "create_reaction",
-                    json!({"channel_id": "snowflake", "message_id": "snowflake", "emoji": "unicode|custom"}),
+                    json!({"channel_id": "snowflake", "message_id": "snowflake", "emoji": "unicode|custom", "emoji_vocabulary": "unicode_and_permitted_custom"}),
                     OutboundInterruptionClass::Ambient,
                     OutboundDeliverySemanticsKind::ReactionTarget,
                     None,
@@ -323,6 +323,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 "APNs can interrupt users and depends on app entitlement, token validity, and user notification permission.",
             )],
         ),
+        in_app_reaction_manifest(),
         manifest(
             "imessage_mfb",
             "apple_messages_for_business",
@@ -382,6 +383,23 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundPermissionState::Conditional,
                     true,
                     "Media sends require explicit file access and host-device consent.",
+                ),
+                verb(
+                    "react",
+                    "local_messages_tapback",
+                    json!({
+                        "chat_id": "string",
+                        "message_id": "host-local message handle",
+                        "glyph": "tapback glyph",
+                        "emoji_vocabulary": ["👍", "👎", "❤️", "😂", "‼️", "❓"]
+                    }),
+                    OutboundInterruptionClass::Ambient,
+                    OutboundDeliverySemanticsKind::ReactionTarget,
+                    None,
+                    OutboundRetryClass::IdempotentEmulated,
+                    OutboundPermissionState::Conditional,
+                    true,
+                    "Only a host bridge with tapback support may execute this verb; the target message must be visible to the bridge account.",
                 ),
             ],
         ),
@@ -557,6 +575,32 @@ fn verb(
             note,
         },
     }
+}
+
+// In-app reactions target an existing message visible to the actor's
+// audience; the app adapter enforces that scope at the write door.
+fn in_app_reaction_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "in_app",
+        "first_party_chat",
+        "First-party conversation messages; reaction targets retain their message audience.",
+        vec![verb(
+            "react",
+            "reaction.put",
+            json!({
+                "message_id": "visible message ref",
+                "glyph": "Unicode emoji",
+                "emoji_vocabulary": "unicode_emoji"
+            }),
+            OutboundInterruptionClass::Ambient,
+            OutboundDeliverySemanticsKind::ReactionTarget,
+            None,
+            OutboundRetryClass::IdempotentNative,
+            OutboundPermissionState::Conditional,
+            false,
+            "The first-party adapter checks message visibility and audience before writing a reaction.",
+        )],
+    )
 }
 
 fn feedback_manifest(channel: &'static str) -> OutboundCapabilityManifest {
