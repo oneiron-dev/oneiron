@@ -78,25 +78,26 @@ run_stage() {
   fi
 }
 
+# Build commands are --locked so a stale manifest cannot rewrite Cargo.lock during verification.
 # Generated code map first: cheap, and a stale map is a docs bug that must not
 # hide behind a long compile.
 run_stage codemap             scripts/codemap/check.sh
 # Honor the workspace's heed exclusion; --all also follows local path dependencies.
 run_stage fmt                 cargo fmt --check
-run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings
-run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+run_stage clippy              cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+run_stage clippy-featureless  cargo clippy --locked -p oneiron --all-targets --no-default-features -- -D warnings
 # The server's own feature selection of the engine (`sync` without `test-hooks`) is a
 # third combination neither row above compiles: `--workspace --all-targets` unifies the
 # dev-dependency features in, and `--no-default-features` drops `sync`. No `--all-targets`
 # here on purpose — that is what the release binary builds.
-run_stage clippy-server       cargo clippy -p oneiron-server --all-features -- -D warnings
+run_stage clippy-server       cargo clippy --locked -p oneiron-server --all-features -- -D warnings
 # Existing mandatory documentation policy belongs in the gate, not a manual step.
 # Encoded flags take precedence even when empty. Unset them for this child only;
 # do not change other stages' environments or compiler fingerprints globally.
-run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
-run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
-run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
+run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
+run_stage test                cargo nextest run --locked --workspace --exclude oneiron-napi --all-features --profile full
+run_stage test-featureless    cargo test --locked -p oneiron --lib --no-default-features
+run_stage doctest             cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
 
 if [ "$LIST_ONLY" = false ]; then
   echo "VERIFY-OK"
