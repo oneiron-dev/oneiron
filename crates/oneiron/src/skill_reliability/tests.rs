@@ -1340,3 +1340,42 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
     }
     Ok(())
 }
+
+#[test]
+fn shared_posterior_skill_contract_updates_samples_and_scores() {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut posterior =
+        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::UnvettedImport);
+    posterior.update(true).unwrap();
+    posterior.update(false).unwrap();
+    assert_eq!((posterior.alpha, posterior.beta), (2.0, 2.0));
+    let mut first = StdRng::seed_from_u64(2012);
+    let mut second = StdRng::seed_from_u64(2012);
+    let draw = posterior.sample(&mut first).unwrap();
+    assert!((0.0..=1.0).contains(&draw));
+    assert_eq!(draw, posterior.sample(&mut second).unwrap());
+    let bonus = posterior.ucb_bonus(12, 0.25);
+    assert!(bonus > 0.0);
+    assert!((f64::from(posterior.ucb(12)) - (0.5 + bonus)).abs() < 1e-6);
+    assert!((posterior.lower_bound() - 0.132).abs() < 0.01);
+}
+
+#[test]
+fn skill_posterior_sample_rejects_invalid_public_parameters() {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(2012);
+    for alpha in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let posterior = SkillReliabilityPosterior { alpha, beta: 1.0 };
+        assert!(
+            matches!(
+                posterior.sample(&mut rng),
+                Err(crate::Error::InvalidConfig(_))
+            ),
+            "invalid alpha {alpha:?} must be rejected"
+        );
+    }
+}
