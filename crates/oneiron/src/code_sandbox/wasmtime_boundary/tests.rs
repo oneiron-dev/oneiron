@@ -35,6 +35,11 @@ impl GuestImports for Host {
             tgt: input.tgt,
         })
     }
+    fn report_blocked(&mut self, _: String, _: String) -> Result<BlockedOutput, String> {
+        Ok(BlockedOutput {
+            receipt: "receipt".into(),
+        })
+    }
     fn ask_human(&mut self, _: PromptInput) -> Result<WaitOutput, String> {
         Ok(WaitOutput {
             wait_id: "wait".into(),
@@ -89,6 +94,10 @@ fn per_tier_import_inventory_equals_boundary_contract() {
             .map(|import| import.name())
             .collect();
         assert_eq!(actual, expected);
+        assert_eq!(
+            linked_imports(tier).contains(&("report-blocked", "self.report_blocked")),
+            tier == SandboxGuestTier::FirstPartyDreamer
+        );
         if tier.requires_zero_write_imports() {
             assert!(actual.iter().all(|name| !name.starts_with("self.")));
         }
