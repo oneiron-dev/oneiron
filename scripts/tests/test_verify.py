@@ -51,7 +51,7 @@ GATES = [
     ("clippy-featureless", ["cargo", "clippy", "--locked", "-p", "oneiron", "--all-targets", "--no-default-features", "--", "-D", "warnings"]),
     ("clippy-server", ["cargo", "clippy", "--locked", "-p", "oneiron-server", "--all-features", "--", "-D", "warnings"]),
     ("rustdoc", ["env", "-u", "CARGO_ENCODED_RUSTDOCFLAGS", "RUSTDOCFLAGS=-D warnings", "cargo", "doc", "--locked", "--workspace", "--all-features", "--no-deps"]),
-    ("test", ["cargo", "nextest", "run", "--locked", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full"]),
+    ("test", ["cargo", "nextest", "run", "--locked", "--workspace", "--all-features", "--profile", "full"]),
     ("test-featureless", ["cargo", "test", "--locked", "-p", "oneiron", "--lib", "--no-default-features"]),
     ("doctest", ["cargo", "test", "--locked", "--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features"]),
 ]
@@ -283,11 +283,9 @@ class VerifyCase(unittest.TestCase):
         ])
         self.assertIn("CONFORMANCE GREEN for fixture", result.stdout)
 
-    def test_distributed_legs_keep_full_tier_and_host_specific_napi_coverage(self):
+    def test_distributed_legs_keep_full_tier_and_napi_coverage_on_both_hosts(self):
         for host in ("Linux", "Darwin"):
             nextest = COMMAND_BY_STAGE["test"]
-            if host == "Darwin":
-                nextest = [arg for arg in nextest if arg not in ("--exclude", "oneiron-napi")]
             legs = {
                 "fmt-clippy": COMMANDS[:3],
                 "tests:1/2": [nextest + ["--partition", "hash:1/2"], COMMAND_BY_STAGE["doctest"]],

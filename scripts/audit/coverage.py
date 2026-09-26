@@ -61,7 +61,7 @@ def collect(output, toolchain=None, unstable_doctests=False, tmp_dir=None):
         env["TMPDIR"] = str(temporary)
         reports = []
         lanes = [
-            ["nextest", "--workspace", "--exclude", "oneiron-napi", "--all-features", "--profile", "full", "--test-threads", "2", "--no-fail-fast"],
+            ["nextest", "--workspace", "--all-features", "--profile", "full", "--test-threads", "2", "--no-fail-fast"],
             ["--package", "oneiron", "--lib", "--no-default-features"],
             ["--doc", "--workspace", "--exclude", "oneiron-bench", "--all-features", "--doctests"],
         ]

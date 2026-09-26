@@ -78,8 +78,8 @@ than rewrite the committed `Cargo.lock`. Keep `cargo fmt --check` separate; it d
 not resolve dependencies. Formatting is members-only (`cargo fmt --check`, never `--all`,
 which follows the ONE-218 heed vendor). Server clippy deliberately omits
 `--all-targets` so test-only features cannot hide production errors. Workspace
-nextest retains its `oneiron-napi` exclusion; the crate's separate Linux Rust tests now
-use a dev-only dynamic-symbol feature, while JS ABI tests still need a real Node host.
+nextest includes `oneiron-napi`: Linux Rust tests use a dev-only dynamic-symbol
+feature, and macOS tests use dynamic lookup. JS ABI tests still need a real Node host.
 Doctests exclude `oneiron-bench`. The rustdoc stage runs
 `env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps`
 after server clippy and before runtime tests. CI `Checks` runs the same command
@@ -101,10 +101,9 @@ cargo nextest run -p oneiron --features sync,test-hooks --profile full
 ```
 
 For distributed runs, `scripts/verify-leg.sh` covers the code-map pin, fmt,
-workspace clippy, partitioned full nextest, and doctests. The test legs exclude
-napi only on Linux; macOS keeps its existing napi coverage, unlike the full
-script's unconditional exclusion. Select `LEG=fmt-clippy`, `LEG=tests:1/2`,
-or `LEG=tests:2/2`.
+workspace clippy, partitioned full nextest, and doctests. The test legs include napi
+on Linux and macOS, as does the full script. Select `LEG=fmt-clippy`,
+`LEG=tests:1/2`, or `LEG=tests:2/2`.
 A pass across all three legs still needs **five** commands to close the gate:
 
 ```bash
