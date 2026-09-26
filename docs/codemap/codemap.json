@@ -20003,14 +20003,15 @@
       "RoutedSeat",
       "SeatBirth",
       "SeatSettings",
-      "VerdictExecution"
+      "VerdictExecution",
+      "VerdictPayload"
      ],
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
       "enum": 1,
-      "fn": 10,
-      "struct": 10,
+      "fn": 12,
+      "struct": 11,
       "trait": 1
      }
     },

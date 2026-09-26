@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BudgetGuard, CallPurpose, DurableStepContext, DurableStepResult, LlmBackend, LlmRequest,
-    ModelId, ModelLocality, ModelTierRef, ReasoningEffort, ResponseFormat, StepOutcome,
-    call_as_step,
+    BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
+    ResponseFormat, StepOutcome, call_as_step,
 };
 use crate::{
     Vault,
@@ -120,7 +120,13 @@ pub struct DescriptionJudgment {
 }
 
 pub trait DescriptionJudge {
-    fn judge(&self, task: &str, model: &ModelId, description: &str) -> DescriptionJudgment;
+    fn judge(
+        &self,
+        task: &str,
+        model: &ModelId,
+        description: &str,
+        effort: ReasoningEffort,
+    ) -> DescriptionJudgment;
 }
 
 /// Overrides filter the description candidates; they never bypass judgment.
@@ -164,18 +170,45 @@ pub struct RoutedSeat {
 }
 
 impl RoutedSeat {
-    /// Rebind every generative call from the persisted seat. A later call
-    /// cannot change its model, effort, locality, or seat-level tier.
-    pub fn bind(&self, request: &mut LlmRequest) {
+    /// Rebind every generative call from the persisted seat. Provider options
+    /// that could shadow its effective controls are refused before mutation.
+    pub fn bind(&self, request: &mut LlmRequest) -> Result<()> {
+        apply_controls(request, self.effort, &self.inference_overrides)?;
         request.model = self.model.clone();
         request.envelope.locality = self.locality;
         request.envelope.tier.per_seat = Some(self.tier.clone());
-        for (key, value) in &self.inference_overrides {
-            request.params.insert(key.clone(), value.clone());
+        Ok(())
+    }
+}
+
+/// One current schema-verdict payload. History belongs in neither field:
+/// system instructions and the current input are supplied explicitly, not
+/// inferred from the roles of a generative session's messages.
+pub struct VerdictPayload {
+    pub instructions: Option<String>,
+    pub input: Vec<ContentPart>,
+}
+
+impl VerdictPayload {
+    fn messages(self) -> Result<Vec<LlmMessage>> {
+        if self.input.is_empty() {
+            return Err(invalid("empty verdict payload"));
         }
-        request
-            .params
-            .insert("reasoning_effort".into(), serde_json::json!(self.effort));
+        let mut messages = Vec::new();
+        if let Some(instructions) = self.instructions {
+            if instructions.trim().is_empty() {
+                return Err(invalid("empty verdict instructions"));
+            }
+            messages.push(LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text { text: instructions }],
+            });
+        }
+        messages.push(LlmMessage {
+            role: LlmMessageRole::User,
+            content: self.input,
+        });
+        Ok(messages)
     }
 }
 
@@ -193,6 +226,8 @@ pub struct DescriptionReask {
     pub owner_model: ModelId,
     pub observed_model: ModelId,
     pub trigger: ReaskTrigger,
+    #[serde(default)]
+    pub acknowledged: bool,
 }
 
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
@@ -222,6 +257,67 @@ fn purpose_key(purpose: &CallPurpose) -> String {
             .to_owned(),
     }
 }
+fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result<()> {
+    if overrides.keys().any(|key| {
+        key.trim().is_empty()
+            || matches!(
+                key.as_str(),
+                "reasoning_effort"
+                    | "reasoning"
+                    | "thinking"
+                    | "model"
+                    | "messages"
+                    | "stream"
+                    | "response_format"
+                    | "tools"
+                    | "provider_options"
+                    | "output_config"
+            )
+    }) {
+        return Err(invalid("invalid routed inference override"));
+    }
+    Ok(())
+}
+
+/// Reject fields that would win after the adapter merges provider options.
+/// Unknown provider-specific fields remain available, but cannot shadow a
+/// routed inference setting or carry a competing reasoning dial.
+fn apply_controls(
+    request: &mut LlmRequest,
+    effort: ReasoningEffort,
+    overrides: &BTreeMap<String, serde_json::Value>,
+) -> Result<()> {
+    validate_overrides(overrides)?;
+    for options in request.provider_options.values() {
+        let fields = options
+            .as_object()
+            .ok_or_else(|| invalid("invalid provider options"))?;
+        if fields.keys().any(|key| {
+            overrides.contains_key(key)
+                || matches!(
+                    key.as_str(),
+                    "reasoning_effort" | "reasoning" | "thinking" | "output_config" | "model"
+                )
+        }) {
+            return Err(invalid("provider options shadow routed inference controls"));
+        }
+    }
+    for (key, value) in overrides {
+        request.params.insert(key.clone(), value.clone());
+    }
+    request.params.remove("reasoning");
+    request.params.remove("thinking");
+    request.params.remove("reasoning_effort");
+    // None is a seat/receipt choice, not a provider reasoning control. A
+    // non-reasoning catalog model must still pass adapter admission.
+    if effort != ReasoningEffort::None {
+        request
+            .params
+            .insert("reasoning_effort".into(), serde_json::json!(effort));
+    }
+    Ok(())
+}
+
 fn effort_for(
     policy: &DescriptionPolicy,
     chosen: &ModelDescription,
@@ -244,9 +340,10 @@ fn resolve<'a>(
     policy: &'a DescriptionPolicy,
     measurements: &'a BTreeMap<ModelId, MeasuredDescription>,
     settings: &SeatSettings,
+    purpose: &CallPurpose,
     task: &str,
     judge: &dyn DescriptionJudge,
-) -> Result<(&'a ModelDescription, DescriptionJudgment)> {
+) -> Result<(&'a ModelDescription, DescriptionJudgment, ReasoningEffort)> {
     policy
         .models
         .iter()
@@ -257,11 +354,12 @@ fn resolve<'a>(
                 .is_none_or(|allowed| allowed.contains(&row.model))
         })
         .filter_map(|row| {
+            let effort = effort_for(policy, row, settings, purpose).ok()?;
             row.line(measurements.get(&row.model))
-                .map(|line| (row, judge.judge(task, &row.model, line)))
+                .map(|line| (row, judge.judge(task, &row.model, line, effort), effort))
         })
-        .filter(|(_, verdict)| verdict.fitness > 0 && !verdict.reason.trim().is_empty())
-        .max_by_key(|(_, verdict)| verdict.fitness)
+        .filter(|(_, verdict, _)| verdict.fitness > 0 && !verdict.reason.trim().is_empty())
+        .max_by_key(|(_, verdict, _)| verdict.fitness)
         .ok_or_else(|| invalid("no description candidate passed judgment"))
 }
 
@@ -353,6 +451,7 @@ impl Vault {
                     owner_model: owner.model.clone(),
                     observed_model: row.model.clone(),
                     trigger,
+                    acknowledged: false,
                 };
                 self.store
                     .vault_meta
@@ -377,6 +476,43 @@ impl Vault {
             .map(|bytes| decode(&bytes))
             .transpose()
     }
+    /// Recover owner asks persisted before their first delivery. A crash
+    /// between trigger persistence and handoff cannot hide a pending ask.
+    pub fn pending_description_reasks(&self) -> Result<Vec<DescriptionReask>> {
+        let txn = self.store.env.read_txn()?;
+        let mut pending = Vec::new();
+        for entry in self.store.vault_meta.prefix_iter(&txn, REASK_PREFIX)? {
+            let (_, bytes) = entry?;
+            let ask: DescriptionReask = decode(&bytes)?;
+            if !ask.acknowledged {
+                pending.push(ask);
+            }
+        }
+        Ok(pending)
+    }
+    /// Acknowledge only after the owner work is durably handed off. A retry
+    /// leaves the same trigger identity and cannot mint a second owner ask.
+    pub fn acknowledge_description_reask(&self, identity: &str) -> Result<()> {
+        if identity.len() != 64 || !identity.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid("invalid description re-ask identity"));
+        }
+        let key = [REASK_PREFIX, identity.as_bytes()].concat();
+        let mut txn = self.store.env.write_txn()?;
+        let mut ask: DescriptionReask = decode(
+            &self
+                .store
+                .vault_meta
+                .get(&txn, &key)?
+                .ok_or_else(|| invalid("unknown description re-ask"))?,
+        )?;
+        if ask.identity != identity {
+            return Err(invalid("description re-ask identity mismatch"));
+        }
+        ask.acknowledged = true;
+        self.store.vault_meta.put(&mut txn, &key, &encode(&ask)?)?;
+        txn.commit()?;
+        Ok(())
+    }
     /// Mint once; a repeated seat id returns the original pin, not a new route.
     pub fn route_seat(
         &self,
@@ -392,13 +528,7 @@ impl Vault {
             tier,
         } = birth;
         let key = seat_key(id)?;
-        if settings
-            .inference_overrides
-            .keys()
-            .any(|key| key.trim().is_empty() || key == "reasoning_effort")
-        {
-            return Err(invalid("invalid seat inference override"));
-        }
+        validate_overrides(&settings.inference_overrides)?;
         let (policy_bytes, measurement_bytes, existing) = {
             let txn = self.store.env.read_txn()?;
             (
@@ -425,8 +555,8 @@ impl Vault {
             .map(decode)
             .transpose()?
             .unwrap_or_default();
-        let (chosen, verdict) = resolve(&policy, &measurements, settings, task, judge)?;
-        let effort = effort_for(&policy, chosen, settings, purpose)?;
+        let (chosen, verdict, effort) =
+            resolve(&policy, &measurements, settings, purpose, task, judge)?;
         let seat = RoutedSeat {
             id: id.into(),
             role: role.into(),
@@ -488,6 +618,7 @@ impl Vault {
         judge: &dyn DescriptionJudge,
         settings: &SeatSettings,
         mut request: LlmRequest,
+        payload: VerdictPayload,
         execution: VerdictExecution<'_>,
     ) -> DurableStepResult<StepOutcome> {
         if !matches!(
@@ -502,17 +633,19 @@ impl Vault {
             .description_policy()?
             .ok_or_else(|| invalid("description policy not configured"))?;
         let measurements = self.description_measurements()?;
-        let (chosen, _) = resolve(&policy, &measurements, settings, task, judge)?;
+        let (chosen, _, effort) = resolve(
+            &policy,
+            &measurements,
+            settings,
+            &request.envelope.purpose,
+            task,
+            judge,
+        )?;
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;
         request.envelope.tier.per_seat = None;
-        let effort = effort_for(&policy, chosen, settings, &request.envelope.purpose)?;
-        request
-            .params
-            .insert("reasoning_effort".into(), serde_json::json!(effort));
-        request
-            .messages
-            .retain(|message| message.role == super::LlmMessageRole::User);
+        apply_controls(&mut request, effort, &settings.inference_overrides)?;
+        request.messages = payload.messages()?;
         call_as_step(
             execution.context,
             execution.backend,

@@ -62,7 +62,13 @@ impl Judge {
     }
 }
 impl DescriptionJudge for Judge {
-    fn judge(&self, task: &str, model: &ModelId, description: &str) -> DescriptionJudgment {
+    fn judge(
+        &self,
+        task: &str,
+        model: &ModelId,
+        description: &str,
+        _effort: ReasoningEffort,
+    ) -> DescriptionJudgment {
         self.0
             .lock()
             .unwrap()
@@ -163,7 +169,7 @@ fn seat_birth_pins_model_and_effort_and_overrides_later_calls() {
     later_call
         .params
         .insert("reasoning_effort".into(), json!("high"));
-    seat.bind(&mut later_call);
+    seat.bind(&mut later_call).unwrap();
     assert_eq!(later_call.model, seat.model);
     assert_eq!(later_call.envelope.tier.resolved(), &seat.tier);
     assert_eq!(later_call.params["reasoning_effort"], json!("low"));
@@ -188,7 +194,7 @@ fn seat_birth_pins_model_and_effort_and_overrides_later_calls() {
     assert!(override_seat.receipt.contains("high effort"));
     let mut next_call = request();
     next_call.params.insert("temperature".into(), json!(0.9));
-    override_seat.bind(&mut next_call);
+    override_seat.bind(&mut next_call).unwrap();
     assert_eq!(next_call.params["temperature"], json!(0.2));
 }
 #[test]
@@ -214,6 +220,11 @@ fn revision_and_contradiction_trigger_once_without_moving_owner_line() {
         Some(revisions[0].clone())
     );
     assert_eq!(revisions[0].observed_model, model("test/strong@r2"));
+    assert_eq!(vault.pending_description_reasks().unwrap(), revisions);
+    vault
+        .acknowledge_description_reask(&revisions[0].identity)
+        .unwrap();
+    assert!(vault.pending_description_reasks().unwrap().is_empty());
     configured.models[1].public_benchmark = Some("new public evidence".into());
     vault.set_description_policy(&configured).unwrap();
     assert!(vault.check_description_drift().unwrap().is_empty());
@@ -317,7 +328,7 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 #[test]
-fn verdict_calls_route_twice_without_prefix_or_generating_seat_mutation() {
+fn verdict_calls_route_independently_without_prefix_or_generating_seat_mutation() {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     vault.set_description_policy(&policy()).unwrap();
     let judge = Judge::new();
@@ -338,7 +349,6 @@ fn verdict_calls_route_twice_without_prefix_or_generating_seat_mutation() {
             &judge,
         )
         .unwrap();
-    let before = judge.calls();
     let actor = EntityId::now();
     let subject = EntityId::now();
     let at = TimeRange { start: 10, end: 10 };
@@ -380,21 +390,74 @@ fn verdict_calls_route_twice_without_prefix_or_generating_seat_mutation() {
         500,
         BudgetExhaustionPolicy::Suspend,
     );
+    for reserved in ["reasoning_effort", "output_config"] {
+        let settings = SeatSettings {
+            allowed_models: None,
+            effort: None,
+            inference_overrides: BTreeMap::from([(reserved.into(), json!("invalid"))]),
+        };
+        assert!(
+            block_on(vault.call_routed_verdict(
+                "quick",
+                &judge,
+                &settings,
+                request(),
+                VerdictPayload {
+                    instructions: Some("current".into()),
+                    input: vec![ContentPart::Text {
+                        text: "question".into()
+                    }]
+                },
+                VerdictExecution {
+                    context: &ctx,
+                    backend: &backend,
+                    guard: &guard
+                }
+            ))
+            .is_err()
+        );
+    }
+    assert!(backend.0.lock().unwrap().is_empty());
+    let before = judge.calls();
     for (i, selected) in ["test/cheap@r1", "test/strong@r1"].iter().enumerate() {
         let mut call = request();
-        call.messages[1].content = vec![ContentPart::Text {
-            text: format!("question {i}"),
-        }];
+        call.messages.extend([
+            LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: "old user turn".into(),
+                }],
+            },
+            LlmMessage {
+                role: LlmMessageRole::Assistant,
+                content: vec![ContentPart::Text {
+                    text: "old assistant turn".into(),
+                }],
+            },
+            LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: "another old user turn".into(),
+                }],
+            },
+        ]);
+        call.params.insert("temperature".into(), json!(0.9));
         let settings = SeatSettings {
             allowed_models: Some(vec![model(selected)]),
             effort: None,
-            inference_overrides: BTreeMap::new(),
+            inference_overrides: BTreeMap::from([("temperature".into(), json!(0.2))]),
         };
         let outcome = block_on(vault.call_routed_verdict(
             "quick",
             &judge,
             &settings,
             call,
+            VerdictPayload {
+                instructions: Some("current verdict instruction".into()),
+                input: vec![ContentPart::Text {
+                    text: format!("question {i}"),
+                }],
+            },
             VerdictExecution {
                 context: &ctx,
                 backend: &backend,
@@ -404,13 +467,178 @@ fn verdict_calls_route_twice_without_prefix_or_generating_seat_mutation() {
         .unwrap();
         assert!(matches!(outcome, StepOutcome::Finished { .. }));
     }
-    assert_eq!(judge.calls(), before + 2);
+    let mut updated = policy();
+    updated.models[0].effort_ladder = vec![ReasoningEffort::Low];
+    vault.set_description_policy(&updated).unwrap();
+    let high = SeatSettings {
+        allowed_models: None,
+        effort: Some(ReasoningEffort::High),
+        inference_overrides: BTreeMap::from([("temperature".into(), json!(0.2))]),
+    };
+    assert!(matches!(
+        block_on(vault.call_routed_verdict(
+            "quick",
+            &judge,
+            &high,
+            request(),
+            VerdictPayload {
+                instructions: Some("current verdict instruction".into()),
+                input: vec![ContentPart::Text {
+                    text: "high-effort question".into()
+                }]
+            },
+            VerdictExecution {
+                context: &ctx,
+                backend: &backend,
+                guard: &guard
+            }
+        ))
+        .unwrap(),
+        StepOutcome::Finished { .. }
+    ));
+    assert_eq!(judge.calls(), before + 3);
     let calls = backend.0.lock().unwrap();
-    assert_eq!(calls.len(), 2);
-    for (call, expected) in calls.iter().zip(["test/cheap@r1", "test/strong@r1"]) {
+    assert_eq!(calls.len(), 3);
+    for (call, expected) in calls
+        .iter()
+        .zip(["test/cheap@r1", "test/strong@r1", "test/strong@r1"])
+    {
         assert_eq!(call.model, model(expected));
-        assert_eq!(call.messages.len(), 1);
-        assert_eq!(call.messages[0].role, LlmMessageRole::User);
+        assert_eq!(call.messages.len(), 2);
+        assert_eq!(call.messages[0].role, LlmMessageRole::System);
+        assert_eq!(
+            call.messages[0].content,
+            vec![ContentPart::Text {
+                text: "current verdict instruction".into()
+            }]
+        );
+        assert_eq!(call.messages[1].role, LlmMessageRole::User);
+        assert_eq!(call.params["temperature"], json!(0.2));
     }
+    assert_eq!(calls[2].params["reasoning_effort"], json!("high"));
     assert_eq!(vault.routed_seat("writer").unwrap(), Some(seat));
+}
+
+#[test]
+fn persisted_reask_is_recoverable_after_restart_until_acknowledged() {
+    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut configured = policy();
+    configured.models[1].model = model("test/strong@r2");
+    vault.set_description_policy(&configured).unwrap();
+    let original = vault.check_description_drift().unwrap();
+    assert_eq!(original.len(), 1);
+    drop(vault); // simulate a crash before the host has queued the owner ask
+    let reopened = crate::Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    assert!(reopened.check_description_drift().unwrap().is_empty());
+    assert_eq!(reopened.pending_description_reasks().unwrap(), original);
+    reopened
+        .acknowledge_description_reask(&original[0].identity)
+        .unwrap();
+    assert!(reopened.pending_description_reasks().unwrap().is_empty());
+    assert!(reopened.check_description_drift().unwrap().is_empty());
+    assert!(
+        reopened
+            .description_reask(&original[0].identity)
+            .unwrap()
+            .unwrap()
+            .acknowledged
+    );
+}
+
+#[test]
+fn effort_constraint_filters_before_judgment_and_is_part_of_judge_input() {
+    struct Fitness(Mutex<Vec<(ModelId, ReasoningEffort)>>);
+    impl DescriptionJudge for Fitness {
+        fn judge(
+            &self,
+            _task: &str,
+            model: &ModelId,
+            _line: &str,
+            effort: ReasoningEffort,
+        ) -> DescriptionJudgment {
+            self.0.lock().unwrap().push((model.clone(), effort));
+            DescriptionJudgment {
+                fitness: if model.name() == "cheap" { 100 } else { 90 },
+                reason: "fit".into(),
+            }
+        }
+    }
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut configured = policy();
+    configured.models[0].effort_ladder = vec![ReasoningEffort::Low];
+    vault.set_description_policy(&configured).unwrap();
+    let judge = Fitness(Mutex::new(vec![]));
+    let settings = SeatSettings {
+        allowed_models: None,
+        effort: Some(ReasoningEffort::High),
+        inference_overrides: BTreeMap::new(),
+    };
+    let seat = vault
+        .route_seat(
+            SeatBirth {
+                id: "effort-filter",
+                role: "writer",
+                task: "quick",
+                purpose: &CallPurpose::AnswerGen,
+                settings: &settings,
+                tier: &tier(),
+            },
+            &judge,
+        )
+        .unwrap();
+    assert_eq!(seat.model, model("test/strong@r1"));
+    assert_eq!(seat.effort, ReasoningEffort::High);
+    assert_eq!(
+        *judge.0.lock().unwrap(),
+        vec![(model("test/strong@r1"), ReasoningEffort::High)]
+    );
+    let measurement = BTreeMap::new();
+    let (candidate, judgment, effort) = resolve(
+        &configured,
+        &measurement,
+        &settings,
+        &CallPurpose::AutoCheck,
+        "quick",
+        &judge,
+    )
+    .unwrap();
+    assert_eq!(candidate.model, model("test/strong@r1"));
+    assert_eq!(judgment.fitness, 90);
+    assert_eq!(effort, ReasoningEffort::High);
+    assert_eq!(judge.0.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn verdict_controls_reject_shadowing_provider_options_and_reserved_overrides() {
+    let mut request = request();
+    request.provider_options.insert(
+        "openai".into(),
+        json!({"temperature": 0.9, "reasoning_effort": "high"}),
+    );
+    let original = request.clone();
+    assert!(
+        apply_controls(
+            &mut request,
+            ReasoningEffort::Low,
+            &BTreeMap::from([("temperature".into(), json!(0.2))])
+        )
+        .is_err()
+    );
+    assert_eq!(request, original);
+    for reserved in [
+        "reasoning_effort",
+        "reasoning",
+        "thinking",
+        "model",
+        "output_config",
+    ] {
+        assert!(
+            apply_controls(
+                &mut request,
+                ReasoningEffort::Low,
+                &BTreeMap::from([(reserved.into(), json!("override"))])
+            )
+            .is_err()
+        );
+    }
 }
