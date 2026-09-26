@@ -14,8 +14,8 @@ use super::math_keys::{
     voice_sample_key,
 };
 use super::storage_admission::{
-    active_print_subjects, admit_enrollment_consent, admit_match_segments, admit_sample_origin,
-    best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
+    VoiceDeletionTally, active_print_subjects, admit_enrollment_consent, admit_match_segments,
+    admit_sample_origin, best_enrolled_match, calibration_for, cluster_residuals, compute_centroid,
     delete_voice_biometrics_in_txn, load_match_candidates, read_active_print,
     require_counterparty_contact_entity, require_relationship_entity, residual_cluster_ref,
     residual_speaker_label, unambiguous_invite_remainder,
@@ -26,22 +26,30 @@ use super::types::{
     VoiceSessionRosterV1, VoiceWithdrawalReceipt, VoiceWithdrawalRequest,
 };
 
-/// An event ID names one immutable decision. Both consent doors use this
-/// compare in the same transaction as the write (and any hard deletion).
+/// An event ID names one immutable decision. Only the first insertion may
+/// perform a withdrawal's destructive effect; identical redelivery is a replay.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConsentEventWrite {
+    Inserted,
+    Replayed,
+}
+
+/// Both consent doors compare inside the transaction that holds the event
+/// write and any hard deletion.
 fn put_consent_event_once(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     key: &[u8],
     data: &[u8],
-) -> Result<()> {
+) -> Result<ConsentEventWrite> {
     match store.vault_meta.get(txn, key)? {
-        Some(existing) if existing.as_ref() == data => Ok(()),
+        Some(existing) if existing.as_ref() == data => Ok(ConsentEventWrite::Replayed),
         Some(_) => Err(invalid_voice(
             "voice consent event id already names another decision",
         )),
         None => {
             store.vault_meta.put(txn, key, data)?;
-            Ok(())
+            Ok(ConsentEventWrite::Inserted)
         }
     }
 }
@@ -67,6 +75,7 @@ impl Vault {
         let data = encode_consent_event(event)?;
         let key = voice_consent_key(&event.subject_ref, &event.event_id);
         self.with_write_txn(|wtxn| put_consent_event_once(&self.store, wtxn, &key, &data))
+            .map(|_| ())
     }
 
     /// Builds (or rebuilds) one subject's active voice print.
@@ -380,8 +389,9 @@ impl Vault {
     ///
     /// One write transaction appends the non-biometric withdrawal event and
     /// removes the print row, every stored sample/vector row, and the
-    /// active-space pointer. A second call is idempotent: nothing is left to
-    /// delete, and the receipt says `already_absent`.
+    /// active-space pointer. Replaying the same event is idempotent even when
+    /// a newer grant has enrolled a new print: the receipt marks the replay
+    /// and no later biometric material is deleted.
     pub fn withdraw_voice_consent(
         &self,
         request: &VoiceWithdrawalRequest,
@@ -400,14 +410,22 @@ impl Vault {
 
         let store = &self.store;
         let subject = request.subject_ref;
-        let tally = self.with_write_txn(|wtxn| {
-            put_consent_event_once(store, wtxn, &consent_key, &body)?;
-            delete_voice_biometrics_in_txn(store, wtxn, &subject)
+        let (tally, replayed) = self.with_write_txn(|wtxn| {
+            if put_consent_event_once(store, wtxn, &consent_key, &body)?
+                == ConsentEventWrite::Replayed
+            {
+                return Ok((VoiceDeletionTally::default(), true));
+            }
+            Ok((
+                delete_voice_biometrics_in_txn(store, wtxn, &subject)?,
+                false,
+            ))
         })?;
 
         Ok(VoiceWithdrawalReceipt {
             consent_event_ref: request.event_id.clone(),
             subject_ref: subject,
+            replayed,
             already_absent: tally.is_empty(),
             deleted_print: tally.print_rows > 0,
             deleted_sample_count: tally.sample_rows,

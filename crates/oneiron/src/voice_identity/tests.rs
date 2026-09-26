@@ -694,6 +694,71 @@ fn voice_consent_event_id_cannot_replace_an_existing_withdrawal() -> Result<()> 
 }
 
 #[test]
+fn replaying_an_old_withdrawal_preserves_a_newer_grant_and_print() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let subject = test_id(0x37);
+    let recorder = test_id(0x38);
+    let withdrawal = VoiceWithdrawalRequest {
+        event_id: "withdraw-old".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 200,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    };
+    let first = vault.withdraw_voice_consent(&withdrawal)?;
+    assert!(!first.replayed);
+    vault.record_voice_consent(&granted_event(
+        "grant-new",
+        subject,
+        recorder,
+        300,
+        notice_basis(),
+    ))?;
+    let print = vault.enroll_voice_print(&enrollment(
+        subject,
+        "grant-new",
+        vec![solo_sample("s-new", "en", [1.0, 0.0, 0.0, 0.0])],
+        400,
+    ))?;
+    let sample = stored_sample(&vault, subject, "s-new")?.expect("new sample");
+
+    let replay = vault.withdraw_voice_consent(&withdrawal)?;
+    assert!(replay.replayed);
+    assert!(replay.already_absent);
+    assert!(!replay.deleted_print);
+    assert_eq!(replay.deleted_sample_count, 0);
+    assert_eq!(replay.deleted_vector_count, 0);
+    assert_eq!(stored_print(&vault, subject)?, Some(print.clone()));
+    assert_eq!(
+        stored_sample(&vault, subject, "s-new")?,
+        Some(sample.clone())
+    );
+
+    let old_event = VoiceConsentEventV1 {
+        event_id: withdrawal.event_id.clone(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: withdrawal.occurred_at,
+        purposes: withdrawal.purposes.clone(),
+        basis: withdrawal.basis.clone(),
+        state: VoiceConsentState::Withdrawn,
+    };
+    vault.record_voice_consent(&old_event)?;
+    assert_eq!(stored_print(&vault, subject)?, Some(print));
+    assert_eq!(stored_sample(&vault, subject, "s-new")?, Some(sample));
+    assert!(
+        vault
+            .withdraw_voice_consent(&VoiceWithdrawalRequest {
+                occurred_at: 201,
+                ..withdrawal
+            })
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn recording_a_withdrawal_through_the_generic_consent_door_deletes_prints() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let subject = test_id(0x35);
@@ -1431,6 +1496,7 @@ fn withdrawal_removes_every_biometric_row_in_one_transaction_and_is_idempotent()
     let receipt = vault.withdraw_voice_consent(&request)?;
     assert_eq!(receipt.consent_event_ref, "consent-withdraw");
     assert_eq!(receipt.subject_ref, subject);
+    assert!(!receipt.replayed);
     assert!(!receipt.already_absent);
     assert!(receipt.deleted_print);
     assert!(receipt.deleted_active_pointer);
@@ -1483,6 +1549,7 @@ fn withdrawal_removes_every_biometric_row_in_one_transaction_and_is_idempotent()
         ..request
     })?;
     assert!(second.already_absent);
+    assert!(!second.replayed);
     assert!(!second.deleted_print);
     assert!(!second.deleted_active_pointer);
     assert_eq!(second.deleted_sample_count, 0);
