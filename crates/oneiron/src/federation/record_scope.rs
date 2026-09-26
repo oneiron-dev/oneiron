@@ -156,6 +156,29 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
+/// Preserve an existing, digest-proved scope when a text document replaces only
+/// its row body with a pointer. Do not mint reach for an unstamped or stale row.
+#[cfg(feature = "sync")]
+pub(crate) fn restamp_document_pointer(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    original: &[u8],
+    pointer: &[u8],
+) -> Result<()> {
+    let Some(scope) = stored_scope(store, txn, id, kind, original)? else {
+        return Ok(());
+    };
+    let bytes = serde_json::to_vec(&Stamp {
+        version: 1,
+        digest: digest(kind, pointer),
+        scope,
+    })
+    .map_err(|_| Error::InvariantViolation("scope stamp encode"))?;
+    store.vault_meta.put(txn, &key(id), &bytes)?;
+    Ok(())
+}
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(

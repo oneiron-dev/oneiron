@@ -13,6 +13,8 @@ use super::{
     GeneratedUiAgentCallback, LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget,
     LensBackingTargetKind, LensHostBackingRef, LensPrincipalBinding, LensReadHandle, LensReadReach,
 };
+#[cfg(feature = "sync")]
+use super::{LensSpanCursor, LensSpanSelectionRequest};
 
 #[derive(Debug, Clone)]
 pub struct LensRenderFrame {
@@ -66,6 +68,21 @@ impl LensRenderFrame {
             ));
         }
         self.ensure_target_readable(scoped_read, &target)?;
+        #[cfg(feature = "sync")]
+        let document_frontier = if target.kind() == LensBackingTargetKind::Entity {
+            let vault = scoped_read.vault();
+            let has_document = {
+                let txn = vault.store.env.read_txn()?;
+                crate::entity_doc::has_record_head(&vault.store, &txn, target.entity_id())?
+            };
+            if has_document {
+                Some(vault.entity_text_frontier(target.entity_id())?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let ref_id = LensBackingRefId::new(format!("ref-{}", self.backing_refs.len()))?;
         let token = LensBackingRefToken {
@@ -77,6 +94,8 @@ impl LensRenderFrame {
             handle,
             role,
             target,
+            #[cfg(feature = "sync")]
+            document_frontier,
         });
         Ok(token)
     }
@@ -137,6 +156,69 @@ impl LensRenderFrame {
         self.issue_read_handle(render, &request.atom_id, &resolved)
     }
 
+    /// Select a half-open Unicode-scalar span in the host-bound entity document.
+    /// The source document and cursor/version are derived by the engine, not the client.
+    #[cfg(feature = "sync")]
+    pub fn select_span(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        request: &LensSpanSelectionRequest,
+    ) -> Result<LensReadHandle> {
+        let atom = self.select_atom(
+            scoped_read,
+            render,
+            &LensAtomSelectionRequest {
+                card_id: request.card_id.clone(),
+                atom_id: request.atom_id.clone(),
+                handle: request.handle.clone(),
+            },
+        )?;
+        let resolved = self.resolve_backing_ref_token(scoped_read, &atom.backing_token)?;
+        self.issue_span_read_handle(
+            scoped_read,
+            render,
+            &atom.atom_id,
+            &resolved,
+            request.start,
+            request.end,
+        )
+    }
+
+    #[cfg(feature = "sync")]
+    fn issue_span_read_handle(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        atom_id: &LensAtomId,
+        resolved: &LensHostBackingRef,
+        start: usize,
+        end: usize,
+    ) -> Result<LensReadHandle> {
+        let mut handle = self.issue_read_handle(render, atom_id, resolved)?;
+        if handle.target_kind != LensBackingTargetKind::Entity {
+            return Err(Error::InvalidConfig(
+                "lens span requires an entity document".into(),
+            ));
+        }
+        // make_anchor validates the bounds and creates both Loro cursors and the
+        // causal version from one document snapshot. No selected text enters the handle.
+        let pinned = resolved.document_frontier.as_ref().ok_or_else(|| {
+            Error::InvalidConfig("lens span was not rendered from an entity document".into())
+        })?;
+        let anchor =
+            scoped_read
+                .vault()
+                .entity_text_anchor(resolved.target.entity_id(), start, end)?;
+        if anchor.frontier() != pinned {
+            return Err(Error::InvalidConfig(
+                "lens span document changed since render".into(),
+            ));
+        }
+        handle.span = Some(LensSpanCursor::from_anchor(&anchor, start, end));
+        Ok(handle)
+    }
+
     /// The handle that selecting `atom_id` onto `resolved` proves *right now*.
     ///
     /// Issuance and re-resolution share this one derivation, so every field a handle
@@ -163,6 +245,7 @@ impl LensRenderFrame {
             target_kind: resolved.target.kind(),
             short_ref: resolved.target.short_ref(),
             backing_token: resolved.token.clone(),
+            span: None,
         })
     }
 
@@ -185,7 +268,24 @@ impl LensRenderFrame {
         self.ensure_scoped_read_actor(scoped_read)?;
         self.ensure_render_is_ours(render)?;
         let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
-        if self.issue_read_handle(render, &handle.atom_id, &resolved)? != *handle {
+        let current = match &handle.span {
+            #[cfg(feature = "sync")]
+            Some(span) => {
+                let (start, end) = span.range();
+                self.issue_span_read_handle(
+                    scoped_read,
+                    render,
+                    &handle.atom_id,
+                    &resolved,
+                    start,
+                    end,
+                )?
+            }
+            #[cfg(not(feature = "sync"))]
+            Some(_) => return Err(Error::InvalidConfig("span resolution requires sync".into())),
+            None => self.issue_read_handle(render, &handle.atom_id, &resolved)?,
+        };
+        if current != *handle {
             return Err(Error::InvalidConfig(
                 "lens read handle no longer matches the reach this render issues".to_string(),
             ));
