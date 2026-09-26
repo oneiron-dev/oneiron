@@ -64,9 +64,7 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("order", Value::from(call.order)),
             ("occurred_at", Value::from(call.occurred_at)),
         ]),
-        SelfCall::AskHuman(call) => {
-            request_map(vec![("prompt", Value::from(call.prompt.as_str()))])
-        }
+        SelfCall::Ask(call) => request_map(vec![("prompt", Value::from(call.prompt.as_str()))]),
         SelfCall::DestructiveFixture(call) | SelfCall::OutboundFixture(call) => {
             request_map(vec![("label", Value::from(call.label.as_str()))])
         }
@@ -366,7 +364,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),
         "self.memory.supersede_claim" => Ok(SelfEffect::MemorySupersedeClaim),
         "self.memory.put_edge" => Ok(SelfEffect::MemoryPutEdge),
-        "self.ask_human" => Ok(SelfEffect::AskHuman),
+        "ask" => Ok(SelfEffect::Ask),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "self.tasks.delegate" => Ok(SelfEffect::TaskDelegate),

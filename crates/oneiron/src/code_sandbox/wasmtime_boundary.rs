@@ -113,7 +113,7 @@ impl<H: 'static> WasmtimeRequest<H> {
 }
 
 /// Exact WIT-to-public-name inventory installed by the linker for this tier.
-/// It includes both pinned ask-human spellings as separate typed imports.
+/// It exposes only the pinned bare `ask` import for a first-party guest.
 pub fn linked_imports(tier: SandboxGuestTier) -> Vec<(&'static str, &'static str)> {
     let contract = SandboxBoundaryContract::for_tier(tier);
     IMPORTS
@@ -175,8 +175,7 @@ fn link<H: bindings::GuestImports + 'static>(
                 unary!(root, wit, memory_supersede_claim, SupersedeInput);
             }
             "self.memory.put_edge" => unary!(root, wit, memory_put_edge, EdgeInput),
-            "self.ask_human" => unary!(root, wit, ask_human, PromptInput),
-            "self.askHuman" => unary!(root, wit, ask_human_camel, PromptInput),
+            "ask" => unary!(root, wit, ask, PromptInput),
             "self.speak" => unary!(root, wit, speak, TextInput),
             "self.think" => unary!(root, wit, think, TextInput),
             "self.express" => unary!(root, wit, express, TextInput),

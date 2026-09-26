@@ -51,6 +51,7 @@ fn stored_invalid_option_is_a_store_error_not_caller_input()
             source,
             word,
             order: 1,
+            at: 1,
         },
     )?;
     vault

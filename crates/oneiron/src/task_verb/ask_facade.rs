@@ -26,16 +26,7 @@ impl Memory<'_> {
                 return replay_receipt(group_ref, group, self.actor(), &digest);
             }
             // Revocation and admission observe the SAME snapshot.
-            let holders = match &input.who {
-                Some(TaskAskTarget::Authority(scope)) => self
-                    .vault()
-                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?,
-                Some(TaskAskTarget::Responder(assignee)) => {
-                    vec![assignee.entity_ref().unwrap_or(self.actor())]
-                }
-                Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
-                None => vec![self.actor()],
-            };
+            let holders = self.ask_holders_in_txn(txn, input)?;
             let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
             let effective = input.effective(
                 &holders.iter().copied().collect(),
@@ -178,7 +169,25 @@ impl Memory<'_> {
         })
     }
 
-    fn ask_class_in_txn(
+    pub(super) fn ask_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<Vec<EntityId>> {
+        Ok(match &input.who {
+            Some(TaskAskTarget::Authority(scope)) => {
+                self.vault()
+                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?
+            }
+            Some(TaskAskTarget::Responder(assignee)) => {
+                vec![assignee.entity_ref().unwrap_or(self.actor())]
+            }
+            Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
+            None => vec![self.actor()],
+        })
+    }
+
+    pub(super) fn ask_class_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
@@ -629,6 +638,42 @@ impl Memory<'_> {
 }
 
 impl Memory<'_> {
+    /// `peek(ask)`: attributed partial words, then explicit unknowns at cutoff.
+    /// Reading this view never mints a TASK or settles an ask.
+    pub fn tasks_ask_peek(
+        &self,
+        handle: TaskAskHandle,
+    ) -> MemoryResult<Vec<TaskAskPersonEvidence>> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        if group.owner != self.actor().to_hex()
+            && !group
+                .members
+                .iter()
+                .any(|member| member.actor == self.actor().to_hex())
+        {
+            return Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "ask handle is not addressed to this actor",
+                "Read an ask you own or answer.",
+            ));
+        }
+        Ok(ask_record::person_evidence_in(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            &group,
+            self.vault().store.clock.now_recorded_at(),
+        )?)
+    }
+
     /// Live evidence includes late words, without rewriting the cutoff receipt.
     pub fn tasks_ask_evidence(&self, handle: TaskAskHandle) -> MemoryResult<Vec<TaskAskEvidence>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;

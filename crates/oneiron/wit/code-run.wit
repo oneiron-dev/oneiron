@@ -65,10 +65,8 @@ world guest {
     import memory-supersede-claim: func(input: supersede-input) -> result<claim-output, string>;
     // @js self.memory.put_edge
     import memory-put-edge: func(input: edge-input) -> result<edge-output, string>;
-    // @js self.ask_human
-    import ask-human: func(input: prompt-input) -> result<wait-output, string>;
-    // @js self.askHuman
-    import ask-human-camel: func(input: prompt-input) -> result<wait-output, string>;
+    // @js ask
+    import ask: func(input: prompt-input) -> result<wait-output, string>;
     // @js self.speak
     import speak: func(input: text-input) -> result<speech-output, string>;
     // @js self.think

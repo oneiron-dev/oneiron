@@ -928,6 +928,77 @@ fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> 
 }
 
 #[test]
+fn ask_peek_round_trips_word_companion_and_silent_unknown_with_distinct_attribution() -> Result<()>
+{
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Proceed;
+    let handle = fixture.ask(&spec)?;
+    let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    fixture.word(handle, 0, "yes")?;
+    fixture.clock.set(1_010);
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.owner,
+                option: Some(TaskAskOptionId::new("no")?),
+                inform_for: Some(fixture.people[1]),
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let partial = owner.tasks_ask_peek(handle)?;
+    assert_eq!(partial.len(), 2);
+    let human = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[0])
+        .unwrap();
+    assert_eq!(human.kind, TaskAskPersonKind::Word);
+    assert_eq!(human.at, 1_000);
+    assert_eq!(human.source, Some(fixture.people[0]));
+    let companion = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[1])
+        .unwrap();
+    assert_eq!(companion.kind, TaskAskPersonKind::Companion);
+    assert_eq!(companion.at, 1_010);
+    assert_eq!(companion.source, Some(fixture.owner));
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(
+        result.coverage.unknown,
+        [fixture.people[1], fixture.people[2]].into()
+    );
+    assert_eq!(
+        result.fallback.as_ref().unwrap().branch,
+        TaskAskDefault::Proceed
+    );
+    let evidence = owner.tasks_ask_peek(handle)?;
+    assert_eq!(evidence.len(), 3);
+    let silent = evidence
+        .iter()
+        .find(|entry| entry.who == fixture.people[2])
+        .unwrap();
+    assert_eq!(silent.kind, TaskAskPersonKind::Unknown);
+    assert_eq!(silent.answer, None);
+    assert_eq!(silent.at, 1_101);
+    assert_eq!(silent.source, None);
+    assert!(
+        evidence
+            .iter()
+            .all(|entry| entry.kind != TaskAskPersonKind::Default)
+    );
+    let json = serde_json::to_string(&evidence)?;
+    assert_eq!(
+        serde_json::from_str::<Vec<TaskAskPersonEvidence>>(&json)?,
+        evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn ask_silent_founder_is_unknown_and_default_is_one_aggregate_event() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
     let mut spec = fixture.all();

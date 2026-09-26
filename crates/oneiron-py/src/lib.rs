@@ -282,6 +282,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn can(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "can")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("can", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn peek(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(request_json, "peek")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("peek", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn tasks_ask(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "tasks.ask")?;
         let output = py

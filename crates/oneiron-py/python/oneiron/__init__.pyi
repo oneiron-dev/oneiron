@@ -173,6 +173,25 @@ class TaskCancelReceipt(TypedDict):
     cancel_requested: bool
     forced: bool
 
+TaskCanAskRequest = dict[str, Any]
+TaskAskHandle = dict[str, str]
+
+class TaskAskPreflightRecipient(TypedDict):
+    who: str
+    face: str | None
+    channel: str | None
+    word_required: bool
+
+class TaskAskPreflight(TypedDict):
+    recipients: list[TaskAskPreflightRecipient]
+
+class TaskAskPersonEvidence(TypedDict):
+    who: str
+    answer: dict[str, Any] | None
+    kind: Literal["word", "companion", "default", "unknown"]
+    at: int
+    source: str | None
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -194,7 +213,7 @@ class Oneiron:
     @classmethod
     def pair(cls, link: str) -> tuple["Oneiron", str]: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
-    # BEGIN GENERATED FACADE VERBS
+# BEGIN GENERATED FACADE VERBS
     def cancel(self, task_ref: str) -> TaskCancelReceipt: ...
     def describe(self, task_ref: str | None = None) -> TaskDescription: ...
     def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
@@ -206,5 +225,7 @@ class Oneiron:
     def key_value_delete(self, request: KeyValueAddress) -> KeyValueDeleteReceipt: ...
     def key_value_search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
     def key_value_namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
+    def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
+    def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
 
 # END GENERATED FACADE VERBS

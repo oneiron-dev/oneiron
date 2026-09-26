@@ -15,6 +15,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/key_value_delete", post(key_value_delete))
         .route("/key_value_search", post(key_value_search))
         .route("/key_value_namespaces", post(key_value_namespaces))
+        .route("/can", post(can))
+        .route("/peek", post(peek))
         .route("/tasks.ask", post(tasks_ask))
         .route("/tasks.wait", post(tasks_wait))
         .route("/tasks.answer", post(tasks_answer))
@@ -229,6 +231,36 @@ async fn key_value_namespaces(
     Ok(Json(oneiron::task_verb::sdk::invoke(
         &server.vault.memory(actor, class),
         "key_value_namespaces",
+        value,
+    )?))
+}
+async fn can(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "can",
+        value,
+    )?))
+}
+async fn peek(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+
+    let value = facade_json(payload)?;
+    let (actor, class) = facade_actor(&auth)?;
+    Ok(Json(oneiron::task_verb::sdk::invoke(
+        &server.vault.memory(actor, class),
+        "peek",
         value,
     )?))
 }

@@ -40,9 +40,8 @@ declare namespace self {
     function supersede_claim(input: OneironCodeRun.SupersedeInput): Promise<OneironCodeRun.ClaimOutput>;
     function put_edge(input: OneironCodeRun.EdgeInput): Promise<OneironCodeRun.EdgeOutput>;
   }
-  function ask_human(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
-  function askHuman(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;
   function speak(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
   function think(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
   function express(input: OneironCodeRun.TextInput): Promise<OneironCodeRun.SpeechOutput>;
 }
+function ask(input: OneironCodeRun.PromptInput): Promise<OneironCodeRun.WaitOutput>;

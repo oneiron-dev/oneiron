@@ -1360,7 +1360,7 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
 #[test]
 fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<()> {
     use crate::code_run::{
-        HostSelfDispatcher, SelfAskHumanCall, SelfCall, SelfDispatcher, SelfFixtureEffectCall,
+        HostSelfDispatcher, SelfAskCall, SelfCall, SelfDispatcher, SelfFixtureEffectCall,
         SelfSpeechCall,
     };
     let (_tmp, vault) = temp_vault();
@@ -1378,7 +1378,7 @@ fn anonymous_audited_effects_refuse_before_creating_floor_receipts() -> Result<(
         "anonymous-run",
     )?;
     for call in [
-        SelfCall::AskHuman(SelfAskHumanCall::new("private prompt")),
+        SelfCall::Ask(SelfAskCall::new("private prompt")),
         SelfCall::DestructiveFixture(SelfFixtureEffectCall {
             label: "private deletion".to_owned(),
         }),

@@ -1,7 +1,7 @@
 //! Protected replicated ask facts. No winner index lives in vault_meta.
 use super::ask_types::{
-    TaskAskAnswer, TaskAskEvidence, TaskAskEvidenceReason, TaskAskHoldReason, TaskAskSource,
-    TaskAskStatus, TaskAskWord,
+    TaskAskAnswer, TaskAskEvidence, TaskAskEvidenceReason, TaskAskHoldReason,
+    TaskAskPersonEvidence, TaskAskPersonKind, TaskAskSource, TaskAskStatus, TaskAskWord,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, RecordError, Result};
@@ -47,6 +47,7 @@ struct AskAnswerFact {
     source: TaskAskSource,
     word: TaskAskWord,
     order: u64,
+    at: u64,
 }
 
 pub(super) fn invalid() -> Error {
@@ -213,6 +214,32 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8], subkind: &str) -> Result
         .map_err(|_| invalid())
 }
 
+fn read_answer(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<AskAnswerFact>> {
+    let Some(raw) = vault.get_raw_in(txn, &id)? else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Ok(None);
+    }
+    let fact = decode::<AskAnswerFact>(
+        raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?,
+        ANSWER,
+    )?;
+    if fact.as_ref().is_some_and(|fact| {
+        fact.at != header.learned_at
+            || fact.at != header.occurred_start
+            || fact.at != header.occurred_end
+    }) {
+        return Err(invalid());
+    }
+    Ok(fact)
+}
+
 pub(super) fn put<T: Serialize>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -298,7 +325,7 @@ pub(super) fn evidence_in(
             return Err(Error::IndexOverflow("ask words"));
         }
         let word_ref = row?.target;
-        let Some(fact) = read::<AskAnswerFact>(vault, txn, word_ref, ANSWER)? else {
+        let Some(fact) = read_answer(vault, txn, word_ref)? else {
             continue;
         };
         if fact.group != id {
@@ -310,6 +337,7 @@ pub(super) fn evidence_in(
             .iter()
             .any(|member| member.task == fact.task.to_hex() && member.actor == person.to_hex())
             || fact.order == 0
+            || fact.at == 0
             || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
             || (fact.source == TaskAskSource::Inform && fact.actor.to_hex() != group.owner)
             || answer_id(id, fact.task, fact.actor, fact.source, &fact.word)? != word_ref
@@ -333,6 +361,54 @@ pub(super) fn evidence_in(
     }
     evidence.sort_by_key(|entry| (entry.order, entry.answer.word_ref));
     Ok(evidence)
+}
+
+/// Projects all admitted words without erasing their speakers. A person
+/// without a word becomes unknown only when the cutoff has passed or settled.
+pub(super) fn person_evidence_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    now: u64,
+) -> Result<Vec<TaskAskPersonEvidence>> {
+    let settled = super::ask_settlement::read_result(vault, txn, id)?;
+    let cutoff = settled
+        .as_ref()
+        .map(|result| result.settlement.at)
+        .or_else(|| group.effective.until.filter(|until| *until <= now));
+    let words = super::ask_settlement::evidence(vault, txn, id, group)?;
+    let mut answers = Vec::with_capacity(group.members.len());
+    for member in &group.members {
+        let who = entity(&member.actor)?;
+        let selected = words
+            .iter()
+            .filter(|entry| entry.person_ref == who)
+            .max_by_key(|entry| (u8::from(entry.source == TaskAskSource::Human), entry.order));
+        if let Some(entry) = selected {
+            let fact = read_answer(vault, txn, entry.answer.word_ref)?.ok_or_else(invalid)?;
+            answers.push(TaskAskPersonEvidence {
+                who,
+                answer: Some(entry.word.clone()),
+                kind: if entry.source == TaskAskSource::Human {
+                    TaskAskPersonKind::Word
+                } else {
+                    TaskAskPersonKind::Companion
+                },
+                at: fact.at,
+                source: Some(entry.answer.actor_ref),
+            });
+        } else if let Some(at) = cutoff {
+            answers.push(TaskAskPersonEvidence {
+                who,
+                answer: None,
+                kind: TaskAskPersonKind::Unknown,
+                at,
+                source: None,
+            });
+        }
+    }
+    Ok(answers)
 }
 
 fn validate_word(group: &AskGroup, word: &TaskAskWord) -> Result<()> {
@@ -406,7 +482,7 @@ pub(super) fn admit_word(
         result_ref: word.result_ref,
         word_ref,
     };
-    if let Some(existing) = read::<AskAnswerFact>(vault, txn, word_ref, ANSWER)? {
+    if let Some(existing) = read_answer(vault, txn, word_ref)? {
         if existing.group == id
             && existing.task == task
             && existing.actor == actor
@@ -451,6 +527,7 @@ pub(super) fn admit_word(
             source,
             word: word.clone(),
             order,
+            at: now,
         },
         now,
     )?;
@@ -643,6 +720,7 @@ pub(crate) fn guard_ask_fact_put(
         Some(ANSWER) => {
             let fact: AskAnswerFact = decode(data, ANSWER)?.ok_or_else(invalid)?;
             if fact.order == 0
+                || fact.at == 0
                 || (fact.source == TaskAskSource::Inform) != fact.word.inform_for.is_some()
                 || answer_id(fact.group, fact.task, fact.actor, fact.source, &fact.word)? != id
             {
