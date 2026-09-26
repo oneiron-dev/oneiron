@@ -144,7 +144,9 @@ pub fn request_compaction_wake_with_packet(
 /// `projection_digest` is the SHA-256 of the projector's proposed image, not
 /// a hash of the turn or of the queue payload. The projector supplies it only
 /// after computing the candidate image. `None` is no new material. Equal images mean no change:
-/// no attempt, cursor, or receipt is written. The projection cursor and the
+/// no attempt, cursor, or receipt is written. The image participates in the
+/// enqueue dedupe key, so a new image for the same turn cannot be swallowed
+/// by an existing attempt. The projection cursor and the
 /// queued attempt land in the same transaction; a failed enqueue cannot lose
 /// a changed image. Other triggers (consent, connector, session end) bypass
 /// the cadence gate and retain their existing event semantics.
@@ -172,13 +174,25 @@ pub fn request_turn_wake(
     if vault.queued_wake_projection_in_txn(&txn)? == Some(projection_digest) {
         return Ok(None);
     }
+    // Caller dedupe keys may name a turn, not an image. Bind the image into
+    // the effective key so a second, changed projection on the SAME turn
+    // cannot return Existing and advance the cursor without new work.
+    let mut key_hash = blake3::Hasher::new();
+    key_hash.update(b"dreamer:turn-projection:v1");
+    key_hash.update(&turn_ordinal.to_be_bytes());
+    key_hash.update(&projection_digest);
+    if let Some(key) = dedupe_key {
+        key_hash.update(&(key.len() as u64).to_be_bytes());
+        key_hash.update(key.as_bytes());
+    }
+    let image_key = format!("turn-projection:{}", key_hash.finalize().to_hex());
     let outcome = store.enqueue_consolidation_in_txn(
         &mut txn,
         EnqueueDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             input: payload.input,
             parent_attempt: payload.parent_attempt,
-            dedupe_key,
+            dedupe_key: Some(image_key),
             run_id,
             now,
         },

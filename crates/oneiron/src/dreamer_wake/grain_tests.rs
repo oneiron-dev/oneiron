@@ -50,3 +50,14 @@ fn two_vaults_have_independent_turn_grains_and_surprise_is_write_free() -> Resul
     assert!(WakeGrain::new(0).is_err());
     Ok(())
 }
+
+#[test]
+fn new_image_on_same_turn_cannot_be_swallowed_by_advisory_dedupe() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    assert!(tick(&vault, 1, Some([1; 32]))?);
+    assert!(tick(&vault, 1, Some([2; 32]))?);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
+    assert!(!tick(&vault, 1, Some([2; 32]))?);
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
+    Ok(())
+}
