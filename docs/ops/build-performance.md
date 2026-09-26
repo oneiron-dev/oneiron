@@ -110,14 +110,18 @@ env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
 This includes all non-ignored featureless library tests, including the slow set.
 The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
 only to this command. It is not full verification, does not emit `VERIFY-OK`, and
-must not replace the mandatory shared-process libtest lane. On Linux,
-`Test (featureless)` runs the shared-process `cargo test` lane and the
-per-test-process nextest lane, in that order, in parallel with `Test` (workspace
-nextest and doctests). The main-push/dispatch-only `Test (macOS)` recipe still
-runs both featureless lanes in the same order. Both CI featureless nextest steps
-pin `--retries 0` even if the runner exports `NEXTEST_RETRIES`; they do not
-suppress user configuration or set eight threads. The new Linux context must
-be added to the main ruleset's required checks after merge.
+must not replace the mandatory shared-process libtest lane.
+
+CI is scoped (owner ruling 2026-09-26). A PR or main push runs
+`scripts/ci/ci_scope.py` on its diff: `Checks` lints only the touched packages,
+`Test` runs nextest for the touched packages and, for `oneiron`, the lib tests of
+the touched top-level modules, and `Test (featureless)` runs the shared-process
+`cargo test` lane for those modules. The full gate runs nightly (03:00 JST), on
+manual dispatch, and when a build file changes: there `Test (featureless)` runs
+the shared-process `cargo test` lane and the per-test-process nextest lane, in
+that order, in parallel with `Test` (workspace nextest and doctests), and the
+featureless nextest step pins `--retries 0`. `Test (macOS)` and the mutation
+audit run on dispatch only.
 
 These **local inner-loop measurements** are a latency/compute choice, not
 equivalent gate coverage. On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
@@ -127,7 +131,7 @@ median system CPU rose from **76.4 to 88.2 s**. These measurements establish no
 aggregate-RAM benefit and no full-script speedup. Two clean Arch pairs showed no
 improvement (nextest was slightly slower); a contaminated third pair was excluded.
 No precise pooled Linux effect is claimed. These results do not show a speedup for
-the CI recipes, which now include both process models.
+the CI recipes; the nightly full gate runs both process models.
 
 ## Diagnosing macOS vault-open ENOSPC
 
