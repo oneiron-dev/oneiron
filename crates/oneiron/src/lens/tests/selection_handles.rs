@@ -133,6 +133,130 @@ fn span_handle_resolves_loro_cursors_at_its_version_and_rejects_stale_head() -> 
 
 #[cfg(feature = "sync")]
 #[test]
+fn span_selection_refuses_offsets_from_a_stale_render() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    let at_start = vault.entity_text_anchor(&target, 0, 0)?;
+    vault.edit_entity_text(
+        &target,
+        &[crate::entity_doc::AnchoredEdit {
+            actor: Some(actor),
+            verb: crate::entity_doc::EditVerb::InsertAfterAnchor {
+                anchor: at_start,
+                text: "X".into(),
+            },
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        10,
+    )?;
+    assert_eq!(vault.entity_text(&target)?, "Xperson");
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("people"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    assert!(
+        frame.select_span(&read, &render, &request).is_err(),
+        "stale offsets must not turn the rendered 'ers' into the current 'per'"
+    );
+
+    let (fresh_key, mut fresh_frame) = viewer_frame("card-1")?;
+    fresh_frame.mint_backing_ref(
+        &vault.scoped_read(fresh_key.clone()),
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let fresh_read = vault.scoped_read(fresh_key);
+    let selected = fresh_frame.select_span(&fresh_read, &render, &request)?;
+    assert_eq!(
+        selected.span().expect("fresh cursor").frontier(),
+        vault.entity_text_frontier(&target)?
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn rewrite_switch_keeps_scoped_span_reachable_but_refuses_old_handle() -> Result<()> {
+    let SpanFixture {
+        _tmp,
+        vault,
+        target,
+        actor,
+        owner,
+        key,
+        frame,
+        render,
+    } = span_fixture()?;
+    let read = vault.scoped_read(key);
+    let request = LensSpanSelectionRequest {
+        card_id: render_id("card-1"),
+        atom_id: id("people"),
+        handle: handle("visible-set"),
+        start: 1,
+        end: 4,
+    };
+    let old = frame.select_span(&read, &render, &request)?;
+    let proposal = crate::EntityId::now();
+    vault.open_text_proposal(
+        &proposal,
+        &[crate::entity_doc::ForkRequest {
+            entity: target,
+            base: vault.entity_text_frontier(&target)?,
+            actor,
+            edits: Vec::new(),
+            rewrite: Some("replacement".into()),
+        }],
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        11,
+    )?;
+    vault.settle_text_proposal(
+        &proposal,
+        crate::entity_doc::SettleVerb::Switch,
+        &crate::entity_doc::DocAuthorization::Owner(&owner),
+        actor,
+        12,
+    )?;
+    assert_eq!(vault.entity_text(&target)?, "replacement");
+    assert!(frame.resolve_read_handle(&read, &render, &old).is_err());
+
+    let (fresh_key, mut fresh_frame) = viewer_frame("card-1")?;
+    fresh_frame.mint_backing_ref(
+        &vault.scoped_read(fresh_key.clone()),
+        handle("visible-set"),
+        LensHandleRole::EntitySet,
+        backing_target_for(&vault, &target, LensBackingTargetKind::Entity)?,
+    )?;
+    let fresh_read = vault.scoped_read(fresh_key);
+    let fresh = fresh_frame.select_span(&fresh_read, &render, &request)?;
+    assert_eq!(
+        fresh_frame
+            .resolve_read_handle(&fresh_read, &render, &fresh)?
+            .target()
+            .entity_id(),
+        &target
+    );
+    assert_ne!(
+        old.span().expect("old cursor").frontier(),
+        fresh.span().expect("new cursor").frontier()
+    );
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
 fn span_rejects_out_of_bounds_and_claim_backing() -> Result<()> {
     let SpanFixture {
         _tmp,

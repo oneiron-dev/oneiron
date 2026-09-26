@@ -393,7 +393,8 @@ pub(super) fn move_pointer(
     let raw = store
         .entities
         .get(txn, entity.as_bytes())?
-        .ok_or(Error::EntityNotFound)?;
+        .ok_or(Error::EntityNotFound)?
+        .to_vec();
     let value = rmpv::decode::read_value(&mut std::io::Cursor::new(
         &raw[ENTITY_METADATA_HEADER_LEN..],
     ))
@@ -409,6 +410,15 @@ pub(super) fn move_pointer(
     let mut out = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
     rmpv::encode::write_value(&mut out, &rmpv::Value::Map(fields))
         .map_err(|_| invalid("document pointer encoding"))?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    crate::federation::record_scope::restamp_document_pointer(
+        store,
+        txn,
+        *entity,
+        header.entity_type,
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        &out[ENTITY_METADATA_HEADER_LEN..],
+    )?;
     store.entities.put(txn, entity.as_bytes(), &out)?;
     Ok(())
 }

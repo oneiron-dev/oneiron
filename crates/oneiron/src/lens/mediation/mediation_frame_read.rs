@@ -68,6 +68,21 @@ impl LensRenderFrame {
             ));
         }
         self.ensure_target_readable(scoped_read, &target)?;
+        #[cfg(feature = "sync")]
+        let document_frontier = if target.kind() == LensBackingTargetKind::Entity {
+            let vault = scoped_read.vault();
+            let has_document = {
+                let txn = vault.store.env.read_txn()?;
+                crate::entity_doc::has_record_head(&vault.store, &txn, target.entity_id())?
+            };
+            if has_document {
+                Some(vault.entity_text_frontier(target.entity_id())?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         let ref_id = LensBackingRefId::new(format!("ref-{}", self.backing_refs.len()))?;
         let token = LensBackingRefToken {
@@ -79,6 +94,8 @@ impl LensRenderFrame {
             handle,
             role,
             target,
+            #[cfg(feature = "sync")]
+            document_frontier,
         });
         Ok(token)
     }
@@ -186,10 +203,18 @@ impl LensRenderFrame {
         }
         // make_anchor validates the bounds and creates both Loro cursors and the
         // causal version from one document snapshot. No selected text enters the handle.
+        let pinned = resolved.document_frontier.as_ref().ok_or_else(|| {
+            Error::InvalidConfig("lens span was not rendered from an entity document".into())
+        })?;
         let anchor =
             scoped_read
                 .vault()
                 .entity_text_anchor(resolved.target.entity_id(), start, end)?;
+        if anchor.frontier() != pinned {
+            return Err(Error::InvalidConfig(
+                "lens span document changed since render".into(),
+            ));
+        }
         handle.span = Some(LensSpanCursor::from_anchor(&anchor, start, end));
         Ok(handle)
     }

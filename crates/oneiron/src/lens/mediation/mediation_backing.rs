@@ -121,6 +121,9 @@ pub struct LensHostBackingRef {
     pub(super) handle: LensHandleName,
     pub(super) role: LensHandleRole,
     pub(super) target: LensBackingTarget,
+    /// Document frontier when this host backing was emitted; absent for non-doc rows.
+    #[cfg(feature = "sync")]
+    pub(super) document_frontier: Option<Vec<u8>>,
 }
 
 impl LensHostBackingRef {
