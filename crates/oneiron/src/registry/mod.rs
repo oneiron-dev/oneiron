@@ -1,5 +1,6 @@
 //! Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators.
 
+mod artifact_kinds;
 mod families;
 mod namespaces;
 pub mod pack_byte_map;
@@ -8,6 +9,7 @@ mod type_bytes;
 mod validation;
 mod zones;
 
+pub use self::artifact_kinds::{ArtifactFamilyId, ArtifactFamilyKindId, artifact_family_kind_of};
 pub(crate) use self::families::family_matches;
 pub use self::families::{
     TYPE_BYTE_FAMILIES, TypeByteFamily, TypeByteFamilyEntry, allocate_type_byte, family_of,
