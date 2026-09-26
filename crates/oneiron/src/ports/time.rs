@@ -149,9 +149,15 @@ impl crate::store::Store {
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         // A preliminary read would consume one reader slot per concurrent
         // caller before writers serialize, exhausting small reader budgets.
-        // The writer both observes the persisted floor and commits the new one.
+        // Persist ONLY clock authority here: a read must not also commit the
+        // floor of IDs allocated in RAM but not yet used by a mutation.
         let mut txn = self.env.write_txn()?;
-        let now = recorded_at_in_txn(self, &mut txn)?;
+        let persisted = authorization_floor_in_txn(self, &txn)?;
+        let now = self.clock.observe_floor(persisted)?;
+        if now != persisted {
+            self.vault_meta
+                .put(&mut txn, CLOCK_FLOOR, &now.to_be_bytes())?;
+        }
         txn.commit()?;
         Ok(now)
     }
