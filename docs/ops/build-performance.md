@@ -5,8 +5,8 @@
 The workspace uses limited debug information (`debug = 1`) in the `dev` profile.
 The `test` profile inherits it. This keeps file/line backtraces and module-level
 information, but omits type and local-variable debugger information. It does not
-change optimization, assertions, overflow checks, panic behavior, features, or
-release profiles.
+by itself change optimization, assertions, overflow checks, panic behavior,
+features, or release profiles. Dependency-only optimization is described below.
 
 For a debugging session that needs locals, opt back into full debug information:
 
@@ -26,8 +26,62 @@ below is from the MacBook; the repeated codegen-unit follow-up is from the Mini.
 The core package also uses 256 codegen units for dev/test builds. This improves
 the measured non-incremental Mini core build while matching the ordinary
 incremental default count. It is not a measured incremental edit-loop gain.
-Other packages' profile settings and release/bench defaults are unchanged.
-See the follow-up results and package-specific comparison override below.
+Other packages' codegen-unit settings and release/bench defaults are unchanged.
+Dependency optimization is a separate setting below. See the follow-up results
+and package-specific comparison override below.
+
+## Optimized dependencies in dev and test builds (2026-09-26)
+
+`[profile.dev.package."*"] opt-level = 2` optimizes dependencies, including
+non-member path packages (`heed`, `paste`, and the `pkix-chain` patch). Workspace
+member library, binary, and test units, including `oneiron`, `oneiron-bench`,
+and `oneiron-napi`, keep the dev optimization default (`0`); their build
+scripts follow the separate build override (`2`). The existing `oneiron`
+codegen-unit setting remains. The test profile inherits dev. Release, bench,
+and napi production builds using release retain their own profile defaults;
+no profile for them changes.
+
+On a clean 16-core box at main `97bb7049` with rustc 1.96.1, featureless
+library nextest (7,474 tests; `--profile featureless --retries 0`) took **733 s**
+with dependencies at opt-level 0 and **430 s** at opt-level 2, a **41% runtime
+reduction**. The corresponding cold test-binary build rose from **276 s** to
+**329 s**. The build cost is paid once for cached dependencies; this is not a
+claim that every feature set or host sees the same test speedup.
+
+A single cold-build comparison on remote Ubuntu (8 Cargo jobs, rustc 1.96.1,
+separate fresh targets, identical featureless `cargo test -p oneiron --lib
+--no-default-features --no-run --locked`) held dependency opt-level at 2 and
+changed only `profile.dev.build-override.opt-level`:
+
+| Build-dependency opt-level | Cargo-reported build time | Wrapper wall time |
+| --- | ---: | ---: |
+| 0 (default) | 8m44s | 544 s |
+| 2 (adopted) | 7m36s | 894 s, including ~438 s host-capacity wait |
+
+Build-override 2 matches the normal-dependency setting and reduced the measured
+cold **build phase** by 68 s (13%) in this pair. The wrapper wall figures are
+not directly comparable because the second run queued before Cargo started.
+This does not prove all shared build/normal dependencies compile once: host
+and target units or different features may still require separate builds. It
+also does not predict edit-loop gains. With both settings, a separate featureless
+nextest run on the remote host passed 7,474 tests in **595 s wrapper wall time**
+(nextest reported 581.326 s); it reused the optimized cold-build target and is
+not a paired 0-versus-2 comparison. Both changes are dev/test-only; release,
+bench, and napi release builds use their unchanged profiles.
+
+To opt out when stepping through dependency code in a debugger, use the
+package override for that session, not a workspace-wide optimization change:
+
+```sh
+cargo test --config 'profile.dev.package."*".opt-level=0' \
+  -p oneiron --lib --no-default-features
+```
+
+This causes a separate one-time dependency rebuild. To inspect build
+scripts/build dependencies without optimization too, add
+`--config 'profile.dev.build-override.opt-level=0'`. For debugger locals,
+also use `CARGO_PROFILE_DEV_DEBUG=2` as described above. Keep override choices
+the same across commands when you want to reuse their artifacts.
 
 ## Cache retention
 
@@ -110,14 +164,18 @@ env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
 This includes all non-ignored featureless library tests, including the slow set.
 The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
 only to this command. It is not full verification, does not emit `VERIFY-OK`, and
-must not replace the mandatory shared-process libtest lane. On Linux,
-`Test (featureless)` runs the shared-process `cargo test` lane and the
-per-test-process nextest lane, in that order, in parallel with `Test` (workspace
-nextest and doctests). The main-push/dispatch-only `Test (macOS)` recipe still
-runs both featureless lanes in the same order. Both CI featureless nextest steps
-pin `--retries 0` even if the runner exports `NEXTEST_RETRIES`; they do not
-suppress user configuration or set eight threads. The new Linux context must
-be added to the main ruleset's required checks after merge.
+must not replace the mandatory shared-process libtest lane.
+
+CI is scoped (owner ruling 2026-09-26). A PR or main push runs
+`scripts/ci/ci_scope.py` on its diff: `Checks` lints only the touched packages,
+`Test` runs nextest for the touched packages and, for `oneiron`, the lib tests of
+the touched top-level modules, and `Test (featureless)` runs the shared-process
+`cargo test` lane for those modules. The full gate runs nightly (03:00 JST), on
+manual dispatch, and when a build file changes: there `Test (featureless)` runs
+the shared-process `cargo test` lane and the per-test-process nextest lane, in
+that order, in parallel with `Test` (workspace nextest and doctests), and the
+featureless nextest step pins `--retries 0`. `Test (macOS)` and the mutation
+audit run on dispatch only.
 
 These **local inner-loop measurements** are a latency/compute choice, not
 equivalent gate coverage. On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
@@ -127,7 +185,7 @@ median system CPU rose from **76.4 to 88.2 s**. These measurements establish no
 aggregate-RAM benefit and no full-script speedup. Two clean Arch pairs showed no
 improvement (nextest was slightly slower); a contaminated third pair was excluded.
 No precise pooled Linux effect is claimed. These results do not show a speedup for
-the CI recipes, which now include both process models.
+the CI recipes; the nightly full gate runs both process models.
 
 ## Diagnosing macOS vault-open ENOSPC
 
