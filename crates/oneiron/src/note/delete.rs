@@ -28,6 +28,16 @@ pub(crate) fn delete_document_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let hex = id.to_hex();
+    let reverse = format!("note.title/v1/id/{}", id.to_hex());
+    if let Some(key) = store
+        .vault_meta
+        .get(txn, reverse.as_bytes())?
+        .map(|key| key.to_vec())
+    {
+        store.vault_meta.delete(txn, &key)?;
+        store.vault_meta.delete(txn, reverse.as_bytes())?;
+    }
+
     for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:", "ds:e:"] {
         store.sync_state.delete(txn, &format!("{prefix}{hex}"))?;
     }

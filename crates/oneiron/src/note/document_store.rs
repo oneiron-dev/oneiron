@@ -49,6 +49,55 @@ pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocume
     if doc.snapshot()?.len() > super::operations::MAX_RECEIPT_PAYLOAD - 18 {
         return Err(invalid("NOTE snapshot exceeds wire bound"));
     }
+    // Reserve a normalized title under the same writer as the document commit.
+    // A reverse entry makes retitles and erasure exact; never scan the vault
+    // or use the text body as a content-hash dedup oracle.
+    let reverse = format!("note.title/v1/id/{}", doc.id.to_hex());
+    let previous = vault
+        .store
+        .vault_meta
+        .get(txn, reverse.as_bytes())?
+        .map(|key| key.to_vec());
+    let next = doc
+        .title()?
+        .map(|title| {
+            let normalized = title
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let (_, core) = super::verbs::note_core(vault, txn, doc.id)?;
+            let digest = blake3::hash(normalized.as_bytes());
+            Ok::<_, crate::Error>(format!(
+                "note.title/v1/author/{}:{}",
+                core.author_ref.to_hex(),
+                digest.to_hex()
+            ))
+        })
+        .transpose()?;
+    if let Some(ref key) = next
+        && let Some(owner) = vault.store.vault_meta.get(txn, key.as_bytes())?
+        && owner.as_ref() != doc.id.as_bytes()
+    {
+        return Err(invalid("duplicate NOTE title"));
+    }
+    if previous.as_deref() != next.as_ref().map(String::as_bytes) {
+        if let Some(old) = previous {
+            vault.store.vault_meta.delete(txn, &old)?;
+        }
+        if let Some(key) = next {
+            vault
+                .store
+                .vault_meta
+                .put(txn, key.as_bytes(), doc.id.as_bytes())?;
+            vault
+                .store
+                .vault_meta
+                .put(txn, reverse.as_bytes(), key.as_bytes())?;
+        } else {
+            vault.store.vault_meta.delete(txn, reverse.as_bytes())?;
+        }
+    }
     super::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
     vault
         .batch_in()

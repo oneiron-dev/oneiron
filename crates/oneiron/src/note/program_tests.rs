@@ -682,3 +682,46 @@ fn switch_moves_the_head_pointer_to_the_fork() {
         fork
     );
 }
+
+#[test]
+fn note_title_reservation_is_atomic_and_normalized_in_featureless_mode() {
+    let (_dir, vault, actor) = fixture();
+    let a = vault.create_note("research", "first", actor).unwrap();
+    let b = vault.create_note("research", "second", actor).unwrap();
+    let title = |title: &str| NoteOperation {
+        request_id: EntityId::now(),
+        change: NoteChange::SetTitle {
+            title: title.into(),
+        },
+    };
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(a, &title("  Field   Notes  "))
+        .unwrap();
+    let before = vault.note_document(b).unwrap();
+    assert!(
+        vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .apply_local_note_operation(b, &title("field notes"))
+            .is_err()
+    );
+    assert_eq!(vault.note_document(b).unwrap(), before);
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(a, &title("Renamed"))
+        .unwrap();
+    vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .apply_local_note_operation(b, &title("FIELD NOTES"))
+        .unwrap();
+    assert_eq!(
+        vault.note_document(b).unwrap().title.as_deref(),
+        Some("FIELD NOTES")
+    );
+    assert!(
+        vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .apply_local_note_operation(b, &title("\ninvalid"))
+            .is_err()
+    );
+}

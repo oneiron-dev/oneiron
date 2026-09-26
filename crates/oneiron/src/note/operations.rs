@@ -24,6 +24,7 @@ pub struct NoteOperation {
 pub enum NoteChange {
     Edit { base: Vec<u8>, edits: Vec<NoteEdit> },
     Cite { pin: NotePin },
+    SetTitle { title: String },
 }
 
 /// Durable provenance authored only by the admission door. Commit messages
@@ -283,6 +284,10 @@ impl Memory<'_> {
                         self, txn, note, operation,
                     )?))
                 }
+            }
+            NoteChange::SetTitle { title } => {
+                doc.set_title(title, &actor)?;
+                None
             }
             NoteChange::Cite { pin } => {
                 validate_pin_source(self.vault(), txn, pin)?;
