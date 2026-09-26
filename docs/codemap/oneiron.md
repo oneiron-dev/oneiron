@@ -1078,7 +1078,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
 | `src/dreamer_runner/admission.rs` | src | m | 13 fn · 2 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
 | `src/dreamer_runner/admission/settlement.rs` | src | s | 4 crate-vis | — | Transaction-composable reservation settlement shared by completion and deferral |
-| `src/dreamer_runner/authority.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | DreamerAuthorityStamp | One vault-owned Dreamer principal; job kinds are facets, not new authorities |
+| `src/dreamer_runner/authority.rs` | src | s | 1 struct · 3 fn · 1 re-export · 3 crate-vis | DreamerAuthorityStamp | One vault-owned Dreamer principal; job kinds are facets, not new authorities |
+| `src/dreamer_runner/authority/policy.rs` | src | s | 1 struct · 2 fn | DreamerAgentBoundary | Dreamer job roster and the boundary for minting a separate agent |
 | `src/dreamer_runner/authority/tests.rs` | test | s | — | — | — |
 | `src/dreamer_runner/claim_authoring.rs` | src | s | 6 struct · 6 enum · 11 fn | DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision, DreamerClaimAuthoringSchedule, DreamerClaimAuthoringSinglePassReason, DreamerClaimAuthoringStrategy, DreamerClaimEvidenceState +4 | OF-366/OF-267 claim-authoring admission gate: single-pass vs tournament |
 | `src/dreamer_runner/codec.rs` | src | m | 2 fn · 36 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
