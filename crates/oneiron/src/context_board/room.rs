@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 mod tests;
 
 /// Host-resolved presence; authority comes from the normal turn resolver.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RoomPresence {
     pub actor: EntityId,
     /// Class authenticated by the host; validated against the actor entity on each read.

@@ -392,6 +392,71 @@ pub struct Memory<'v> {
     pub(super) vault: &'v Vault,
     pub(super) actor: EntityId,
     pub(super) actor_class: EdgeActorClass,
+    room_turn: Option<RoomTurnContext>,
+}
+
+/// Host-bound turn selection. It carries authority, not a copy of ROOM state.
+struct RoomTurnContext {
+    room: EntityId,
+    presence: Vec<crate::context_board::RoomPresence>,
+    scope: crate::federation::Scope,
+}
+
+impl<'v> Memory<'v> {
+    /// Bind the authenticated presence to this actor's room turn. The SDK is
+    /// given this handle, never a roster supplied by an agent verb request.
+    pub fn for_room_turn(
+        &self,
+        room: EntityId,
+        presence: &[crate::context_board::RoomPresence],
+    ) -> MemoryResult<Memory<'v>> {
+        let (_, scope) = self.checked_room_scope(room, presence)?;
+        Ok(Memory {
+            vault: self.vault,
+            actor: self.actor,
+            actor_class: self.actor_class,
+            room_turn: Some(RoomTurnContext {
+                room,
+                presence: presence.to_vec(),
+                scope,
+            }),
+        })
+    }
+
+    pub(crate) fn room_turn_presence(
+        &self,
+    ) -> Option<(EntityId, &[crate::context_board::RoomPresence])> {
+        self.room_turn
+            .as_ref()
+            .map(|turn| (turn.room, turn.presence.as_slice()))
+    }
+
+    /// Re-check live membership and grants; the saved turn scope is a ceiling.
+    /// A grant added mid-turn cannot widen the scope with which it opened.
+    pub(crate) fn room_turn_read_scope(
+        &self,
+        room: EntityId,
+    ) -> MemoryResult<Option<crate::federation::Scope>> {
+        let Some(turn) = &self.room_turn else {
+            return Ok(None);
+        };
+        if turn.room != room {
+            return Err(MemoryError::bad_request("room differs from bound turn"));
+        }
+        let (_, fresh) = self.checked_room_scope(room, &turn.presence)?;
+        Ok(Some(turn.scope.meet(&fresh)))
+    }
+
+    /// Agent SDK room history must use a host-bound turn, never an unscoped
+    /// actor handle. Generic history APIs remain available outside a turn.
+    pub(crate) fn require_room_turn(&self, room: EntityId) -> MemoryResult<()> {
+        match self.room_turn_presence() {
+            Some((bound, _)) if bound == room => Ok(()),
+            _ => Err(MemoryError::bad_request(
+                "rooms verb requires a bound room turn",
+            )),
+        }
+    }
 }
 
 impl Vault {
@@ -409,6 +474,7 @@ impl Vault {
             vault: self,
             actor,
             actor_class,
+            room_turn: None,
         }
     }
 }

@@ -82,6 +82,10 @@ pub struct RoomTurn {
 pub struct RoomPage {
     pub rows: Vec<RoomTurn>,
     pub next_after: Option<String>,
+    /// Scope actually applied by a host-bound room turn. Absent on generic
+    /// history reads outside a turn (which do not claim room-turn authority).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_scope: Option<crate::federation::Scope>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +120,10 @@ impl Vault {
 }
 impl Memory<'_> {
     pub fn rooms_list(&self) -> MemoryResult<Vec<(EntityId, ProjectRoom)>> {
+        let turn_scope = match self.room_turn_presence() {
+            Some((room, _)) => self.room_turn_read_scope(room)?,
+            None => None,
+        };
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let mut result = Vec::new();
         for row in self
@@ -128,6 +136,10 @@ impl Memory<'_> {
             let id = EntityId::from_bytes(key[1..].try_into().map_err(|_| invalid())?)?;
             if let Ok(room) = room_in(self.vault(), &txn, id)
                 && room.member_ids.contains(&self.actor().to_hex())
+                && match &turn_scope {
+                    Some(scope) => history::turn_admitted(self.vault(), &txn, id, scope)?,
+                    None => true,
+                }
             {
                 result.push((id, room));
             }
@@ -140,8 +152,16 @@ impl Memory<'_> {
         turn: EntityId,
         now: u64,
     ) -> MemoryResult<RoomClaimOutcome> {
+        let turn_scope = self.room_turn_read_scope(room)?;
         self.with_verified_actor_write_txn(|txn| {
             require_member(self.vault(), txn, room, self.actor())?;
+            if let Some(scope) = &turn_scope
+                && !history::turn_admitted(self.vault(), txn, turn, scope)?
+            {
+                return Err(MemoryError::bad_request(
+                    "room turn is outside the bound scope",
+                ));
+            }
             let addressed = turn_in(self.vault(), txn, turn)?;
             if addressed.room_id != room.to_hex() {
                 return Err(MemoryError::from(invalid()));
@@ -181,6 +201,13 @@ impl Memory<'_> {
     /// the claim, membership, reply binding, and addressing before any message.
     pub fn rooms_speak(&self, turn: &WitnessTurn) -> MemoryResult<WitnessReceipt> {
         let room = EntityId::from_hex(&turn.conversation_ref)?;
+        if let Some(scope) = self.room_turn_read_scope(room)?
+            && !scope
+                .worlds
+                .contains(&crate::federation::ScopeId(crate::claim::base_world_id()))
+        {
+            return Err(MemoryError::bad_request("room is outside the bound scope"));
+        }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
         drop(txn);
