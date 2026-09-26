@@ -48,6 +48,62 @@ fn bootstrap_commits_genesis_and_slip_mint_and_reuses_one_root() {
     assert!(verify(&vault, &issuer, &root).unwrap().allows_verb("read"));
 }
 #[test]
+fn signed_revoke_reports_one_winner_and_keeps_one_tombstone() {
+    let (_dir, vault, issuer, root) = fixture();
+    let before = vault.authority_fold().unwrap().valid_entries.len();
+    let winners = std::thread::scope(|scope| {
+        let start = std::sync::Arc::new(std::sync::Barrier::new(12));
+        let calls: Vec<_> = (0..12)
+            .map(|_| {
+                let start = std::sync::Arc::clone(&start);
+                let vault = &vault;
+                let issuer = &issuer;
+                scope.spawn(move || {
+                    start.wait();
+                    vault
+                        .revoke_capability_slip_once(issuer, root.claims.slip_id)
+                        .unwrap()
+                })
+            })
+            .collect();
+        calls
+            .into_iter()
+            .map(|call| call.join().unwrap() as usize)
+            .sum::<usize>()
+    });
+    assert_eq!(winners, 1);
+    assert!(
+        !vault
+            .revoke_capability_slip_once(&issuer, root.claims.slip_id)
+            .unwrap()
+    );
+    assert!(
+        !vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+    assert_eq!(
+        vault.authority_fold().unwrap().valid_entries.len(),
+        before + 1
+    );
+}
+
+#[test]
+fn first_signed_revoke_preempts_late_mint_and_still_authenticates_retry() {
+    let (_dir, vault, issuer, root) = fixture();
+    let id = [81; 32];
+    assert!(vault.revoke_capability_slip_once(&issuer, id).unwrap());
+    assert!(!vault.revoke_capability_slip_once(&issuer, id).unwrap());
+    let stranger = HostSlipIssuer::from_secret(b"other host").unwrap();
+    assert!(vault.revoke_capability_slip_once(&stranger, id).is_err());
+    let mut claims = root.claims.clone();
+    claims.slip_id = id;
+    claims.parent_id = Some(root.claims.slip_id);
+    assert!(vault.mint_capability_slip(&issuer, claims).is_err());
+    assert!(vault.authority_fold().unwrap().slips.revoked.contains(&id));
+}
+
+#[test]
 fn v2_roundtrip_tamper_and_missing_binding_deny() {
     let (_dir, vault, issuer, root) = fixture();
     let decoded = CapabilitySlip::from_token(&root.to_token().unwrap()).unwrap();
