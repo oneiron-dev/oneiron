@@ -25214,7 +25214,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 89,
+      "crate-vis": 90,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -27798,7 +27798,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/admission_tests.rs",
@@ -28368,7 +28368,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -28420,6 +28420,24 @@
      "surface": {
       "crate-vis": 3,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuditPair",
+      "BlindPreference",
+      "JudgeMeasurements",
+      "PreferredResponse",
+      "WorldAxisScore"
+     ],
+     "path": "src/skill_optimize/gate/measurement.rs",
+     "purpose": "Receipt-only DecoEvo measurements and per-axis world-outcome calibration",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -34722,7 +34740,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,7 +34938,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {

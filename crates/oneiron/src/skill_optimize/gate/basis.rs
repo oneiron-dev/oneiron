@@ -176,6 +176,7 @@ pub(super) struct ScoredBasis {
     pub(super) target_digest: String,
     pub(super) evidence_count: u64,
     pub(super) evidence_digest: String,
+    pub(super) world_digest: String,
     /// The PROPOSAL's own effective governance tier, resolved in the snapshot
     /// this basis was taken in ([`super::tier_verdict_in_txn`] over the
     /// proposal id and record).
@@ -197,6 +198,7 @@ impl ScoredBasis {
         proposal: &SkillRecord,
         target: &SkillRecord,
         held_out: &[String],
+        outcomes: &[(String, bool)],
         proposal_tier: Option<SkillGovernanceTier>,
     ) -> Result<Self> {
         let (evidence_count, evidence_digest) = evidence_identity(held_out);
@@ -205,6 +207,7 @@ impl ScoredBasis {
             target_digest: skill_body_binding_digest(target)?,
             evidence_count,
             evidence_digest,
+            world_digest: world_labels_digest(outcomes),
             proposal_tier,
         })
     }
@@ -217,6 +220,10 @@ impl ScoredBasis {
             && verdict.held_out_count == self.evidence_count
             && verdict.held_out_digest == self.evidence_digest
             && verdict.proposal_tier == self.proposal_tier
+            && verdict
+                .measurements
+                .as_ref()
+                .is_some_and(|m| m.world_labels_digest == self.world_digest)
     }
 }
 
@@ -261,6 +268,40 @@ pub trait HeldOutReplayScorer {
     /// Implementation-defined. A scorer that cannot judge must error rather
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
+
+    /// Score requirement coverage using only the task identity and rubric text.
+    /// An unimplemented auditor fails closed rather than fabricating a result.
+    fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {
+        Err(invalid("no structural judge auditor is registered"))
+    }
+
+    /// Choose near-tie rollout pairs and freeze response-only preferences.
+    /// This is called BEFORE `score`, `structural_audit`, or `contrastive_audit`;
+    /// no rubric text, scalar score or outcome label is supplied. The host
+    /// resolves held-out receipt ids to questions and rollouts, excludes
+    /// equivalent preferences, and gives each sampled pair a stable reference.
+    fn blind_preference(&self, _task: &str, _receipts: &[String]) -> Result<Vec<BlindPreference>> {
+        Err(invalid(
+            "no blind contrastive preference sampler is registered",
+        ))
+    }
+
+    /// Score rubric separation against the SAME frozen response preferences
+    /// for both instruction versions. The preference cannot be changed here.
+    fn contrastive_audit(
+        &self,
+        _case: &HeldOutReplayCase<'_>,
+        _blind: &[BlindPreference],
+    ) -> Result<f32> {
+        Err(invalid("no contrastive judge auditor is registered"))
+    }
+
+    /// Predict the binary task-success outcome of each held-out receipt, in
+    /// case order, WITHOUT seeing its label. Labels are joined by the engine
+    /// from the outcome ledger only after this call returns.
+    fn predict_task_success(&self, _case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Err(invalid("no judge world-outcome predictor is registered"))
+    }
 }
 
 /// The [`CallPurpose`] a replay scorer's LLM tier must stamp.
