@@ -115,14 +115,42 @@ pub fn check_reliability_floor(
 ) -> Result<Option<EntityId>> {
     let prior = skill_reliability_prior(vault, skill)?;
     vault.with_write_txn(|wtxn| {
-        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill)? {
+        let posterior = match resolved_reliability_posterior_in_txn(vault, wtxn, skill, None)? {
             Some(posterior) => posterior,
-            None => tally_outcomes(vault, wtxn, skill)?.posterior(prior),
+            None => tally_outcomes(vault, wtxn, skill, None)?.posterior(prior),
         };
         floor_check_in_txn(
             vault,
             wtxn,
             skill,
+            None,
+            posterior,
+            attributed_outcomes(prior, posterior),
+            at,
+        )
+    })
+}
+
+/// Checks the floor against just one executor arm, not pooled skill history.
+pub fn check_reliability_floor_for_executor(
+    vault: &Vault,
+    skill: &EntityId,
+    executor: &str,
+    at: u64,
+) -> Result<Option<EntityId>> {
+    super::read::validate_executor(executor)?;
+    let prior = skill_reliability_prior(vault, skill)?;
+    vault.with_write_txn(|wtxn| {
+        let posterior =
+            match resolved_reliability_posterior_in_txn(vault, wtxn, skill, Some(executor))? {
+                Some(posterior) => posterior,
+                None => tally_outcomes(vault, wtxn, skill, Some(executor))?.posterior(prior),
+            };
+        floor_check_in_txn(
+            vault,
+            wtxn,
+            skill,
+            Some(executor),
             posterior,
             attributed_outcomes(prior, posterior),
             at,
@@ -134,6 +162,7 @@ pub(super) fn floor_check_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     skill: &EntityId,
+    executor: Option<&str>,
     posterior: SkillReliabilityPosterior,
     outcomes: u32,
     at: u64,
@@ -149,20 +178,26 @@ pub(super) fn floor_check_in_txn(
     if let Some((existing, _, _)) =
         active_claims_in_txn(vault, wtxn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
             .into_iter()
-            .next()
+            .find(|(_, body, _)| {
+                super::codec::map_entry(&body.value, "executor").and_then(Value::as_str) == executor
+            })
     {
         return Ok(Some(existing));
     }
     let proposal_id = vault.store.clock.entity_id()?;
+    let mut fields = vec![
+        (Value::from(KEY_ALPHA), Value::F32(posterior.alpha)),
+        (Value::from(KEY_BETA), Value::F32(posterior.beta)),
+        (Value::from(KEY_LOWER_BOUND), Value::F32(lower_bound)),
+        (Value::from(KEY_FLOOR), Value::F32(floor)),
+    ];
+    if let Some(executor) = executor {
+        fields.push((Value::from("executor"), Value::from(executor)));
+    }
     let mut body = ClaimBody::new(
         PREDICATE_SKILL_QUARANTINE_PROPOSAL,
         ClaimSubject::Entity(*skill),
-        Value::Map(vec![
-            (Value::from(KEY_ALPHA), Value::F32(posterior.alpha)),
-            (Value::from(KEY_BETA), Value::F32(posterior.beta)),
-            (Value::from(KEY_LOWER_BOUND), Value::F32(lower_bound)),
-            (Value::from(KEY_FLOOR), Value::F32(floor)),
-        ]),
+        Value::Map(fields),
         1.0,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,

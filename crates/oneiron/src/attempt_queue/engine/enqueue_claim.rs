@@ -201,6 +201,7 @@ impl<'a> AttemptQueue<'a> {
             updated_at: input.now,
             events: Vec::new(),
             manifest: Vec::new(),
+            executor_model: None,
             cancel_state: AttemptCancelState::default(),
             placement: None,
             result_ref: None,

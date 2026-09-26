@@ -1,0 +1,200 @@
+//! Judge-revision provenance for routed receipts, and non-destructive displacement.
+
+use super::attribution_judgments;
+use crate::Vault;
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+
+const JUDGE_PREFIX: &[u8] = b"skill_attribution:judge_revision:v1:";
+const DISPLACED_PREFIX: &[u8] = b"skill_attribution:displaced_judge:v1:";
+
+fn key(prefix: &[u8], sequence: u64) -> Vec<u8> {
+    let mut key = prefix.to_vec();
+    key.extend_from_slice(&sequence.to_be_bytes());
+    key
+}
+
+pub(super) fn stamp_judge_revision(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sequence: u64,
+    revision: &str,
+) -> Result<()> {
+    if revision.is_empty() || revision.len() > 256 || revision.chars().any(char::is_control) {
+        return Err(Error::InvalidClaimBody(
+            "invalid attribution judge revision",
+        ));
+    }
+    let key = key(JUDGE_PREFIX, sequence);
+    if let Some(held) = vault.store.vault_meta.get(txn, &key)? {
+        if held.as_ref() != revision.as_bytes() {
+            return Err(Error::InvalidClaimBody(
+                "attribution judgment cannot be rescored by a new judge",
+            ));
+        }
+        return Ok(());
+    }
+    vault.store.vault_meta.put(txn, &key, revision.as_bytes())?;
+    Ok(())
+}
+
+pub(crate) fn judgment_displaced(vault: &Vault, sequence: u64) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .vault_meta
+        .get(&txn, &key(DISPLACED_PREFIX, sequence))?
+        .is_some())
+}
+
+/// One old judge's retained receipt. The original judgment and attempt receipt
+/// remain readable; the replacement identity is a marker, never a rescore.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplacedJudgeReceipt {
+    pub judgment_sequence: u64,
+    pub receipt_ref: String,
+    pub displaced_revision: String,
+    pub replacement_revision: String,
+}
+
+/// Reads marked receipts without deleting or reinterpreting their verdicts.
+pub fn displaced_judge_receipts(vault: &Vault) -> Result<Vec<DisplacedJudgeReceipt>> {
+    let judgments = attribution_judgments(vault)?;
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for judgment in judgments {
+        let Some(replacement) = vault
+            .store
+            .vault_meta
+            .get(&txn, &key(DISPLACED_PREFIX, judgment.sequence))?
+        else {
+            continue;
+        };
+        let old = vault
+            .store
+            .vault_meta
+            .get(&txn, &key(JUDGE_PREFIX, judgment.sequence))?
+            .ok_or(Error::CorruptedIndex("displaced judge provenance"))?;
+        let displaced_revision = String::from_utf8(old.to_vec())
+            .map_err(|_| Error::CorruptedIndex("displaced judge provenance"))?;
+        let replacement_revision = String::from_utf8(replacement.to_vec())
+            .map_err(|_| Error::CorruptedIndex("displaced judge marker"))?;
+        for receipt_ref in &judgment.evidence_receipts {
+            rows.push(DisplacedJudgeReceipt {
+                judgment_sequence: judgment.sequence,
+                receipt_ref: receipt_ref.clone(),
+                displaced_revision: displaced_revision.clone(),
+                replacement_revision: replacement_revision.clone(),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+/// Marks exactly the verdicts by the displaced judge revision. The original
+/// receipt/judgment/outcome rows stay intact; active posterior projections
+/// omit only their superseded weight. Repeating the swap is idempotent.
+pub fn supersede_displaced_judge_receipts(
+    vault: &Vault,
+    displaced: &str,
+    replacement: &str,
+    at: u64,
+) -> Result<Vec<DisplacedJudgeReceipt>> {
+    if displaced == replacement
+        || displaced.is_empty()
+        || replacement.is_empty()
+        || displaced.len() > 256
+        || replacement.len() > 256
+        || displaced.chars().any(char::is_control)
+        || replacement.chars().any(char::is_control)
+    {
+        return Err(Error::InvalidClaimBody("invalid judge replacement"));
+    }
+    let mut affected: Vec<(EntityId, Option<String>)> = Vec::new();
+    // Read immutable terminal receipts before acquiring LMDB's writer: opening
+    // a nested read transaction while this thread owns the writer is BadRslot.
+    let judgments = attribution_judgments(vault)?;
+    let prepared = judgments
+        .into_iter()
+        .map(|judgment| {
+            let executor = if judgment.verdict == super::AttributionVerdict::SkillDefect {
+                judgment
+                    .evidence_receipts
+                    .first()
+                    .map(|id| {
+                        crate::receipt::attempt_pack_receipt(vault, id).map(|receipt| {
+                            receipt.and_then(|row| {
+                                row.fields.get("model").filter(|id| !id.is_empty()).cloned()
+                            })
+                        })
+                    })
+                    .transpose()?
+                    .flatten()
+            } else {
+                None
+            };
+            Ok((judgment, executor))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    vault.with_write_txn(|txn| {
+        for (judgment, executor) in &prepared {
+            let origin = vault
+                .store
+                .vault_meta
+                .get(txn, &key(JUDGE_PREFIX, judgment.sequence))?;
+            if origin.as_deref() != Some(displaced.as_bytes()) {
+                continue;
+            }
+            let mark = key(DISPLACED_PREFIX, judgment.sequence);
+            if let Some(held) = vault.store.vault_meta.get(txn, &mark)? {
+                if held.as_ref() != replacement.as_bytes() {
+                    return Err(Error::InvalidClaimBody("judge verdict already displaced"));
+                }
+            } else {
+                vault
+                    .store
+                    .vault_meta
+                    .put(txn, &mark, replacement.as_bytes())?;
+            }
+            // Also re-project on a repeated call: a crash after committing the
+            // marker but before projecting must not strand a stale active claim.
+            if judgment.verdict == super::AttributionVerdict::SkillDefect {
+                let Some(receipt_ref) = judgment.evidence_receipts.first() else {
+                    continue;
+                };
+                crate::skill_reliability::mark_displaced_outcome_in_txn(
+                    vault,
+                    txn,
+                    &judgment.subject,
+                    executor.as_deref(),
+                    receipt_ref,
+                    displaced,
+                    replacement,
+                )?;
+                let pair = (judgment.subject, executor.clone());
+                if !affected.contains(&pair) {
+                    affected.push(pair);
+                }
+            }
+        }
+        Ok(())
+    })?;
+    for (skill, executor) in affected {
+        match executor {
+            Some(model) => {
+                crate::skill_reliability::project_skill_reliability_for_executor(
+                    vault, &skill, &model, at,
+                )?;
+            }
+            None => {
+                crate::skill_reliability::project_skill_reliability_for(vault, &skill, at)?;
+            }
+        }
+    }
+    Ok(displaced_judge_receipts(vault)?
+        .into_iter()
+        .filter(|row| {
+            row.displaced_revision == displaced && row.replacement_revision == replacement
+        })
+        .collect())
+}

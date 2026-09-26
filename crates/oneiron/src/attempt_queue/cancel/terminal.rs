@@ -558,6 +558,7 @@ fn landing_successor(
         updated_at: now,
         events: Vec::new(),
         manifest: Vec::new(),
+        executor_model: None,
         cancel_state: AttemptCancelState {
             // The whole point of a designed landing: the successor starts from
             // the exact recorded point, with a fresh reserve on the same dial.

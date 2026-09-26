@@ -108,6 +108,9 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
         fields: BTreeMap::new(),
     };
     append_pack_manifest_fields(&mut receipt, record.manifest())?;
+    if let Some(model) = &record.executor_model {
+        receipt.fields.insert("model".to_owned(), model.clone());
+    }
     let encoded = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("attempt pack receipt encode failed"))?;
     store.vault_meta.put(
