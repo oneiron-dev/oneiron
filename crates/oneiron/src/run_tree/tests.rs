@@ -730,6 +730,8 @@ fn dreamer_record(
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        signals: Vec::new(),
+        asks: Vec::new(),
         placement: None,
         result_ref: None,
     })
@@ -860,6 +862,8 @@ fn abandoned_record(seed: u8, kind: &str, result_ref: &str) -> AttemptRecord {
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        signals: Vec::new(),
+        asks: Vec::new(),
         placement: None,
         result_ref: Some(
             crate::attempt_queue::AttemptResultRef::new(result_ref).expect("valid result ref"),
@@ -895,6 +899,8 @@ fn legacy_queued_record(seed: u8, created_at: u64, backoff_until: Option<u64>) -
         events: Vec::new(),
         manifest: Vec::new(),
         cancel_state: crate::attempt_queue::AttemptCancelState::default(),
+        signals: Vec::new(),
+        asks: Vec::new(),
         placement: None,
         result_ref: None,
     }
@@ -1265,5 +1271,255 @@ fn run_projection_serializes_only_attempt_state_not_write_velocity() -> Result<(
     );
     let round_trip: crate::run_tree::RunTree = serde_json::from_value(wire).expect("decode tree");
     assert_eq!(round_trip, tree);
+    Ok(())
+}
+
+// ── ONE-2030 branch Signal safe breakpoints ────────────────────────────────
+
+#[test]
+fn branch_signal_interject_is_isolated_and_acknowledged_replay_is_cached() -> Result<()> {
+    use super::{RunSignalInput, RunSignalKind, RunSignalState};
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let root = enqueue(&runner, "root", None, 1, "run-signal")?;
+    let left = enqueue(&runner, "left", Some(root.attempt.id), 2, "run-signal")?;
+    let right = enqueue(&runner, "right", Some(root.attempt.id), 3, "run-signal")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let mut claimed = Vec::new();
+    for id in [root.attempt.id, left.attempt.id, right.attempt.id] {
+        let ClaimOutcome::Claimed(row) = queue.claim(ClaimAttempt {
+            lease_owner: "signal-worker".into(),
+            now: 10,
+        })?
+        else {
+            panic!("expected claimed branch");
+        };
+        assert_eq!(row.id, id);
+        claimed.push(row);
+    }
+    let adapter = RunTreeAdapter::new(&vault);
+    let input = RunSignalInput {
+        branch: left.attempt.id,
+        run_id: "run-signal".into(),
+        key: "effect-7".into(),
+        actor: "operator".into(),
+        kind: RunSignalKind::Interject {
+            content: "new context".into(),
+        },
+    };
+    let pending = adapter.signal(input.clone())?;
+    assert_eq!(pending.state, RunSignalState::Pending);
+    assert!(
+        adapter
+            .breakpoint(
+                right.attempt.id,
+                "run-signal",
+                "signal-worker",
+                claimed[2].attempt_count
+            )?
+            .is_empty()
+    );
+    assert_eq!(adapter.signal(input.clone())?, pending);
+    assert_eq!(
+        adapter
+            .breakpoint(
+                left.attempt.id,
+                "run-signal",
+                "signal-worker",
+                claimed[1].attempt_count
+            )?
+            .len(),
+        1
+    );
+    assert_eq!(
+        adapter.signal(input.clone())?.state,
+        RunSignalState::Pending
+    );
+    assert_eq!(
+        adapter.breakpoint(
+            left.attempt.id,
+            "run-signal",
+            "signal-worker",
+            claimed[1].attempt_count
+        )?,
+        vec![pending]
+    );
+    let settled = adapter.acknowledge_signal(
+        left.attempt.id,
+        "run-signal",
+        "signal-worker",
+        claimed[1].attempt_count,
+        "effect-7",
+    )?;
+    assert_eq!(settled.state, RunSignalState::Settled);
+    assert_eq!(
+        adapter.acknowledge_signal(
+            left.attempt.id,
+            "run-signal",
+            "signal-worker",
+            claimed[1].attempt_count,
+            "effect-7"
+        )?,
+        settled
+    );
+    assert_eq!(adapter.signal(input)?, settled);
+    assert!(
+        adapter
+            .breakpoint(
+                left.attempt.id,
+                "run-signal",
+                "signal-worker",
+                claimed[1].attempt_count
+            )?
+            .is_empty()
+    );
+    assert_eq!(queue.get(right.attempt.id)?.unwrap().signals.len(), 0);
+    assert_eq!(queue.get(left.attempt.id)?.unwrap().signals.len(), 1);
+    assert_eq!(
+        adapter
+            .signal(RunSignalInput {
+                branch: left.attempt.id,
+                run_id: "run-other".into(),
+                key: "x".into(),
+                actor: "operator".into(),
+                kind: RunSignalKind::Steer {
+                    instruction: "no".into()
+                },
+            })
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidConfig
+    );
+    assert_eq!(
+        adapter
+            .breakpoint(
+                left.attempt.id,
+                "run-signal",
+                "stale-worker",
+                claimed[1].attempt_count
+            )
+            .unwrap_err()
+            .kind(),
+        crate::ErrorKind::InvalidConfig
+    );
+    Ok(())
+}
+
+#[test]
+fn branch_ask_signals_partial_answers_and_cancel_uses_soft_rail() -> Result<()> {
+    use super::{RunAskAnswerKind, RunAskQuestion, RunAskState, RunSignalInput, RunSignalKind};
+    use crate::attempt_queue::{AttemptCancelReceiptKind, CancelStanding};
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let row = enqueue(&runner, "worker", None, 1, "run-ask")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "signal-worker".into(),
+        now: 2,
+    })?
+    else {
+        panic!("expected claimed branch");
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    let ask = adapter.open_ask(
+        row.attempt.id,
+        "run-ask",
+        "signal-worker",
+        claimed.attempt_count,
+        "ask-1",
+        vec![
+            RunAskQuestion {
+                who: "alice".into(),
+                prompt: "Choose a route".into(),
+                options: vec!["a".into()],
+                deadline: None,
+            },
+            RunAskQuestion {
+                who: "bob".into(),
+                prompt: "Choose a time".into(),
+                options: vec!["b".into()],
+                deadline: Some(100),
+            },
+        ],
+    )?;
+    assert!(ask.answers.is_empty());
+    assert_eq!(ask.questions[0].prompt, "Choose a route");
+    assert!(matches!(
+        adapter.peek_ask(row.attempt.id, "run-ask", "ask-1")?,
+        Some(RunAskState::Pending(_))
+    ));
+    let answer = |key: &str, who: &str| RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-ask".into(),
+        key: key.into(),
+        actor: who.into(),
+        kind: RunSignalKind::AskAnswer {
+            handle: "ask-1".into(),
+            who: who.into(),
+            answer: format!("answer-{who}"),
+            kind: RunAskAnswerKind::Word,
+        },
+    };
+    adapter.signal(answer("answer-a", "alice"))?;
+    let Some(RunAskState::Pending(partial)) =
+        adapter.peek_ask(row.attempt.id, "run-ask", "ask-1")?
+    else {
+        panic!("expected partial answer");
+    };
+    assert_eq!(partial.answers.len(), 1);
+    adapter.signal(answer("answer-b", "bob"))?;
+    assert!(matches!(
+        adapter.peek_ask(row.attempt.id, "run-ask", "ask-1")?,
+        Some(RunAskState::Ready(_))
+    ));
+    adapter.signal(RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-ask".into(),
+        key: "cancel-1".into(),
+        actor: "operator".into(),
+        kind: RunSignalKind::Cancel {
+            standing: CancelStanding::Authority,
+            reason: Some("stop after breakpoint".into()),
+        },
+    })?;
+    assert!(
+        queue
+            .get(row.attempt.id)?
+            .unwrap()
+            .cancel_receipts()
+            .is_empty()
+    );
+    assert_eq!(
+        adapter
+            .breakpoint(
+                row.attempt.id,
+                "run-ask",
+                "signal-worker",
+                claimed.attempt_count
+            )?
+            .len(),
+        3
+    );
+    let record = queue.get(row.attempt.id)?.unwrap();
+    assert_eq!(record.state, AttemptState::Leased);
+    assert_eq!(record.cancel_receipts().len(), 1);
+    assert_eq!(
+        record.cancel_receipts()[0].kind,
+        AttemptCancelReceiptKind::SoftRequested
+    );
+    assert!(
+        adapter
+            .breakpoint(
+                row.attempt.id,
+                "run-ask",
+                "signal-worker",
+                claimed.attempt_count
+            )?
+            .is_empty()
+    );
+    assert_eq!(
+        queue.get(row.attempt.id)?.unwrap().cancel_receipts().len(),
+        1
+    );
     Ok(())
 }

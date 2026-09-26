@@ -7,7 +7,9 @@ mod a2a;
 mod adapter;
 mod consent;
 mod render;
+mod signal;
 pub(crate) use render::effective_parent;
+pub(crate) use signal::validate_signal_rows;
 mod types;
 
 pub use self::a2a::project_attempt_to_a2a;
@@ -18,6 +20,10 @@ pub use self::consent::{
     GateConsentBundleMember, GateConsentBundleReceipt,
 };
 pub use self::render::render_run_tree;
+pub use self::signal::{
+    RunAsk, RunAskAnswer, RunAskAnswerKind, RunAskQuestion, RunAskState, RunBranchSignal,
+    RunSignalInput, RunSignalKind, RunSignalState,
+};
 pub use self::types::{
     RunTree, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeFailureDiagram, RunTreeNode,
     RunTreeNodeMarker, RunTreeNodeMarkerKind, RunTreeRepair, RunTreeStatus, RunTreeTimestamps,

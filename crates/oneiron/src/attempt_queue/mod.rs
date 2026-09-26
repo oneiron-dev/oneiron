@@ -55,6 +55,9 @@ pub use types::{
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
+pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {
+    encoding::encode_record(record)
+}
 pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.
