@@ -20012,7 +20012,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CatalogSeed",
@@ -20028,11 +20028,39 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 10,
+      "re-export": 1,
       "struct": 5
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DescriptionClass",
+      "DescriptionContribution",
+      "ModelDescription"
+     ],
+     "path": "src/llm/registry/description.rs",
+     "purpose": "Ranked, source-attributed model descriptions; absent evidence stays absent",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/registry/installed_pack.rs",
+     "purpose": "The shipped catalog is read from an installed, pinned first-party hub pack",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/registry/tests.rs",
@@ -27934,8 +27962,8 @@
      "path": "src/skill_hub/default_hub.rs",
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
-      "crate-vis": 1,
-      "fn": 4
+      "crate-vis": 4,
+      "fn": 5
      }
     },
     {
@@ -34469,7 +34497,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35052,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2070,
    "test_files": 710
   },
   "oneiron-android": {

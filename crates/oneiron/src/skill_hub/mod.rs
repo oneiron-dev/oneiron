@@ -22,7 +22,9 @@ pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
 pub(crate) use admission_guard::check_hub_skill_put;
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
 pub(crate) use bootstrap::HubAdmissionProof;
-pub(crate) use default_hub::seed_default_skill_hub;
+pub(crate) use default_hub::{
+    MODEL_PACK_HASH, MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub,
+};
 pub use default_hub::{default_skill_hub_commit, default_skill_hub_id};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;

@@ -65,6 +65,8 @@ pub struct PackInstallReceipt {
     /// Provisioned recipe as data. Execution must still use the ordinary action gate.
     pub runtime: Option<PackRuntimeRecipe>,
     pub hub_id: String,
+    /// Repository-relative folder resolved at the pinned, hash-checked fetch.
+    pub ref_string: String,
     pub publisher: String,
     /// A slate of requested powers, not a standing grant.
     pub requested_grants: Vec<String>,

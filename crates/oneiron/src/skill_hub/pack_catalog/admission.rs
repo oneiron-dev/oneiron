@@ -110,6 +110,7 @@ impl Vault {
                 qualification_report_hash: ask.qualification.report_hash.clone(),
                 runtime: ask.qualification.runtime.clone(),
                 hub_id: ask.hub.hub_id.to_hex(),
+                ref_string: ask.hub.ref_string.clone(),
                 publisher: ask.publisher.identity().to_owned(),
                 requested_grants: source.manifest.requested_grants.iter().cloned().collect(),
                 wake_subscriptions: source.manifest.wake_subscriptions.iter().cloned().collect(),
@@ -165,6 +166,7 @@ impl Vault {
                     .pack_source_in_txn(txn, &source_id)?
                     .ok_or_else(|| invalid("installed source is unavailable"))?;
                 if source.manifest.name != name
+                    || receipt.ref_string.is_empty()
                     || source.content_hash().to_hex() != receipt.content_hash
                 {
                     return Err(invalid("installed source identity drift"));
