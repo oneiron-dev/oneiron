@@ -106,6 +106,9 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
             assert_eq!(receive(&mut guest),json!({"type":"receipt","accepted":true}));
             send(&mut guest,json!({"type":"write","path":"/mnt/workspace/result.txt","bytes":[111,107]}));
             assert_eq!(receive(&mut guest),json!({"type":"receipt","accepted":true}));
+            send(&mut guest,json!({"type":"write","path":"/mnt/workspace/adapter-output.json",
+                "bytes": br#"{"inbound":[],"verbs":[],"events":[]}"#.to_vec()}));
+            assert_eq!(receive(&mut guest),json!({"type":"receipt","accepted":true}));
             send(&mut guest,json!({"type":"finish","status":0}));
         });
         exchange(
@@ -134,9 +137,22 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
         &["https://api.example.com"]
     );
     assert!(result.0.overlay_dirty);
-    let [SandboxProposalWrite::FileEdit(file)] = result.1.as_slice() else {
-        panic!("one file proposal")
+    let [
+        SandboxProposalWrite::FileEdit(adapter_output),
+        SandboxProposalWrite::FileEdit(file),
+    ] = result.1.as_slice()
+    else {
+        panic!("two lowered edit proposals")
     };
+    let bytes = crate::skill_hub::pack_catalog::script_output_bytes(&result.1[0])?;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).expect("typed output JSON"),
+        json!({"inbound":[],"verbs":[],"events":[]})
+    );
+    assert_eq!(
+        adapter_output.path.as_str(),
+        "/mnt/workspace/adapter-output.json"
+    );
     assert_eq!(file.path.as_str(), "/mnt/workspace/result.txt");
     assert_eq!(file.edit.replacement, "ok");
     assert_eq!(file.edit.start, 0);
@@ -146,6 +162,7 @@ fn socket_protocol_denies_off_list_before_resolution_and_returns_proposals_not_w
         b"base"
     );
     assert!(!base.join("result.txt").exists());
+    assert!(!base.join("adapter-output.json").exists());
     Ok(())
 }
 

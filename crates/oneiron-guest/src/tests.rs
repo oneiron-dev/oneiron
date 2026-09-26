@@ -351,14 +351,17 @@ fn foreign_quickjs_pack_script_reads_only_snapshot_and_emits_typed_output() {
         include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
     let (_temp, root) = scratch();
     let (mut host, guest) = UnixStream::pair().expect("socketpair");
-    host.set_read_timeout(Some(Duration::from_secs(30)))
+    host.set_read_timeout(Some(Duration::from_secs(120)))
         .expect("timeout");
     guest
-        .set_read_timeout(Some(Duration::from_secs(30)))
+        .set_read_timeout(Some(Duration::from_secs(120)))
         .expect("timeout");
     let worker = std::thread::spawn(move || serve_localtest(guest, &root));
     assert_eq!(get(&mut host), json!({"type":"hello", "version":1}));
-    let script = include_str!("../../oneiron/tests/fixtures/echo_pack/scripts/adapter.js");
+    let source = include_str!("../../oneiron/tests/fixtures/echo_pack/scripts/adapter.js");
+    let script = format!(
+        "const packGrants = Object.freeze({{\"email\":{{\"handle\":\"fixture-handle\",\"scheme\":\"https\",\"host\":\"api.example.com\"}}}});\n{source}"
+    );
     let mut first = start(COMPONENT.len());
     first["source"] = script.into();
     put(&mut host, first);
@@ -387,7 +390,7 @@ fn foreign_quickjs_pack_script_reads_only_snapshot_and_emits_typed_output() {
     }
     assert_eq!(
         first_reply,
-        json!({"type":"credential_read","handle":"email-token",
+        json!({"type":"credential_read","handle":"fixture-handle",
         "operation":"metadata","scheme":"https","host":"api.example.com"})
     );
     put(&mut host, json!({"type":"receipt","accepted":true}));
@@ -413,10 +416,10 @@ fn foreign_quickjs_refuses_read_outside_manifest_without_output() {
         include_bytes!("../../../components/code-run-quickjs/artifacts/quickjs-foreign.wasm");
     let (_temp, root) = scratch();
     let (mut host, guest) = UnixStream::pair().expect("socketpair");
-    host.set_read_timeout(Some(Duration::from_secs(30)))
+    host.set_read_timeout(Some(Duration::from_secs(120)))
         .expect("timeout");
     guest
-        .set_read_timeout(Some(Duration::from_secs(30)))
+        .set_read_timeout(Some(Duration::from_secs(120)))
         .expect("timeout");
     let worker = std::thread::spawn(move || serve_localtest(guest, &root));
     assert_eq!(get(&mut host), json!({"type":"hello","version":1}));

@@ -297,3 +297,52 @@ fn script_install_refuses_a_runtime_other_than_the_code_mode_interpreter() -> Re
     assert!(vault.installed_pack("fixture.echo")?.is_none());
     Ok(())
 }
+
+struct QualifiedScript;
+impl PackQualifier for QualifiedScript {
+    fn qualify(&self, source: &PackSource) -> Result<PackQualification> {
+        Ok(PackQualification {
+            suite: "fixture".into(),
+            report_hash: "12".repeat(32),
+            passed: true,
+            advisory_accepted: true,
+            advisory: "fixture".into(),
+            runtime: Some(PackRuntimeRecipe {
+                adapter: source.manifest().adapter.clone().unwrap(),
+                runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
+                runtime_hash: "23".repeat(32),
+            }),
+        })
+    }
+}
+#[test]
+fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> Result<()> {
+    let mut files = vec![
+        HubFile::new(
+            "PACK.md",
+            include_bytes!("../../../tests/fixtures/echo_pack/PACK.md").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/adapter.js",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/adapter.js").to_vec(),
+        ),
+        HubFile::new(
+            "scripts/input.json",
+            include_bytes!("../../../tests/fixtures/echo_pack/scripts/input.json").to_vec(),
+        ),
+    ];
+    files.push(HubFile::new(
+        "knowledge/reference.txt",
+        vec![b'x'; 1024 * 1024 + 1],
+    ));
+    let source = PackSource::from_files(files)?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &QualifiedScript)
+            .is_err()
+    );
+    assert!(vault.installed_pack("fixture.echo")?.is_none());
+    Ok(())
+}

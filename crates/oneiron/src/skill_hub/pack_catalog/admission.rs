@@ -164,6 +164,16 @@ impl Vault {
         }
         Ok(Some(installed))
     }
+    /// Fresh installed-source check under a caller-owned writer transaction.
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    pub(crate) fn installed_pack_for_script_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        name: &str,
+    ) -> Result<Option<PackInstallReceipt>> {
+        self.installed_pack_in_txn(txn, name)
+    }
+
     fn installed_pack_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -270,14 +280,54 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
             return Err(invalid("runtime recipe does not bind declared adapter"));
         }
         crate::skill::SkillContentHash::parse_hex(&runtime.runtime_hash)?;
-        if matches!(runtime.adapter, super::PackAdapter::Script(_))
-            && runtime.runtime_id != crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME
-        {
-            return Err(invalid(
-                "script adapter requires the code-mode QuickJS runtime",
-            ));
+        if matches!(runtime.adapter, super::PackAdapter::Script(_)) {
+            if runtime.runtime_id != crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME {
+                return Err(invalid(
+                    "script adapter requires the code-mode QuickJS runtime",
+                ));
+            }
+            validate_script_snapshot(source)?;
         }
         crate::batch::secret_scan::scan_metadata_field(&runtime.runtime_id)?;
+    }
+    Ok(())
+}
+
+/// Match the existing Firecracker/guest snapshot budget at admission, not
+/// after a pack has been installed and cannot execute. All pack files enter
+/// the source snapshot, including knowledge the script might never read.
+fn validate_script_snapshot(source: &PackSource) -> Result<()> {
+    let mut total = 0_usize;
+    let mut directories = std::collections::BTreeSet::new();
+    for file in source.files() {
+        if file.content.len() > 1024 * 1024 || file.path.len() > 4096 {
+            return Err(invalid("script pack source exceeds sandbox file limit"));
+        }
+        total = total
+            .checked_add(file.content.len())
+            .ok_or_else(|| invalid("script pack source length overflow"))?;
+        if total > 16 * 1024 * 1024 {
+            return Err(invalid("script pack source exceeds sandbox snapshot limit"));
+        }
+        let mut parent = String::new();
+        let parts: Vec<_> = file.path.split('/').collect();
+        if parts.len() > 65 {
+            return Err(invalid(
+                "script pack source exceeds sandbox directory depth",
+            ));
+        }
+        for part in &parts[..parts.len() - 1] {
+            if !parent.is_empty() {
+                parent.push('/');
+            }
+            parent.push_str(part);
+            directories.insert(parent.clone());
+        }
+        if directories.len() > 8192 {
+            return Err(invalid(
+                "script pack source exceeds sandbox directory limit",
+            ));
+        }
     }
     Ok(())
 }

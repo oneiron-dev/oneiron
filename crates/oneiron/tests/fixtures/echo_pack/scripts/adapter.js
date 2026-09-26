@@ -1,7 +1,8 @@
 const bytes = await sandbox.fs.read_file('/mnt/workspace/scripts/input.json');
 let text = ''; for (const byte of bytes) text += String.fromCharCode(byte);
-await sandbox.credential.call({operation:'metadata', credentialHandle:'email-token',
-    args:{scheme:'https', host:'api.example.com'}});
+const grant = packGrants.email;
+await sandbox.credential.call({operation:'metadata', credentialHandle:grant.handle,
+    args:{scheme:grant.scheme, host:grant.host}});
 const output = JSON.stringify({
     inbound: [JSON.parse(text)],
     verbs: [{channel:'email', verb:'send', target:'recipient', content_ref:'artifact:1'}],

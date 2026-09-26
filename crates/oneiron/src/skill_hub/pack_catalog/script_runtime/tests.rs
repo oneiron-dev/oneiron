@@ -62,6 +62,18 @@ fn setup(
     PackScriptGrant,
     GuestImage,
 )> {
+    setup_with_secret(auto_install, "email-token")
+}
+fn setup_with_secret(
+    auto_install: bool,
+    secret_ref: &str,
+) -> Result<(
+    tempfile::TempDir,
+    Arc<Vault>,
+    EntityId,
+    PackScriptGrant,
+    GuestImage,
+)> {
     let mut config = VaultConfig::device();
     config.map_size = 32 * 1024 * 1024;
     config.dimensions = 4;
@@ -86,7 +98,7 @@ fn setup(
     )?;
     vault.register_secret(SecretCustodyRecord {
         schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-        name: "email-token".into(),
+        name: secret_ref.into(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
         value_bytes: b"host-only-secret".to_vec(),
@@ -113,7 +125,7 @@ fn setup(
             registered_at: 1,
         },
         ConnectorKeySpec {
-            secret_ref: Some("email-token".into()),
+            secret_ref: Some(secret_ref.into()),
             actor_entity_ref: Some(agent),
             ..ConnectorKeySpec::new("email")
         },
@@ -223,6 +235,7 @@ struct OutputBackend {
     root: PathBuf,
     output: Vec<u8>,
     seen_secret: Arc<Mutex<Vec<u8>>>,
+    after_run: Option<Box<dyn Fn() + Send + Sync>>,
 }
 impl MicroVmBackend for OutputBackend {
     fn name(&self) -> &'static str {
@@ -245,10 +258,24 @@ impl MicroVmBackend for OutputBackend {
         _: ExecutionBudget,
         proxy: &CredentialEgressProxy,
     ) -> Result<MicroVmExit> {
-        assert_eq!(image.source, JS);
+        let (prefix, original) = image
+            .source
+            .split_once(");\n")
+            .ok_or_else(|| invalid("missing injected grant mapping"))?;
+        assert_eq!(original, JS);
+        let mapping: serde_json::Value = serde_json::from_str(
+            prefix
+                .strip_prefix("const packGrants = Object.freeze(")
+                .ok_or_else(|| invalid("missing grant object"))?,
+        )
+        .map_err(|_| invalid("invalid grant mapping"))?;
+        let token = mapping["email"]["handle"]
+            .as_str()
+            .ok_or_else(|| invalid("missing opaque handle"))?;
+        assert_ne!(token, "email-token");
         let call = SandboxCredentialCall::read_only(
             "metadata",
-            SandboxCredentialHandle::new("email-token")?,
+            SandboxCredentialHandle::new(token)?,
             rmpv::Value::Map(vec![
                 (rmpv::Value::from("scheme"), rmpv::Value::from("https")),
                 (
@@ -258,6 +285,9 @@ impl MicroVmBackend for OutputBackend {
             ]),
         )?;
         proxy.forward_read(vm, &call, &Sink(Arc::clone(&self.seen_secret)))?;
+        if let Some(change) = &self.after_run {
+            change();
+        }
         std::fs::write(vm.overlay_upper().join("adapter-output.json"), &self.output)?;
         Ok(MicroVmExit {
             status: 0,
@@ -268,7 +298,16 @@ impl MicroVmBackend for OutputBackend {
         collect_overlay_writes(
             vm.overlay_upper(),
             crate::code_sandbox::SandboxMount::Workspace,
-        )
+        )?
+        .into_iter()
+        .map(|write| {
+            let SandboxProposalWrite::FileWrite(file) = write else {
+                unreachable!()
+            };
+            Ok(file.lower_to_edit(b"")?.map(SandboxProposalWrite::FileEdit))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(|edits| edits.into_iter().flatten().collect())
     }
     fn proxy_credentials(&self, _: &MicroVmHandle, _: &dyn CredentialResolver) -> Result<()> {
         Ok(())
@@ -308,6 +347,7 @@ fn installed_script_uses_key_custody_surface_verbs_and_subscription_wake() -> Re
             root: scratch.path().to_path_buf(),
             output: output(),
             seen_secret: Arc::clone(&seen_secret),
+            after_run: None,
         }),
     )?;
     assert_eq!(&*seen_secret.lock().unwrap(), b"host-only-secret");
@@ -346,6 +386,7 @@ fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()>
                 root: scratch.path().to_path_buf(),
                 output,
                 seen_secret: Arc::clone(&seen_secret),
+                after_run: None,
             }),
         )
     };
@@ -386,7 +427,8 @@ fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
                 Box::new(OutputBackend {
                     root: scratch.path().to_path_buf(),
                     output: output(),
-                    seen_secret: Arc::clone(&secret)
+                    seen_secret: Arc::clone(&secret),
+                    after_run: None
                 })
             )
             .is_err()
@@ -433,11 +475,344 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
                 Box::new(OutputBackend {
                     root: scratch.path().to_path_buf(),
                     output: serde_json::to_vec(&wrong).unwrap(),
-                    seen_secret: Arc::new(Mutex::new(Vec::new()))
+                    seen_secret: Arc::new(Mutex::new(Vec::new())),
+                    after_run: None
                 })
             )
             .is_err()
     );
+    assert!(vault.surface_event_handoff_status("message-1")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn same_pack_receives_run_local_grants_for_two_vault_custody_names() -> Result<()> {
+    for secret_ref in ["email-token", "work-mail-token"] {
+        let (_dir, vault, agent, grant, image) = setup_with_secret(false, secret_ref)?;
+        let scratch = tempfile::tempdir()?;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let outcome = vault.run_script_pack_in_vm(
+            PackScriptRun {
+                name: "fixture.echo",
+                agent,
+                grants: std::slice::from_ref(&grant),
+                image: &image,
+                budget: ExecutionBudget::new(5, 128, 2),
+                now: 1_800_000_123,
+            },
+            Box::new(OutputBackend {
+                root: scratch.path().to_path_buf(),
+                output: output(),
+                seen_secret: Arc::clone(&seen),
+                after_run: None,
+            }),
+        )?;
+        assert_eq!(outcome.wakes.len(), 1);
+        assert_eq!(&*seen.lock().unwrap(), b"host-only-secret");
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
+    for malformed_position in [0, 1] {
+        let (_dir, vault, agent, grant, image) = setup(false)?;
+        let mut output: serde_json::Value = serde_json::from_slice(&output()).unwrap();
+        let valid = output["events"][0].clone();
+        output["events"].as_array_mut().unwrap().push(valid);
+        output["events"][1]["event_id"] = "arrival-2".into();
+        output["events"][malformed_position]["event_id"] = "".into();
+        let scratch = tempfile::tempdir()?;
+        assert!(
+            vault
+                .run_script_pack_in_vm(
+                    PackScriptRun {
+                        name: "fixture.echo",
+                        agent,
+                        grants: std::slice::from_ref(&grant),
+                        image: &image,
+                        budget: ExecutionBudget::new(5, 128, 2),
+                        now: 1_800_000_123,
+                    },
+                    Box::new(OutputBackend {
+                        root: scratch.path().to_path_buf(),
+                        output: serde_json::to_vec(&output).unwrap(),
+                        seen_secret: Arc::new(Mutex::new(Vec::new())),
+                        after_run: None
+                    })
+                )
+                .is_err()
+        );
+        assert!(vault.surface_event_handoff_status("message-1")?.is_none());
+        assert!(
+            vault
+                .store
+                .gate_decisions(100)?
+                .iter()
+                .all(|receipt| receipt.content_kind != "connector_wake")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<()> {
+    use crate::connector_key::{ConnectorDispatchTelemetry, ConnectorKeyRecord, EffectorBudget};
+    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let other = entity(0xB7);
+    vault.put_entity(
+        &other,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"other",
+    )?;
+    let other_key = entity(0xB8);
+    vault.register_connector_key(
+        &other_key,
+        ConnectorKeyRecord::active("email", Some(other), vec![EffectorBudget::rate(1, 600)], 1),
+    )?;
+    let owner = vault.authenticate_owner(
+        entity(0xB1),
+        "principal:script-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    vault.subscribe_connector_event(
+        &owner,
+        other,
+        other_key,
+        ConnectorEventFilter {
+            connector: "email".into(),
+            event_kind: Some("arrived".into()),
+            predicate: None,
+        },
+    )?;
+    let scratch = tempfile::tempdir()?;
+    let outcome = vault.run_script_pack_in_vm(
+        PackScriptRun {
+            name: "fixture.echo",
+            agent,
+            grants: std::slice::from_ref(&grant),
+            image: &image,
+            budget: ExecutionBudget::new(5, 128, 2),
+            now: 1_800_000_123,
+        },
+        Box::new(OutputBackend {
+            root: scratch.path().to_path_buf(),
+            output: output(),
+            seen_secret: Arc::new(Mutex::new(Vec::new())),
+            after_run: None,
+        }),
+    )?;
+    assert_eq!(outcome.wakes.len(), 1);
+    assert_eq!(outcome.wakes[0].agent, agent);
+    let spend = vault.admit_connector_key_dispatches(
+        &other_key,
+        "email",
+        1,
+        ConnectorDispatchTelemetry::default(),
+    )?;
+    assert_eq!(
+        spend.admitted, 1,
+        "ungranted B key retains full wake budget"
+    );
+    Ok(())
+}
+
+#[test]
+fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result<()> {
+    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let scratch = tempfile::tempdir()?;
+    let key_id = grant.key_id;
+    let to_revoke = Arc::clone(&vault);
+    let result = vault.run_script_pack_in_vm(
+        PackScriptRun {
+            name: "fixture.echo",
+            agent,
+            grants: std::slice::from_ref(&grant),
+            image: &image,
+            budget: ExecutionBudget::new(5, 128, 2),
+            now: 1_800_000_123,
+        },
+        Box::new(OutputBackend {
+            root: scratch.path().to_path_buf(),
+            output: output(),
+            seen_secret: Arc::new(Mutex::new(Vec::new())),
+            after_run: Some(Box::new(move || {
+                to_revoke
+                    .revoke_connector_key(&key_id, 1_800_000_122)
+                    .unwrap();
+            })),
+        }),
+    );
+    assert!(result.is_err());
+    assert!(vault.surface_event_handoff_status("message-1")?.is_none());
+    assert!(
+        vault
+            .store
+            .gate_decisions(100)?
+            .iter()
+            .all(|receipt| receipt.content_kind != "connector_wake")
+    );
+    Ok(())
+}
+
+#[test]
+fn stored_wake_id_conflict_rolls_back_new_inbound() -> Result<()> {
+    let (_dir, vault, agent, grant, image) = setup(false)?;
+    vault.ingest_connector_event(&crate::connector_key::events::ConnectorEvent {
+        event_id: "arrival-1".into(),
+        connector: "email".into(),
+        event_kind: "arrived".into(),
+        predicate: "email.message".into(),
+        payload: serde_json::json!({"id":"different"}),
+    })?;
+    let scratch = tempfile::tempdir()?;
+    let result = vault.run_script_pack_in_vm(
+        PackScriptRun {
+            name: "fixture.echo",
+            agent,
+            grants: std::slice::from_ref(&grant),
+            image: &image,
+            budget: ExecutionBudget::new(5, 128, 2),
+            now: 1_800_000_123,
+        },
+        Box::new(OutputBackend {
+            root: scratch.path().to_path_buf(),
+            output: output(),
+            seen_secret: Arc::new(Mutex::new(Vec::new())),
+            after_run: None,
+        }),
+    );
+    assert!(result.is_err());
+    assert!(vault.surface_event_handoff_status("message-1")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() -> Result<()> {
+    use crate::channel_identity::{
+        ChannelIdentityFulfillment, DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest,
+        delegated_custody_scopes,
+    };
+    let (_dir, vault, agent, grant, image) = setup(false)?;
+    let mailbox = "member@member-owned.example";
+    let delegated = DelegatedGrant::new("member-oauth", vec![DelegatedGrantScope::MailRead]);
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "member-oauth".into(),
+        class: CustodyClass::CrossVault,
+        device_only: true,
+        value_bytes: b"member-token".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1_800_000_000,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![SecretBinding {
+            effector: "connector:gmail".into(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes("email", mailbox),
+        }],
+        manifest_ref: String::new(),
+        declared_paths: Vec::new(),
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let first = entity(0xB9);
+    vault.provision_delegated_identity(
+        &first,
+        DelegatedProvisionRequest {
+            channel: "email".into(),
+            address_or_handle: mailbox.into(),
+            binding: ChannelIdentityBinding::agent(agent),
+            grant: delegated.clone(),
+        },
+        1_800_000_000,
+    )?;
+    vault.transition_channel_identity(
+        &first,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        1_800_000_010,
+        None,
+    )?;
+    vault.transition_channel_identity(
+        &first,
+        ChannelIdentityState::Active,
+        None,
+        1_800_000_020,
+        None,
+    )?;
+    let other = entity(0xBA);
+    vault.put_entity(
+        &other,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"other",
+    )?;
+    let mut output: serde_json::Value = serde_json::from_slice(&output()).unwrap();
+    output["inbound"][0]["receiving_address_or_handle"] = mailbox.into();
+    let change = Arc::clone(&vault);
+    let scratch = tempfile::tempdir()?;
+    let result = vault.run_script_pack_in_vm(
+        PackScriptRun {
+            name: "fixture.echo",
+            agent,
+            grants: std::slice::from_ref(&grant),
+            image: &image,
+            budget: ExecutionBudget::new(5, 128, 2),
+            now: 1_800_000_123,
+        },
+        Box::new(OutputBackend {
+            root: scratch.path().to_path_buf(),
+            output: serde_json::to_vec(&output).unwrap(),
+            seen_secret: Arc::new(Mutex::new(Vec::new())),
+            after_run: Some(Box::new(move || {
+                change
+                    .transition_channel_identity(
+                        &first,
+                        ChannelIdentityState::Released,
+                        None,
+                        1_800_000_030,
+                        None,
+                    )
+                    .unwrap();
+                let second = entity(0xBB);
+                change
+                    .provision_delegated_identity(
+                        &second,
+                        DelegatedProvisionRequest {
+                            channel: "email".into(),
+                            address_or_handle: mailbox.into(),
+                            binding: ChannelIdentityBinding::agent(other),
+                            grant: delegated.clone(),
+                        },
+                        1_800_000_040,
+                    )
+                    .unwrap();
+                change
+                    .transition_channel_identity(
+                        &second,
+                        ChannelIdentityState::PendingFulfillment,
+                        Some(ChannelIdentityFulfillment::Api),
+                        1_800_000_050,
+                        None,
+                    )
+                    .unwrap();
+                change
+                    .transition_channel_identity(
+                        &second,
+                        ChannelIdentityState::Active,
+                        None,
+                        1_800_000_060,
+                        None,
+                    )
+                    .unwrap();
+            })),
+        }),
+    );
+    assert!(result.is_err());
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
     Ok(())
 }

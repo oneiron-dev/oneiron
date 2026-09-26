@@ -6638,7 +6638,7 @@
      "path": "src/channel_identity/vault_doors.rs",
      "purpose": "Vault doors for ChannelIdentity create, provision, transition, reads, and body apply",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -9933,6 +9933,7 @@
      "path": "src/connector_key/events.rs",
      "purpose": "Durable, revocable connector-event subscriptions and atomic wake decisions",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -10036,7 +10037,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 8
      }
@@ -27968,17 +27969,18 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -28060,7 +28062,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -28085,12 +28087,13 @@
      "path": "src/skill_hub/pack_catalog/script_runtime.rs",
      "purpose": "Foreign pack scripts run only through the existing propose-only code-mode VM",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/script_runtime/tests.rs",
@@ -29430,7 +29433,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 9,
       "struct": 5,
@@ -29457,7 +29460,7 @@
      "purpose": "Inbound surface event, source and action types, channel routing, and route receipts",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 7,
       "fn": 14,
       "struct": 4

@@ -9,8 +9,7 @@ use super::{PackAdapter, PackSource, invalid};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
-        CredentialAllowlist, CredentialDestination, CredentialReadTransport, ExecutionBudget,
-        GuestImage,
+        CredentialDestination, CredentialReadTransport, ExecutionBudget, GuestImage,
     },
     connector_key::{
         ConnectorKeyStatus,
@@ -22,7 +21,10 @@ use crate::{
 };
 #[cfg(any(test, feature = "microvm-firecracker"))]
 use crate::{
-    code_sandbox::microvm::{CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter},
+    code_sandbox::SandboxCredentialHandle,
+    code_sandbox::microvm::{
+        CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
+    },
     code_sandbox::{SandboxGuestTier, SandboxMountTable, SandboxProposalWrite},
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
@@ -191,25 +193,36 @@ impl Vault {
             return Err(invalid("foreign pack requires isolating code-mode backend"));
         }
         let (source, path) = self.installed_script_pack(name)?;
-        let allowlist = validate_grants(self, &source, agent, grants)?;
+        let secret_refs = validate_grants(self, &source, agent, grants)?;
+        let mut allowlist = CredentialAllowlist::new();
+        let mut bindings = BTreeMap::new();
+        let mut guest_grants = BTreeMap::new();
+        for (grant, secret_ref) in grants.iter().zip(secret_refs) {
+            // A random run-local handle, not the name of vault-local custody.
+            let handle =
+                SandboxCredentialHandle::new(format!("pack-{}", EntityId::now().to_hex()))?;
+            allowlist.allow(&handle, grant.destination.clone());
+            guest_grants.insert(
+                grant.requested.clone(),
+                serde_json::json!({
+                    "handle": handle.as_str(), "scheme": grant.destination.scheme(),
+                    "host": grant.destination.host_suffix(),
+                }),
+            );
+            bindings.insert(
+                handle.as_str().to_owned(),
+                (
+                    grant.key_id,
+                    grant.requested.clone(),
+                    secret_ref,
+                    grant.destination.clone(),
+                    agent,
+                ),
+            );
+        }
         let resolver: Arc<dyn CredentialResolver> = Arc::new(PackCredentialResolver {
             vault: Arc::clone(self),
-            grants: grants
-                .iter()
-                .map(|grant| {
-                    Ok((
-                        validate_grant(self, &source, agent, grant)?
-                            .as_str()
-                            .to_owned(),
-                        (
-                            grant.key_id,
-                            grant.requested.clone(),
-                            grant.destination.clone(),
-                            agent,
-                        ),
-                    ))
-                })
-                .collect::<Result<_>>()?,
+            grants: bindings,
         });
         let script = source
             .files()
@@ -265,7 +278,10 @@ impl Vault {
             resolver,
             allowlist,
         )?;
-        let guest = image.clone().with_source(script);
+        let grant_json = serde_json::to_string(&guest_grants)
+            .map_err(|_| invalid("script grant mapping encoding failed"))?;
+        let injected = format!("const packGrants = Object.freeze({grant_json});\n{script}");
+        let guest = image.clone().with_source(injected);
         let exit = adapter.run(&guest, budget)?;
         if exit.status != 0 {
             return Err(invalid("pack script failed in sandbox"));
@@ -274,23 +290,11 @@ impl Vault {
         if deltas.len() != 1 {
             return Err(invalid("pack script must emit one typed output"));
         }
-        let SandboxProposalWrite::FileWrite(file) = deltas[0].write() else {
-            return Err(invalid("pack script emitted non-output proposal"));
-        };
-        if file.path.as_str() != OUTPUT_PATH || file.bytes.len() > MAX_OUTPUT_BYTES {
-            return Err(invalid("pack script output outside manifest"));
-        }
-        let output: ScriptOutput = serde_json::from_slice(&file.bytes)
+        let bytes = script_output_bytes(deltas[0].write())?;
+        let output: ScriptOutput = serde_json::from_slice(&bytes)
             .map_err(|_| invalid("invalid typed pack script output"))?;
         if output.inbound.len() > 16 || output.verbs.len() > 16 || output.events.len() > 16 {
             return Err(invalid("pack script output count exceeded"));
-        }
-        for grant in grants {
-            // Revocation or rotation during execution suppresses all output.
-            let _ = validate_grant(self, &source, agent, grant)?;
-        }
-        if self.installed_pack(name)?.as_ref() != Some(&receipt) {
-            return Err(invalid("installed pack changed during script execution"));
         }
         let permitted: BTreeSet<&str> = grants
             .iter()
@@ -339,27 +343,45 @@ impl Vault {
                 OutboundIntentTrigger::agent_immediate(source.content_hash().to_hex()),
             ));
         }
-        // Preflight EVERY identity route before enqueuing the first event. A
-        // script with one valid and one cross-agent address cannot commit the
-        // valid prefix and then discover the privilege violation.
-        let mut checked = Vec::new();
-        for mut event in output.inbound {
-            event.foreign_inbound = true;
-            event.received_at = now;
-            let routed = self.route_inbound_surface_event(event.clone())?;
-            if routed.agent_ref.as_deref() != Some(agent.to_hex().as_str()) {
-                return Err(invalid("script inbound route outside granted agent"));
+        // All structural checks happen before a write. Each durable door
+        // below shares ONE write transaction: revocation, identity reassignment,
+        // event admission, wake budget and receipt see the same snapshot.
+        let mut seen_events = BTreeSet::new();
+        for event in &output.events {
+            crate::connector_key::events::validate_connector_event(event)?;
+            if !seen_events.insert((event.connector.clone(), event.event_id.clone())) {
+                return Err(invalid("duplicate script connector event"));
             }
-            checked.push(event);
         }
         let mut inbound = Vec::new();
-        for event in checked {
-            inbound.push(self.enqueue_inbound_surface_event(event, now)?);
-        }
         let mut wakes = Vec::new();
-        for event in output.events {
-            wakes.extend(self.ingest_connector_event(&event)?);
-        }
+        self.with_write_txn(|txn| {
+            if self.installed_pack_for_script_in_txn(&*txn, name)?.as_ref() != Some(&receipt) {
+                return Err(invalid("installed pack changed during script execution"));
+            }
+            for grant in grants {
+                let _ = validate_grant_in_txn(self, &*txn, &source, agent, grant)?;
+            }
+            for mut event in output.inbound {
+                event.foreign_inbound = true;
+                event.received_at = now;
+                inbound.push(self.enqueue_pack_surface_event_in_txn(txn, event, agent, now)?);
+            }
+            for event in output.events {
+                let grant = grants
+                    .iter()
+                    .find(|grant| grant.requested == event.connector)
+                    .ok_or_else(|| invalid("script event outside granted connector"))?;
+                wakes.extend(self.ingest_connector_event_for_pack_in_txn(
+                    txn,
+                    &event,
+                    agent,
+                    grant.key_id,
+                    now,
+                )?);
+            }
+            Ok(())
+        })?;
         Ok(PackScriptOutcome {
             inbound,
             verbs,
@@ -368,12 +390,34 @@ impl Vault {
     }
 }
 
+/// Parse the exact Firecracker protocol's reviewable empty-base file edit.
+/// The guest never commits a whole-file write or bypasses the proposal lane.
+#[cfg(any(test, feature = "microvm-firecracker"))]
+pub(crate) fn script_output_bytes(write: &SandboxProposalWrite) -> Result<Vec<u8>> {
+    let SandboxProposalWrite::FileEdit(file) = write else {
+        return Err(invalid("pack script emitted non-output proposal"));
+    };
+    let edit = &file.edit;
+    if file.path.as_str() != OUTPUT_PATH
+        || file.base_content_hash != *blake3::hash(b"").as_bytes()
+        || edit.path != file.path.relative_path()
+        || edit.start != 0
+        || edit.end != 0
+        || !edit.expected.is_empty()
+        || edit.new_path.is_some()
+        || edit.replacement.len() > MAX_OUTPUT_BYTES
+    {
+        return Err(invalid("pack script output outside manifest"));
+    }
+    Ok(edit.replacement.as_bytes().to_vec())
+}
+
 fn validate_grants(
     vault: &Vault,
     source: &PackSource,
     agent: EntityId,
     grants: &[PackScriptGrant],
-) -> Result<CredentialAllowlist> {
+) -> Result<Vec<String>> {
     let requested: BTreeSet<&str> = grants
         .iter()
         .map(|grant| grant.requested.as_str())
@@ -390,25 +434,27 @@ fn validate_grants(
     {
         return Err(invalid("script grants differ from requested slate"));
     }
-    let mut allowlist = CredentialAllowlist::new();
-    let mut handles = BTreeSet::new();
-    for grant in grants {
-        let handle = validate_grant(vault, source, agent, grant)?;
-        if !handles.insert(handle.as_str().to_owned()) {
-            return Err(invalid(
-                "script grants share an ambiguous credential handle",
-            ));
-        }
-        allowlist.allow(&handle, grant.destination.clone());
-    }
-    Ok(allowlist)
+    grants
+        .iter()
+        .map(|grant| validate_grant(vault, source, agent, grant))
+        .collect()
 }
 fn validate_grant(
     vault: &Vault,
     source: &PackSource,
     agent: EntityId,
     grant: &PackScriptGrant,
-) -> Result<crate::code_sandbox::SandboxCredentialHandle> {
+) -> Result<String> {
+    let txn = vault.store.env.read_txn()?;
+    validate_grant_in_txn(vault, &txn, source, agent, grant)
+}
+fn validate_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &PackSource,
+    agent: EntityId,
+    grant: &PackScriptGrant,
+) -> Result<String> {
     if !source
         .manifest()
         .requested_grants
@@ -416,8 +462,7 @@ fn validate_grant(
     {
         return Err(invalid("undeclared script grant"));
     }
-    let key = vault
-        .get_connector_key(&grant.key_id)?
+    let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &grant.key_id)?
         .ok_or_else(|| invalid("connector key absent"))?;
     if key.status != ConnectorKeyStatus::Active
         || key.connector != grant.requested
@@ -425,15 +470,14 @@ fn validate_grant(
     {
         return Err(invalid("script connector key inactive or scope mismatch"));
     }
-    let handle = key
+    let secret_ref = key
         .secret_ref
         .ok_or_else(|| invalid("script grant has no credential handle"))?;
-    let custody = vault
-        .resolve_secret_ref(&handle)?
+    let custody = crate::secret_custody::resolve_secret_ref_in_txn(&vault.store, txn, &secret_ref)?
         .ok_or_else(|| invalid("script grant custody absent"))?;
-    let metadata = vault
-        .get_secret_metadata(&custody)?
-        .ok_or_else(|| invalid("script grant custody unavailable"))?;
+    let metadata = crate::secret_custody::read_secret_custody_in_txn(&vault.store, txn, &custody)?
+        .ok_or_else(|| invalid("script grant custody unavailable"))?
+        .metadata();
     if metadata.status != crate::secret_custody::SecretCustodyStatus::Active
         || !metadata.bindings.iter().any(|binding| {
             binding.effector == format!("connector:{}", grant.requested) && binding.grants_read()
@@ -441,7 +485,7 @@ fn validate_grant(
     {
         return Err(invalid("script grant custody inactive or unbound"));
     }
-    crate::code_sandbox::SandboxCredentialHandle::new(handle)
+    Ok(secret_ref)
 }
 
 /// Resolves an opaque handle only if its exact connector key and custody
@@ -449,7 +493,7 @@ fn validate_grant(
 #[cfg(any(test, feature = "microvm-firecracker"))]
 struct PackCredentialResolver {
     vault: Arc<Vault>,
-    grants: BTreeMap<String, (EntityId, String, CredentialDestination, EntityId)>,
+    grants: BTreeMap<String, (EntityId, String, String, CredentialDestination, EntityId)>,
 }
 #[cfg(any(test, feature = "microvm-firecracker"))]
 impl CredentialResolver for PackCredentialResolver {
@@ -458,10 +502,10 @@ impl CredentialResolver for PackCredentialResolver {
         handle: &crate::code_sandbox::SandboxCredentialHandle,
         dest: &CredentialDestination,
     ) -> Result<Vec<u8>> {
-        let (key_id, connector, bound_dest, agent) = self
-            .grants
-            .get(handle.as_str())
-            .ok_or_else(|| invalid("unbound pack credential handle"))?;
+        let (key_id, connector, secret_ref, bound_dest, agent) =
+            self.grants
+                .get(handle.as_str())
+                .ok_or_else(|| invalid("unbound pack credential handle"))?;
         if dest != bound_dest {
             return Err(invalid("pack credential destination mismatch"));
         }
@@ -471,14 +515,14 @@ impl CredentialResolver for PackCredentialResolver {
             .ok_or_else(|| invalid("connector key absent"))?;
         if key.status != ConnectorKeyStatus::Active
             || key.connector != *connector
-            || key.secret_ref.as_deref() != Some(handle.as_str())
+            || key.secret_ref.as_deref() != Some(secret_ref.as_str())
             || key.actor_entity_ref.is_some_and(|bound| bound != *agent)
         {
             return Err(invalid("pack credential key revoked or rotated"));
         }
         let custody = self
             .vault
-            .resolve_secret_ref(handle.as_str())?
+            .resolve_secret_ref(secret_ref)?
             .ok_or_else(|| invalid("pack credential custody absent"))?;
         let txn = self.vault.store.env.write_txn()?;
         let value = self
