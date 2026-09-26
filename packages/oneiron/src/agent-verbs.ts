@@ -13,6 +13,8 @@ export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: Task
 export type TaskAskDefault = "proceed" | "hold" | "ask_me";
 export interface TaskAskDisagree {branch: "hold" | "proceed"; surface: "card" | "none"}
 export interface TaskAskClass {key: string; version: number; governance: boolean; deadline_seconds: number; allowed_recipients: string[]; required_people: string[]; minimum_responses: number; required_sources: ConsultPayloadRef[]; decision: TaskAskDecide | null; disclosure: Record<string, ConsultPayloadRef[]>; fallback: TaskAskDefault[]; remind: number[]}
+export type TaskAskWho = TaskAskTarget | string | string[] | null;
+export interface TaskAskShort {who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault}
 export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
 export interface TaskAskHandle { group_ref: string }
 export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
@@ -23,7 +25,8 @@ export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: Ta
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
 export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"}
 export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
-export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
+export type TaskAskEffectAuthorization = "not_evaluated_by_ask";
+export interface TaskAskResult {effect_authorization: TaskAskEffectAuthorization; coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
 export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
@@ -33,7 +36,10 @@ export function agentVerbs(invoke: AgentInvoke) {
 tasks: {
 create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
 update(turn: Record<string, unknown>): unknown { return invoke("tasksUpdate", turn) as unknown },
-ask(spec: TaskAskSpec): TaskAskReceipt { return invoke("tasksAsk", spec) as TaskAskReceipt },
+ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number, defaultBranch?: TaskAskDefault]): TaskAskReceipt {
+  const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]};
+  return invoke("tasksAsk", input) as TaskAskReceipt
+},
 wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return invoke("tasksWait", {handle, step_key: stepKey}) as TaskAskWait },
 answer(handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer { return invoke("tasksAnswer", {handle, word}) as TaskAskAnswer },
 outcomes(handle: TaskAskHandle): CalibrationPair[] { return invoke("tasksOutcomes", handle) as CalibrationPair[] },

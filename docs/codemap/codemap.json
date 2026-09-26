@@ -30734,6 +30734,7 @@
       "TaskAskDecision",
       "TaskAskDefault",
       "TaskAskDisagree",
+      "TaskAskEffectAuthorization",
       "TaskAskElectorate",
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
@@ -30759,8 +30760,8 @@
      "path": "src/task_verb/ask_types.rs",
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
-      "crate-vis": 2,
-      "enum": 14,
+      "crate-vis": 3,
+      "enum": 15,
       "fn": 5,
       "struct": 16
      }

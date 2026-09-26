@@ -2509,7 +2509,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/ask_record/tests.rs` | test | s | — | — | — |
 | `src/task_verb/ask_settlement.rs` | src | m | 6 crate-vis | — | Atomic ask cutoffs and the fixed human-word reducers |
 | `src/task_verb/ask_tests.rs` | test | L | — | — | — |
-| `src/task_verb/ask_types.rs` | src | m | 16 struct · 14 enum · 5 fn · 2 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +22 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
+| `src/task_verb/ask_types.rs` | src | m | 16 struct · 15 enum · 5 fn · 3 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +23 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
 | `src/task_verb/consts.rs` | src | s | 1 const · 14 crate-vis | — | Module-level constants shared across the task-verb files |
 | `src/task_verb/consult_fanout_admission.rs` | src | m | 4 fn · 4 crate-vis | — | Meter and admit consult fan-outs before any TASK exists |
 | `src/task_verb/consult_fanout_facade.rs` | src | s | 1 fn | — | — |

@@ -223,6 +223,7 @@ pub struct TaskAskClass {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskSpec {
+    #[serde(default)]
     pub intent_key: String,
     #[serde(default)]
     pub task_ref: Option<EntityId>,
@@ -267,6 +268,27 @@ impl TaskAskSpec {
             on_disagree: TaskAskDisagree::default(),
             remind: None,
         }
+    }
+
+    /// Only the SDK's four-field short call may omit the retry key. Keep the
+    /// rich AskSpec strict; an omitted key cannot weaken its coverage rules.
+    pub(crate) fn normalize_sdk_input(mut self) -> MemoryResult<Self> {
+        if self.intent_key.is_empty() {
+            if self.task_ref.is_some()
+                || self.class.is_some()
+                || self.need != TaskAskNeed::default()
+                || self.decide.is_some()
+                || self.provisional != TaskAskProvisional::Inform
+                || self.on_disagree != TaskAskDisagree::default()
+                || self.remind.is_some()
+            {
+                return Err(MemoryError::bad_request(
+                    "short ask only accepts who, what, until and default",
+                ));
+            }
+            self = Self::shorthand(self.who, self.what, self.until, self.default);
+        }
+        Ok(self)
     }
 
     pub(super) fn effective(
@@ -379,6 +401,14 @@ impl TaskAskSpec {
             if effective.remind.is_none() {
                 effective.remind = Some(class.remind.clone());
             }
+        }
+        // Ungoverned short asks still need a finite cutoff. A bound class
+        // supplies its own deadline first; otherwise use the base one-day TTL.
+        if effective.until.is_none() {
+            effective.until = Some(
+                now.checked_add(24 * 60 * 60)
+                    .ok_or_else(|| MemoryError::bad_request("ask deadline overflow"))?,
+            );
         }
         if effective.until.is_none_or(|until| until <= now) {
             return Err(MemoryError::bad_request(
@@ -563,9 +593,18 @@ pub struct TaskAskSettlement {
     pub unmet_sources: BTreeSet<ConsultPayloadRef>,
     pub outcome_answer_ref: Option<EntityId>,
 }
+/// Ask settlement cannot grant or deny an external effect. Only the separate
+/// effect gate evaluates that authority against its own live inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAskEffectAuthorization {
+    NotEvaluatedByAsk,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskResult {
+    pub effect_authorization: TaskAskEffectAuthorization,
     pub coverage: TaskAskCoverage,
     pub decision: TaskAskDecision,
     pub fallback: Option<TaskAskFallback>,

@@ -474,7 +474,7 @@
       "name": "tasks.ask",
       "input": "crate::task_verb::TaskAskSpec",
       "output": "crate::task_verb::TaskAskReceipt",
-      "call": "memory.tasks_ask(&input)?",
+      "call": "memory.tasks_ask(&input.normalize_sdk_input()?)?",
       "scope": "Write",
       "mcp_fields": {
         "spec": "$"

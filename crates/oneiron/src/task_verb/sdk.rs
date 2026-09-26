@@ -184,3 +184,84 @@ fn non_keyed_sdk_request_does_not_claim_a_keyed_decoder() {
     assert_eq!(error.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
     assert!(!error.message.contains("keyed"), "{error:?}");
 }
+
+#[cfg(test)]
+#[test]
+fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
+    use crate::task_verb::{TaskAskDefault, TaskAskEffectAuthorization, TaskAskSpec, TaskAskWait};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let memory = vault.memory(actor, crate::EdgeActorClass::Human);
+    let short = serde_json::json!({
+        "who": {"responder": {"human": {"actor_ref": actor}}},
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
+        "default": "proceed",
+    });
+    let schema = input_schema("tasks.ask").unwrap();
+    assert!(
+        !schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("intent_key"))
+    );
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("what"))
+    );
+    let receipt = invoke(&memory, "tasks.ask", short.clone()).unwrap();
+    let handle: crate::task_verb::TaskAskHandle =
+        serde_json::from_value(receipt["handle"].clone()).unwrap();
+    assert_eq!(
+        invoke(&memory, "tasks.ask", short).unwrap()["handle"],
+        receipt["handle"]
+    );
+    let spec: TaskAskSpec = serde_json::from_value(serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
+    }))
+    .unwrap();
+    assert_eq!(
+        spec.normalize_sdk_input().unwrap().decide,
+        Some(crate::task_verb::TaskAskDecide::First)
+    );
+    let bad = serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
+        "need": {"count": 2}
+    });
+    assert_eq!(
+        invoke(&memory, "tasks.ask", bad).unwrap_err().code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
+    );
+    let answer = memory
+        .tasks_answer(&handle, &crate::task_verb::TaskAskWord::new(actor))
+        .unwrap();
+    let wait: TaskAskWait = serde_json::from_value(
+        invoke(
+            &memory,
+            "tasks.wait",
+            serde_json::json!({
+                "handle": handle, "step_key": "sdk-short"
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let TaskAskWait::Ready(result) = wait else {
+        panic!("settled short ask")
+    };
+    assert_eq!(
+        result.decision,
+        crate::task_verb::TaskAskDecision::First(answer)
+    );
+    assert!(result.coverage.met);
+    assert!(result.fallback.is_none());
+    assert_eq!(
+        result.effect_authorization,
+        TaskAskEffectAuthorization::NotEvaluatedByAsk
+    );
+    assert_eq!(result.settlement.effective.default, TaskAskDefault::Proceed);
+    assert!(result.settlement.effective.until.is_some());
+}

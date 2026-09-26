@@ -518,7 +518,7 @@ pub fn tasks_ask(
     memory: &Memory<'_>,
     input: crate::task_verb::TaskAskSpec,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    memory.tasks_ask(&input)
+    memory.tasks_ask(&input.normalize_sdk_input()?)
 }
 pub fn tasks_wait(
     memory: &Memory<'_>,

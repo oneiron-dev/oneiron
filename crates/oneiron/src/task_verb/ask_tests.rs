@@ -75,6 +75,10 @@ fn external_ask_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
         let answer = memory.tasks_answer(&receipt.handle, &TaskAskWord::new(owner))?;
         let result = settled(&memory, receipt.handle);
         assert_eq!(result.decision, TaskAskDecision::First(answer));
+        assert_eq!(
+            result.effect_authorization,
+            TaskAskEffectAuthorization::NotEvaluatedByAsk
+        );
         let expected = TaskAskWait::Ready(Box::new(result));
         for binding in [Some("step"), Some("step"), None] {
             assert_eq!(memory.tasks_wait(receipt.handle, binding)?, expected);
