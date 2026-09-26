@@ -52,6 +52,7 @@ pub mod scheduled;
 pub(crate) mod untrusted_text;
 
 pub mod healer_host;
+pub use crate::gate::proposal_observation::{ProposalSubmissionCheck, ProposalSubmissionReceipt};
 mod receipt_serde;
 mod repair;
 

@@ -615,6 +615,27 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    // Count only an authenticated local actor's new proposed claim identity.
+    // Replays and envelope-less system puts cannot be assigned to an actor;
+    // same-id writes reuse the submission receipt rather than counting twice.
+    if !replicated
+        && decoded_claim_body
+            .as_ref()
+            .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)
+        && let Some(envelope) = write_envelope
+    {
+        let threshold = match write_policy {
+            Some(policy) => policy.proposal_check_threshold(),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        };
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            wtxn,
+            envelope.actor().entity_ref(),
+            &format!("claim:{}", id.to_hex()),
+            threshold,
+        )?;
+    }
     if entity_type == ENTITY_TYPE_TASK {
         crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
         if body_changed {
