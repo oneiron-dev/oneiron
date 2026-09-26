@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
 | `src/beam/edit_path/tests.rs` | test | s | 2 fn · 1 mod | — | — |
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
-| `src/beam/infra.rs` | src | s | 4 crate-vis | — | Vector-database cost framing |
+| `src/beam/infra.rs` | src | s | 5 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
 | `src/beam/llm_host.rs` | src | m | 10 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
 | `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |

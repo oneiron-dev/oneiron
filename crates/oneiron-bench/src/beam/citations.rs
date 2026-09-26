@@ -14,6 +14,7 @@ pub(super) struct CitationCorpus {
     pub appendix: Vec<CitationNumber>,
     pub dropped: Vec<CitationNumber>,
     pub infra_status: String,
+    pub infra_cost_framing: Vec<super::infra::InfraRow>,
 }
 pub(super) fn corpus() -> BeamResult<CitationCorpus> {
     let source: Value =
@@ -23,10 +24,11 @@ pub(super) fn corpus() -> BeamResult<CitationCorpus> {
         main_table: Vec::new(),
         appendix: Vec::new(),
         dropped: Vec::new(),
-        infra_status: source["vector_db_infra_walled_reason"]
+        infra_status: source["vector_db_infra_status"]
             .as_str()
             .unwrap_or_default()
             .to_owned(),
+        infra_cost_framing: super::infra::carded_rows()?,
     };
     for group in [
         "beam_paper_baselines",
