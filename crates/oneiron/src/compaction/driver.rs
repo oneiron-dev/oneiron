@@ -643,6 +643,35 @@ impl CompactionDriver {
         })
     }
 
+    /// Commit a compaction and move its covered working outputs to references.
+    /// A refused integration leaves the host-owned output context unchanged.
+    /// The host retains the `OutputWorkingContext` alongside its message log.
+    pub fn integrate_with_outputs(
+        &mut self,
+        vault: &Vault,
+        byline: WriteActor,
+        request: &CompactionRequest,
+        product: CompactionProduct,
+        accumulated: &[CompactionWindowMessage],
+        outputs: &mut super::output::OutputWorkingContext,
+    ) -> Result<SwapPlan> {
+        let plan = self.integrate(
+            vault,
+            &request.session_ref,
+            byline,
+            request,
+            product,
+            accumulated,
+        )?;
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        outputs.compact_span(request.turn_start, last);
+        Ok(plan)
+    }
+
     /// Backend-failure exit.
     ///
     /// Legal only in `Compacting`; returns to `Idle` WITHOUT minting, so the

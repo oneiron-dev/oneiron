@@ -661,3 +661,77 @@ fn completion_fence_keeps_trigger_watermark_and_survives_newer_failed_flights() 
     assert_eq!(summary_row_count(&vault), 2);
     Ok(())
 }
+
+#[test]
+fn working_outputs_decay_and_compaction_restores_exact_bytes() -> Result<()> {
+    use crate::compaction::output::{
+        OutputAffordance, OutputDecayPolicy, OutputTier, OutputWorkingContext, restore_output,
+    };
+
+    let (_dir, vault) = open_vault();
+    let session = mint_session(&vault, 10);
+    let actor = loom_actor(&vault, 0x67);
+    let mut driver = engine_driver(1_000);
+    let mut outputs = OutputWorkingContext::default();
+    let first_bytes = b"early output\0\xff exact";
+    let first = outputs.record(&vault, 1, first_bytes, "early overview")?;
+    let middle = outputs.record(&vault, 3, b"middle output", "middle overview")?;
+    let tail = outputs.record(&vault, 8, b"tail output", "tail overview")?;
+    let policy = OutputDecayPolicy {
+        overview_after_turns: 2,
+        stub_after_turns: 5,
+    };
+    let initial = outputs.assemble(&vault, 1, policy)?;
+    assert_eq!(
+        initial.len(),
+        1,
+        "future outputs are not in this turn's context"
+    );
+    assert_eq!(initial[0].tier, OutputTier::Full);
+    assert_eq!(initial[0].bytes, first_bytes);
+    let aged = outputs.assemble(&vault, 5, policy)?;
+    assert_eq!(aged[0].tier, OutputTier::Overview);
+    assert_eq!(aged[0].bytes, b"early overview");
+    assert_eq!(aged[1].tier, OutputTier::Overview);
+    let oldest = outputs.assemble(&vault, 8, policy)?;
+    assert_eq!(oldest[0].tier, OutputTier::Stub);
+    assert!(oldest[0].bytes.is_empty());
+
+    driver.evaluate_now(&vault, u64::MAX)?;
+    let request = driver.request_for(&vault, &session, host_window(&vault, 0xB0, 1, 3))?;
+    let mut wrong = request.clone();
+    wrong.turn_start += 1;
+    let product = driver.backend().compact(&request)?;
+    assert!(
+        driver
+            .integrate_with_outputs(&vault, actor, &wrong, product.clone(), &[], &mut outputs)
+            .is_err()
+    );
+    assert_eq!(
+        outputs.assemble(&vault, 3, policy)?[1].tier,
+        OutputTier::Full
+    );
+    driver.integrate_with_outputs(&vault, actor, &request, product, &[], &mut outputs)?;
+    let early_compacted = outputs.assemble(&vault, 3, policy)?;
+    assert_eq!(early_compacted[0].tier, OutputTier::Stub);
+    assert_eq!(early_compacted[1].tier, OutputTier::Stub);
+    assert!(early_compacted[1].bytes.is_empty());
+    let compacted = outputs.assemble(&vault, 8, policy)?;
+    assert_eq!(compacted[0].tier, OutputTier::Stub);
+    assert_eq!(compacted[1].tier, OutputTier::Stub);
+    assert_eq!(compacted[2].tier, OutputTier::Full);
+    assert_eq!(compacted[2].source, tail);
+    assert_eq!(compacted[1].source, middle);
+    let OutputAffordance::Reexpand(source) = compacted[0].affordances[0] else {
+        panic!("stub must carry a typed reexpand action");
+    };
+    assert_eq!(source, first);
+    assert_eq!(restore_output(&vault, source)?, first_bytes);
+    // Persist the reference-only working state; no raw bytes enter its wire form.
+    let saved = serde_json::to_vec(&outputs).expect("serialize working context");
+    assert!(!saved.windows(first_bytes.len()).any(|w| w == first_bytes));
+    let restored: OutputWorkingContext =
+        serde_json::from_slice(&saved).expect("deserialize working context");
+    assert_eq!(restored.assemble(&vault, 8, policy)?, compacted);
+    Ok(())
+}

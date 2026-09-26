@@ -9624,7 +9624,7 @@
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 23,
+      "fn": 24,
       "struct": 8,
       "trait": 1
      }
@@ -9653,14 +9653,16 @@
       "OutputContextView",
       "OutputDecayPolicy",
       "OutputRef",
-      "OutputTier"
+      "OutputTier",
+      "OutputWorkingContext"
      ],
      "path": "src/compaction/output.rs",
      "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 4,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
      }
     },
     {

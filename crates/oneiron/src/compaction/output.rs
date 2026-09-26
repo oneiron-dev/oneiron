@@ -46,7 +46,100 @@ pub struct OutputContextView {
     pub affordances: [OutputAffordance; 2],
 }
 
+/// Host-owned working output span. Raw bytes live only in the vault side store;
+/// entries keep source references across context assembly and compaction.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputWorkingContext {
+    entries: Vec<WorkingOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkingOutput {
+    entry: OutputContextEntry,
+    recoverable_only: bool,
+}
+
+impl OutputWorkingContext {
+    /// Capture an output at the host's turn boundary. Only its reference and
+    /// overview enter working state; the original remains byte-exact on disk.
+    pub fn record(
+        &mut self,
+        vault: &Vault,
+        turn: u64,
+        bytes: &[u8],
+        overview: impl Into<String>,
+    ) -> Result<OutputRef> {
+        if self
+            .entries
+            .last()
+            .is_some_and(|last| turn < last.entry.created_turn)
+        {
+            return Err(Error::InvalidConfig("output turns must be ordered".into()));
+        }
+        let source = store_output(vault, bytes)?;
+        self.entries.push(WorkingOutput {
+            entry: OutputContextEntry {
+                source,
+                created_turn: turn,
+                overview: overview.into(),
+            },
+            recoverable_only: false,
+        });
+        Ok(source)
+    }
+
+    /// Assemble the ordered working-context output views at the current turn.
+    /// Compacted spans stay as actionable stubs, even when still young.
+    pub fn assemble(
+        &self,
+        vault: &Vault,
+        turn: u64,
+        policy: OutputDecayPolicy,
+    ) -> Result<Vec<OutputContextView>> {
+        if policy.overview_after_turns > policy.stub_after_turns {
+            return Err(Error::InvalidConfig(
+                "output decay tiers are reversed".into(),
+            ));
+        }
+        self.entries
+            .iter()
+            .filter(|item| item.entry.created_turn <= turn)
+            .map(|item| {
+                if item.recoverable_only {
+                    Ok(item.entry.stub_view())
+                } else {
+                    item.entry.view(vault, turn, policy)
+                }
+            })
+            .collect()
+    }
+
+    /// Move exactly the committed turn span to recoverable references.
+    /// Does not remove entries or mutate the side-store bytes.
+    pub(super) fn compact_span(&mut self, first: u64, last: u64) {
+        for item in &mut self.entries {
+            if (first..=last).contains(&item.entry.created_turn) {
+                item.recoverable_only = true;
+            }
+        }
+    }
+}
+
 impl OutputContextEntry {
+    fn stub_view(&self) -> OutputContextView {
+        OutputContextView {
+            source: self.source,
+            tier: OutputTier::Stub,
+            bytes: Vec::new(),
+            affordances: [
+                OutputAffordance::Reexpand(self.source),
+                OutputAffordance::Summarize(self.source),
+            ],
+        }
+    }
+
     pub fn view(
         &self,
         vault: &Vault,
