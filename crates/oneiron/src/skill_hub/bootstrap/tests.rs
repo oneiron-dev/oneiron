@@ -360,7 +360,7 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
     let entry = HubIndexEntry {
         name: other.record.skill_id.clone(),
         description: other.record.desc.clone(),
-        version: other.record.version.clone(),
+        version: other.record.version,
         content_hash: hash,
         ref_string: source.ref_string.clone(),
     };
