@@ -30,6 +30,7 @@ impl Vault {
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
+        refuse_agent_runtime(&source)?;
         // Real host suite runs outside the writer lock over immutable source bytes.
         let qualification = qualifier.qualify(&source)?;
         let txn = self.store.env.read_txn()?;
@@ -224,7 +225,16 @@ impl Vault {
         Ok((binding, surface))
     }
 }
+fn refuse_agent_runtime(source: &PackSource) -> Result<()> {
+    if source.manifest.kind == PackKind::Agent {
+        return Err(invalid(
+            "agent packs are inert sources, not runtime installations",
+        ));
+    }
+    Ok(())
+}
 fn validate_qualification(source: &PackSource, result: &PackQualification) -> Result<()> {
+    refuse_agent_runtime(source)?;
     if !result.passed
         || !result.advisory_accepted
         || result.suite.is_empty()
