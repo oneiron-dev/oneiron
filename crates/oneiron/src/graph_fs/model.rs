@@ -381,7 +381,7 @@ pub struct GraphFsCommandOutput {
     pub(super) next_cursor: Option<String>,
     pub(super) decision: GraphFsCoreutilsDecision,
     pub(super) decision_reason: String,
-    pub(super) telemetry_run_id: RetrievalRunId,
+    pub(super) telemetry_run_id: Option<RetrievalRunId>,
     pub(super) read_receipt: Option<crate::claim::ScopedReadReceipt>,
 }
 
@@ -421,7 +421,7 @@ impl GraphFsCommandOutput {
     }
 
     #[must_use]
-    pub fn telemetry_run_id(&self) -> RetrievalRunId {
+    pub fn telemetry_run_id(&self) -> Option<RetrievalRunId> {
         self.telemetry_run_id
     }
 }

@@ -22,15 +22,15 @@ pub struct RsiBudgetShare {
     pub pinned: bool,
 }
 
-/// One vault line with a protected exploration slice.
+/// Independent vault lines: loop spend is token-denominated, exploration is exposure-denominated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RsiBudgetConfig {
     pub limit: u64,
-    pub exploration_units: u64,
+    pub exploration_exposure_limit: u64,
     pub shares: BTreeMap<String, RsiBudgetShare>,
 }
 
-/// Observable accounting, including reservations that survive reopen.
+/// Token-denominated loop accounting, including reservations that survive reopen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RsiBudgetRead {
     pub limit: u64,
@@ -39,10 +39,20 @@ pub struct RsiBudgetRead {
     pub suspended: bool,
 }
 
+/// Exposure-denominated exploration accounting, independent of token spend.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RsiExplorationRead {
+    pub exposure_limit: u64,
+    pub spent_exposure: u64,
+    pub reserved_exposure: u64,
+    pub suspended: bool,
+}
+
 /// The durable receipt of one reservation's terminal outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RsiSettlement {
     Spent(u64),
+    Exposure(u64),
     Refunded,
 }
 
@@ -57,6 +67,8 @@ pub enum RsiBudgetError {
     DuplicateReservation,
     #[error("RSI spend requires an open reservation")]
     ReservationRequired,
+    #[error("RSI settlement uses the wrong budget line")]
+    WrongLine,
     #[error("RSI budget capacity exceeded")]
     Exhausted,
     #[error("RSI work is suspended")]
@@ -68,11 +80,17 @@ type RsiResult<T> = std::result::Result<T, RsiBudgetError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Reservation {
-    units: u64,
-    purpose: RsiSpendPurpose,
+    amount: u64,
+    line: RsiLine,
+    purpose: Option<RsiSpendPurpose>,
     share: Option<String>,
-    exploration: bool,
     settlement: Option<RsiSettlement>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum RsiLine {
+    Tokens,
+    Exposure,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Line {
@@ -82,33 +100,43 @@ struct Line {
 }
 
 impl Line {
-    fn usage(&self, accepts: impl Fn(&Reservation) -> bool) -> RsiResult<(u64, u64)> {
+    fn usage(
+        &self,
+        line: RsiLine,
+        accepts: impl Fn(&Reservation) -> bool,
+    ) -> RsiResult<(u64, u64)> {
         let (mut spent, mut reserved) = (0u64, 0u64);
         for row in self.reservations.values().filter(|row| accepts(row)) {
-            match row.settlement {
-                Some(RsiSettlement::Spent(units)) => {
-                    spent = spent.checked_add(units).ok_or(RsiBudgetError::Exhausted)?;
-                }
-                None => {
-                    reserved = reserved
-                        .checked_add(row.units)
-                        .ok_or(RsiBudgetError::Exhausted)?;
-                }
-                Some(RsiSettlement::Refunded) => {}
+            let amount = match (row.line, &row.settlement) {
+                (RsiLine::Tokens, Some(RsiSettlement::Spent(amount)))
+                | (RsiLine::Exposure, Some(RsiSettlement::Exposure(amount))) => Some(*amount),
+                (_, None) | (_, Some(RsiSettlement::Refunded)) => None,
+                _ => return Err(crate::Error::CorruptedIndex("RSI budget settlement line").into()),
+            };
+            if row.line != line {
+                continue;
+            }
+            if let Some(amount) = amount {
+                spent = spent.checked_add(amount).ok_or(RsiBudgetError::Exhausted)?;
+            } else if row.settlement.is_none() {
+                reserved = reserved
+                    .checked_add(row.amount)
+                    .ok_or(RsiBudgetError::Exhausted)?;
             }
         }
         Ok((spent, reserved))
     }
     fn has_room(
         &self,
+        line: RsiLine,
         limit: u64,
-        units: u64,
+        amount: u64,
         accepts: impl Fn(&Reservation) -> bool,
     ) -> RsiResult<()> {
-        let (spent, reserved) = self.usage(accepts)?;
+        let (spent, reserved) = self.usage(line, accepts)?;
         if spent
             .checked_add(reserved)
-            .and_then(|n| n.checked_add(units))
+            .and_then(|n| n.checked_add(amount))
             .is_none_or(|total| total > limit)
         {
             return Err(RsiBudgetError::Exhausted);
@@ -130,11 +158,10 @@ fn save(vault: &Vault, txn: &mut heed::RwTxn<'_>, line: &Line) -> RsiResult<()> 
 impl Vault {
     /// Creates the line once. Reconfiguration cannot erase receipts or spend.
     pub fn configure_rsi_budget(&self, config: RsiBudgetConfig) -> RsiResult<()> {
-        if config.exploration_units > config.limit
-            || config
-                .shares
-                .iter()
-                .any(|(key, share)| key.is_empty() || share.units > config.limit)
+        if config
+            .shares
+            .iter()
+            .any(|(key, share)| key.is_empty() || share.units > config.limit)
         {
             return Err(RsiBudgetError::InvalidConfig);
         }
@@ -155,14 +182,29 @@ impl Vault {
         Ok(())
     }
 
-    /// Admission reserves first. No reservation means no lawful loop spend.
+    /// Reserve token-denominated loop spend; this cannot debit exploration exposure.
     pub fn reserve_rsi_budget(
         &self,
         id: EntityId,
         units: u64,
         purpose: RsiSpendPurpose,
         share: Option<String>,
-        exploration: bool,
+    ) -> RsiResult<()> {
+        self.reserve_rsi_line(id, units, RsiLine::Tokens, Some(purpose), share)
+    }
+
+    /// Reserve exposure for a bandit slice, independently of token spend.
+    pub fn reserve_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
+        self.reserve_rsi_line(id, exposure, RsiLine::Exposure, None, None)
+    }
+
+    fn reserve_rsi_line(
+        &self,
+        id: EntityId,
+        amount: u64,
+        kind: RsiLine,
+        purpose: Option<RsiSpendPurpose>,
+        share: Option<String>,
     ) -> RsiResult<()> {
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
         let mut line = load(self, &txn)?;
@@ -172,26 +214,26 @@ impl Vault {
         if line.reservations.contains_key(&id.to_hex()) {
             return Err(RsiBudgetError::DuplicateReservation);
         }
-        line.has_room(line.config.limit, units, |_| true)?;
-        let slice = if exploration {
-            line.config.exploration_units
-        } else {
-            line.config.limit - line.config.exploration_units
+        let limit = match kind {
+            RsiLine::Tokens => line.config.limit,
+            RsiLine::Exposure => line.config.exploration_exposure_limit,
         };
-        line.has_room(slice, units, |row| row.exploration == exploration)?;
+        line.has_room(kind, limit, amount, |_| true)?;
         if let Some(key) = &share
             && let Some(policy) = line.config.shares.get(key)
             && policy.pinned
         {
-            line.has_room(policy.units, units, |row| row.share.as_ref() == Some(key))?;
+            line.has_room(kind, policy.units, amount, |row| {
+                row.share.as_ref() == Some(key)
+            })?;
         }
         line.reservations.insert(
             id.to_hex(),
             Reservation {
-                units,
+                amount,
+                line: kind,
                 purpose,
                 share,
-                exploration,
                 settlement: None,
             },
         );
@@ -200,10 +242,14 @@ impl Vault {
         Ok(())
     }
 
-    /// Settles absolute usage once and releases unused reserved capacity.
-    /// Repeating the exact terminal response is idempotent; changing it fails.
+    /// Settle token spend once, releasing unused reserved tokens.
     pub fn settle_rsi_budget(&self, id: EntityId, spent: u64) -> RsiResult<()> {
         self.finish_rsi_reservation(id, RsiSettlement::Spent(spent))
+    }
+
+    /// Settle exploration exposure once, releasing unused reserved exposure.
+    pub fn settle_rsi_exploration(&self, id: EntityId, exposure: u64) -> RsiResult<()> {
+        self.finish_rsi_reservation(id, RsiSettlement::Exposure(exposure))
     }
 
     /// Refunds an unspent reservation. Settled spend cannot be erased.
@@ -218,6 +264,14 @@ impl Vault {
             .reservations
             .get_mut(&id.to_hex())
             .ok_or(RsiBudgetError::ReservationRequired)?;
+        if !matches!(
+            (row.line, &settlement),
+            (RsiLine::Tokens, RsiSettlement::Spent(_))
+                | (RsiLine::Exposure, RsiSettlement::Exposure(_))
+                | (_, RsiSettlement::Refunded)
+        ) {
+            return Err(RsiBudgetError::WrongLine);
+        }
         if let Some(current) = &row.settlement {
             return if *current == settlement {
                 Ok(())
@@ -225,8 +279,8 @@ impl Vault {
                 Err(RsiBudgetError::ReservationRequired)
             };
         }
-        if let RsiSettlement::Spent(units) = settlement
-            && units > row.units
+        if let RsiSettlement::Spent(amount) | RsiSettlement::Exposure(amount) = settlement
+            && amount > row.amount
         {
             return Err(RsiBudgetError::Exhausted);
         }
@@ -249,11 +303,24 @@ impl Vault {
     pub fn rsi_budget(&self) -> RsiResult<RsiBudgetRead> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         let line = load(self, &txn)?;
-        let (spent, reserved) = line.usage(|_| true)?;
+        let (spent, reserved) = line.usage(RsiLine::Tokens, |_| true)?;
         Ok(RsiBudgetRead {
             limit: line.config.limit,
             spent,
             reserved,
+            suspended: line.suspended,
+        })
+    }
+
+    /// Reads the exposure line without adding token spend to it.
+    pub fn rsi_exploration(&self) -> RsiResult<RsiExplorationRead> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let line = load(self, &txn)?;
+        let (spent_exposure, reserved_exposure) = line.usage(RsiLine::Exposure, |_| true)?;
+        Ok(RsiExplorationRead {
+            exposure_limit: line.config.exploration_exposure_limit,
+            spent_exposure,
+            reserved_exposure,
             suspended: line.suspended,
         })
     }
@@ -280,7 +347,7 @@ mod tests {
         vault
             .configure_rsi_budget(RsiBudgetConfig {
                 limit: 100,
-                exploration_units: 20,
+                exploration_exposure_limit: 20,
                 shares: BTreeMap::new(),
             })
             .unwrap();
@@ -292,21 +359,20 @@ mod tests {
         let first = EntityId::now();
         let second = EntityId::now();
         vault
-            .reserve_rsi_budget(first, 70, RsiSpendPurpose::Experiment, None, false)
+            .reserve_rsi_budget(first, 70, RsiSpendPurpose::Experiment, None)
             .unwrap();
         assert!(matches!(
-            vault.reserve_rsi_budget(second, 11, RsiSpendPurpose::Judge, None, false),
+            vault.reserve_rsi_budget(second, 31, RsiSpendPurpose::Judge, None),
             Err(RsiBudgetError::Exhausted)
         ));
-        vault
-            .reserve_rsi_budget(second, 20, RsiSpendPurpose::HeldOut, None, true)
-            .unwrap();
+        vault.reserve_rsi_exploration(second, 20).unwrap();
         drop(vault);
         let vault = Vault::open(dir.path(), config).unwrap();
-        assert_eq!(vault.rsi_budget().unwrap().reserved, 90);
+        assert_eq!(vault.rsi_budget().unwrap().reserved, 70);
+        assert_eq!(vault.rsi_exploration().unwrap().reserved_exposure, 20);
         vault.suspend_rsi_budget(true).unwrap();
         assert!(matches!(
-            vault.reserve_rsi_budget(EntityId::now(), 1, RsiSpendPurpose::Judge, None, true),
+            vault.reserve_rsi_exploration(EntityId::now(), 1),
             Err(RsiBudgetError::Suspended)
         ));
         vault.settle_rsi_budget(first, 40).unwrap();
@@ -319,5 +385,65 @@ mod tests {
             vault.rsi_settlement(second).unwrap(),
             Some(RsiSettlement::Refunded)
         );
+    }
+
+    #[test]
+    fn exploration_exposure_is_independent_of_token_spend() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        vault
+            .configure_rsi_budget(RsiBudgetConfig {
+                limit: 10,
+                exploration_exposure_limit: 2,
+                shares: BTreeMap::new(),
+            })
+            .unwrap();
+        let tokens = EntityId::now();
+        let bandit = EntityId::now();
+        vault
+            .reserve_rsi_budget(tokens, 10, RsiSpendPurpose::Experiment, None)
+            .unwrap();
+        assert_eq!(vault.rsi_exploration().unwrap().reserved_exposure, 0);
+        vault.reserve_rsi_exploration(bandit, 2).unwrap();
+        assert_eq!(vault.rsi_budget().unwrap().reserved, 10);
+        assert_eq!(vault.rsi_exploration().unwrap().reserved_exposure, 2);
+        assert!(matches!(
+            vault.reserve_rsi_budget(EntityId::now(), 1, RsiSpendPurpose::Judge, None),
+            Err(RsiBudgetError::Exhausted)
+        ));
+        assert!(matches!(
+            vault.reserve_rsi_exploration(EntityId::now(), 1),
+            Err(RsiBudgetError::Exhausted)
+        ));
+        assert!(matches!(
+            vault.settle_rsi_budget(bandit, 1),
+            Err(RsiBudgetError::WrongLine)
+        ));
+        assert!(matches!(
+            vault.settle_rsi_exploration(tokens, 1),
+            Err(RsiBudgetError::WrongLine)
+        ));
+        assert!(matches!(
+            vault.settle_rsi_exploration(bandit, 3),
+            Err(RsiBudgetError::Exhausted)
+        ));
+        vault.settle_rsi_budget(tokens, 10).unwrap();
+        vault.settle_rsi_exploration(bandit, 1).unwrap();
+        assert_eq!(vault.rsi_budget().unwrap().spent, 10);
+        assert_eq!(vault.rsi_exploration().unwrap().spent_exposure, 1);
+        assert_eq!(
+            vault.rsi_settlement(bandit).unwrap(),
+            Some(RsiSettlement::Exposure(1))
+        );
+        vault.reserve_rsi_exploration(EntityId::now(), 1).unwrap();
+        assert!(matches!(
+            vault.reserve_rsi_budget(EntityId::now(), 1, RsiSpendPurpose::HeldOut, None),
+            Err(RsiBudgetError::Exhausted)
+        ));
+        drop(vault);
+        let reopened = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        assert_eq!(reopened.rsi_budget().unwrap().spent, 10);
+        assert_eq!(reopened.rsi_exploration().unwrap().spent_exposure, 1);
+        assert_eq!(reopened.rsi_exploration().unwrap().reserved_exposure, 1);
     }
 }

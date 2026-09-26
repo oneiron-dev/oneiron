@@ -11,6 +11,15 @@ pub(super) fn record_verdict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
+    if let Some(measurements) = &verdict.measurements {
+        validate_measurements(measurements, verdict.held_out_count)?;
+    } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
+        || verdict.accepted_verdict.is_some()
+    {
+        return Err(invalid(
+            "a judged skill edit verdict must carry measurements",
+        ));
+    }
     let row = Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -80,6 +89,16 @@ pub(super) fn record_verdict_in_txn(
                     .collect(),
             ),
         ),
+        (
+            Value::from(KEY_MEASUREMENTS),
+            match &verdict.measurements {
+                Some(measurements) => Value::from(
+                    serde_json::to_string(measurements)
+                        .map_err(|_| invalid("judge measurement encode failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
         (Value::from(KEY_AT), Value::from(verdict.at)),
     ]);
     let mut encoded = Vec::new();
@@ -143,9 +162,34 @@ fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
             .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))
             .map(str::to_owned)
     };
+    let held_out_count = field(KEY_HELD_OUT_COUNT)
+        .and_then(Value::as_u64)
+        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    let measurements = match field(KEY_MEASUREMENTS) {
+        Some(Value::Nil) => None,
+        Some(value) => {
+            let decoded: JudgeMeasurements = serde_json::from_str(
+                value
+                    .as_str()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            )
+            .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+            validate_measurements(&decoded, held_out_count)
+                .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+            Some(decoded)
+        }
+        None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+    };
+    if measurements.is_none()
+        && (disposition != SkillEditDisposition::RefusedStaleTarget
+            || field(KEY_ACCEPTED_VERDICT) != Some(&Value::Nil))
+    {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
     Ok(HeldOutVerdict {
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
+        measurements,
         accepted: disposition.admits(),
         id,
         proposal: entity(KEY_PROPOSAL)?,
@@ -153,9 +197,7 @@ fn decode_verdict(id: EntityId, raw: &[u8]) -> Result<HeldOutVerdict> {
         disposition,
         cycle: text(KEY_CYCLE)?,
         held_out_receipts: strings(KEY_HELD_OUT)?,
-        held_out_count: field(KEY_HELD_OUT_COUNT)
-            .and_then(Value::as_u64)
-            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+        held_out_count,
         held_out_digest: text(KEY_HELD_OUT_DIGEST)?,
         held_out_truncated: field(KEY_HELD_OUT_TRUNCATED)
             .and_then(Value::as_bool)
@@ -368,6 +410,12 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(measurements) = &verdict.measurements {
+        fields.insert(
+            FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),
+            serde_json::to_string(measurements).expect("validated measurement serializes"),
+        );
+    }
     if !verdict.proposal_digest.is_empty() {
         fields.insert(
             FIELD_SKILL_EDIT_PROPOSAL_DIGEST.to_owned(),
