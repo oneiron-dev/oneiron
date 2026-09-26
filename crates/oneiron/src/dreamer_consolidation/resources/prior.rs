@@ -30,12 +30,20 @@ impl BranchResources<'_> {
             {
                 continue;
             }
-            let crate::claim::ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = self.read.get_entity_parts_with_receipt(&id, None)?;
-            let (kind, learned_at, bytes) =
-                value.ok_or_else(|| invalid_consolidation("prior head is not actor-readable"))?;
+            let head = self
+                .read
+                .read(&[crate::claim::PointRead::id(id)], None)?
+                .single();
+            self.fold_read_receipt(&head.receipt)?;
+            let Some(crate::claim::ReadRow {
+                entity_type: kind,
+                learned_at,
+                body: Some(bytes),
+                ..
+            }) = head.value
+            else {
+                return Err(invalid_consolidation("prior head is not actor-readable"));
+            };
             let resource = document_version(id, &bytes);
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {
                 return Err(invalid_consolidation("prior head exact read refused"));

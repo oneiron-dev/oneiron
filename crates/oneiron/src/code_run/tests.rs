@@ -1914,10 +1914,23 @@ fn canonical_speech_materializes_one_complete_bubble_per_call() -> Result<()> {
         // The bubble is at the derived id, and its body is the complete
         // canonical envelope the ceiling door authorized.
         let id = crate::code_run::executor_speech_message_id("run-canonical-speech", order)?;
-        let view = vault
+        // The agent's own facade read is grant-bound, and this vault grants
+        // it no read: the bubble is withheld with a receipt naming it. The
+        // vault owner reads the bubble.
+        let agent_read = vault
             .memory(actor, EdgeActorClass::Agent)
             .get_entity(&id.to_hex())
+            .expect("agent read");
+        assert!(agent_read.value.is_none());
+        assert!(agent_read.receipt.applied.deny_all);
+        let view = vault
+            .memory(
+                vault.ensure_embedded_owner_actor().expect("vault owner"),
+                EdgeActorClass::Human,
+            )
+            .get_entity(&id.to_hex())
             .expect("get bubble")
+            .value
             .expect("bubble exists");
         let body = view.body.expect("bubble body decodes");
         assert_eq!(body["author"], serde_json::json!("companion"));
@@ -1972,10 +1985,15 @@ fn canonical_speech_redispatch_at_the_same_order_writes_no_second_bubble() -> Re
         "and one turn, not one per attempt"
     );
     let id = crate::code_run::executor_speech_message_id("run-canonical-speech-retry", 2)?;
+    // Read by the vault owner: the agent's own facade reads are grant-bound.
     let body = vault
-        .memory(actor, EdgeActorClass::Agent)
+        .memory(
+            vault.ensure_embedded_owner_actor().expect("vault owner"),
+            EdgeActorClass::Human,
+        )
         .get_entity(&id.to_hex())
         .expect("get bubble")
+        .value
         .expect("bubble exists")
         .body
         .expect("bubble body decodes");

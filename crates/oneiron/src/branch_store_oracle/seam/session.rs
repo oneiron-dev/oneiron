@@ -528,7 +528,7 @@ impl<'vault> SessionVault<'vault> {
     pub(in crate::branch_store_oracle) fn session_scoped_read_visible_claim_count(
         &self,
         subject: &EntityId,
-    ) -> Result<usize> {
+    ) -> Result<crate::claim::ScopedReadResult<usize>> {
         let view = self.session.read_view()?;
         let count = scoped_read_visible_claim_count(
             &self

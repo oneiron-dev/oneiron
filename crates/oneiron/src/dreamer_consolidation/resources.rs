@@ -14,7 +14,9 @@ use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
 use super::watermark::{TurnBodyFacts, decode_turn_body};
 use crate::attempt_queue::AttemptId;
-use crate::claim::{ScopedRead, ScopedReadActorKey};
+use crate::claim::{
+    PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult,
+};
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -44,6 +46,9 @@ pub(super) struct BranchResources<'a> {
     signals: ScopeResource,
     priors: BTreeMap<EntityId, super::PriorHead>,
     rules: super::routing::PredicateKeyRules,
+    /// Every scoped read this branch made, folded. Methods read through
+    /// `&self`, so the fold sits behind a lock.
+    read_receipt: std::sync::Mutex<ScopedReadReceipt>,
 }
 
 impl<'a> BranchResources<'a> {
@@ -72,8 +77,11 @@ impl<'a> BranchResources<'a> {
         let output = output_projection(&partition, turns);
         let mut sources = BTreeMap::new();
         let mut readable = BTreeSet::from([bucket.clone()]);
+        let mut read_receipt = read.read_receipt(None, 0)?;
         for id in std::iter::once(&partition.conversation_ref).chain(turns) {
-            let (entity_type, learned_at, body) = read_source(&read, id)?;
+            let source = read_source(&read, id)?;
+            read_receipt.restrict_with(&source.receipt);
+            let (entity_type, learned_at, body) = source.value;
             if (*id == partition.conversation_ref
                 && !matches!(entity_type, ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION))
                 || (*id != partition.conversation_ref && entity_type != ENTITY_TYPE_TURN)
@@ -123,6 +131,7 @@ impl<'a> BranchResources<'a> {
             signals,
             priors: BTreeMap::new(),
             rules: vault.consolidation_key_rules()?,
+            read_receipt: std::sync::Mutex::new(read_receipt),
         };
         resources.check_axes(&resources.scope)?;
         resources.source(&resources.scope, &partition.conversation_ref)?;
@@ -136,6 +145,24 @@ impl<'a> BranchResources<'a> {
 
     pub(super) fn key_rules(&self) -> &super::routing::PredicateKeyRules {
         &self.rules
+    }
+
+    /// Fold a later scoped read into this branch's receipt.
+    pub(super) fn fold_read_receipt(&self, later: &ScopedReadReceipt) -> Result<()> {
+        self.read_receipt
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
+            .restrict_with(later);
+        Ok(())
+    }
+
+    /// The folded receipt of every scoped read made so far.
+    pub(super) fn read_receipt(&self) -> Result<ScopedReadReceipt> {
+        Ok(self
+            .read_receipt
+            .lock()
+            .map_err(|_| crate::Error::InvariantViolation("branch read receipt lock"))?
+            .clone())
     }
 
     pub(super) fn scope(&self) -> &Scope {
@@ -164,7 +191,9 @@ impl<'a> BranchResources<'a> {
         if !scope.allows_read(&self.bucket) || !scope.allows_read(&pin.resource) {
             return Err(invalid_consolidation("branch document read refused"));
         }
-        let (entity_type, learned_at, body) = read_source(&self.read, id)?;
+        let source = read_source(&self.read, id)?;
+        self.fold_read_receipt(&source.receipt)?;
+        let (entity_type, learned_at, body) = source.value;
         if entity_type != pin.entity_type
             || learned_at != pin.learned_at
             || document_version(*id, &body) != pin.resource
@@ -183,6 +212,7 @@ impl<'a> BranchResources<'a> {
         let facts = decode_turn_body(&body);
         let parent = decode_turn_body(&conversation);
         let edges = self.read.edges_out(id)?;
+        self.fold_read_receipt(&edges.receipt)?;
         if edges.receipt.suppressed_count != 0 {
             return Err(invalid_consolidation("branch turn graph is incomplete"));
         }
@@ -294,7 +324,10 @@ impl<'a> BranchResources<'a> {
     }
 }
 
-fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>)> {
+fn read_source(
+    read: &ScopedRead<'_>,
+    id: &EntityId,
+) -> Result<ScopedReadResult<(u8, u64, Vec<u8>)>> {
     // Restrict the type BEFORE asking for bytes, including at the custody door.
     if !matches!(
         read.vault().get_entity_type(id)?,
@@ -304,11 +337,20 @@ fn read_source(read: &ScopedRead<'_>, id: &EntityId) -> Result<(u8, u64, Vec<u8>
             "branch source is not a turn or conversation",
         ));
     }
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = read.get_entity_parts_with_receipt(id, None)?;
-    value.ok_or_else(|| invalid_consolidation("branch source is not readable"))
+    let ScopedReadResult { value, receipt } = read.read(&[PointRead::id(*id)], None)?.single();
+    let Some(ReadRow {
+        entity_type,
+        learned_at,
+        body: Some(body),
+        ..
+    }) = value
+    else {
+        return Err(invalid_consolidation("branch source is not readable"));
+    };
+    Ok(ScopedReadResult {
+        value: (entity_type, learned_at, body),
+        receipt,
+    })
 }
 
 pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource {

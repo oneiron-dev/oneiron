@@ -368,7 +368,12 @@ fn standard_specificity_ignores_unreadable_inbound_mentions() -> TestResult {
             )
             .edge(&hidden, crate::edge::EdgeKind::Mentions, &anchor, 1.0)
             .commit()?;
-        assert!(scoped.get(&hidden)?.is_none());
+        assert!(
+            scoped
+                .read(&[crate::claim::PointRead::id(hidden)], None)?
+                .single()
+                .is_none()
+        );
     }
     let after = scoped.search_with_effort(&request)?;
     assert_eq!(hit_ids(&after), hit_ids(&baseline));
@@ -516,15 +521,13 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     assert_eq!(hit_ids(&result), vec![id]);
     assert_ne!(vault.indexed_revision(&id)?, Some(before));
     assert_eq!(result.revisions.get(&id), Some(&before));
-    let crate::claim::ScopedReadResult {
-        value,
-        receipt: _receipt,
-    } = scoped.get_entity_parts_with_mode_with_receipt(
-        &id,
-        crate::vault::ReadMode::Pinned(before),
-        None,
-    )?;
-    assert_eq!(value.map(|(_, _, body)| body), Some(body));
+    let pinned = scoped
+        .read(
+            &[crate::claim::PointRead::id(id).at(crate::vault::ReadMode::Pinned(before))],
+            None,
+        )?
+        .single();
+    assert_eq!(pinned.value.and_then(|row| row.body), Some(body));
     Ok(())
 }
 
@@ -586,10 +589,17 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
     let old_result = search(world_a)?;
     assert_eq!(hit_ids(&old_result), vec![id]);
     assert_eq!(old_result.revisions[&id], old_pin);
-    let pinned =
-        scoped.get_entity_parts_with_mode_with_receipt(&id, ReadMode::Pinned(old_pin), None)?;
+    let pinned = scoped
+        .read(
+            &[crate::claim::PointRead::id(id).at(ReadMode::Pinned(old_pin))],
+            None,
+        )?
+        .single();
     assert!(old_result.narrowing.contains(&pinned.receipt));
-    let (_, _, pinned_body) = pinned.value.expect("selected body");
+    let pinned_body = pinned
+        .value
+        .and_then(|row| row.body)
+        .expect("selected body");
     assert_eq!(
         crate::claim::decode_claim_body(&pinned_body, true)?.world,
         Some(world_a)

@@ -12,6 +12,8 @@ mod observations_tests;
 mod read_set;
 mod room;
 mod room_verbs;
+#[cfg(test)]
+mod room_verbs_tests;
 mod worlds;
 pub use capabilities::{CapabilityHit, SkillsSection};
 pub use read_set::{ChangedLine, ServedLifecycle, SessionReadSet};

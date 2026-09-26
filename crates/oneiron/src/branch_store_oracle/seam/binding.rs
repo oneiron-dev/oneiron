@@ -218,34 +218,44 @@ pub(in crate::branch_store_oracle) fn authorize_scoped_reader(vault: &Vault) -> 
     )
 }
 
-/// Counts the claims `read` surfaces whose subject is `subject`.
+/// Counts the claims `read` surfaces whose subject is `subject`, read in one
+/// snapshot; the receipt counts the stored claims `read` withheld.
 pub(super) fn scoped_read_visible_claim_count(
     read: &crate::claim::ScopedRead<'_>,
     subject: &EntityId,
-) -> Result<usize> {
-    let mut count = 0_usize;
-    for id in read
+) -> Result<crate::claim::ScopedReadResult<usize>> {
+    let reads: Vec<_> = read
         .vault()
         .entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?
+        .into_iter()
+        .map(crate::claim::PointRead::id)
+        .collect();
+    let rows = read.read(&reads, None)?;
+    let mut count = 0_usize;
+    for body in rows
+        .value
+        .iter()
+        .flatten()
+        .filter_map(|row| row.body.as_ref())
     {
-        let Some(body) = read.get(&id)?.value else {
-            continue;
-        };
-        // `ScopedRead::get` has ALREADY decoded this body under the same
+        // `ScopedRead::read` has ALREADY decoded this body under the same
         // permissive flag to answer the policy question (`claim.rs`'
         // `is_claim_raw_readable_with_policy_in`), and propagates the
-        // failure — so on this codebase the decode below cannot fail and
-        // the `continue` that stood here was unreachable. It is still the
-        // wrong shape: the count is EVIDENCE, compared for EQUALITY
-        // across the base and session halves of the R10 reader family, so
-        // a census that silently drops a row it cannot read reports an
-        // agreement it never observed. All-or-error, never partial.
-        let body = crate::claim::decode_claim_body(&body, true)?;
+        // failure — so on this codebase the decode below cannot fail. It
+        // still propagates rather than skips: the count is EVIDENCE,
+        // compared for EQUALITY across the base and session halves of the
+        // R10 reader family, so a census that silently drops a row it
+        // cannot read reports an agreement it never observed. All-or-error,
+        // never partial.
+        let body = crate::claim::decode_claim_body(body, true)?;
         if body.subject == crate::claim::ClaimSubject::Entity(*subject) {
             count += 1;
         }
     }
-    Ok(count)
+    Ok(crate::claim::ScopedReadResult {
+        value: count,
+        receipt: rows.receipt,
+    })
 }
 
 /// ONE-1728: number of claims a BASE-side ScopedRead surfaces for
@@ -253,7 +263,7 @@ pub(super) fn scoped_read_visible_claim_count(
 pub(in crate::branch_store_oracle) fn base_scoped_read_visible_claim_count(
     vault: &Vault,
     subject: &EntityId,
-) -> Result<usize> {
+) -> Result<crate::claim::ScopedReadResult<usize>> {
     scoped_read_visible_claim_count(&vault.scoped_read(scoped_read_actor_key()), subject)
 }
 

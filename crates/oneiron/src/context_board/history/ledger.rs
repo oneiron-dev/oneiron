@@ -223,6 +223,7 @@ impl Vault {
                 crate::vault::entity_revision::ensure_document(self, &mut txn, &id)?;
             map_insert(&doc, "documents", &id.to_hex(), &revision.0)?;
         }
+        let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;
         doc.commit();
         let frontier = doc.oplog_frontiers().encode();
         let anchor_ref = reference(&input.owner, &frontier);
@@ -283,6 +284,7 @@ impl Vault {
             turn: input.turn,
             source_revision_ref: anchor_ref,
             changed_claims,
+            read_receipt,
         })
     }
 
@@ -397,6 +399,7 @@ impl Vault {
             }
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }
+        let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;
         Ok(ReconstructedBoard {
             turn: *turn,
             owner: anchor.owner,
@@ -404,6 +407,7 @@ impl Vault {
             source_revision_ref: anchor.source_revision_ref,
             selection,
             documents,
+            read_receipt,
         })
     }
 

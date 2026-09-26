@@ -274,7 +274,10 @@ fn reverse_receipt_in_txn(
 }
 impl HealerRegistration<'_> {
     /// Read-only diagnostic-band access for the external runner's identity.
-    pub fn failure_corpus(&self) -> Result<Vec<(EntityId, DiagnosticEvent)>> {
+    /// The receipt counts the stored events this runner may not read.
+    pub fn failure_corpus(
+        &self,
+    ) -> Result<crate::claim::ScopedReadResult<Vec<(EntityId, DiagnosticEvent)>>> {
         let actor = crate::claim::ScopedReadActorKey::new(self.actor.entity_ref().to_hex())
             .ok_or(Error::InvalidKey)?;
         self.vault.scoped_read(actor).diagnostic_events()

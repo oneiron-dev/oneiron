@@ -17,6 +17,8 @@ use crate::pipeline::ScoredEntity;
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, PortRows};
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod claim_admission;
+mod diagnostic_reads;
 mod graph_reads;
 mod note_visibility;
 mod pinned_reads;
@@ -24,6 +26,8 @@ mod point_reads;
 mod receipt;
 mod retrieval_visibility;
 mod versions;
+pub(crate) use claim_admission::ClaimReadStatus;
+pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 
 mod access_gate;
@@ -46,6 +50,9 @@ pub struct ScopedRead<'a> {
     /// this field is unchanged — the union widens what is VISIBLE, never what
     /// is permitted.
     session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+    /// Which claim statuses this lane admits; retrieval's surfaceable set
+    /// unless a record verb asks for [`ClaimReadStatus::Recorded`].
+    claim_status: ClaimReadStatus,
 }
 
 impl crate::vault::Vault {
@@ -57,6 +64,7 @@ impl crate::vault::Vault {
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: None,
+            claim_status: ClaimReadStatus::Surfaceable,
         }
     }
 
@@ -80,6 +88,7 @@ impl crate::vault::Vault {
             audience: None,
             audience_cache: Mutex::new(Default::default()),
             session_view: Some(view),
+            claim_status: ClaimReadStatus::Surfaceable,
         }
     }
 }
@@ -123,6 +132,18 @@ impl<'a> ScopedRead<'a> {
             claims.channels.is_empty()
                 && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
         })
+    }
+
+    /// The owner key's binding, re-verified in this read's own snapshot, so a
+    /// key minted before a revocation resolves no plan after it.
+    fn owner_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let Some(owner) = self.actor_key.vault_owner_ref() else {
+            return Ok(());
+        };
+        let human = crate::edge::EdgeActorClass::Human;
+        crate::memory::verify_actor_binding_in_txn(self.vault, txn, owner, human)
+            .and_then(|()| crate::memory::verify_owner_actor_binding_in_txn(self.vault, txn, owner))
+            .map_err(|_| Error::InvalidClaimBody("scoped read owner binding no longer live"))
     }
 
     fn proof_live_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
@@ -257,6 +278,7 @@ impl<'a> ScopedRead<'a> {
                 "scoped read credential no longer live",
             ));
         }
+        self.owner_live_in(txn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let filter = crate::gate::narrow_retrieval_filter(
             &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
@@ -581,6 +603,9 @@ impl<'a> ScopedRead<'a> {
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
+        } else if self.actor_key.vault_owner_ref().is_some() {
+            // The owner's ceiling is all of the owner's vault, stamped or not.
+            Ok(true)
         } else {
             let Some(scope) =
                 crate::federation::record_scope::scope_for_blob(&self.vault.store, rtxn, *id, raw)?
@@ -603,79 +628,6 @@ impl<'a> ScopedRead<'a> {
     ) -> Result<bool> {
         let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
         self.is_entity_raw_readable_with_filter_in(rtxn, &policy, id, raw, &filter)
-    }
-
-    fn is_claim_raw_readable_with_policy_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        raw: &[u8],
-        filter: &ResolvedRetrievalFilter,
-    ) -> Result<bool> {
-        if raw.len() == ENTITY_METADATA_HEADER_LEN
-            && self.vault.store.entity_deletion_present_in_txn(
-                rtxn,
-                id,
-                EntityMetadataHeader::parse(raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?
-                    .learned_at,
-            )?
-        {
-            return Ok(false);
-        }
-        let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-        self.is_claim_readable_with_body_and_policy_in(rtxn, policy, id, &body, filter)
-    }
-
-    fn is_claim_readable_with_body_and_policy_in(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        policy: &PolicyManifestResolution,
-        id: &EntityId,
-        body: &ClaimBody,
-        filter: &ResolvedRetrievalFilter,
-    ) -> Result<bool> {
-        let principal = claim_principal_id(body)?;
-        let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
-        if principal.is_some() && principal != reader {
-            return Ok(false);
-        }
-        if crate::edit_distance::miner::is_mined_preference(&body.predicate) {
-            if principal.is_none() {
-                return Ok(false);
-            }
-            let learned_at = self
-                .entity_record_in(rtxn, id)?
-                .ok_or(Error::CorruptedIndex("preference entity"))?
-                .learned_at;
-            if !preference_in_force(body, learned_at, crate::unix_seconds_now())? {
-                return Ok(false);
-            }
-        }
-        if !self.credential_allows_id(id) || !self.proof_live_in(rtxn)? {
-            return Ok(false);
-        }
-        if !crate::authority::claim_causal_admitted(
-            &self.vault.authority_fold_readonly_in_txn(rtxn)?,
-            body,
-        ) {
-            return Ok(false);
-        }
-        let admitted = crate::pipeline::retrieval_claim_allowed(filter, body);
-        if !admitted
-            || !self.audience_readable_in(rtxn, id)?
-            || !self.relationship_claim_allowed_in(rtxn, body)?
-        {
-            return Ok(false);
-        }
-        let claim_facets = self.claim_facet_refs_in(rtxn, id)?;
-        Ok(crate::gate::scoped_read_claim_allowed(
-            policy,
-            &self.actor_key,
-            body,
-            &claim_facets,
-        ))
     }
 
     fn filter_context_entities(
@@ -799,6 +751,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         rtxn: &heed::RoTxn<'_>,
     ) -> Result<PolicyManifestResolution> {
+        self.owner_live_in(rtxn)?;
         crate::gate::resolve_policy_manifest(&self.vault.store, rtxn)
     }
 }
@@ -817,7 +770,7 @@ impl<'a> ScopedRead<'a> {
 /// it is already reading from, matching
 /// [`ScopedRead::filter_scored_entities`] and
 /// [`ScopedRead::filter_context_pack`]. That is why this is not
-/// `get_entity_parts_with_receipt`, which opens a transaction of its own.
+/// [`ScopedRead::read`], which opens a transaction of its own.
 impl crate::ppr::PprNodeVisibility for ScopedRead<'_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
         let policy = self.policy_manifest_in(txn)?;
@@ -832,25 +785,7 @@ fn context_pack_edge_can_reach_neighbor(edge: &EdgeInfo) -> bool {
             .is_some_and(|flags| flags.confirmation_status == EdgeConfirmationStatus::Retracted)
 }
 
-impl ScopedRead<'_> {
-    /// Structured failure corpus, read through this actor's existing scoped door.
-    pub fn diagnostic_events(&self) -> Result<Vec<(EntityId, crate::self_heal::DiagnosticEvent)>> {
-        let mut events = Vec::new();
-        for id in self
-            .vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_DIAGNOSTIC)?
-        {
-            let ScopedReadResult {
-                value,
-                receipt: _receipt,
-            } = self.get_entity_parts_with_receipt(&id, None)?;
-            if let Some((_, _, body)) = value {
-                events.push((id, crate::self_heal::decode_diagnostic_event_body(&body)?));
-            }
-        }
-        Ok(events)
-    }
-}
-
 #[cfg(test)]
 mod slip_tests;
+#[cfg(test)]
+mod tests;

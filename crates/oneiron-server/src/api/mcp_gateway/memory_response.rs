@@ -3,6 +3,7 @@
 use super::{McpGatewayError, mcp_engine_error, mcp_scoped_read};
 use crate::mcp::{McpResolvedActor, McpVerbToolArgs};
 use crate::server::SyncServer;
+use oneiron::claim::ScopedReadReceipt;
 use oneiron::code_run::vault_read::{
     CoreEntityRecord, CoreHydrateResponse, CoreHydrateStatus, InProcessVaultReadAdapter,
     VaultReadClient, VaultReadError, VaultReadMethod, View,
@@ -18,13 +19,14 @@ pub(super) async fn execute(
     args: &McpVerbToolArgs,
     actor: &McpResolvedActor,
 ) -> Result<(Value, Vec<CapabilityHit>), McpGatewayError> {
-    let produced = execute_read(server, args, actor)?;
+    let mut produced = execute_read(server, args, actor)?;
     if !produced.served.is_empty() {
         let mut target = super::board_observations::read_set(server, actor).await;
         let reader = mcp_scoped_read(&server.vault, actor)?;
         let mut staged = target.clone();
+        let mut observed: Option<ScopedReadReceipt> = None;
         for observation in produced.served {
-            if let Some(body) = observation.skill_body {
+            let receipt = if let Some(body) = observation.skill_body {
                 staged.observe_snapshot(
                     &reader,
                     observation.id,
@@ -35,18 +37,52 @@ pub(super) async fn execute(
             } else if observation.is_claim {
                 // ScopedRead's D19 door admits only active CLAIMs. That fact
                 // belongs to the served row, not a new post-await read txn.
-                staged.observe_lifecycle(
-                    observation.id,
-                    oneiron::context_board::ServedLifecycle::Active,
-                )
+                staged
+                    .observe_lifecycle(
+                        observation.id,
+                        oneiron::context_board::ServedLifecycle::Active,
+                    )
+                    .map(|()| None)
             } else {
-                staged.observe_rows(&reader, &[observation.id])
+                staged.observe_rows(&reader, &[observation.id]).map(Some)
             }
             .map_err(|error| mcp_engine_error("mcp session observation failed", error))?;
+            if let Some(receipt) = receipt {
+                match &mut observed {
+                    Some(observed) => observed.restrict_with(&receipt),
+                    None => observed = Some(receipt),
+                }
+            }
+        }
+        if let Some(observed) = &observed {
+            fold_observation_receipt(&mut produced.output, observed)?;
         }
         *target = staged;
     }
     Ok((produced.output, produced.capabilities))
+}
+
+/// The observation reads answer to the same actor as the served read, so
+/// their receipt joins the served response's `narrowing`.
+fn fold_observation_receipt(
+    output: &mut Value,
+    observed: &ScopedReadReceipt,
+) -> Result<(), McpGatewayError> {
+    let Some(slot) = output.pointer_mut("/response/narrowing") else {
+        return Ok(());
+    };
+    let unreadable = || {
+        McpGatewayError::new(
+            -32603,
+            "engine_error",
+            "native read receipt cannot be encoded",
+        )
+    };
+    let mut narrowing: ScopedReadReceipt =
+        serde_json::from_value(slot.take()).map_err(|_| unreadable())?;
+    narrowing.restrict_with(observed);
+    *slot = serde_json::to_value(narrowing).map_err(|_| unreadable())?;
+    Ok(())
 }
 
 struct MemoryRead {

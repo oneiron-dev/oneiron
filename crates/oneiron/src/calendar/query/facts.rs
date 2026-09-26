@@ -7,7 +7,10 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_TIME_KIND, decode_passport_value, decode_status_value,
     decode_time_kind_value, is_calendar_claim_predicate,
 };
-use crate::claim::{ClaimBody, ScopedRead, claim_surfaceable, decode_claim_body};
+use crate::claim::{
+    ClaimBody, ScopedRead, ScopedReadReceipt, ScopedReadResult, claim_surfaceable,
+    decode_claim_body,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_EVENT;
@@ -23,8 +26,26 @@ use crate::vault::Vault;
 pub enum CalendarRead<'a> {
     /// Internal engine lane (BK-00's `BusyUnion` consumer rides this).
     Vault(&'a Vault),
-    /// Actor lane used by every SDK/MCP surface.
-    Scoped(&'a ScopedRead<'a>),
+    /// Actor lane used by every SDK/MCP surface, with the receipt every claim
+    /// read on it folds into.
+    Scoped(
+        &'a ScopedRead<'a>,
+        &'a std::cell::RefCell<ScopedReadReceipt>,
+    ),
+}
+
+/// Runs one projection on `read`'s actor lane and returns it with the receipt
+/// of every claim read the projection made.
+pub(in crate::calendar) fn receipted<T>(
+    read: &ScopedRead<'_>,
+    project: impl FnOnce(&CalendarRead<'_>) -> Result<T>,
+) -> Result<ScopedReadResult<T>> {
+    let receipt = std::cell::RefCell::new(read.read_receipt(None, 0)?);
+    let value = project(&CalendarRead::Scoped(read, &receipt))?;
+    Ok(ScopedReadResult {
+        value,
+        receipt: receipt.into_inner(),
+    })
 }
 
 impl<'a> CalendarRead<'a> {
@@ -33,7 +54,7 @@ impl<'a> CalendarRead<'a> {
     pub fn vault(&self) -> &'a Vault {
         match self {
             Self::Vault(vault) => vault,
-            Self::Scoped(read) => read.vault(),
+            Self::Scoped(read, _) => read.vault(),
         }
     }
 
@@ -55,10 +76,12 @@ impl<'a> CalendarRead<'a> {
                 return Ok(withheld);
             }
             for id in &ids {
-                if self.claim(id)?.is_none()
-                    && let Some(body) = self.vault().get_claim(id)?.filter(claim_surfaceable)
+                // Only exception claims are read on the lane, so the receipt
+                // counts the exceptions this actor may not read, not every claim.
+                if let Some(body) = self.vault().get_claim(id)?.filter(claim_surfaceable)
                     && body.predicate
                         == crate::calendar::claims::PREDICATE_CALENDAR_SERIES_EXCEPTION
+                    && self.claim(id)?.is_none()
                 {
                     // Only the suppression key is used internally; no hidden
                     // exception contents reach the actor's projection.
@@ -72,15 +95,20 @@ impl<'a> CalendarRead<'a> {
     }
 
     /// Reads one claim through this lane, or `None` when the lane does not
-    /// admit it.
+    /// admit it. A scoped read folds its receipt into the lane's.
     fn claim(&self, id: &EntityId) -> Result<Option<ClaimBody>> {
         match self {
             Self::Vault(vault) => Ok(vault.get_claim(id)?.filter(claim_surfaceable)),
-            Self::Scoped(read) => read
-                .get(id)?
-                .value
-                .map(|raw| decode_claim_body(&raw, true))
-                .transpose(),
+            Self::Scoped(read, receipt) => {
+                let row = read
+                    .read(&[crate::claim::PointRead::id(*id)], None)?
+                    .single();
+                receipt.borrow_mut().restrict_with(&row.receipt);
+                row.value
+                    .and_then(|row| row.body)
+                    .map(|raw| decode_claim_body(&raw, true))
+                    .transpose()
+            }
         }
     }
 
@@ -95,7 +123,7 @@ impl<'a> CalendarRead<'a> {
     fn withheld_predicate(&self, id: &EntityId) -> Result<Option<String>> {
         match self {
             Self::Vault(_) => Ok(None),
-            Self::Scoped(read) => Ok(read
+            Self::Scoped(read, _) => Ok(read
                 .vault()
                 .get_claim(id)?
                 .filter(claim_surfaceable)

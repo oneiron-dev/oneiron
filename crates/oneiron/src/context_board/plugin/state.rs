@@ -100,6 +100,7 @@ fn refused_block() -> MemoryError {
         suggestions: vec!["Use the bound actor and a live registered board section.".to_owned()],
         successor_short_id: None,
         gate_denial: None,
+        read_receipt: None,
     }
 }
 

@@ -1,6 +1,6 @@
 //! Named (agent, world) standing blocks compiled from gated persona claims.
 //! Handles are durable; compiled text is a node-local, disposable projection.
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{PointRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
@@ -68,6 +68,9 @@ pub struct StandingBlockSession {
     pub other_context_tokens: usize,
     pub compiled: Vec<u8>,
     pub eviction: StandingBlockEviction,
+    /// The reader's scoped read of the agent's claims. Claims the reader may
+    /// not read never enter the block and are counted here.
+    pub read_receipt: ScopedReadReceipt,
 }
 #[derive(Default)]
 pub struct StandingBlockCache {
@@ -279,11 +282,15 @@ impl Vault {
             return Err(invalid());
         }
         let scoped = self.scoped_read(reader);
+        let reads: Vec<_> = self
+            .claims_for_subject(&handle.agent)?
+            .into_iter()
+            .map(PointRead::id)
+            .collect();
+        let readable = scoped.read(&reads, None)?;
+        let read_receipt = readable.receipt;
         let mut claims = Vec::new();
-        for id in self.claims_for_subject(&handle.agent)? {
-            if !scoped.is_entity_readable(&id)? {
-                continue;
-            }
+        for id in readable.value.into_iter().flatten().map(|row| row.id) {
             let Some(body) = self.get_claim(&id)? else {
                 continue;
             };
@@ -336,6 +343,7 @@ impl Vault {
             other_context_tokens: total_tokens - block_tokens,
             compiled,
             eviction,
+            read_receipt,
         })
     }
 }

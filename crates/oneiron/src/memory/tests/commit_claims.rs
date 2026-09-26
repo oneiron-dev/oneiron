@@ -472,6 +472,7 @@ fn put_structural_carries_text_index_fields_and_edges() {
     let view = facade
         .get_entity(&person.entity_ref)
         .expect("get")
+        .value
         .expect("exists");
     assert_eq!(view.kind, "PERSON");
     assert_eq!(view.body.unwrap()["name"], serde_json::json!("Chihiro"));
@@ -549,6 +550,7 @@ fn put_habit_checkin_appends_child_with_pinned_role() {
     let view = facade
         .get_entity(&checkin.entity_ref)
         .unwrap()
+        .value
         .expect("checkin view");
     let body = view.body.unwrap();
     assert_eq!(
@@ -709,6 +711,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
     let view_before = facade
         .get_entity(&victim.entity_ref)
         .expect("get before")
+        .value
         .expect("view before");
     let text_before = vault.search_text("tsukimi", 10).expect("search before");
     assert!(edges_before.is_empty(), "victim starts with no edges");
@@ -762,6 +765,7 @@ fn put_structural_rejects_cross_kind_id_reuse_without_side_effects() {
     let view_after = facade
         .get_entity(&victim.entity_ref)
         .expect("get after")
+        .value
         .expect("view after");
     assert_eq!(view_after.kind, "EVENT", "stored kind is unchanged");
     assert_eq!(view_after.id_hex, view_before.id_hex);
@@ -1007,6 +1011,9 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
     let (_dir, vault) = open_vault();
     let agent = put_person(&vault, 0x17);
     let subject = put_person(&vault, 0x18);
+    // An agent's facade reads are grant-bound: the agent re-reads its own
+    // parked proposals under an explicit read grant.
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
     let facade = vault.memory(agent, EdgeActorClass::Agent);
 
     let parked = facade
@@ -1022,6 +1029,7 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
         &facade
             .get_entity(&parked.claim_short_id)
             .expect("read parked claim")
+            .value
             .expect("parked claim exists")
             .id_hex,
     )
@@ -1040,6 +1048,7 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
         &facade
             .get_entity(&unrelated.claim_short_id)
             .expect("read unrelated claim")
+            .value
             .expect("unrelated claim exists")
             .id_hex,
     )

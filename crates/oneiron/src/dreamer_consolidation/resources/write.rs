@@ -1,7 +1,7 @@
 //! Sealed resource handoff. Only the executor can construct one; every real
 //! promotion and attachment checks its pins inside the write transaction.
 use super::{BranchResources, SourcePin, document_version};
-use crate::claim::{ClaimSource, ScopedReadActorKey};
+use crate::claim::{ClaimSource, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::llm::Scope;
@@ -12,12 +12,20 @@ pub struct ScopedConsolidationWrite {
     pub(crate) candidates: Vec<PromotionCandidate>,
     pub(crate) attachments: Vec<(EntityId, PromotionCandidate)>,
     pub(crate) fence: ConsolidationFence,
+    read_receipt: ScopedReadReceipt,
 }
 
 impl ScopedConsolidationWrite {
     /// Inspection for non-writing sinks. Persistence must use the sealed write.
     pub fn candidates(&self) -> &[PromotionCandidate] {
         &self.candidates
+    }
+
+    /// Every scoped read behind these candidates, folded: sources, priors,
+    /// graph signals and any retry refresh. Rows withheld from the Dreamer
+    /// actor are counted here, never silently dropped.
+    pub fn read_receipt(&self) -> &ScopedReadReceipt {
+        &self.read_receipt
     }
 }
 
@@ -71,6 +79,7 @@ impl BranchResources<'_> {
             candidates: writes,
             attachments,
             fence: self.write_fence(),
+            read_receipt: self.read_receipt()?,
         })
     }
 

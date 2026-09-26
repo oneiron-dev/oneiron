@@ -672,3 +672,112 @@ pub struct NapiForgetSelector {
     /// Predicate (used with `subject_ref`).
     pub predicate: Option<String>,
 }
+
+// ── read receipts ───────────────────────────────────────────────────────
+
+/// One read scope on a receipt: the requested, ceiling, or applied tuple.
+#[napi(object)]
+pub struct NapiReadScope {
+    /// Admitted entity type bytes; absent means every registered type.
+    pub entity_types: Option<Vec<u32>>,
+    /// Highest admitted sensitivity band.
+    pub max_sensitivity_band: u32,
+    /// Whether stale claims are admitted.
+    pub include_stale: bool,
+    /// Lowest admitted claim confidence.
+    pub min_confidence: f64,
+    /// Lowest admitted claim salience.
+    pub min_salience: f64,
+    /// Whether the scope admits nothing.
+    pub deny_all: bool,
+}
+
+/// The mandatory receipt every read returns: what was asked, the actor's
+/// ceiling, what applied, and which axes narrowed.
+#[napi(object)]
+pub struct NapiReadReceipt {
+    /// The scope the caller asked for.
+    pub requested: NapiReadScope,
+    /// The actor's ceiling.
+    pub actor_ceiling: NapiReadScope,
+    /// The intersection that applied.
+    pub applied: NapiReadScope,
+    /// Axes that narrowed the read.
+    pub narrowed_axes: Vec<String>,
+    /// Stored rows this actor may not read.
+    pub suppressed_count: u32,
+    /// Machine-readable re-plan hint: the narrowed axes.
+    pub replan_hint: Vec<String>,
+}
+
+/// `getEntity` result: the view, or none, with the read's receipt.
+#[napi(object)]
+pub struct NapiEntityRead {
+    /// The entity view; absent when missing or withheld.
+    pub value: Option<NapiEntityView>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `hydrate` result: every view, with the read's receipt.
+#[napi(object)]
+pub struct NapiEntityViews {
+    /// Views, in request order.
+    pub value: Vec<NapiEntityView>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `claimList` / `claimHistory` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiClaimViews {
+    /// Claim views.
+    pub value: Vec<NapiClaimView>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `queryBm25` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiLexicalHits {
+    /// Hits, in engine score order.
+    pub value: Vec<NapiLexicalHit>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `neighbors` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiNeighborHits {
+    /// Neighbors, outbound first.
+    pub value: Vec<NapiNeighborHit>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `calendarRead` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiCalendarEventRead {
+    /// The EVENT; absent when unknown, unreadable, or not a calendar EVENT.
+    pub value: Option<NapiCalendarEventView>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `calendarSearch` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiCalendarEvents {
+    /// Matching EVENTs.
+    pub value: Vec<NapiCalendarEventView>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}
+
+/// `calendarFreebusy` result, with the read's receipt.
+#[napi(object)]
+pub struct NapiCalendarFreebusy {
+    /// Busy intervals, occupancy only.
+    pub value: Vec<NapiCalendarFreebusyInterval>,
+    /// The read's receipt.
+    pub narrowing: NapiReadReceipt,
+}

@@ -97,13 +97,16 @@ impl CodeMemoryPullRequest {
 pub struct CodeMemoryPullResult {
     pub notes: Vec<ProvenanceLabelled<CodeMemorySlotValue>>,
     pub always_on_contracts: Vec<ProvenanceLabelled<AlwaysOnCodeMemoryContract>>,
+    /// The actor's read, resolved in the pull's own snapshot: stored payloads
+    /// the actor may not see are counted here, never silently dropped.
+    pub read_receipt: crate::claim::ScopedReadReceipt,
 }
 
 /// Payload admission for one pull candidate, decided ON THE CALLER'S SNAPSHOT.
 ///
 /// [`ScopedRead::ppr_node_visible`] is the canonical readability predicate —
 /// literally `ScopedRead::is_entity_readable_with_policy_in`, the same
-/// admission `ScopedRead::get_entity_parts_with_receipt` applies — and it answers in the
+/// admission `ScopedRead::read` applies — and it answers in the
 /// transaction it is handed. That is what lets this module decide a candidate
 /// and MATERIALIZE it against one coherent view.
 ///
@@ -117,24 +120,27 @@ pub struct CodeMemoryPullResult {
 ///
 /// Nothing else is decided locally: every other row goes to the canonical
 /// predicate, so this can neither widen nor narrow what the lane admits.
+///
+/// `None` is a payload with no stored row: absence of data, which a receipt
+/// never counts. `Some(false)` is a stored row withheld from this actor.
 fn payload_visible_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     scoped_read: &ScopedRead<'_>,
     payload: CodeMemoryPayloadRef,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
     let payload_id = payload.entity_id();
-    if let Some(raw) = store
+    let Some(raw) = store
         .port_entity_record(rtxn, &payload_id)?
         .map(|row| row.encode())
-    {
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
-            return Ok(false);
-        }
+    else {
+        return Ok(None);
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type == ENTITY_TYPE_CLAIM && raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Ok(Some(false));
     }
-    scoped_read.ppr_node_visible(rtxn, &payload_id)
+    scoped_read.ppr_node_visible(rtxn, &payload_id).map(Some)
 }
 
 /// One admitted note candidate: inherited relevance, owning symbol, slot name,
@@ -146,7 +152,8 @@ type PullNoteCandidates = Vec<(f32, EntityId, CodeMemorySlotName, CodeMemorySlot
 /// Returns at most `request.limit` notes, every one of them already admitted
 /// by [`payload_visible_in_txn`] on THIS snapshot, plus the always-on
 /// registrations of every retained symbol (which the caller's note limit never
-/// cuts).
+/// cuts), and the count of examined payloads stored but withheld from the
+/// actor (a missing payload is absence of data and is not counted).
 ///
 /// TWO BOUNDS, BOTH LOAD-BEARING:
 ///
@@ -176,9 +183,10 @@ fn collect_pull_candidates(
     scoped_read: &ScopedRead<'_>,
     request: &CodeMemoryPullRequest,
     retained: &[ScoredEntity],
-) -> Result<(PullNoteCandidates, Vec<AlwaysOnCodeMemoryContract>)> {
+) -> Result<(PullNoteCandidates, Vec<AlwaysOnCodeMemoryContract>, usize)> {
     let note_limit = request.limit;
     let examined_values = Cell::new(0_usize);
+    let withheld = Cell::new(0_usize);
     let mut candidate_notes: PullNoteCandidates = Vec::with_capacity(note_limit);
     let mut candidate_contracts: Vec<AlwaysOnCodeMemoryContract> = Vec::new();
 
@@ -204,9 +212,14 @@ fn collect_pull_candidates(
                         // bounds admission work across ALL symbols and slots,
                         // not merely the number of notes eventually retained.
                         examined_values.set(examined_values.get() + 1);
-                        if !payload_visible_in_txn(&vault.store, rtxn, scoped_read, value.payload)?
+                        match payload_visible_in_txn(&vault.store, rtxn, scoped_read, value.payload)?
                         {
-                            continue;
+                            Some(true) => {}
+                            Some(false) => {
+                                withheld.set(withheld.get() + 1);
+                                continue;
+                            }
+                            None => continue,
                         }
                         candidate_notes.push((scored.score, scored.id, name.clone(), value));
                         if candidate_notes.len() == note_limit {
@@ -222,7 +235,7 @@ fn collect_pull_candidates(
         }
     }
 
-    Ok((candidate_notes, candidate_contracts))
+    Ok((candidate_notes, candidate_contracts, withheld.get()))
 }
 
 /// ScopedRead-clamped L2 pull.
@@ -258,13 +271,13 @@ fn collect_pull_candidates(
 /// 6. label everything `Data`.
 ///
 /// ONE SNAPSHOT DECIDES ADMISSION AND THE RESULT. There is deliberately no
-/// second, later clamp: re-asking `ScopedRead::get_entity_parts_with_receipt` after this
+/// second, later clamp: re-asking `ScopedRead::read` after this
 /// transaction closed would ask a NEWER snapshot, and a candidate that had
 /// already consumed one of the caller's `limit` places could then be dropped
 /// by that newer answer — a concurrent delete or policy change would make the
 /// pull return fewer notes than the snapshot it ranked actually holds, with no
 /// lower-ranked note ever collected to take the empty place. The in-transaction
-/// predicate is the SAME admission `get_entity_parts_with_receipt` applies (see
+/// predicate is the SAME admission `ScopedRead::read` applies (see
 /// `payload_visible_in_txn`), so coherence costs no scope.
 pub fn pull_code_memory(
     vault: &Vault,
@@ -328,7 +341,7 @@ pub fn pull_code_memory(
         }
     }
 
-    let (mut permitted_notes, mut candidate_contracts) =
+    let (mut permitted_notes, mut candidate_contracts, mut withheld) =
         collect_pull_candidates(vault, &rtxn, scoped_read, &request, &retained)?;
 
     permitted_notes.sort_by(|left, right| {
@@ -374,8 +387,13 @@ pub fn pull_code_memory(
             // registrations carry no caller cut, so no place can be consumed
             // here — but a contract and a note naming the SAME payload must
             // never disagree about whether this actor may see it.
-            if !payload_visible_in_txn(&vault.store, &rtxn, scoped_read, contract.payload)? {
-                continue;
+            match payload_visible_in_txn(&vault.store, &rtxn, scoped_read, contract.payload)? {
+                Some(true) => {}
+                Some(false) => {
+                    withheld += 1;
+                    continue;
+                }
+                None => continue,
             }
             always_on_contracts.push(ProvenanceLabelled {
                 provenance: CodeMemoryProvenance {
@@ -390,12 +408,14 @@ pub fn pull_code_memory(
         }
     }
 
-    // Held deliberately this far: admission, ranking, and materialization all
-    // answered from THIS snapshot, and nothing above may reopen a newer one.
+    // Held deliberately this far: admission, ranking, materialization and
+    // the receipt all answer from THIS snapshot; nothing may reopen a newer one.
+    let read_receipt = scoped_read.read_receipt_in(&rtxn, None, withheld)?;
     drop(rtxn);
     Ok(CodeMemoryPullResult {
         notes,
         always_on_contracts,
+        read_receipt,
     })
 }
 
@@ -411,7 +431,7 @@ pub fn pull_code_memory(
 /// docs contracts outrank the blueprint's stale "no NOTE entity type exists
 /// in v1" rule, so registration enforces the note type rather than the weaker
 /// live-non-CLAIM predicate. The CLAIM clamp inside
-/// `ScopedRead::get_entity_parts_with_receipt` is untouched and still governs reads.
+/// `ScopedRead::read` is untouched and still governs reads.
 pub fn register_always_on_contract(
     store: &Store,
     txn: &mut RwTxn<'_>,

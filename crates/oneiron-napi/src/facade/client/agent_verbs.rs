@@ -89,6 +89,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self
@@ -106,6 +107,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self
@@ -123,6 +125,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self
@@ -140,6 +143,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self
@@ -157,6 +161,7 @@ impl NativeClient {
                 suggestions: vec!["Use the documented keyed DTO.".to_owned()],
                 successor_short_id: None,
                 gate_denial: None,
+                read_receipt: None,
             })
         })?;
         let output = self

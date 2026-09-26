@@ -18,14 +18,15 @@ use super::bridge::ActorScopedVault;
 use super::convert::{
     calendar_event_from_engine, calendar_range_to_engine, calendar_selectors_to_engine,
     commit_receipt_from_engine, entity_ref_receipt_from_engine, memory_pack_from_engine,
-    recall_scope_to_engine, structural_put_to_engine,
+    read_receipt_from_engine, recall_scope_to_engine, structural_put_to_engine,
 };
 use super::dtos::{
-    NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventView,
-    NapiCalendarFreebusyInterval, NapiCalendarInviteInput, NapiCalendarRange,
-    NapiCalendarSearchRequest, NapiCalendarSel, NapiClaimInput, NapiCommitReceipt,
-    NapiCompanionRecordInput, NapiConsolidationJobInput, NapiDreamerJobRef, NapiDreamerJobView,
-    NapiEntityRefReceipt, NapiHabitCheckinInput, NapiLexicalHit, NapiMemoryPack, NapiNeighborHit,
+    NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead,
+    NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval,
+    NapiCalendarInviteInput, NapiCalendarRange, NapiCalendarSearchRequest, NapiCalendarSel,
+    NapiClaimInput, NapiCommitReceipt, NapiCompanionRecordInput, NapiConsolidationJobInput,
+    NapiDreamerJobRef, NapiDreamerJobView, NapiEntityRefReceipt, NapiHabitCheckinInput,
+    NapiLexicalHit, NapiLexicalHits, NapiMemoryPack, NapiNeighborHit, NapiNeighborHits,
     NapiNeighborOpts, NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope,
     NapiStructuralPutInput,
 };
@@ -172,34 +173,39 @@ impl ActorScopedVault {
         })
     }
 
-    /// BM25 text query over the engine index. The standard N-API query
-    /// (8 KiB) and result (1,000) caps apply.
+    /// BM25 text query over the engine index, with the read's receipt. The
+    /// standard N-API query (8 KiB) and result (1,000) caps apply.
     #[napi]
-    pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<Vec<NapiLexicalHit>> {
+    pub fn query_bm25(&self, query: String, limit: u32) -> napi::Result<NapiLexicalHits> {
         crate::validate_query_len(&query).map_err(boundary_error)?;
         let limit = crate::parse_search_limit(limit).map_err(boundary_error)?;
         let hits = self
             .facade()?
             .query_bm25(&query, limit)
             .map_err(facade_error)?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| NapiLexicalHit {
-                short_id: hit.short_id,
-                kind: hit.kind,
-                score: f64::from(hit.score),
-                snippet: hit.snippet,
-            })
-            .collect())
+        Ok(NapiLexicalHits {
+            value: hits
+                .value
+                .into_iter()
+                .map(|hit| NapiLexicalHit {
+                    short_id: hit.short_id,
+                    kind: hit.kind,
+                    score: f64::from(hit.score),
+                    snippet: hit.snippet,
+                })
+                .collect(),
+            narrowing: read_receipt_from_engine(hits.receipt).map_err(boundary_error)?,
+        })
     }
 
-    /// Weighted-edge neighborhood, filtered engine-side.
+    /// Weighted-edge neighborhood, filtered engine-side, with the read's
+    /// receipt.
     #[napi]
     pub fn neighbors(
         &self,
         entity_ref: String,
         opts: NapiNeighborOpts,
-    ) -> napi::Result<Vec<NapiNeighborHit>> {
+    ) -> napi::Result<NapiNeighborHits> {
         let hits = self
             .facade()?
             .neighbors(
@@ -215,16 +221,20 @@ impl ActorScopedVault {
                 },
             )
             .map_err(facade_error)?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| NapiNeighborHit {
-                short_id: hit.short_id,
-                kind: hit.kind,
-                edge_kind: hit.edge_kind,
-                weight: f64::from(hit.weight),
-                direction: hit.direction,
-            })
-            .collect())
+        Ok(NapiNeighborHits {
+            value: hits
+                .value
+                .into_iter()
+                .map(|hit| NapiNeighborHit {
+                    short_id: hit.short_id,
+                    kind: hit.kind,
+                    edge_kind: hit.edge_kind,
+                    weight: f64::from(hit.weight),
+                    direction: hit.direction,
+                })
+                .collect(),
+            narrowing: read_receipt_from_engine(hits.receipt).map_err(boundary_error)?,
+        })
     }
 
     /// Effort-dialed retrieval into an S6 memory pack. `effort` is
@@ -364,16 +374,22 @@ impl ActorScopedVault {
         })
     }
 
-    /// Reads one calendar EVENT under the bound actor's read scope; `null`
-    /// when the id is unknown, unreadable, or not a calendar EVENT.
+    /// Reads one calendar EVENT under the bound actor's read scope; `value`
+    /// is `null` when the id is unknown, unreadable, or not a calendar EVENT.
     #[napi]
-    pub fn calendar_read(&self, event_ref: String) -> napi::Result<Option<NapiCalendarEventView>> {
-        self.facade()?
+    pub fn calendar_read(&self, event_ref: String) -> napi::Result<NapiCalendarEventRead> {
+        let read = self
+            .facade()?
             .calendar_read(&CalendarReadRequest { event_ref })
-            .map_err(facade_error)?
-            .map(calendar_event_from_engine)
-            .transpose()
-            .map_err(boundary_error)
+            .map_err(facade_error)?;
+        Ok(NapiCalendarEventRead {
+            value: read
+                .value
+                .map(calendar_event_from_engine)
+                .transpose()
+                .map_err(boundary_error)?,
+            narrowing: read_receipt_from_engine(read.receipt).map_err(boundary_error)?,
+        })
     }
 
     /// Searches calendar EVENTs under the bound actor's read scope.
@@ -381,7 +397,7 @@ impl ActorScopedVault {
     pub fn calendar_search(
         &self,
         request: NapiCalendarSearchRequest,
-    ) -> napi::Result<Vec<NapiCalendarEventView>> {
+    ) -> napi::Result<NapiCalendarEvents> {
         let engine_request = CalendarSearchRequest {
             calendars: calendar_selectors_to_engine(request.calendars),
             range: calendar_range_to_engine(request.range)
@@ -393,13 +409,19 @@ impl ActorScopedVault {
             text: request.text,
             limit: request.limit,
         };
-        self.facade()?
+        let events = self
+            .facade()?
             .calendar_search(&engine_request)
-            .map_err(facade_error)?
-            .into_iter()
-            .map(calendar_event_from_engine)
-            .collect::<BoundaryResult<Vec<_>>>()
-            .map_err(boundary_error)
+            .map_err(facade_error)?;
+        Ok(NapiCalendarEvents {
+            value: events
+                .value
+                .into_iter()
+                .map(calendar_event_from_engine)
+                .collect::<BoundaryResult<Vec<_>>>()
+                .map_err(boundary_error)?,
+            narrowing: read_receipt_from_engine(events.receipt).map_err(boundary_error)?,
+        })
     }
 
     /// Projects busy-only occupancy over an inclusive UTC window.
@@ -408,22 +430,28 @@ impl ActorScopedVault {
         &self,
         calendars: Option<Vec<NapiCalendarSel>>,
         range: NapiCalendarRange,
-    ) -> napi::Result<Vec<NapiCalendarFreebusyInterval>> {
+    ) -> napi::Result<NapiCalendarFreebusy> {
         let engine_range = calendar_range_to_engine(Some(range))
             .map_err(boundary_error)?
             .ok_or_else(|| boundary_error("range is required".to_owned()))?;
-        self.facade()?
+        let busy = self
+            .facade()?
             .calendar_freebusy(&calendar_selectors_to_engine(calendars), engine_range)
-            .map_err(facade_error)?
-            .into_iter()
-            .map(|interval| {
-                Ok(NapiCalendarFreebusyInterval {
-                    start_utc: ts_from_engine(interval.start_utc, "start_utc")?,
-                    end_utc: ts_from_engine(interval.end_utc, "end_utc")?,
+            .map_err(facade_error)?;
+        Ok(NapiCalendarFreebusy {
+            value: busy
+                .value
+                .into_iter()
+                .map(|interval| {
+                    Ok(NapiCalendarFreebusyInterval {
+                        start_utc: ts_from_engine(interval.start_utc, "start_utc")?,
+                        end_utc: ts_from_engine(interval.end_utc, "end_utc")?,
+                    })
                 })
-            })
-            .collect::<BoundaryResult<Vec<_>>>()
-            .map_err(boundary_error)
+                .collect::<BoundaryResult<Vec<_>>>()
+                .map_err(boundary_error)?,
+            narrowing: read_receipt_from_engine(busy.receipt).map_err(boundary_error)?,
+        })
     }
 
     /// Schedules one calendar invite through the ordinary outbound gate. The

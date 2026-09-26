@@ -140,7 +140,18 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
             drifted: true
         }
     );
-    let memory = vault.memory(EntityId::now(), crate::EdgeActorClass::Human);
+    // Facade reads verify the bound actor row, so the reader is a stored person.
+    let reader = EntityId::now();
+    vault
+        .put_entity(
+            &reader,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::TimeRange { start: 1, end: 1 },
+            1,
+            b"reader",
+        )
+        .unwrap();
+    let memory = vault.memory(reader, crate::EdgeActorClass::Human);
     assert_eq!(
         memory
             .get_entity_with_mode(
@@ -148,6 +159,7 @@ fn live_indexed_pinned_and_pack_switch_only_at_manifest_debounced_idle() {
                 ReadMode::Pinned(citation.source_revision_ref)
             )
             .unwrap()
+            .value
             .unwrap()
             .body,
         Some(serde_json::json!({"content": "alpha zebra"}))
@@ -265,16 +277,24 @@ fn pinned_claim_does_not_bypass_current_scoped_admission() {
         value,
         receipt: _receipt,
     } = scoped
-        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
-        .unwrap();
+        .read(
+            &[crate::claim::PointRead::id(claim).at(ReadMode::Pinned(pin))],
+            None,
+        )
+        .unwrap()
+        .single();
     assert!(value.is_some());
     vault.retract_claim(&claim, 2).unwrap();
     let crate::claim::ScopedReadResult {
         value,
         receipt: _receipt,
     } = scoped
-        .get_entity_parts_with_mode_with_receipt(&claim, ReadMode::Pinned(pin), None)
-        .unwrap();
+        .read(
+            &[crate::claim::PointRead::id(claim).at(ReadMode::Pinned(pin))],
+            None,
+        )
+        .unwrap()
+        .single();
     assert!(value.is_none());
 }
 

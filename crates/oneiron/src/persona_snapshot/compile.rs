@@ -13,8 +13,8 @@ use super::types::{
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead,
-    claim_sensitivity_band, decode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, PointRead, ScopedRead,
+    ScopedReadReceipt, claim_sensitivity_band, decode_claim_body,
 };
 use crate::companion::{CompanionRecordKind, CompanionScope};
 use crate::entity_id::EntityId;
@@ -282,8 +282,12 @@ impl crate::Vault {
             .as_ref()
             .map(|key| key.actor_ref().to_owned());
 
-        let subject_claims =
-            self.persona_snapshot_candidate_claims(subject_ref, audience_read.as_ref())?;
+        let mut read_receipt = None;
+        let subject_claims = self.persona_snapshot_candidate_claims(
+            subject_ref,
+            audience_read.as_ref(),
+            &mut read_receipt,
+        )?;
 
         let mut identity_provenance = Vec::new();
         let mut identity_claim_ids = BTreeSet::new();
@@ -364,8 +368,11 @@ impl crate::Vault {
 
         let mut third_party_rows = Vec::new();
         for (other, (record_role, record_ref)) in &related {
-            let other_claims =
-                self.persona_snapshot_candidate_claims(other, audience_read.as_ref())?;
+            let other_claims = self.persona_snapshot_candidate_claims(
+                other,
+                audience_read.as_ref(),
+                &mut read_receipt,
+            )?;
             let other_name = top_claim_text(&other_claims, PERSONA_SNAPSHOT_NAME_PREDICATE)
                 .map_or_else(|| person_fallback_label(other), |(_, name)| name);
             let role = record_role.clone().or_else(|| {
@@ -492,13 +499,17 @@ impl crate::Vault {
             compiled_at_secs: stamp.compiled_at_secs,
             stale_after_secs: options.stale_after_secs,
             stamp,
+            read_receipt,
         })
     }
 
+    /// Admissible claims about `person_ref`; with an audience, only those the
+    /// audience may read, the audience read folded into `receipt`.
     fn persona_snapshot_candidate_claims(
         &self,
         person_ref: &EntityId,
         audience: Option<&ScopedRead<'_>>,
+        receipt: &mut Option<ScopedReadReceipt>,
     ) -> Result<Vec<CandidateClaim>> {
         let mut candidates = Vec::new();
         for claim_id in self.claims_for_subject(person_ref)? {
@@ -524,12 +535,20 @@ impl crate::Vault {
             if persona_snapshot_tier_a_clamped(&body) {
                 continue;
             }
-            if let Some(audience) = audience
-                && !audience.is_entity_readable(&claim_id)?
-            {
-                continue;
-            }
             candidates.push(CandidateClaim { id: claim_id, body });
+        }
+        if let Some(audience) = audience {
+            let reads: Vec<_> = candidates
+                .iter()
+                .map(|candidate| PointRead::id(candidate.id))
+                .collect();
+            let admitted = audience.read(&reads, None)?;
+            match receipt {
+                Some(receipt) => receipt.restrict_with(&admitted.receipt),
+                None => *receipt = Some(admitted.receipt),
+            }
+            let mut rows = admitted.value.into_iter();
+            candidates.retain(|_| rows.next().flatten().is_some());
         }
         candidates.sort_by(|a, b| {
             let a_salience = a.body.salience.unwrap_or(-1.0);

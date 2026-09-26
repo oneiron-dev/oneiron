@@ -1,6 +1,6 @@
 //! The in-process adapter: scoped reads against a live vault plus retrieval-budget control.
 
-use crate::claim::{ScopedRead, ScopedReadActorKey};
+use crate::claim::{PointRead, ReadRow, ScopedRead, ScopedReadActorKey};
 use crate::context_pack::{
     ContextPack, ContextPackBuilder, ContextPackRetrievalBudget, DEFAULT_MAX_NEIGHBORS,
     EmptyContext, EmptyReason, FieldProfile, TokenAllocation,
@@ -9,7 +9,7 @@ use crate::pipeline::ScoredEntity;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
-use crate::vault::{HydratedShortId, Vault};
+use crate::vault::Vault;
 
 use super::context_pack::{
     ContextPackBudgetControls, ContextPackRetrievalBudgetControls, CoreContextPackRequest,
@@ -84,27 +84,29 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let mut narrowing = admitted.receipt;
         let projected = self
             .scoped_read
-            .get_entities_parts_with_modes_with_receipt(
+            .read(
                 &admitted
                     .value
                     .iter()
-                    .map(|result| (result.id, crate::vault::ReadMode::Indexed))
+                    .map(|result| PointRead::id(result.id).at(crate::vault::ReadMode::Indexed))
                     .collect::<Vec<_>>(),
                 Some(&narrowing.applied.as_filter()),
             )
             .map_err(|error| engine_failure(METHOD, &error))?;
         narrowing.restrict_with(&projected.receipt);
-        let total = projected
-            .value
-            .iter()
-            .filter(|parts| parts.is_some())
-            .count();
+        let total = projected.value.iter().filter(|row| row.is_some()).count();
         let mut items = Vec::with_capacity(total.min(request.limit));
-        for (result, parts) in admitted.value.into_iter().zip(projected.value) {
+        for (result, row) in admitted.value.into_iter().zip(projected.value) {
             if items.len() >= request.limit {
                 break;
             }
-            let Some((entity_type, learned_at, body)) = parts else {
+            let Some(ReadRow {
+                entity_type,
+                learned_at,
+                body: Some(body),
+                ..
+            }) = row
+            else {
                 continue;
             };
             items.push(entity_record_from_parts(
@@ -227,8 +229,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     ) -> VaultReadResult<CoreHydrateResponse> {
         let hydrated = self
             .scoped_read
-            .hydrate_short_id(&short_id, content_hash)
-            .map_err(|error| engine_failure(method, &error))?;
+            .read(&[PointRead::short(&short_id, content_hash)], None)
+            .map_err(|error| engine_failure(method, &error))?
+            .single();
         self.project_hydrate(
             method,
             short_id,
@@ -245,17 +248,18 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         short_id: String,
         content_hash: u8,
         view: View,
-        hydrated: Option<HydratedShortId>,
+        hydrated: Option<ReadRow>,
         narrowing: &crate::claim::ScopedReadReceipt,
     ) -> VaultReadResult<CoreHydrateResponse> {
         // A missing row and a clamp-denied claim are the SAME answer here. The
         // adapter never probes the naked vault to tell them apart.
-        let Some(HydratedShortId {
+        let Some(ReadRow {
             id,
             entity_type,
             learned_at,
             deletion,
             body,
+            ..
         }) = hydrated
         else {
             return Err(engine_absent(method, "short_id").with_read_receipt(narrowing.clone()));
@@ -310,11 +314,11 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let refs: Vec<_> = parsed
             .iter()
             .flatten()
-            .map(|(id, hash)| (id.as_str(), *hash))
+            .map(|(id, hash)| PointRead::short(id, *hash))
             .collect();
         let hydrated = self
             .scoped_read
-            .hydrate_short_ids(&refs)
+            .read(&refs, None)
             .map_err(|error| engine_failure(METHOD, &error))?;
         let narrowing = hydrated.receipt;
         let mut values = hydrated.value.into_iter();

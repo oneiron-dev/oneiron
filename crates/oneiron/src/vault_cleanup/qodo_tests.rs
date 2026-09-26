@@ -161,7 +161,13 @@ fn archive_restore_preserves_payload_and_all_seeded_indexes_across_reopen() {
         assert!(vault.get_vector(&id).expect("archived vector").is_none());
         let reader = vault
             .scoped_read(crate::claim::ScopedReadActorKey::new("cleanup-reader").expect("reader"));
-        assert!(reader.get(&id).expect("scoped archived body").is_none());
+        assert!(
+            reader
+                .read(&[crate::claim::PointRead::id(id)], None)
+                .expect("scoped archived body")
+                .single()
+                .is_none()
+        );
         assert!(matches!(
             vault.live_entity_row(&id).expect("regression fixture"),
             LiveEntityRow::DeletedShell

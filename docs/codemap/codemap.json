@@ -5687,7 +5687,7 @@
      "path": "src/calendar/query/facts.rs",
      "purpose": "Lane admission and fail-closed fact reduction",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 1
      }
@@ -5699,7 +5699,7 @@
      "path": "src/calendar/query/mod.rs",
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 3
      }
     },
@@ -7454,7 +7454,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ScopedRead"
@@ -7462,9 +7462,9 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
-      "fn": 14,
-      "re-export": 2,
+      "crate-vis": 6,
+      "fn": 13,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -7487,9 +7487,29 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/claim_admission.rs",
+     "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/diagnostic_reads.rs",
+     "purpose": "The structured failure corpus, read through the actor's scoped door",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -7535,15 +7555,21 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PointRead",
+      "ReadRow",
+      "ReadTarget"
+     ],
      "path": "src/claim/scoped_read/point_reads.rs",
-     "purpose": "Same-snapshot, receipted point and short-reference hydration doors",
+     "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "fn": 9
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReadScope",
@@ -7553,8 +7579,8 @@
      "path": "src/claim/scoped_read/receipt.rs",
      "purpose": "Mandatory read receipts",
      "surface": {
-      "crate-vis": 1,
-      "fn": 4,
+      "crate-vis": 2,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -7577,13 +7603,21 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/claim/scoped_read/tests.rs",
+     "purpose": "The one point-read entry and the read-grant holes it keeps closed",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -8029,6 +8063,7 @@
       "ActionArgKind",
       "ActionArgument",
       "ActionBuildContext",
+      "ActionDispatch",
       "ActionRegistry",
       "ActionVerbDefinition",
       "AgentActionCall"
@@ -8039,7 +8074,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 6,
-      "struct": 4,
+      "struct": 5,
       "type": 1
      }
     },
@@ -10972,6 +11007,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/room_verbs_tests.rs",
+     "purpose": "Room render reads: the caller's scoped read and every present peer's",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "BoardEvent",
@@ -12950,7 +12993,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "re-export": 1
      }
     },
@@ -12984,7 +13027,7 @@
      "purpose": "Sealed resource handoff",
      "surface": {
       "crate-vis": 6,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -17404,9 +17447,9 @@
      "purpose": "Graph-FS public projection types: caps, host imports, mount and options, entry, page and file, coreutils…",
      "surface": {
       "const": 10,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
-      "fn": 33,
+      "fn": 34,
       "struct": 6
      }
     },
@@ -20541,7 +20584,7 @@
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
       "const": 9,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 2,
       "type": 1
@@ -20785,6 +20828,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/read_lane.rs",
+     "purpose": "The bound actor's one read lane",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -20797,7 +20850,7 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 2,
       "fn": 10,
       "struct": 5
      }
@@ -20929,7 +20982,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 23,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -20958,13 +21011,13 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/mod.rs",
      "purpose": "BRIDGE-01 acceptance tests, engine side",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -23322,7 +23375,7 @@
      "path": "src/pipeline/authority.rs",
      "purpose": "Enforcement of gate-resolved retrieval authority",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -33926,9 +33979,9 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 36,
+     "files": 39,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)"
     },
@@ -34094,7 +34147,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 49,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34507,7 +34560,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35039,10 +35092,10 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 7,
+   "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2078,
-   "test_files": 704
+   "source_files": 2081,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [
@@ -37344,7 +37397,7 @@
      "path": "src/facade/convert.rs",
      "purpose": "DTO to/from engine converters plus the forget paging helper",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -37354,7 +37407,10 @@
       "NapiAdmitImportedClaimInput",
       "NapiBlobArtifactInput",
       "NapiBlobVersionView",
+      "NapiCalendarEventRead",
       "NapiCalendarEventView",
+      "NapiCalendarEvents",
+      "NapiCalendarFreebusy",
       "NapiCalendarFreebusyInterval",
       "NapiCalendarInviteInput",
       "NapiCalendarRange",
@@ -37363,26 +37419,33 @@
       "NapiClaimInput",
       "NapiClaimListFilter",
       "NapiClaimView",
+      "NapiClaimViews",
       "NapiCommitReceipt",
       "NapiCompanionRecordInput",
       "NapiConsolidationJobInput",
       "NapiDeleteReceipt",
       "NapiDreamerJobRef",
       "NapiDreamerJobView",
+      "NapiEntityRead",
       "NapiEntityRefReceipt",
       "NapiEntityView",
+      "NapiEntityViews",
       "NapiForgetSelector",
       "NapiGateReceipt",
       "NapiHabitCheckinInput",
       "NapiLexicalHit",
+      "NapiLexicalHits",
       "NapiMemoryItem",
       "NapiMemoryPack",
       "NapiMemoryProvenance",
       "NapiNeighborHit",
+      "NapiNeighborHits",
       "NapiNeighborOpts",
       "NapiOutboundDraftInput",
       "NapiOutboundIntentReceipt",
       "NapiPendingWrite",
+      "NapiReadReceipt",
+      "NapiReadScope",
       "NapiRecallScope",
       "NapiRetrievalMeta",
       "NapiScopeHonesty",
@@ -37396,7 +37459,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 41
+      "struct": 51
      }
     },
     {
@@ -39231,7 +39294,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -41935,6 +41998,7 @@
       "ClaimInput",
       "ClaimListFilter",
       "ClaimView",
+      "ClaimViews",
       "CommitReceipt",
       "CompanionRecordInput",
       "ConsolidationJobInput",
@@ -41942,21 +42006,27 @@
       "DreamerJobRef",
       "DreamerJobView",
       "Effort",
+      "EntityRead",
       "EntityRefReceipt",
       "EntityView",
+      "EntityViews",
       "FacadeReceipt",
       "ForgetSelector",
       "HabitCheckinInput",
       "LexicalHit",
+      "LexicalHits",
       "MemoryItem",
       "MemoryPack",
       "MemoryProvenance",
       "NeighborHit",
+      "NeighborHits",
       "NeighborOpts",
       "OpenOptions",
       "OutboundDraftInput",
       "OutboundIntentReceipt",
       "PendingWrite",
+      "ReadReceipt",
+      "ReadScope",
       "RecallScope",
       "RetrievalMeta",
       "SafeDeleteReason",
@@ -41974,7 +42044,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 37
+      "struct": 44
      }
     },
     {

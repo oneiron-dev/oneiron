@@ -27,7 +27,7 @@ impl Memory<'_> {
                 .find(|edge| edge.kind == EdgeKind::HasFacet)
                 .map(|edge| edge.target.to_hex())
         });
-        let Some(view) = self.entity_view_with_mode(id, mode)? else {
+        let Some(view) = self.recall_record_view(id, mode)? else {
             return Ok(None);
         };
         let short_id = view.short_ref.clone().unwrap_or_else(|| id.to_hex());
@@ -114,5 +114,93 @@ impl Memory<'_> {
                 salience: None,
             }))
         }
+    }
+
+    /// Recall's own record projection, apart from the read verbs' lane.
+    ///
+    /// Recall's candidates, candidate counts and rendered pack all come from
+    /// the unscoped retrieval pack, so its item read still admits as recall
+    /// always has: the revision read, the keyed-memory refusal and NOTE
+    /// privacy. Moving only this read onto the actor's lane would narrow the
+    /// items under a pack that still carries them, with no receipt to say so.
+    /// The recall follow-on moves the whole of recall onto `ScopedRead` and
+    /// gives `MemoryPack` its receipt.
+    fn recall_record_view(
+        &self,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)?;
+        let Some(raw) =
+            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, &txn, id, mode)?
+        else {
+            return Ok(None);
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(|| {
+            MemoryError::from(crate::error::Error::CorruptedIndex("entity header"))
+        })?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
+            return Err(crate::secret_custody::reject_secret_custody_byte().into());
+        }
+        if header.entity_type == ENTITY_TYPE_CLAIM {
+            let Some(body) = raw
+                .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .and_then(|bytes| crate::claim::decode_claim_body(bytes, true).ok())
+            else {
+                return Ok(None);
+            };
+            if !crate::claim::claim_generic_readable(&body) {
+                return Ok(None);
+            }
+        }
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            super::super::verify_actor_binding_in_txn(
+                self.vault,
+                &txn,
+                self.actor,
+                self.actor_class,
+            )?;
+            if !crate::note::note_body_readable(
+                &self.vault.store,
+                &txn,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                Some(&self.actor),
+            )? {
+                return Ok(None);
+            }
+        }
+        let projected = crate::note::live_body_in_txn(
+            &self.vault.store,
+            &txn,
+            id,
+            header.entity_type,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let short_ref = self.short_ref_of_in_txn(&txn, id)?.map(|reference| {
+            let short = reference.split(':').next().unwrap_or(&reference);
+            let hash =
+                (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
+                    % 256) as u8;
+            match mode {
+                crate::vault::ReadMode::Pinned(revision) => {
+                    format!("{short}:{hash:02x}@{}", revision.to_hex())
+                }
+                _ => format!("{short}:{hash:02x}"),
+            }
+        });
+        Ok(Some(EntityView {
+            id_hex: id.to_hex(),
+            short_ref,
+            kind: kind_string_for_type(header.entity_type),
+            occurred_start: header.occurred_start,
+            occurred_end: header.occurred_end,
+            learned_at: header.learned_at,
+            body: super::super::support::decode_body_json(&projected),
+        }))
     }
 }

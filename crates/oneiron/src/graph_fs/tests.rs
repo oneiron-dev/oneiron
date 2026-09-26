@@ -382,7 +382,7 @@ fn grep_r_claims_pushdown_matches_scoped_bm25_ids_and_logs() -> Result<()> {
 
     assert_eq!(output.decision(), GraphFsCoreutilsDecision::Pushdown);
     assert_eq!(actual_ids, expected_ids);
-    let receipt = output.search_receipt().expect("indexed grep receipt");
+    let receipt = output.read_receipt().expect("indexed grep receipt");
     assert_eq!(receipt.suppressed_count, 0);
     assert_eq!(receipt.requested, receipt.applied);
     assert!(actual_ids.contains(&matching_claim));
@@ -652,7 +652,7 @@ fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Resu
     let expected = reader.search_text(needle, 10, None)?;
     assert_eq!(expected.receipt.suppressed_count, 1);
     let full = resolver(&reader, 4096).grep(needle, "/claims", true, None)?;
-    assert_eq!(full.search_receipt(), Some(&expected.receipt));
+    assert_eq!(full.read_receipt(), Some(&expected.receipt));
     let text = std::str::from_utf8(full.bytes()).unwrap();
     assert_eq!(text.lines().count(), 2);
     assert!(!text.contains(&hidden.to_hex()));
@@ -662,15 +662,84 @@ fn grep_pushdown_preserves_narrowing_receipts_on_full_and_capped_pages() -> Resu
         std::str::from_utf8(capped.bytes()).unwrap().lines().count(),
         1
     );
-    assert_eq!(capped.search_receipt(), Some(&expected.receipt));
+    assert_eq!(capped.read_receipt(), Some(&expected.receipt));
     let next = resolver(&reader, 256).grep(needle, "/claims", true, capped.next_cursor())?;
-    assert_eq!(next.search_receipt(), Some(&expected.receipt));
+    assert_eq!(next.read_receipt(), Some(&expected.receipt));
     assert_eq!(
         std::str::from_utf8(next.bytes()).unwrap().lines().count(),
         1
     );
     let empty = resolver(&reader, 256).grep("nomatch", "/claims", true, None)?;
     assert!(empty.bytes().is_empty());
-    assert_eq!(empty.search_receipt().unwrap().suppressed_count, 0);
+    assert_eq!(empty.read_receipt().unwrap().suppressed_count, 0);
+    Ok(())
+}
+
+#[test]
+fn readdir_listing_carries_the_read_receipt() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(VaultConfig::default());
+    let (world, other_world, subject) = (test_id(0x3A), test_id(0x3B), test_id(0x3C));
+    let (allowed, withheld) = (test_id(0x4A), test_id(0x4B));
+    put_entity(&vault, world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, other_world, ENTITY_TYPE_WORLD)?;
+    put_entity(&vault, subject, ENTITY_TYPE_PERSON)?;
+    put_claim(&vault, allowed, subject, Some(world), 10)?;
+    put_claim(&vault, withheld, subject, Some(other_world), 11)?;
+    put_policy_manifest(
+        &vault,
+        test_id(0x9A),
+        encode_policy_manifest(vec![core_read_world_grant("reader", world)]),
+    )?;
+    let read = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    let fs = resolver(&read, 16 * 1024);
+
+    // A claims listing reads each claim it names: every stored claim outside
+    // the reader's world, the fixture's and the vault's own, is absent from
+    // the page and counted on its receipt.
+    let stored = vault.entities_by_type(ENTITY_TYPE_CLAIM)?.len();
+    let page = fs.readdir("/claims/by-id", None)?;
+    let names: Vec<_> = page
+        .entries()
+        .iter()
+        .map(|entry| entry.name().to_owned())
+        .collect();
+    assert_eq!(names, vec![allowed.to_hex()]);
+    let receipt = page.read_receipt().expect("the listing read claims");
+    assert_eq!(receipt.suppressed_count, stored - 1);
+    assert!(receipt.narrowed_axes.contains(&"row_authority".to_owned()));
+    // An entity directory reads its body the same way.
+    let directory = fs.readdir(&format!("/entities/{}", withheld.to_hex()), None)?;
+    assert!(directory.entries().is_empty());
+    assert_eq!(
+        directory
+            .read_receipt()
+            .map(|receipt| receipt.suppressed_count),
+        Some(1)
+    );
+    // A fixed listing makes no point read.
+    assert!(fs.readdir("/", None)?.read_receipt().is_none());
+
+    // Files: the withheld claim and body read as absent, with their receipts.
+    for path in [
+        format!("/claims/{}", withheld.to_hex()),
+        format!("/entities/{}/body", withheld.to_hex()),
+    ] {
+        let file = fs.read_file(&path)?;
+        assert!(file.value.is_none());
+        assert_eq!(file.receipt.suppressed_count, 1);
+    }
+    let file = fs.read_file(&format!("/claims/{}", allowed.to_hex()))?;
+    assert!(file.value.is_some());
+    assert_eq!(file.receipt.suppressed_count, 0);
+
+    // The coreutils carry the receipt of the reads behind their output.
+    let cat = fs.cat(&format!("/claims/{}", withheld.to_hex()), None)?;
+    assert!(cat.bytes().is_empty());
+    assert_eq!(cat.read_receipt().map(|r| r.suppressed_count), Some(1));
+    let ls = fs.ls("/claims/by-id", false, None)?;
+    assert_eq!(
+        ls.read_receipt().map(|r| r.suppressed_count),
+        Some(stored - 1)
+    );
     Ok(())
 }

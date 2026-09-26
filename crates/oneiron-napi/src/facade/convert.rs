@@ -12,8 +12,8 @@ use super::boundary::{
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiClaimView, NapiCommitReceipt,
     NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack,
-    NapiMemoryProvenance, NapiRecallScope, NapiRetrievalMeta, NapiScopeHonesty,
-    NapiStructuralPutInput, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiMemoryProvenance, NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRetrievalMeta,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -142,14 +142,42 @@ pub(super) fn forget_active_matches(
             lifecycle: Some("active".to_owned()),
             limit: FORGET_PAGE_SIZE,
         })?;
-        if matches.is_empty() {
+        if matches.value.is_empty() {
             break;
         }
-        for claim in matches {
+        for claim in matches.value {
             receipts.push(facade.claim_retract(&claim.claim_ref)?);
         }
     }
     Ok(receipts)
+}
+
+fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> NapiReadScope {
+    NapiReadScope {
+        entity_types: scope
+            .entity_types
+            .map(|types| types.into_iter().map(u32::from).collect()),
+        max_sensitivity_band: u32::from(scope.max_sensitivity_band),
+        include_stale: scope.include_stale,
+        min_confidence: f64::from(scope.min_confidence),
+        min_salience: f64::from(scope.min_salience),
+        deny_all: scope.deny_all,
+    }
+}
+
+/// The engine's read receipt, field for field.
+pub(super) fn read_receipt_from_engine(
+    receipt: oneiron::claim::ScopedReadReceipt,
+) -> BoundaryResult<NapiReadReceipt> {
+    Ok(NapiReadReceipt {
+        requested: read_scope_from_engine(receipt.requested),
+        actor_ceiling: read_scope_from_engine(receipt.actor_ceiling),
+        applied: read_scope_from_engine(receipt.applied),
+        narrowed_axes: receipt.narrowed_axes,
+        suppressed_count: u32::try_from(receipt.suppressed_count)
+            .map_err(|_| "suppressed_count does not fit a 32-bit count".to_owned())?,
+        replan_hint: receipt.replan_hint,
+    })
 }
 
 pub(super) fn entity_view_from_engine(view: oneiron::EntityView) -> BoundaryResult<NapiEntityView> {

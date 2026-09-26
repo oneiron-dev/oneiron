@@ -119,8 +119,11 @@ func claimsCompile(client: Oneiron) throws {
         limit: 10
     )
     let _: UInt32 = filter.limit
-    let _: [ClaimView] = try client.claimList(filter: filter)
-    let _: [ClaimView] = try client.claimHistory(claimRef: "claim:compile-only")
+    let listed: ClaimViews = try client.claimList(filter: filter)
+    let _: [ClaimView] = listed.value
+    let _: ReadReceipt = listed.narrowing
+    let history: ClaimViews = try client.claimHistory(claimRef: "claim:compile-only")
+    let _: [ClaimView] = history.value
 
     let receipt = CommitReceipt(
         claimShortId: "claim:compile-only",
@@ -191,16 +194,48 @@ func deletionAndConsentCompile(client: Oneiron) throws {
 // MARK: Reads and graph
 
 func readsCompile(client: Oneiron) throws {
-    let _: [EntityView] = try client.hydrate(refs: ["entity:compile-only"])
-    let _: EntityView? = try client.getEntity(entityRef: "entity:compile-only")
-    let _: [LexicalHit] = try client.queryBm25(query: "compile-only", limit: 10)
+    let hydrated: EntityViews = try client.hydrate(refs: ["entity:compile-only"])
+    let _: [EntityView] = hydrated.value
+    let read: EntityRead = try client.getEntity(entityRef: "entity:compile-only")
+    let _: EntityView? = read.value
+    let hits: LexicalHits = try client.queryBm25(query: "compile-only", limit: 10)
+    let _: [LexicalHit] = hits.value
 
     let opts = NeighborOpts(edgeKind: "compile_only", minWeight: 0.5, limit: 10)
     let _: Float? = opts.minWeight
-    let _: [NeighborHit] = try client.neighbors(
+    let neighbors: NeighborHits = try client.neighbors(
         entityRef: "entity:compile-only",
         opts: opts
     )
+    let _: [NeighborHit] = neighbors.value
+
+    let scope = ReadScope(
+        entityTypes: nil,
+        maxSensitivityBand: 3,
+        includeStale: false,
+        minConfidence: 0.0,
+        minSalience: 0.0,
+        denyAll: false
+    )
+    let _: UInt8 = scope.maxSensitivityBand
+    let receipt = ReadReceipt(
+        requested: scope,
+        actorCeiling: scope,
+        applied: scope,
+        narrowedAxes: ["row_authority"],
+        suppressedCount: 1,
+        replanHint: ["row_authority"]
+    )
+    let _: UInt64 = receipt.suppressedCount
+    let _: ReadReceipt = hydrated.narrowing
+    let _: ReadReceipt = read.narrowing
+    let _: ReadReceipt = hits.narrowing
+    let _: ReadReceipt = neighbors.narrowing
+    let _: EntityView? = EntityRead(value: nil, narrowing: receipt).value
+    let _: [EntityView] = EntityViews(value: [], narrowing: receipt).value
+    let _: [ClaimView] = ClaimViews(value: [], narrowing: receipt).value
+    let _: [LexicalHit] = LexicalHits(value: [], narrowing: receipt).value
+    let _: [NeighborHit] = NeighborHits(value: [], narrowing: receipt).value
 
     let entity = EntityView(
         idHex: "00000000000000000000000000000000",

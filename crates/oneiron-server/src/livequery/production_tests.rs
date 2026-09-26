@@ -145,10 +145,9 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         let auth = auth(&server, class);
         assert_eq!(auth.actor_class(), Some(class));
         assert_eq!(bound_actor_class(&auth).unwrap(), expected);
-        assert_eq!(
-            rpc(&server, &auth, "hydrate", json!({"refs":[]}))["result"],
-            json!([])
-        );
+        let reply = rpc(&server, &auth, "hydrate", json!({"refs":[]}));
+        assert_eq!(reply["result"]["value"], json!([]));
+        assert!(reply["result"]["narrowing"].is_object());
     }
     let classless = format!("scope=core:read;principal_ref={ACTOR}");
     let auth = crate::test_credentials::authenticate(&server, &classless);
@@ -204,9 +203,12 @@ async fn all_eight_production_rpc_reads_return_the_engine_dtos() {
     let witnessed = witness(&server, "solar panel maintenance");
     let committed = claim(&server);
     let auth = auth(&server, "human");
+    // The engine side of each case reads under the same credential the RPC
+    // presents, so both answers carry the same receipt.
     let memory = server
         .vault()
-        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human)
+        .with_read_proof(auth.verified_slip().unwrap());
     let refs = witnessed.message_short_ids;
     let filter = ClaimListFilter {
         subject_ref: Some(ACTOR.to_owned()),
@@ -424,6 +426,7 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     witness(&server, "solar panel source snapshot");
     claim(&server);
     let auth = auth(&server, "human");
+    let proof = auth.verified_slip().unwrap().clone();
     let source = BoundSource::new(
         Arc::downgrade(&server),
         auth,
@@ -436,7 +439,8 @@ async fn production_source_derives_real_channels_and_rechecks_revocation_before_
     let derived = source.derive(&view, Channel::View).unwrap();
     let memory = server
         .vault()
-        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
+        .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human)
+        .with_read_proof(&proof);
     let expected = memory
         .recall(
             "solar",
