@@ -490,3 +490,120 @@ async fn zero_progress_budget_exhausted_backs_off_instead_of_hot_looping() {
         .expect("status");
     assert_eq!(status.attempt.state, AttemptState::Queued);
 }
+
+#[tokio::test]
+async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
+    use oneiron::ClaimCandidate;
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use oneiron::dreamer_runner::maintenance::digest::ProactivityCadence;
+    use oneiron::store::GateDecisionId;
+    use oneiron::temporal::TimeRange;
+    use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
+    use oneiron::{DreamerHomeNodeCandidate, EntityId};
+    use rmpv::Value;
+
+    let (_dir, vault) = open_vault();
+    let owner_id = EntityId::from_bytes([0x31; 16]).unwrap();
+    vault
+        .put_entity(
+            &owner_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let owner = vault
+        .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
+        .unwrap();
+    vault
+        .set_proactivity_cadence(
+            &owner,
+            &ProactivityCadence {
+                period_secs: 100,
+                group_by_facet: true,
+                urgent_breakthrough: true,
+            },
+        )
+        .unwrap();
+    let store = DreamerRunnerStore::new(&vault);
+    let local = store
+        .local_home_node_candidate(false, false, false)
+        .unwrap()
+        .node_id;
+    store
+        .elect_home_node(
+            &[DreamerHomeNodeCandidate {
+                node_id: local,
+                cloud: true,
+                attached: true,
+                always_on_local: false,
+                primary_device: false,
+            }],
+            1,
+        )
+        .unwrap();
+    let actor = vault.dreamer_authority().unwrap();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))
+        .unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    for seed in [0x41, 0x42, 0x43] {
+        let id = EntityId::from_bytes([seed; 16]).unwrap();
+        vault
+            .batch()
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    "dreamer.proactivity.follow_up",
+                    ClaimSubject::Entity(actor.entity_ref()),
+                    Value::from("pending"),
+                    0.7,
+                ),
+                &envelope,
+                TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .commit()
+            .unwrap();
+    }
+    let mut deadlines = crate::tick::AttemptQueueDeadlines::new(&vault, local);
+    let due = crate::tick::DeadlineSource::next_deadline(&mut deadlines)
+        .unwrap()
+        .unwrap();
+    assert_eq!(due.due_at_ms, 0);
+    let factory = TestExecFactory {
+        panics_left: 0,
+        factory_panics_left: 0,
+        factory_errors_left: 0,
+        completed_units: 0,
+    };
+    let mut config = test_config();
+    config.local_node_id = local;
+    let report = WakeSupervisor::new(
+        &vault,
+        ScriptedTicks {
+            ticks: vec![Tick::Deadline(due)],
+        },
+        factory,
+        config,
+    )
+    .with_clock(Arc::new(|| 100))
+    .run()
+    .await;
+    assert_eq!(report.passes_completed, 1);
+    let digest = vault.latest_proactivity_digest().unwrap().unwrap();
+    assert_eq!(digest.groups.values().map(Vec::len).sum::<usize>(), 3);
+    assert_eq!(vault.next_proactivity_digest_at().unwrap(), None);
+    assert!(
+        crate::tick::DeadlineSource::next_deadline(&mut deadlines)
+            .unwrap()
+            .is_none()
+    );
+}

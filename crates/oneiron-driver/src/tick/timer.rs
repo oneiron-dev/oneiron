@@ -117,9 +117,19 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
         }
-        // The two lanes are independent durable sources; the earlier one arms
-        // the timer. A TIE keeps the attempt deadline, so wiring the commitment
-        // lane in can never displace a deadline this source already surfaced.
+        // A digest is per vault, so only the elected home node arms its
+        // cadence. It shares the same concrete deadline timer, not a poll.
+        if macro_admissible && let Some(at) = self.vault.next_proactivity_digest_at()? {
+            let due = CommitmentDeadline {
+                due_at_ms: at.saturating_mul(1_000),
+                scope: DreamerConsolidationScope::Micro,
+            };
+            if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                next = Some(due);
+            }
+        }
+        // The lanes are independent durable sources; the earlier one arms
+        // the timer. A tie keeps the attempt deadline.
         Ok(match (next, commitment) {
             (Some(attempt), Some(due)) if due.due_at_ms < attempt.due_at_ms => Some(due),
             (Some(attempt), _) => Some(attempt),

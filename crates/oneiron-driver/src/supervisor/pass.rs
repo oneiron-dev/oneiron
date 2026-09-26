@@ -99,6 +99,14 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         reserve_units: config.reserve_units,
         now: (*now_secs)(),
     };
+    // The scheduled display projection runs on its own cadence even when
+    // there is no consolidation attempt to admit. Only timer deadlines on
+    // the designated home produce it; ordinary pushes cannot force a send.
+    if matches!(tick, Tick::Deadline(_)) {
+        vault
+            .emit_due_proactivity_digest(input.now, config.local_node_id)
+            .map_err(PassRunError::PreAdmission)?;
+    }
     let pass = driver.run_wake_pass(input, &mut executor, cancel);
     #[cfg(all(unix, feature = "voice"))]
     if let Some((host, bindings)) = voice {

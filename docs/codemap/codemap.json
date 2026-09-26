@@ -13458,19 +13458,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DigestProposal",
       "ProactivityCadence",
       "ProactivityDigest",
+      "ProactivityPresentation",
       "UrgentDigestWake"
      ],
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "fn": 3,
-      "struct": 4
+      "fn": 7,
+      "struct": 5
      }
     },
     {
