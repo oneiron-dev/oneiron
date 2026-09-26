@@ -1,0 +1,48 @@
+"""Opt-in pinned-reader tests using a retained two-revision PDF fixture."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import unittest
+
+ROOT = Path(__file__).resolve().parent
+FIXTURES = ROOT / "fixtures"
+BIN = Path(os.environ.get("SEAL_INTEROP_HOME", "/mnt/wd16/w8-build/seal-interop")) / "bin"
+
+
+@unittest.skipUnless(os.environ.get("SEAL_INTEROP_INTEGRATION") == "1",
+                     "set SEAL_INTEROP_INTEGRATION=1 after installing pinned readers")
+class MultiSignatureReaderTests(unittest.TestCase):
+    def reader(self, name, fixture):
+        path = BIN / f"seal-{name}"
+        self.assertTrue(path.is_file(), f"install pinned {name} reader first: {path}")
+        proc = subprocess.run([str(path), str(FIXTURES / fixture)],
+                              capture_output=True, text=True, check=False)
+        report = json.loads(proc.stdout)
+        self.assertNotEqual(report["status"], "unavailable", report)
+        return proc.returncode, report
+
+    def test_pyhanko_checks_both_signatures_and_refuses_corrupt_latest(self):
+        code, report = self.reader("pyhanko", "multi-signed.pdf")
+        self.assertEqual(code, 0, report)
+        self.assertEqual(report["signatures_checked"], 2)
+        self.assertEqual([item["valid"] for item in report["signature_results"]], [True, True])
+        code, report = self.reader("pyhanko", "second-signature-corrupt.pdf")
+        self.assertEqual(code, 1, report)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["signatures_checked"], 2)
+        self.assertEqual([item["valid"] for item in report["signature_results"]], [True, False])
+        self.assertIn("trust override", report["detail"])
+
+    def test_earlier_signed_revision_is_accepted_by_pdfbox_dss_and_pdfium(self):
+        for name in ("pdfbox", "dss", "pdfium"):
+            with self.subTest(reader=name):
+                code, report = self.reader(name, "multi-signed.pdf")
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["status"], "pass")
+                self.assertIn("signatures=2", report["detail"])
+                self.assertIn("final_document_coverage=true", report["detail"])
+
+
+if __name__ == "__main__":
+    unittest.main()

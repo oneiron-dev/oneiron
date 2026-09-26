@@ -1,6 +1,7 @@
 package sealinterop;
 import java.io.File;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Collection;
@@ -39,8 +40,9 @@ public final class DssReader {
       if(sigs.isEmpty()){out(version,"fail","no embedded signature","no_signature","no_signature");System.exit(1);}
       for(PDSignature sig:sigs){
         int[] range=sig.getByteRange();
-        if(range==null || range.length!=4 || range[0]!=0 || range[1]<0 || range[2]<range[1] || range[3]<0 || (long)range[2]+range[3]!=pdf.length)
+        if(range==null || range.length!=4 || range[0]!=0 || range[1]<0 || range[2]<range[1] || range[3]<0 || (long)range[2] + range[3] > pdf.length)
           throw new IllegalStateException("signature ByteRange does not cover the complete PDF revision");
+        checkSignedRevision(pdf, range);
         byte[] paddedContents=sig.getContents(pdf);
         byte[] cmsBytes;
         try(ASN1InputStream asn1=new ASN1InputStream(paddedContents)){
@@ -63,6 +65,12 @@ public final class DssReader {
         }
       }
     }
+    int[] latestRange;
+    try (PDDocument doc=Loader.loadPDF(pdf)) {
+      var signatures=doc.getSignatureDictionaries();
+      latestRange=signatures.get(signatures.size()-1).getByteRange();
+    }
+    boolean finalCoverage=(long)latestRange[2]+latestRange[3]==pdf.length;
     CommonCertificateVerifier verifier=new CommonCertificateVerifier();
     // This local oracle trusts certificates carried in the PDF to make the DSS result
     // reproducible without external trust stores. Output states this trust override.
@@ -74,7 +82,9 @@ public final class DssReader {
     DetailedReport detailed=reports.getDetailedReport();
     var ids=simple.getSignatureIdList();
     if(ids.isEmpty()){out(version,"fail","DSS found no signature","no_signature","no_signature");System.exit(1);}
-    StringBuilder info=new StringBuilder("CMS cryptographic signers verified=").append(verifiedSigners)
+    StringBuilder info=new StringBuilder("signatures=").append(ids.size())
+        .append("; final_document_coverage=").append(finalCoverage)
+        .append("; later revisions are not a permitted-change assessment; CMS cryptographic signers verified=").append(verifiedSigners)
         .append("; trust override=embedded CMS certificate(s) treated as local anchors");
     String indication="";
     String subindication="";
@@ -103,6 +113,24 @@ public final class DssReader {
     } catch(Throwable e) {
       out(version,"fail",e.getClass().getSimpleName()+": "+String.valueOf(e.getMessage()),"ERROR","ERROR");
       System.exit(1);
+    }
+  }
+  static void checkSignedRevision(byte[] pdf, int[] range) throws Exception {
+    int end = range[2] + range[3];
+    int tail = end - 1;
+    while (tail >= 0 && (pdf[tail] == 0 || pdf[tail] == 9 || pdf[tail] == 10
+        || pdf[tail] == 12 || pdf[tail] == 13 || pdf[tail] == 32)) tail--;
+    if (tail < 4 || pdf[tail-4] != '%' || pdf[tail-3] != '%'
+        || pdf[tail-2] != 'E' || pdf[tail-1] != 'O' || pdf[tail] != 'F')
+      throw new IllegalStateException("signed revision has no PDF EOF marker");
+    // Parse the signed prefix as a PDF and require its own signature dictionary.
+    // A later incremental revision need not be signed by this earlier signature.
+    try (PDDocument revision = Loader.loadPDF(Arrays.copyOf(pdf, end))) {
+      boolean found = false;
+      for (PDSignature signed : revision.getSignatureDictionaries()) {
+        if (Arrays.equals(signed.getByteRange(), range)) found = true;
+      }
+      if (!found) throw new IllegalStateException("signature ByteRange does not end at its signed revision");
     }
   }
   static boolean compatibleIndication(Object indication,Object subindication){
