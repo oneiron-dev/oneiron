@@ -1,0 +1,13 @@
+{
+  "seed_version": 1,
+  "glossary_version": 1,
+  "answers": [
+    {
+      "question_id": "claim-strength",
+      "unit_id": "slide:1",
+      "evidence": "The slide says all; the cited sample covers one group.",
+      "probability": 0.82,
+      "band": "high"
+    }
+  ]
+}

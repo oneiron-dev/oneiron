@@ -1,50 +1,113 @@
-"""Pin both featureless library process models in the CI test lanes."""
+"""Pin scoped CI: PRs and main pushes test what their diff touched; the full gate runs nightly."""
 
+import importlib.util
 import unittest
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github/workflows/ci.yml"
+RUNNER = ROOT / "scripts/ci/run_scoped.sh"
+FEATURELESS_FULL = (
+    "run cargo test -p oneiron --lib --no-default-features",
+    "run cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0",
+)
+GUARD = (
+    "      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' "
+    "|| github.event.pull_request.draft == false)"
+)
 
-WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml"
+
+def load_scope():
+    spec = importlib.util.spec_from_file_location("ci_scope", ROOT / "scripts/ci/ci_scope.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 class CiWorkflowTests(unittest.TestCase):
-    def test_featureless_tier_runs_under_cargo_test_and_nextest_on_both_lanes(self):
-        lines = WORKFLOW.read_text().splitlines()
-        for job in ("test", "test-linux"):
-            start = lines.index(f"  {job}:") + 1
-            end = next(
-                (i for i in range(start, len(lines)) if lines[i].startswith("  ")
-                 and not lines[i].startswith("    ") and lines[i].strip()),
-                len(lines),
-            )
-            steps = []
-            for line in lines[start:end]:
-                if line.startswith("      - name: "):
-                    steps.append({"name": line.removeprefix("      - name: ")})
-                elif steps and line.startswith("        ") and not line.startswith("          "):
-                    key, _, value = line.strip().partition(": ")
-                    if key in ("run", "if"):
-                        steps[-1][key] = value
+    @classmethod
+    def setUpClass(cls):
+        cls.text = WORKFLOW.read_text()
+        cls.lines = cls.text.splitlines()
+        cls.runner = RUNNER.read_text()
 
-            one_process = next(s for s in steps if s["name"] == "Featureless oneiron library tests")
-            per_test = next(s for s in steps if s["name"] == "Featureless oneiron library tests (nextest, no retries)")
-            self.assertEqual(one_process["run"], "cargo test -p oneiron --lib --no-default-features", job)
-            self.assertEqual(
-                per_test["run"],
-                "cargo nextest run -p oneiron --lib --no-default-features "
-                "--profile featureless --no-fail-fast --retries 0",
-                job,
-            )
-            self.assertEqual(steps.index(per_test), steps.index(one_process) + 1, job)
-            self.assertEqual(per_test.get("if"), one_process.get("if"), job)
+    def job_lines(self, job):
+        start = self.lines.index(f"  {job}:") + 1
+        end = next(
+            (i for i in range(start, len(self.lines)) if self.lines[i].startswith("  ")
+             and not self.lines[i].startswith("    ") and self.lines[i].strip()),
+            len(self.lines),
+        )
+        return self.lines[start:end]
+
+    def test_required_contexts_always_report_and_honour_pause_and_drafts(self):
+        for job, name in (("checks", "Checks"), ("test-linux", "Test"), ("test-linux-featureless", "Test (featureless)")):
+            lines = self.job_lines(job)
+            self.assertIn(f"    name: {name}", lines)
+            self.assertIn("    needs: changes", lines)
+            self.assertIn("      always()", lines)
+            self.assertIn(GUARD, lines)
+
+    def test_jobs_run_the_scoped_runner(self):
+        self.assertIn("        run: scripts/ci/run_scoped.sh clippy", self.job_lines("checks"))
+        self.assertIn("        run: scripts/ci/run_scoped.sh test", self.job_lines("test-linux"))
+        self.assertIn("        run: scripts/ci/run_scoped.sh featureless", self.job_lines("test-linux-featureless"))
+
+    def test_full_gate_runs_nightly_and_keeps_both_featureless_process_models(self):
+        self.assertIn("    - cron: '0 18 * * *'", self.lines)
+        first, second = (self.runner.index(c) for c in FEATURELESS_FULL)
+        self.assertLess(first, second)
+        self.assertIn("run cargo test --doc --workspace --exclude oneiron-bench --all-features", self.runner)
+        self.assertIn("schedule | workflow_dispatch) python3 scripts/ci/ci_scope.py --full ;;", self.text)
+
+    def test_macos_recipe_and_mutation_audit_are_dispatch_only(self):
+        for job in ("test", "mutation-audit"):
+            gate = next(l for l in self.job_lines(job) if l.startswith("    if: "))
+            self.assertIn("github.event_name == 'workflow_dispatch'", gate)
+            self.assertNotIn("pull_request", gate)
 
     def test_workflow_guard_is_executed_by_python_check(self):
-        lines = WORKFLOW.read_text()
-        self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", lines)
+        self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", self.text)
 
-    def test_build_guide_describes_both_ci_process_models(self):
-        guide = (WORKFLOW.parents[2] / "docs/ops/build-performance.md").read_text()
-        self.assertIn("shared-process", guide)
-        self.assertIn("per-test-process", guide)
-        self.assertNotIn("CI is unchanged", guide)
-        self.assertNotIn("CI recipes, which remain unchanged", guide)
+    def test_build_guide_describes_scoped_ci_and_process_models(self):
+        guide = (ROOT / "docs/ops/build-performance.md").read_text()
+        for phrase in ("shared-process", "per-test-process", "`Test (featureless)`", "scripts/ci/ci_scope.py"):
+            self.assertIn(phrase, guide)
+        self.assertNotIn("Both CI test jobs run", guide)
+
+
+class ScopeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.scope = staticmethod(load_scope().scope)
+
+    def test_docs_only_touches_no_rust(self):
+        s = self.scope(["docs/README.md"], False)
+        self.assertFalse(s["rust"])
+        self.assertFalse(s["full"])
+        self.assertEqual(s["packages"], [])
+
+    def test_module_change_scopes_to_that_module(self):
+        s = self.scope(["crates/oneiron/src/authority/fold_engine.rs", "crates/oneiron/src/memory.rs"], False)
+        self.assertTrue(s["rust"] and s["oneiron"])
+        self.assertEqual(s["packages"], ["oneiron"])
+        self.assertEqual(s["modules"], {"authority", "memory"})
+        self.assertFalse(s["full"])
+
+    def test_crate_root_or_many_modules_means_the_whole_crate(self):
+        self.assertEqual(self.scope(["crates/oneiron/src/lib.rs"], False)["modules"], {"ALL"})
+        many = [f"crates/oneiron/src/m{i}/x.rs" for i in range(13)]
+        self.assertEqual(self.scope(many, False)["modules"], {"ALL"})
+
+    def test_build_files_force_the_full_gate(self):
+        for f in ("Cargo.lock", "Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"):
+            self.assertTrue(self.scope([f], False)["full"], f)
+
+    def test_other_crates_and_integration_tests(self):
+        s = self.scope(["crates/oneiron-server/src/lib.rs", "crates/oneiron/tests/it/main.rs"], False)
+        self.assertEqual(sorted(s["packages"]), ["oneiron", "oneiron-server"])
+        self.assertTrue(s["it"])
+
+
+if __name__ == "__main__":
+    unittest.main()

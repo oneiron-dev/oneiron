@@ -18,6 +18,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use super::claim_authoring::{DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision};
 use super::codec::{
     invalid_dreamer_runner, validate_budget_id, validate_budget_record, validate_budget_reservation,
+
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
@@ -31,8 +32,8 @@ use super::types::{
     DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerBudgetRecord, DreamerBudgetReservation,
     DreamerBudgetReserveOutcome, DreamerBudgetSettlement, DreamerBudgetSettlementOutcome,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ReserveDreamerBudget,
-    SettleDreamerBudget,
+    DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ParkDreamerAttempt,
+    ReserveDreamerBudget, SettleDreamerBudget,
 };
 
 /// Private wake-budget counter, keyed by budget id (the rest of the key).
@@ -44,6 +45,9 @@ pub(super) const BUDGET_RESERVATION: SideTable<
     DreamerBudgetReservation,
     Raw,
 > = SideTable::new(&side_table::DREAMER_BUDGET_RESERVATION);
+/// Exact attempt/step memo charged by one wake checkpoint.
+const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), [u8; 1], Raw> =
+    SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 /// The single elected MACRO home-node designation.
 pub(super) const HOME_NODE: SideTable<(), DreamerHomeNodeDesignation, Raw> =
     SideTable::new(&side_table::DREAMER_HOME_NODE);

@@ -333,6 +333,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "IDENTITY_DEVICE_PK",
         "IDENTITY_DEVICE_SK",
         "LINEAR_SYNC_LINK",
+        "LENS_INTENT",
         "LLM_MANIFEST",
         "MANAGED_CANARY_MARKER",
         "MANAGED_DEK_MAC",

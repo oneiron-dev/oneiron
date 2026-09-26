@@ -9,14 +9,14 @@ use super::types::{
     AGENT_DEF_BODY_KEYS, AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
     AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
     AGENT_VERSION_MAX_BYTES, AgentCeiling, AgentDefinition, AgentScope, ContextBudgetSplit,
-    KEY_AGENT_ID, KEY_APPROVAL_STATUS, KEY_CEILING, KEY_CODE_MODE_MCPS, KEY_CONFIDENCE,
-    KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_DESC, KEY_DISPLAY_NAME, KEY_ENABLED,
-    KEY_FORKED_FROM, KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS,
-    KEY_LOGICAL_ID, KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT,
-    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
-    KEY_PROVENANCE, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER,
-    KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WORLD, MemoryProfile, SCOPE_ALL,
-    SCOPE_BASE, SCOPE_WORLD,
+    DreamingMode, KEY_AGENT_ID, KEY_APPROVAL_STATUS, KEY_CEILING, KEY_CODE_MODE_MCPS,
+    KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_DESC,
+    KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
+    KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
+    KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
+    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_WINDOW_TOKEN_BUDGET, KEY_PROVENANCE, KEY_SCOPE,
+    KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES,
+    KEY_SPLIT_TURNS, KEY_VERSION, KEY_WORLD, MemoryProfile, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
@@ -114,6 +114,13 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
             Value::from(KEY_MEMORY_PROFILE),
             encode_memory_profile(profile),
         ));
+    }
+
+    if let Some(mode) = def.dreaming {
+        entries.push((Value::from(KEY_DREAMING), Value::from(mode.as_str())));
+    }
+    if let Some(model) = &def.dreaming_model {
+        entries.push((Value::from(KEY_DREAMING_MODEL), Value::from(model.as_str())));
     }
 
     let value = Value::Map(entries);
@@ -221,6 +228,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
     let mut enabled = None;
     let mut display_name = None;
     let mut memory_profile = None;
+    let mut dreaming = None;
+    let mut dreaming_model = None;
     let mut seen = [false; AGENT_DEF_BODY_KEYS.len()];
 
     for (key, value) in entries {
@@ -387,6 +396,20 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
                 )?);
             }
             KEY_MEMORY_PROFILE => memory_profile = Some(decode_memory_profile(value)?),
+            KEY_DREAMING => {
+                dreaming = Some(value.as_str().and_then(DreamingMode::parse).ok_or(
+                    Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                        "dreaming must be one of own|inherit|off",
+                    )),
+                )?);
+            }
+            KEY_DREAMING_MODEL => {
+                dreaming_model = Some(ModelTierRef(text_value(
+                    value,
+                    AGENT_MODEL_TIER_MAX_BYTES,
+                    "dreamingModel must be a non-empty UTF-8 string at most 256 bytes",
+                )?));
+            }
             _ => unreachable!("index resolved from AGENT_DEF_BODY_KEYS"),
         }
     }
@@ -444,6 +467,8 @@ fn decode_agent_definition_value(value: &Value) -> Result<AgentDefinition> {
         enabled: enabled.unwrap_or(true),
         display_name,
         memory_profile,
+        dreaming,
+        dreaming_model,
     };
     validate_agent_definition(&definition)?;
     Ok(definition)

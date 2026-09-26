@@ -900,6 +900,29 @@ fn unprojectable_task_backlinks_render_jobs_exactly_once() {
         .expect("check tasks");
     let malformed_job = attempt_hex(attempts[0].id);
     let non_task_job = attempt_hex(attempts[1].id);
+    let read_failures = task_presence(&vault)
+        .expect("scan reports malformed body")
+        .read_failures;
+    assert_eq!(read_failures.len(), 1);
+    assert_eq!(read_failures[0].task_ref, malformed);
+    assert_eq!(read_failures[0].stage, TaskPresenceReadStage::PageSlot);
+    assert_eq!(
+        read_failures[0].kind,
+        crate::error::ErrorKind::InvalidTaskBody
+    );
+    assert_eq!(
+        task_presence_for_id(&vault, malformed)
+            .expect_err("direct lookup must report invalid body")
+            .kind(),
+        crate::error::ErrorKind::InvalidTaskBody
+    );
+    let facade = vault.memory(own, EdgeActorClass::Agent);
+    for code in [
+        facade.describe_card(malformed).expect_err("bad card").code,
+        facade.tasks_update(malformed).expect_err("bad update").code,
+    ] {
+        assert_ne!(code, crate::memory::MEMORY_CODE_NOT_FOUND);
+    }
 
     assert_eq!(
         section
@@ -1015,13 +1038,28 @@ fn a_forked_owner_companion_does_not_poison_the_board() {
         1
     );
     assert_eq!(section.rows.len(), 2);
-    // The by-id door agrees with the scan on the poisoned task: hidden here
-    // too, never answered with bits the fold could not verify.
-    assert!(
+    // The by-id door reports the poisoned proof instead of presenting it as
+    // an absent task or answering with bits the fold could not verify.
+    let read_failures = task_presence(&vault)
+        .expect("scan reports the fork")
+        .read_failures;
+    assert!(read_failures.iter().any(|failure| {
+        failure.task_ref == forked
+            && failure.stage == TaskPresenceReadStage::RenderState
+            && failure.kind == crate::error::ErrorKind::InvariantViolation
+    }));
+    assert_eq!(
         task_presence_for_id(&vault, forked)
-            .expect("by-id door survives the fork")
-            .is_none()
+            .expect_err("by-id door returns the forked proof")
+            .kind(),
+        crate::error::ErrorKind::InvariantViolation
     );
+    for code in [
+        facade.describe_card(forked).expect_err("forked card").code,
+        facade.tasks_update(forked).expect_err("forked update").code,
+    ] {
+        assert_eq!(code, crate::memory::MEMORY_CODE_INTERNAL);
+    }
 }
 
 /// P2 F8 for a MALFORMED authority-fact row: the edge is the index and the
@@ -1108,9 +1146,18 @@ fn a_malformed_authority_fact_row_does_not_poison_the_board() {
         1
     );
     assert_eq!(section.rows.len(), 2);
-    assert!(
+    let read_failures = task_presence(&vault)
+        .expect("scan reports the poison")
+        .read_failures;
+    assert!(read_failures.iter().any(|failure| {
+        failure.task_ref == poisoned
+            && failure.stage == TaskPresenceReadStage::RenderState
+            && failure.kind == crate::error::ErrorKind::InvalidTaskBody
+    }));
+    assert_eq!(
         task_presence_for_id(&vault, poisoned)
-            .expect("by-id door survives the poison")
-            .is_none()
+            .expect_err("by-id door returns the malformed proof")
+            .kind(),
+        crate::error::ErrorKind::InvalidTaskBody
     );
 }

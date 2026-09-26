@@ -8,7 +8,7 @@ use crate::{
     Vault,
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectFacts, UndoFidelity},
     entity_id::EntityId,
-    error::Result,
+    error::{Error, RegistryError, Result},
     skill_hub::{ForeignSkillPublisher, HubAskSurface, HubPin, HubRef, SkillHubTrustTier},
 };
 use heed::RoTxn;
@@ -75,10 +75,23 @@ impl Vault {
             // No nested write transaction: catalog, interning, candidates and spend co-commit.
             self.install_pack_kinds_in_txn(txn, &identities)?;
             for predicate in &source.manifest.predicates {
-                if let Some(prior) = PACK_PREDICATE.get(&self.store, txn, predicate)?
+                if let Some(prior) =
+                    PACK_PREDICATE
+                        .get(&self.store, txn, predicate)
+                        .map_err(|error| {
+                            if error.kind() == crate::error::ErrorKind::SideTableRow {
+                                invalid("pack predicate catalog corrupt")
+                            } else {
+                                error
+                            }
+                        })?
                     && prior != source.manifest.name
                 {
-                    return Err(invalid("predicate name owned by another pack"));
+                    return Err(Error::Registry(RegistryError::PackPredicateNameCollision {
+                        predicate: predicate.clone(),
+                        installed_pack: prior,
+                        installing_pack: source.manifest.name.clone(),
+                    }));
                 }
             }
             let old = self.installed_pack_in_txn(txn, &source.manifest.name)?;

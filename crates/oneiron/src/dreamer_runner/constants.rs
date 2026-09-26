@@ -113,6 +113,7 @@ pub(super) const DREAMER_PARKED_KEYS: [&str; 5] = [
     KEY_PARK_OWNER,
     KEY_PARKED_AT,
 ];
+
 pub(super) const MAX_DREAMER_ATTEMPT_TYPE_LEN: usize = 128;
 pub(super) const MAX_DREAMER_BUDGET_ID_LEN: usize = 128;
 pub(super) const MAX_DREAMER_PARK_REASON_LEN: usize = 512;

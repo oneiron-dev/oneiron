@@ -23,6 +23,8 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::posterior::{Posterior, beta_mean};
+
 
 pub const CRITIQUE_ARTIFACT_SCHEMA_VERSION: u64 = 1;
 pub const CRITIC_LENS_CATALOG_SCHEMA_VERSION: u64 = 1;
@@ -320,14 +322,12 @@ impl CriticReliability {
 
     #[must_use]
     pub fn posterior_mean(&self) -> f64 {
-        self.alpha / (self.alpha + self.beta)
+        beta_mean(self.alpha, self.beta)
     }
 
     #[must_use]
     pub fn ucb_bonus(&self, total_observations: u64, exploration: f64) -> f64 {
-        let denominator = self.observations.max(1) as f64;
-        let numerator = ((total_observations.max(1) + 1) as f64).ln();
-        exploration * (2.0 * numerator / denominator).sqrt()
+        Posterior::ucb_bonus(self, total_observations, exploration)
     }
 
     #[must_use]
@@ -336,6 +336,14 @@ impl CriticReliability {
     }
 
     pub fn apply_outcome(&mut self, event: ReliabilityOutcomeEvent) -> Result<()> {
+        self.update(event)
+    }
+}
+
+impl Posterior for CriticReliability {
+    type Outcome = ReliabilityOutcomeEvent;
+
+    fn update(&mut self, event: Self::Outcome) -> Result<()> {
         if self.lens_id != event.lens_id || self.domain != event.domain {
             return Err(invalid_critic_config(
                 "reliability outcome does not match posterior lens/domain",
@@ -356,6 +364,16 @@ impl CriticReliability {
             .checked_add(1)
             .ok_or(Error::IndexOverflow("critic reliability observations"))?;
         Ok(())
+    }
+
+    fn beta_parameters(&self) -> (f64, f64) {
+        (self.alpha, self.beta)
+    }
+
+    fn ucb_bonus(&self, total_observations: u64, exploration: f64) -> f64 {
+        let denominator = self.observations.max(1) as f64;
+        let numerator = (total_observations.max(1).saturating_add(1) as f64).ln();
+        exploration * (2.0 * numerator / denominator).sqrt()
     }
 }
 

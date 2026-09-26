@@ -12,7 +12,7 @@ mod current_architecture;
 mod onboarding_replay;
 use current_architecture::{assert_mailbox_lifecycle_receipt, register_mailbox_custody};
 
-use crate::agent_def::{AgentCeiling, AgentScope};
+use crate::agent_def::{AgentCeiling, AgentScope, DreamingMode};
 use crate::channel_identity_autonomy::{ChannelIdentityActionEnvelope, MailboxReadEnvelope};
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
@@ -707,4 +707,36 @@ fn assert_mailbox_waiting(
         0
     );
     Ok(journal)
+}
+
+#[test]
+fn companion_birth_defaults_to_own_dreaming_without_overriding_authored_mode() -> Result<()> {
+    let (_dir, vault, intent) = fixture("Antevon");
+    let companion_ref = intent.companion_birth.as_ref().expect("birth").actor_ref;
+    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    let companion = vault
+        .get_agent_definition(&companion_ref)?
+        .expect("companion agent");
+    assert_eq!(companion.dreaming, Some(DreamingMode::Own));
+    assert_eq!(companion.dreaming_mode(), DreamingMode::Own);
+    assert_eq!(companion.dreaming_model, None);
+    let member = vault
+        .get_agent_definition(&entity(MEMBER_ACTOR))?
+        .expect("member agent");
+    assert_eq!(member.dreaming_mode(), DreamingMode::Inherit);
+
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    intent
+        .companion_birth
+        .as_mut()
+        .expect("birth")
+        .actor_definition
+        .dreaming = Some(DreamingMode::Off);
+    let companion_ref = intent.companion_birth.as_ref().expect("birth").actor_ref;
+    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    let companion = vault
+        .get_agent_definition(&companion_ref)?
+        .expect("companion agent");
+    assert_eq!(companion.dreaming_mode(), DreamingMode::Off);
+    Ok(())
 }

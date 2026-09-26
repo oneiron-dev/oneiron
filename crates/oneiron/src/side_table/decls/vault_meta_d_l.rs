@@ -42,6 +42,8 @@ side_tables! {
     /// Reservation of budget units against one child attempt, keyed by (budget id, attempt id). Key:
     /// u16be + string + id16.
     DREAMER_BUDGET_RESERVATION: VaultMeta b"dreamer:budget_reservation:" Raw;
+    /// Paid-step receipt keyed by attempt id16 + step hash32. Value: one-byte marker.
+    DREAMER_BUDGET_STEP_CHARGE: VaultMeta b"dreamer:budget_step_charge:" Raw;
     /// Operator-set predicate key rules governing which claim keys the consolidator may fold;
     /// defaults from key_defaults.json when absent. Key: ().
     DREAMER_CONSOLIDATION_KEY_RULES: VaultMeta b"dreamer:consolidation:keys:v1" LegacyJson;
@@ -344,6 +346,8 @@ side_tables! {
     ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
+    /// Vault-scoped authored lens prompt keyed by the lens entity id16.
+    LENS_INTENT: VaultMeta b"lens/intent/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
