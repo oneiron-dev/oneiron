@@ -354,6 +354,91 @@ fn one_builder_writes_what_both_builders_wrote() -> Result<()> {
 }
 
 #[test]
+fn agent_birth_source_asset_inherits_batch_mask_on_both_terminals() -> Result<()> {
+    use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
+    use crate::registry::ENTITY_TYPE_ASSET;
+
+    let agent = entity(0x58);
+    let source = crate::agent_def::birth_source_id(&agent)?;
+    let mask = entity(0x36);
+    let definition = AgentDefinition::new(
+        "fixture.masked-agent",
+        "Masked agent",
+        "1.0.0",
+        Some("Count carefully.\n".into()),
+        vec![],
+        vec![],
+        vec![],
+        None,
+        AgentScope::Base,
+        AgentCeiling::Auto,
+        None,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+        ClaimSource::Generated,
+        1.0,
+        true,
+        false,
+        Value::Map(vec![]),
+        None,
+        true,
+        None,
+    );
+    let body = crate::agent_def::encode_agent_definition(&definition)?;
+    let stamps = |vault: &Vault| -> Result<Vec<EntityId>> {
+        Ok(vault
+            .edges_out(&source)?
+            .into_iter()
+            .filter(|edge| edge.kind == EdgeKind::FacetOf)
+            .map(|edge| edge.target)
+            .collect())
+    };
+
+    for caller_txn in [false, true] {
+        let (_dir, vault) = deterministic_vault();
+        vault.put_entity(&mask, ENTITY_TYPE_FACET, test_time_range(1, 1), 2, b"mask")?;
+        assert_ne!(vault.default_facet()?, mask);
+        let batch = if caller_txn {
+            vault.batch_in()
+        } else {
+            vault.batch()
+        }
+        .mask(Some(mask))
+        .put(
+            &agent,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(10, 10),
+            11,
+            &body,
+        );
+        if caller_txn {
+            vault.with_write_txn(|txn| batch.apply(txn))?;
+        } else {
+            batch.commit()?;
+        }
+        assert_eq!(vault.get_entity_type(&source)?, Some(ENTITY_TYPE_ASSET));
+        assert_eq!(stamps(&vault)?, vec![mask]);
+    }
+
+    // Ordinary commit, without an explicit mask, stamps the source with
+    // the vault default rather than requiring caller attribution.
+    let (_dir, vault) = deterministic_vault();
+    vault
+        .batch()
+        .put(
+            &agent,
+            ENTITY_TYPE_AGENT_DEF,
+            test_time_range(10, 10),
+            11,
+            &body,
+        )
+        .commit()?;
+    assert_eq!(vault.get_entity_type(&source)?, Some(ENTITY_TYPE_ASSET));
+    assert_eq!(stamps(&vault)?, vec![vault.default_facet()?]);
+    Ok(())
+}
+
+#[test]
 fn one_builder_applies_in_the_callers_transaction_and_commits_on_its_own() -> Result<()> {
     use crate::test_util::row_dump::{changed_rows, dump_rows};
 

@@ -264,7 +264,8 @@ pub(super) fn apply_ops_with_origin(
                             hub_sync_imported: false,
                         }],
                         text_index_trusted,
-                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent),
+                        ApplyOpsGateMode::new(record_gate_decisions, persist_gate_pending_consent)
+                            .with_birth_mask(birth_mask),
                         origin,
                     )?;
                 }
