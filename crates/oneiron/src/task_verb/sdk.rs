@@ -239,7 +239,38 @@ fn short_ask_sdk_shape_uses_one_verb_and_never_claims_effect_authority() {
         "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
         "default": "proceed",
     });
-    assert!(input_schema("tasks.ask").unwrap().is_object());
+    let schema = input_schema("tasks.ask").unwrap();
+    let branches = schema["anyOf"]
+        .as_array()
+        .expect("rich and short schema branches");
+    assert_eq!(branches.len(), 2);
+    let rich_schema = branches
+        .iter()
+        .find(|branch| {
+            branch["required"]
+                .as_array()
+                .is_some_and(|fields| fields.contains(&serde_json::json!("intent_key")))
+        })
+        .unwrap();
+    let short_schema = branches
+        .iter()
+        .find(|branch| {
+            branch["required"]
+                .as_array()
+                .is_some_and(|fields| !fields.contains(&serde_json::json!("intent_key")))
+        })
+        .unwrap();
+    for branch in [rich_schema, short_schema] {
+        assert!(
+            branch["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("what"))
+        );
+        assert_eq!(branch["additionalProperties"], false);
+    }
+    assert_eq!(rich_schema["properties"]["intent_key"]["type"], "string");
+    assert!(short_schema["properties"].get("intent_key").is_none());
     let receipt = invoke(&memory, "tasks.ask", short.clone()).unwrap();
     let handle: crate::task_verb::TaskAskHandle =
         serde_json::from_value(receipt["handle"].clone()).unwrap();

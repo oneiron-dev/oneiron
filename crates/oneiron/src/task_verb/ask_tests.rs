@@ -1426,6 +1426,24 @@ fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Resu
             .code,
         crate::memory::MEMORY_CODE_BAD_REQUEST
     );
+    // An own-auto agent may choose a foreign `owner_ref` at tasks.create,
+    // but that owner proof is not an authenticated human assignment.
+    let forged = agent_memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::from("agent-nominated owner"),
+            None,
+            Some(human),
+            None,
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(forged.effected);
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
     let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
         &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
             .with_assignee(TaskAssignee::Peer { actor_ref: agent }),

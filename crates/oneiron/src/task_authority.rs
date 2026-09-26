@@ -65,8 +65,9 @@ const SCOPED_TO_DEFAULT_WEIGHT: f32 = match EdgeKind::ScopedTo.default_weight() 
 
 /// What one authority fact asserts about its subject TASK.
 ///
-/// The three kinds are independent: an Owner fact is a PROOF (who may act
-/// directly), a Cancelled fact and an Acked fact are EVENTS that happened.
+/// Owner proves who may act directly; cancellation and acknowledgement are
+/// events. HumanAssigned records a separate authenticated assignment door,
+/// never inferred from a caller-selected Owner id.
 /// None of them is ever rewritten or deleted, so the set only grows.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,6 +75,7 @@ pub enum TaskAuthorityFactKind {
     Owner = 1,
     Cancelled = 2,
     Acked = 3,
+    HumanAssigned = 4,
 }
 
 impl TaskAuthorityFactKind {
@@ -83,6 +85,7 @@ impl TaskAuthorityFactKind {
             Self::Owner => 1,
             Self::Cancelled => 2,
             Self::Acked => 3,
+            Self::HumanAssigned => 4,
         }
     }
 
@@ -92,6 +95,7 @@ impl TaskAuthorityFactKind {
             1 => Some(Self::Owner),
             2 => Some(Self::Cancelled),
             3 => Some(Self::Acked),
+            4 => Some(Self::HumanAssigned),
             _ => None,
         }
     }
@@ -132,6 +136,7 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) owner_ref: Option<EntityId>,
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
+    pub(crate) human_assigner: Option<EntityId>,
 }
 
 impl TaskAuthorityFacts {
@@ -159,6 +164,12 @@ impl TaskAuthorityFacts {
             },
             TaskAuthorityFactKind::Cancelled => self.cancelled = true,
             TaskAuthorityFactKind::Acked => self.acked = true,
+            TaskAuthorityFactKind::HumanAssigned => match self.human_assigner {
+                Some(actor) if actor != fact.actor_ref => {
+                    return Err(Error::InvariantViolation("task human assignment fork"));
+                }
+                _ => self.human_assigner = Some(fact.actor_ref),
+            },
         }
         Ok(())
     }
@@ -349,6 +360,24 @@ impl Vault {
         Ok(self.task_authority_facts_in(rtxn, task_ref)?.into_state())
     }
 
+    /// The separate, engine-authored human-assignment witness. Owner alone
+    /// is not evidence that the human authored the assignment: tasks.create
+    /// permits a caller to nominate another `owner_ref`.
+    pub(crate) fn task_human_assigner_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+    ) -> Result<Option<EntityId>> {
+        let facts = self.task_authority_facts_in(txn, task_ref)?;
+        match (facts.owner_ref, facts.human_assigner) {
+            (Some(owner), Some(assigner)) if owner == assigner => Ok(Some(owner)),
+            (Some(_), Some(_)) => Err(Error::InvariantViolation(
+                "task human assigner is not owner",
+            )),
+            _ => Ok(None),
+        }
+    }
+
     /// Folds every authority fact scoped to `task_ref`.
     ///
     /// Inbound `ScopedTo` is a shared structural relation, so identification is
@@ -497,7 +526,7 @@ mod tests {
             (BODY_KEY_ROLE, Value::from(TaskRole::Task.role_byte())),
             (BODY_KEY_SCHEMA_VERSION, Value::from(2_u8)),
             (BODY_KEY_SUBKIND, Value::from("typed")),
-            (BODY_KEY_KIND, Value::from(4_u8)),
+            (BODY_KEY_KIND, Value::from(5_u8)),
             (BODY_KEY_TASK_REF, Value::from("not-a-hex-id")),
             (BODY_KEY_OCCURRED_AT, Value::from("not-a-number")),
         ] {
@@ -517,6 +546,34 @@ mod tests {
                 "case {index} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn human_assignment_witness_requires_matching_owner_and_fails_closed_on_fork() {
+        let (_dir, vault) = open_vault();
+        let task = id(0xA5);
+        let owner = id(0xA6);
+        let other = id(0xA7);
+        put_fact(&vault, fact(task, TaskAuthorityFactKind::Owner, owner));
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(vault.task_human_assigner_in(&txn, task).unwrap(), None);
+        drop(txn);
+        put_fact(
+            &vault,
+            fact(task, TaskAuthorityFactKind::HumanAssigned, owner),
+        );
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert_eq!(
+            vault.task_human_assigner_in(&txn, task).unwrap(),
+            Some(owner)
+        );
+        drop(txn);
+        put_fact(
+            &vault,
+            fact(task, TaskAuthorityFactKind::HumanAssigned, other),
+        );
+        let txn = vault.store.env.read_txn().expect("read txn");
+        assert!(vault.task_human_assigner_in(&txn, task).is_err());
     }
 
     /// Direct authority fails CLOSED: no Owner fact, no owner — while the
