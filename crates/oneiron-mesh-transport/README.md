@@ -21,9 +21,12 @@ transport hosts, but cannot itself grant admission.
 
 `Vault::bind_mesh_machine` requires a live pairing slip naming this MACHINE,
 plus signatures from both the paired device key and its transport key over the
-same domain-separated MACHINE/EndpointId transcript. It atomically writes the
-public MACHINE address envelope and a host-signed local binding projection with
-no ALPN grants. `set_mesh_alpn_grant` requires the live host authority root,
+same domain-separated MACHINE/EndpointId transcript. A live, previously created
+MACHINE can be paired through the public pairing route first. The host-authorized
+binding then replaces its body with the typed address envelope; wrong-kind,
+deleted, already-bound, duplicate-key, and conflicting tagged endpoint rows
+fail closed. The envelope and host-signed local binding projection commit
+atomically with no ALPN grants. `set_mesh_alpn_grant` requires the live host authority root,
 appends a scoped `SlipMint` or `SlipRevoke` to AUTHORITY_LOG and updates its
 local pointer in the same transaction. `revoke_mesh_machine` revokes every
 listed grant and seals the local binding. The live read checks the current

@@ -37190,7 +37190,8 @@
      "path": "src/transport_key.rs",
      "purpose": "Pairing derives a distinct transport signer; only the public endpoint key is recorded",
      "surface": {
-      "fn": 5,
+      "crate-vis": 1,
+      "fn": 3,
       "struct": 1
      }
     },

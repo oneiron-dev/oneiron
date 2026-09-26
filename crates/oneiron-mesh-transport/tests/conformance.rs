@@ -1,8 +1,8 @@
 //! The same admission, stream and reconnect laws for the in-memory and iroh transports.
 use oneiron::entity_id::EntityId;
 use oneiron_mesh_transport::{
-    AcceptPolicy, MachineAddress, MachineGrants, MachineId, MachineRoster, MeshConnection,
-    MeshError, MeshFuture, MeshStream, MeshTransport,
+    AcceptPolicy, MachineGrants, MachineId, MachineRoster, MeshConnection, MeshError, MeshFuture,
+    MeshMachineAddress, MeshStream, MeshTransport,
 };
 use std::{
     collections::BTreeMap,
@@ -19,7 +19,7 @@ const MAX_FRAME: usize = 1024 * 1024;
 
 #[derive(Default)]
 struct State {
-    rows: RwLock<BTreeMap<MachineId, (MachineAddress, bool)>>,
+    rows: RwLock<BTreeMap<MachineId, (MeshMachineAddress, bool)>>,
     grant_checks: Mutex<BTreeMap<MachineId, usize>>,
     grant_checks_changed: tokio::sync::Notify,
 }
@@ -31,7 +31,7 @@ impl std::fmt::Debug for MemoryRoster {
     }
 }
 impl MachineRoster for MemoryRoster {
-    fn by_machine(&self, id: MachineId) -> Result<Option<MachineAddress>, MeshError> {
+    fn by_machine(&self, id: MachineId) -> Result<Option<MeshMachineAddress>, MeshError> {
         Ok(self
             .0
             .rows
@@ -40,7 +40,10 @@ impl MachineRoster for MemoryRoster {
             .get(&id)
             .map(|(row, _)| row.clone()))
     }
-    fn by_endpoint(&self, key: [u8; 32]) -> Result<Option<(MachineId, MachineAddress)>, MeshError> {
+    fn by_endpoint(
+        &self,
+        key: [u8; 32],
+    ) -> Result<Option<(MachineId, MeshMachineAddress)>, MeshError> {
         let rows = self.0.rows.read().map_err(|_| MeshError::Unavailable)?;
         let mut matches = rows.iter().filter(|(_, (row, _))| row.endpoint_key == key);
         let result = matches.next().map(|(&id, (row, _))| (id, row.clone()));
@@ -83,7 +86,7 @@ fn policy(state: Arc<State>) -> AcceptPolicy {
         grants: Arc::new(MemoryGrants(state)),
     }
 }
-fn state(rows: impl IntoIterator<Item = (MachineId, MachineAddress)>) -> Arc<State> {
+fn state(rows: impl IntoIterator<Item = (MachineId, MeshMachineAddress)>) -> Arc<State> {
     Arc::new(State {
         rows: RwLock::new(
             rows.into_iter()
@@ -561,7 +564,7 @@ impl MeshStream for TestStream {
 async fn in_memory_transport_conformance() {
     let (a, b, unknown) = (EntityId::now(), EntityId::now(), EntityId::now());
     let (ak, bk, uk) = ([1; 32], [2; 32], [3; 32]);
-    let addr = |endpoint_key| MachineAddress {
+    let addr = |endpoint_key| MeshMachineAddress {
         endpoint_key,
         direct_addrs: vec![],
         relay_url: None,
@@ -594,7 +597,7 @@ async fn iroh_loopback_conformance() {
         iroh::SecretKey::generate(),
         iroh::SecretKey::generate(),
     );
-    let addr = |key, direct_addrs| MachineAddress {
+    let addr = |key, direct_addrs| MeshMachineAddress {
         endpoint_key: key,
         direct_addrs,
         relay_url: None,

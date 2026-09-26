@@ -39,12 +39,12 @@ impl TransportKey {
         )
     }
     #[cfg(feature = "iroh")]
-    pub fn into_iroh_secret(self) -> iroh::SecretKey {
+    pub(crate) fn into_iroh_secret(self) -> iroh::SecretKey {
         iroh::SecretKey::from_bytes(&self.0)
     }
 }
 /// Transcript used by the authority binding door, including vault-local MACHINE id.
-pub fn binding_transcript(machine: MachineId, endpoint_key: [u8; 32]) -> Vec<u8> {
+fn binding_transcript(machine: MachineId, endpoint_key: [u8; 32]) -> Vec<u8> {
     let mut out = b"oneiron/mesh-machine-binding/v1\0".to_vec();
     out.extend_from_slice(machine.as_bytes());
     out.extend_from_slice(&endpoint_key);

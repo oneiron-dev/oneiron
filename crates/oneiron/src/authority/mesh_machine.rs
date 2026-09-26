@@ -11,7 +11,7 @@ use crate::{
     EntityId, Vault,
     error::Result,
     federation::{Scope, ScopeAxis},
-    ports::{EntityRecord, EntityStore, EntityStoreRead},
+    ports::{EntityRecord, EntityStore, EntityStoreRead, TombstoneStoreRead},
     registry::ENTITY_TYPE_MACHINE,
     temporal::TimeRange,
 };
@@ -96,14 +96,11 @@ fn mesh_verb(alpn: &[u8]) -> String {
             .collect::<String>()
     )
 }
-fn parse_address(body: &[u8]) -> Result<Option<MeshMachineAddress>> {
-    let Ok(envelope) = rmp_serde::from_slice::<MeshMachineAddressEnvelope>(body) else {
-        return Ok(None);
-    };
-    if envelope.domain != DOMAIN || envelope.version != 1 {
-        return Ok(None);
-    }
-    if envelope.address.direct_addrs.len() > 32
+fn parse_address(body: &[u8]) -> Option<MeshMachineAddress> {
+    let envelope = rmp_serde::from_slice::<MeshMachineAddressEnvelope>(body).ok()?;
+    if envelope.domain != DOMAIN
+        || envelope.version != 1
+        || envelope.address.direct_addrs.len() > 32
         || VerifyingKey::from_bytes(&envelope.address.endpoint_key).is_err()
         || envelope
             .address
@@ -111,9 +108,9 @@ fn parse_address(body: &[u8]) -> Result<Option<MeshMachineAddress>> {
             .as_ref()
             .is_some_and(|url| url.len() > 2048)
     {
-        return Err(invalid_authority());
+        return None;
     }
-    Ok(Some(envelope.address))
+    Some(envelope.address)
 }
 impl Vault {
     fn mesh_machine_in_txn(
@@ -127,7 +124,7 @@ impl Vault {
         if row.entity_type != ENTITY_TYPE_MACHINE {
             return Ok(None);
         }
-        parse_address(&row.body)
+        Ok(parse_address(&row.body))
     }
     /// One snapshot for type, liveness and address; never guesses a header offset.
     pub fn mesh_machine(&self, machine: EntityId) -> Result<Option<MeshMachineAddress>> {
@@ -140,17 +137,24 @@ impl Vault {
         key: [u8; 32],
     ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
         let txn = self.store.env.read_txn()?;
+        self.mesh_machine_by_endpoint_in_txn(&txn, key)
+    }
+    fn mesh_machine_by_endpoint_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: [u8; 32],
+    ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
         let mut found = None;
         let mut seen = 0;
         for id in
-            EntityStoreRead::port_entity_ids_by_type(&self.store, &txn, ENTITY_TYPE_MACHINE, None)?
+            EntityStoreRead::port_entity_ids_by_type(&self.store, txn, ENTITY_TYPE_MACHINE, None)?
         {
             seen += 1;
             if seen > MAX_MACHINES {
                 return Err(invalid_authority());
             }
             let id = id?;
-            if let Some(row) = self.mesh_machine_in_txn(&txn, id)?
+            if let Some(row) = self.mesh_machine_in_txn(txn, id)?
                 && row.endpoint_key == key
             {
                 if found.is_some() {
@@ -301,7 +305,7 @@ impl Vault {
         }
         let encoded = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(address.clone()))
             .map_err(|_| invalid_authority())?;
-        parse_address(&encoded)?.ok_or_else(invalid_authority)?;
+        parse_address(&encoded).ok_or_else(invalid_authority)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
@@ -321,13 +325,35 @@ impl Vault {
                 .sync_state
                 .get(&txn, &authority_key(machine))?
                 .is_some()
-            || EntityStoreRead::port_entity_record(&self.store, &txn, &machine)?.is_some()
         {
             return Err(invalid_authority());
         }
+        let visibility = TombstoneStoreRead::port_deletion_state(&self.store, &txn, &machine)?;
+        if visibility.deleted || visibility.archived || visibility.stale {
+            return Err(invalid_authority());
+        }
+        // Public pairing requires an existing live holder. Its host-approved
+        // binding replaces the prior MACHINE body with the typed address envelope.
+        // Never overwrite another kind, a deleted/stale holder, or a different
+        // endpoint already tagged as this MACHINE's mesh identity.
+        if let Some(existing) = EntityStoreRead::port_entity_record(&self.store, &txn, &machine)? {
+            if existing.entity_type != ENTITY_TYPE_MACHINE
+                || EntityStore::port_entity_get(self, &txn, &machine)?.is_none()
+            {
+                return Err(invalid_authority());
+            }
+            if let Ok(prior) = rmp_serde::from_slice::<MeshMachineAddressEnvelope>(&existing.body)
+                && prior.domain == DOMAIN
+                && (prior.version != 1
+                    || parse_address(&existing.body).is_none()
+                    || prior.address.endpoint_key != address.endpoint_key)
+            {
+                return Err(invalid_authority());
+            }
+        }
         if self
-            .mesh_machine_by_endpoint(address.endpoint_key)?
-            .is_some()
+            .mesh_machine_by_endpoint_in_txn(&txn, address.endpoint_key)?
+            .is_some_and(|(id, _)| id != machine)
         {
             return Err(invalid_authority());
         }
@@ -469,6 +495,16 @@ mod tests {
         let host = HostSlipIssuer::from_secret(b"mesh grant host root").unwrap();
         vault.ensure_host_root_slip(&host).unwrap();
         let machine = EntityId::now();
+        vault
+            .put_entity(
+                &machine,
+                ENTITY_TYPE_MACHINE,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"paired machine actor",
+            )
+            .unwrap();
+        assert!(vault.get(&machine).unwrap().is_some()); // the public pairing route's holder precondition
         let device = SigningKey::from_bytes(&[31; 32]);
         let transport = SigningKey::from_bytes(&blake3::derive_key(
             "oneiron/mesh-transport-ed25519/v1",
@@ -501,6 +537,10 @@ mod tests {
                 ],
             )
             .unwrap();
+        assert_eq!(
+            vault.mesh_machine(machine).unwrap().unwrap().endpoint_key,
+            address.endpoint_key
+        );
         (dir, vault, host, machine, address, pair.claims.slip_id)
     }
     #[test]
@@ -510,6 +550,11 @@ mod tests {
         assert_eq!(
             vault.mesh_machine_by_endpoint(key).unwrap().unwrap().0,
             machine
+        );
+        assert!(
+            vault
+                .bind_mesh_machine(&host, machine, address, [1; 32], [2; 32], [&[], &[]])
+                .is_err()
         );
         assert!(
             !vault
@@ -607,6 +652,64 @@ mod tests {
             !vault
                 .mesh_grant_permits(machine, key, b"mesh/test")
                 .unwrap()
+        );
+    }
+    #[test]
+    fn binding_refuses_wrong_kind_deleted_duplicate_and_repeat() {
+        use crate::registry::ENTITY_TYPE_PERSON;
+        let (_dir, vault, host, bound, address, pair_id) = fixture();
+        let device = SigningKey::from_bytes(&[31; 32]);
+        let transport = SigningKey::from_bytes(&blake3::derive_key(
+            "oneiron/mesh-transport-ed25519/v1",
+            device.as_bytes(),
+        ));
+        let key = device.verifying_key().to_bytes();
+        let bind = |machine: EntityId, slip_id: [u8; 32]| {
+            let transcript = binding_transcript(machine, address.endpoint_key);
+            vault.bind_mesh_machine(
+                &host,
+                machine,
+                address.clone(),
+                key,
+                slip_id,
+                [
+                    &device.sign(&transcript).to_bytes(),
+                    &transport.sign(&transcript).to_bytes(),
+                ],
+            )
+        };
+        assert!(bind(bound, pair_id).is_err()); // an existing binding cannot be reminted
+        for (kind, deleted) in [
+            (ENTITY_TYPE_PERSON, false),
+            (ENTITY_TYPE_MACHINE, true),
+            (ENTITY_TYPE_MACHINE, false),
+        ] {
+            let machine = EntityId::now();
+            vault
+                .put_entity(&machine, kind, TimeRange { start: 1, end: 1 }, 1, b"holder")
+                .unwrap();
+            let link = vault.issue_pairing_link(&host, Scope::top(), 3600).unwrap();
+            let proof = device
+                .sign(&pairing_binding_transcript(&link.code, &key, &machine.to_hex()).unwrap())
+                .to_bytes();
+            let slip = vault
+                .redeem_pairing_link(&host, &link.code, &machine.to_hex(), key, &proof)
+                .unwrap();
+            if deleted {
+                assert!(vault.delete_entity(&machine).unwrap());
+            }
+            assert!(
+                bind(machine, slip.claims.slip_id).is_err(),
+                "wrong kind, deleted holder, or duplicate endpoint must refuse binding"
+            );
+        }
+        assert_eq!(
+            vault
+                .mesh_machine_by_endpoint(address.endpoint_key)
+                .unwrap()
+                .unwrap()
+                .0,
+            bound
         );
     }
 }

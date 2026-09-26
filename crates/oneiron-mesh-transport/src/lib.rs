@@ -3,9 +3,7 @@
 
 use std::{future::Future, pin::Pin, sync::Arc};
 
-pub use oneiron::authority::{
-    MeshMachineAddress as MachineAddress, MeshMachineAddressEnvelope as MachineAddressEnvelope,
-};
+pub use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
 use oneiron::{ErrorKind, Vault, entity_id::EntityId};
 
 #[cfg(feature = "iroh")]
@@ -34,11 +32,11 @@ impl std::error::Error for MeshError {}
 
 /// Read-only, live source of vault MACHINE rows. Missing/deleted rows fail closed.
 pub trait MachineRoster: Send + Sync + std::fmt::Debug {
-    fn by_machine(&self, machine: MachineId) -> Result<Option<MachineAddress>, MeshError>;
+    fn by_machine(&self, machine: MachineId) -> Result<Option<MeshMachineAddress>, MeshError>;
     fn by_endpoint(
         &self,
         endpoint_key: [u8; 32],
-    ) -> Result<Option<(MachineId, MachineAddress)>, MeshError>;
+    ) -> Result<Option<(MachineId, MeshMachineAddress)>, MeshError>;
 }
 
 /// Fetches only MACHINE entities from the supplied vault, never DNS or a relay directory.
@@ -59,13 +57,13 @@ fn roster_error(error: oneiron::Error) -> MeshError {
     }
 }
 impl MachineRoster for VaultMachineRoster {
-    fn by_machine(&self, machine: MachineId) -> Result<Option<MachineAddress>, MeshError> {
+    fn by_machine(&self, machine: MachineId) -> Result<Option<MeshMachineAddress>, MeshError> {
         self.0.mesh_machine(machine).map_err(roster_error)
     }
     fn by_endpoint(
         &self,
         endpoint_key: [u8; 32],
-    ) -> Result<Option<(MachineId, MachineAddress)>, MeshError> {
+    ) -> Result<Option<(MachineId, MeshMachineAddress)>, MeshError> {
         self.0
             .mesh_machine_by_endpoint(endpoint_key)
             .map_err(roster_error)
@@ -108,7 +106,11 @@ impl AcceptPolicy {
         }
         Ok(machine)
     }
-    pub fn outbound(&self, machine: MachineId, alpn: &[u8]) -> Result<MachineAddress, MeshError> {
+    pub fn outbound(
+        &self,
+        machine: MachineId,
+        alpn: &[u8],
+    ) -> Result<MeshMachineAddress, MeshError> {
         let row = self.roster.by_machine(machine)?.ok_or(MeshError::Refused)?;
         if !self.grants.permits(machine, row.endpoint_key, alpn)? {
             return Err(MeshError::Refused);

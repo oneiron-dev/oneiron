@@ -13,6 +13,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/iroh_transport.rs` | src | m | 1 struct · 5 fn | IrohTransport | Private iroh data plane |
 | `src/lib.rs` | src | s | 3 struct · 1 enum · 5 trait · 2 fn · 2 type · 2 mod · 1 re-export | AcceptPolicy, MachineGrants, MachineRoster, MeshConnection, MeshError, MeshStream, MeshTransport, VaultMachineGrants +1 | Vault-scoped mesh transport |
-| `src/transport_key.rs` | src | s | 1 struct · 5 fn | TransportKey | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
+| `src/transport_key.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | TransportKey | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 | `tests/conformance.rs` | test | m | — | — | The same admission, stream and reconnect laws for the in-memory and iroh transports |
 | `tests/roster.rs` | test | s | — | — | A vault MACHINE row is an address hint only when it carries the exact versioned envelope |
