@@ -111,18 +111,22 @@ pub(super) fn fail_once(
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
     let mut txn = vault.store.env.write_txn()?;
-    let failed = fail_once_in_txn(queue, &mut txn, input)?;
+    let failed = fail_once_in_txn(vault, queue, &mut txn, input)?;
     txn.commit()?;
     vault.store.notify_attempt_observers();
     Ok(failed)
 }
 
 pub(super) fn fail_once_in_txn(
+    vault: &Vault,
     queue: &AttemptQueue<'_>,
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
-    new_failure(queue.fail_in_txn(txn, fail_request(input))?)
+    let failed = new_failure(queue.fail_in_txn(txn, fail_request(input))?)?;
+    crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .cleanup_step_receipts_in_txn(txn, failed.id)?;
+    Ok(failed)
 }
 
 fn fail_request(input: &HandleAttemptFailure) -> FailAttempt {

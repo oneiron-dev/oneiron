@@ -244,7 +244,7 @@ impl<'a> FailureLadder<'a> {
         routing: HealerRouting,
     ) -> Result<FailureLadderOutcome> {
         let mut txn = self.vault.store.env.write_txn()?;
-        let failed_attempt = fail_once_in_txn(queue, &mut txn, input)?;
+        let failed_attempt = fail_once_in_txn(self.vault, queue, &mut txn, input)?;
         let case = HealerCase {
             case_ref: failure_case_ref(failed_attempt.id),
             scope: policy.scope.clone(),
