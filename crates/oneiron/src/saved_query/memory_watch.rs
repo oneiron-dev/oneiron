@@ -67,6 +67,14 @@ fn anchor_of(definition: &SavedQueryDefinition) -> Option<EntityId> {
     }
 }
 
+/// A watch row is reserved at every SAVED_QUERY lifecycle door. Generic
+/// updates/archives cannot change its filter or make the deterministic flag
+/// identity unmanageable; only `set_memory_watch` can change its lifecycle.
+pub(super) fn is_memory_watch_record(record: &SavedQueryRecord) -> bool {
+    anchor_of(&record.definition)
+        .is_some_and(|anchor| is_watch(record, record.definition.owner_actor, anchor))
+}
+
 fn is_watch(record: &SavedQueryRecord, owner: EntityId, anchor: EntityId) -> bool {
     record.definition.owner_actor == owner
         && anchor_of(&record.definition) == Some(anchor)

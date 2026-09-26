@@ -87,8 +87,8 @@ pub(crate) struct CoreMemoryTimelineRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     item: Option<Value>,
-    /// Before/after views for each visible predecessor, using stored revision
-    /// bodies already fetched for this timeline (no read-time diff algorithm).
+    /// Before/after views bound to exact retained revisions captured with
+    /// each accepted supersession. Missing/erased pins never fall back to live bodies.
     changes: Vec<CoreMemoryChange>,
 }
 
@@ -300,7 +300,7 @@ pub(crate) struct CoreMemoryWatchResponse {
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
-pub(crate) async fn core_memory_watch_read(
+pub(super) async fn core_memory_watch_read(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
@@ -326,7 +326,7 @@ pub(crate) async fn core_memory_watch_read(
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
-pub(crate) async fn core_memory_watch_enable(
+pub(super) async fn core_memory_watch_enable(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
@@ -346,7 +346,7 @@ pub(crate) async fn core_memory_watch_enable(
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
-pub(crate) async fn core_memory_watch_disable(
+pub(super) async fn core_memory_watch_disable(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(id_hex): Path<String>,
@@ -668,31 +668,55 @@ pub(crate) fn core_memory_timeline_response(
             changes: Vec::new(),
         });
     }
-    let bodies: std::collections::BTreeMap<_, _> = records
+    let content_visible: std::collections::BTreeSet<_> = records
         .iter()
-        .filter_map(|record| {
-            record
-                .item
-                .as_ref()
-                .map(|body| (record.id.clone(), body.clone()))
-        })
+        .filter(|record| record.item.is_some())
+        .map(|record| record.id.clone())
         .collect();
     for record in &mut records {
-        let Some(after) = bodies.get(&record.id) else {
+        if !content_visible.contains(&record.id) {
             continue;
-        };
-        record.changes = record
-            .supersedes
-            .iter()
-            .filter_map(|before_id| {
-                bodies.get(before_id).map(|before| CoreMemoryChange {
-                    before_id: before_id.clone(),
-                    after_id: record.id.clone(),
-                    before: before.clone(),
-                    after: after.clone(),
-                })
-            })
-            .collect();
+        }
+        let after_id = oneiron::EntityId::from_hex(&record.id)
+            .map_err(|_| ApiError::internal_server_error("timeline successor id"))?;
+        for before_id in &record.supersedes {
+            if !content_visible.contains(before_id) {
+                continue;
+            }
+            let old_id = oneiron::EntityId::from_hex(before_id)
+                .map_err(|_| ApiError::internal_server_error("timeline predecessor id"))?;
+            let pinned = read
+                .memory_supersession_parts_with_receipt(
+                    &old_id,
+                    &after_id,
+                    Some(&narrowing.applied.as_filter()),
+                )
+                .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
+            narrowing.restrict_with(&pinned.receipt);
+            let Some(((before_kind, before_at, before_body), (after_kind, after_at, after_body))) =
+                pinned.value
+            else {
+                continue;
+            };
+            record.changes.push(CoreMemoryChange {
+                before_id: before_id.clone(),
+                after_id: record.id.clone(),
+                before: projection::project_entity_parts(
+                    &old_id,
+                    before_kind,
+                    before_at,
+                    &before_body,
+                    view,
+                ),
+                after: projection::project_entity_parts(
+                    &after_id,
+                    after_kind,
+                    after_at,
+                    &after_body,
+                    view,
+                ),
+            });
+        }
     }
     let visible: std::collections::BTreeSet<_> =
         records.iter().map(|record| record.id.clone()).collect();

@@ -879,11 +879,6 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
     );
     assert_eq!(active.value[0]["query_ref"], watch.query_ref.to_hex());
     assert_eq!(active.value[0]["timeline"]["anchor_id"], anchor.to_hex());
-    assert!(
-        active
-            .dependencies
-            .contains(&format!("e:{}", anchor.to_hex()))
-    );
     let next = EntityId::now();
     let mut successor = server.vault().get_claim(&anchor).unwrap().unwrap();
     successor.value = rmpv::Value::from("Updated name");
@@ -913,6 +908,60 @@ async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
                     .is_some_and(|rows| rows.len() == 2)
             })
     }));
+    // A live credential does not imply that an old queued body is still
+    // readable. Narrow the row while an update is retained and test all
+    // three exits: socket delivery, same-ID reconnect and new-ID replay.
+    let acked = subscribed
+        .buffered()
+        .unwrap()
+        .last()
+        .unwrap()
+        .cursor
+        .clone();
+    subscribed.ack(3, &acked).unwrap();
+    let mut hidden = server.vault().get_claim(&next).unwrap().unwrap();
+    hidden.stale = true;
+    server
+        .vault()
+        .put_claim(
+            &next,
+            &hidden,
+            oneiron::TimeRange {
+                start: AT + 2,
+                end: AT + 2,
+            },
+            AT + 2,
+        )
+        .unwrap();
+    let queued = subscribed.buffered().unwrap();
+    assert_eq!(queued.len(), 1, "{queued:?}");
+    assert_eq!(queued[0].kind, "gap", "{queued:?}");
+    let assert_scrubbed = |pushes: &[subscriptions::Push]| {
+        let wire = serde_json::to_string(pushes).unwrap();
+        assert!(!wire.contains("Updated name"), "retained secret: {wire}");
+        assert_eq!(pushes[0].kind, "gap", "{wire}");
+        assert!(pushes.iter().any(|push| push.kind == "snapshot"));
+    };
+    let same = subscribed
+        .open(
+            3,
+            ScopedView::default(),
+            Channel::OwnerFeed,
+            Some(&acked),
+            None,
+        )
+        .unwrap();
+    assert_scrubbed(&same);
+    let other = subscribed
+        .open(
+            4,
+            ScopedView::default(),
+            Channel::OwnerFeed,
+            Some(&acked),
+            None,
+        )
+        .unwrap();
+    assert_scrubbed(&other);
     let agent = crate::test_credentials::authenticate(
         &server,
         &format!("principal_ref={ACTOR};actor_class=agent;jti=watch-agent"),

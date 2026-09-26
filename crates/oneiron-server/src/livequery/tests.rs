@@ -5,7 +5,7 @@ use super::*;
 use loro::{CommitOptions, LoroDoc, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const WORLD_A: &str = "11111111111111111111111111111111";
@@ -17,8 +17,6 @@ struct Source {
     values: Mutex<BTreeMap<String, u64>>,
     expired: AtomicBool,
     refused: AtomicBool,
-    view_derives: AtomicUsize,
-    owner_feed_derives: AtomicUsize,
 }
 
 impl Source {
@@ -34,11 +32,6 @@ impl Source {
 
 impl LiveQuerySource for Source {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError> {
-        if channel == Channel::OwnerFeed {
-            self.owner_feed_derives.fetch_add(1, Ordering::SeqCst);
-        } else {
-            self.view_derives.fetch_add(1, Ordering::SeqCst);
-        }
         if self.refused.load(Ordering::SeqCst) {
             return Err(AppError::unauthorized());
         }
@@ -530,17 +523,21 @@ fn bridge_origin_edge_updates_name_both_entity_documents() {
 fn owner_feed_poll_never_rederives_unrelated_subscriptions() {
     let source = Arc::new(Source::default());
     let tier = LiveQueries::new(1, source.clone());
-    tier.open(1, ScopedView::default(), Channel::View, None, None)
+    let view_open = tier
+        .open(1, view(WORLD_A), Channel::View, None, None)
         .unwrap();
+    tier.ack(1, &view_open.last().unwrap().cursor).unwrap();
     tier.open(2, ScopedView::default(), Channel::OwnerFeed, None, None)
         .unwrap();
-    let before_view = source.view_derives.load(Ordering::SeqCst);
-    let before_feed = source.owner_feed_derives.load(Ordering::SeqCst);
+    // No materializer notification for this View change. An owner-feed poll
+    // must not cause an unrelated View data push visible to its subscriber.
+    source.write(WORLD_A, 1);
     tier.owner_feed_poll_now();
     tier.refresh().unwrap();
-    assert_eq!(source.view_derives.load(Ordering::SeqCst), before_view);
-    assert_eq!(
-        source.owner_feed_derives.load(Ordering::SeqCst),
-        before_feed + 1
+    assert!(
+        tier.buffered()
+            .unwrap()
+            .iter()
+            .all(|push| push.subscription_id != 1)
     );
 }

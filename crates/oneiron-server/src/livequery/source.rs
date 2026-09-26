@@ -325,6 +325,12 @@ impl LiveQuerySource for BoundSource {
         pushes: &[subscriptions::Push],
     ) -> Result<(), AppError> {
         let _server = self.server()?;
+        if channel == Channel::OwnerFeed {
+            // Owner body history cannot be replayed safely after a later
+            // policy change. Keep only the live subscription ring, which is
+            // re-authorized before each delivery, not a retained payload log.
+            return Ok(());
+        }
         let mut state = self
             .doc
             .lock()
@@ -348,6 +354,9 @@ impl LiveQuerySource for BoundSource {
         cursor: &Cursor,
     ) -> Result<Option<Value>, AppError> {
         let _server = self.server()?;
+        if channel == Channel::OwnerFeed {
+            return Ok(None);
+        }
         let state = self
             .doc
             .lock()
@@ -361,6 +370,9 @@ impl LiveQuerySource for BoundSource {
         channel: Channel,
         cursor: &Cursor,
     ) -> Result<Option<Vec<subscriptions::Push>>, AppError> {
+        if channel == Channel::OwnerFeed {
+            return Ok(None);
+        }
         if !self.can_resume(cursor)? {
             return Ok(None);
         }

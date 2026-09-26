@@ -266,6 +266,27 @@ impl LiveQueries {
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        // Owner-feed snapshots contain claim bodies. Never replay a retained
+        // body after a reconnect: policy may have narrowed while this slip
+        // remained live. A gap + newly scoped snapshot is the safe resume.
+        if channel == Channel::OwnerFeed
+            && let Some(sub) = state.subs.get(&id)
+        {
+            if sub.view != view || sub.channel != channel {
+                return Err(AppError::bad_request(
+                    "subscription id is already open",
+                    Some("subscriptionId"),
+                ));
+            }
+            if cursor.is_none() {
+                return Err(AppError::bad_request(
+                    "subscription is already open",
+                    Some("subscriptionId"),
+                ));
+            }
+            state.subs.remove(&id);
+            state.reindex();
+        }
         if let Some(sub) = state.subs.get_mut(&id) {
             if sub.view != view || sub.channel != channel {
                 return Err(AppError::bad_request(
@@ -304,7 +325,8 @@ impl LiveQueries {
             ));
         }
         let derived = self.source.derive(&view, channel)?;
-        if let Some(cursor) = cursor
+        if channel != Channel::OwnerFeed
+            && let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
         {
@@ -455,7 +477,45 @@ impl LiveQueries {
     }
 
     pub(crate) fn buffered(&self) -> Result<Vec<Push>, AppError> {
-        let state = self.state.lock().map_err(|_| state_error())?;
+        let mut state = self.state.lock().map_err(|_| state_error())?;
+        let owner_ids: Vec<_> = state
+            .subs
+            .iter()
+            .filter_map(|(id, sub)| {
+                (sub.channel == Channel::OwnerFeed && !sub.needs_resync).then_some(*id)
+            })
+            .collect();
+        for id in owner_ids {
+            let sub = &state.subs[&id];
+            let derived = self.source.derive(&sub.view, sub.channel)?;
+            let fingerprint = fingerprint(&derived.value)?;
+            // Even a queued snapshot from before a policy change is unsafe.
+            // Compare EVERY retained result with a fresh scoped projection,
+            // not merely the last fingerprint, before socket delivery.
+            if fingerprint != sub.current
+                || sub.ring.iter().any(|push| {
+                    push.result
+                        .as_ref()
+                        .is_some_and(|result| result != &derived.value)
+                })
+            {
+                let cursor = state.cursor(derived.cursor)?;
+                let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
+                sub.ring.clear();
+                sub.ring.push_back(Push {
+                    subscription_id: id,
+                    cursor,
+                    kind: "gap",
+                    result: None,
+                });
+                sub.bytes = push_bytes(sub.ring.make_contiguous())?;
+                sub.budget
+                    .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
+                sub.needs_resync = true;
+                sub.current = fingerprint;
+                sub.dependencies = derived.dependencies;
+            }
+        }
         Ok(state
             .subs
             .values()
@@ -545,6 +605,12 @@ impl LiveQueries {
             self.source
                 .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
             let bytes = push_bytes(std::slice::from_ref(&push))?;
+            if sub.channel == Channel::OwnerFeed {
+                // Keep only the newest authorized owner projection. Older
+                // snapshots are not safe to ship after an authority change.
+                sub.ring.clear();
+                sub.bytes = 0;
+            }
             if sub.ring.len() >= LIVEQUERY_RING_CAPACITY
                 || sub.bytes.saturating_add(bytes) > MAX_RING_BYTES
                 || sub

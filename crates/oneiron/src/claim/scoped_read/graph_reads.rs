@@ -2,11 +2,15 @@
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{MemoryTimeline, MemoryTimelineRecord, MemoryTimelineRecordState};
+use crate::edge::EdgeKind;
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalFilter};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::vault::ReadMode;
 use crate::{EdgeInfo, EntityId, Error, Result};
 use std::collections::HashSet;
 
 type TimelineEntityParts = (u8, u64, Vec<u8>);
+type SupersessionParts = (TimelineEntityParts, TimelineEntityParts);
 
 impl ScopedRead<'_> {
     /// Edges and both endpoints share one authority snapshot and a mandatory receipt.
@@ -159,6 +163,113 @@ impl ScopedRead<'_> {
         let mut normalized = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
         normalized.extend_from_slice(&crate::claim::encode_claim_body(&claim)?);
         self.is_entity_raw_readable_with_filter_in(txn, policy, id, &normalized, filter)
+    }
+
+    /// Reads the immutable A→B pair recorded with an accepted Supersedes edge.
+    /// Both exact frontiers AND both current rows must still pass this actor's
+    /// present read policy. A peer without the local event/frontiers, an erased
+    /// row or a restricted side yields no before/after data, never live fallback.
+    pub fn memory_supersession_parts_with_receipt(
+        &self,
+        old: &EntityId,
+        new: &EntityId,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Option<SupersessionParts>>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        let receipt = |suppressed| self.receipt_for(requested, &policy, &filter, suppressed);
+        let mut linked = false;
+        for edge in self.vault.port_edges(
+            &txn,
+            new,
+            EdgeDirection::Out,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
+            if edge?.target == *old {
+                linked = true;
+                break;
+            }
+        }
+        if !linked {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt: receipt(0),
+            });
+        }
+        let Some(pair) =
+            crate::claim::supersession_diff::load_in_txn(self.vault, &txn, *old, *new)?
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt: receipt(0),
+            });
+        };
+        let revisions = [
+            (*old, pair.before, pair.before_hash),
+            (*new, pair.after, pair.after_hash),
+        ];
+        let mut parts = Vec::with_capacity(2);
+        for (id, revision, expected_hash) in revisions {
+            if !crate::vault::entity_revision::entity_owns_revision_in_txn(
+                &self.vault.store,
+                &txn,
+                &id,
+                revision,
+            )? {
+                return Ok(ScopedReadResult {
+                    value: None,
+                    receipt: receipt(1),
+                });
+            }
+            let Some(current) = self.entity_record_in(&txn, &id)?.map(|row| row.encode()) else {
+                return Ok(ScopedReadResult {
+                    value: None,
+                    receipt: receipt(1),
+                });
+            };
+            let Some(raw) = crate::vault::entity_revision::read_entity_revision_in_txn(
+                self.vault,
+                &txn,
+                &id,
+                ReadMode::Pinned(revision),
+            )?
+            else {
+                return Ok(ScopedReadResult {
+                    value: None,
+                    receipt: receipt(1),
+                });
+            };
+            if blake3::hash(&raw).as_bytes() != &expected_hash {
+                return Err(Error::CorruptedIndex("supersession revision body hash"));
+            }
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("supersession revision header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &current)?
+                || !self.history_row_readable_in(&txn, &policy, &filter, &id, &raw)?
+            {
+                return Ok(ScopedReadResult {
+                    value: None,
+                    receipt: receipt(1),
+                });
+            }
+            parts.push((
+                header.entity_type,
+                header.learned_at,
+                raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+            ));
+        }
+        let after = parts
+            .pop()
+            .ok_or(Error::CorruptedIndex("supersession after parts"))?;
+        let before = parts
+            .pop()
+            .ok_or(Error::CorruptedIndex("supersession before parts"))?;
+        Ok(ScopedReadResult {
+            value: Some((before, after)),
+            receipt: receipt(0),
+        })
     }
 
     fn timeline_anchor_allowed_in(

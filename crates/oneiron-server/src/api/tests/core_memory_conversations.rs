@@ -1120,6 +1120,42 @@ async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
     .await;
     assert_eq!(status, StatusCode::OK, "{repeated:#}");
     assert_eq!(repeated, enabled);
+    let query_ref = enabled["query_ref"].as_str().expect("durable query ref");
+    let query_path = format!("/saved-queries/{query_ref}");
+    let mutation = json!({
+        "expected_definition_version": 1,
+        "filter": {"op": "all", "terms": []},
+        "matcher": {"kind": "hard", "expression": {"op": "all", "terms": []}},
+        "eval": {"mode": "reactive", "max_entities_per_wake": 128,
+                 "max_judges_per_wake": 1}
+    });
+    let (status, refused) = route_json(
+        server.clone(),
+        core_request_with_authz("PATCH", &query_path, bearer.clone(), Some(&mutation)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused:#}");
+    let (status, readable) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &query_path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{readable:#}");
+    assert_eq!(
+        readable["body"]["record"]["definition"]["definition_version"],
+        1
+    );
+    let (status, archive_refused) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            &format!("{query_path}/archive"),
+            bearer.clone(),
+            Some(&json!({"expected_definition_version": 1})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{archive_refused:#}");
     let (status, denied) = route_json(
         server.clone(),
         core_request_with_principal_ref("GET", &path, "core:read", &owner.to_hex(), None),
@@ -1144,8 +1180,55 @@ async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
     let change = &records[1]["changes"][0];
     assert_eq!(change["before_id"], old.to_hex());
     assert_eq!(change["after_id"], new.to_hex());
-    assert_eq!(change["before"], records[0]["item"]);
+    // The pinned "before" is the original active revision, not the
+    // currently stored closed predecessor with life=superseded and to=777.
+    assert_eq!(change["before"]["val"], "before");
+    assert_eq!(change["before"]["life"], "active");
+    assert_eq!(records[0]["item"]["life"], "superseded");
     assert_eq!(change["after"], records[1]["item"]);
+    let original_before = change["before"].clone();
+    let original_after = change["after"].clone();
+    // Claim ids are mutable. Later wording edits to either row must not
+    // rewrite the exact A→B revisions captured at supersession time.
+    let mut revised_new = server.vault.get_claim(&new).unwrap().unwrap();
+    revised_new.value = rmpv::Value::from("revised after");
+    server
+        .vault
+        .put_claim(
+            &new,
+            &revised_new,
+            oneiron::TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+        )
+        .unwrap();
+    let mut revised_old = server.vault.get_claim(&old).unwrap().unwrap();
+    revised_old.value = rmpv::Value::from("revised before");
+    server
+        .vault
+        .put_claim(
+            &old,
+            &revised_old,
+            oneiron::TimeRange {
+                start: 100,
+                end: 777,
+            },
+            100,
+        )
+        .unwrap();
+    let (status, revised) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &timeline, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revised:#}");
+    let changed = &revised["records"][1]["changes"][0];
+    assert_ne!(revised["records"][0]["item"], original_before);
+    assert_ne!(revised["records"][1]["item"], original_after);
+    assert_eq!(changed["before"], original_before);
+    assert_eq!(changed["after"], original_after);
     let (status, disabled) = route_json(
         server.clone(),
         core_request_with_authz("DELETE", &path, bearer.clone(), None),
@@ -1153,8 +1236,16 @@ async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
     .await;
     assert_eq!(status, StatusCode::OK, "{disabled:#}");
     assert_eq!(disabled["watched"], false);
-    let (status, off) =
-        route_json(server, core_request_with_authz("GET", &path, bearer, None)).await;
+    let (status, off) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &path, bearer.clone(), None),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{off:#}");
     assert_eq!(off["watched"], false);
+    let (status, on_again) =
+        route_json(server, core_request_with_authz("PUT", &path, bearer, None)).await;
+    assert_eq!(status, StatusCode::OK, "{on_again:#}");
+    assert_eq!(on_again["query_ref"], enabled["query_ref"]);
+    assert_eq!(on_again["watched"], true);
 }
