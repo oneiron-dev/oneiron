@@ -141,6 +141,8 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
+            #[cfg(unix)]
+            retrieval_telemetry_lease: Mutex::new(None),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
@@ -215,7 +217,8 @@ impl Store {
         )?;
         self.ensure_receipt_family_indexes_on_open()?;
         self.ensure_gate_claim_index_flag_on_open()?;
-        self.ensure_default_policy_manifest_on_open()
+        self.ensure_default_policy_manifest_on_open()?;
+        self.reconcile_retrieval_telemetry_on_open()
     }
 
     pub(super) fn ensure_default_policy_manifest_on_open(&self) -> Result<()> {

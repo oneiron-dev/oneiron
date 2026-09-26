@@ -3,6 +3,9 @@
 //! session-side [`SessionStoreView`] retrieval siblings.
 
 mod blend_tuning;
+mod retention;
+#[cfg(unix)]
+pub(in crate::store) use retention::RetrievalTelemetryLease;
 mod run_store;
 mod state;
 #[cfg(test)]

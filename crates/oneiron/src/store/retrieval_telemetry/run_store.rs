@@ -23,8 +23,7 @@ use super::types::{
 /// census only tests the prefix.
 pub(crate) const RETRIEVAL_RUN_KEY_PREFIX: &[u8] = b"retr_run:v0:";
 
-const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
-
+pub(super) const RETRIEVAL_RUN_PROVISIONAL_KEY_PREFIX: &[u8] = b"retr_run_prov:v0:";
 const RETRIEVAL_TRACE_FORK_KEY_PREFIX: &[u8] = b"retr_trace_fork:v0:";
 
 const RETRIEVAL_OUTCOME_KEY_PREFIX: &[u8] = b"retr_out:v0:";
@@ -158,7 +157,18 @@ impl Store {
 
         let result = (|| {
             let mut wtxn = self.env.write_txn()?;
+            if published {
+                super::retention::prune_retrieval_runs(self, &mut wtxn, 1)?;
+            }
             stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
+            if published {
+                super::retention::put_retrieval_age(
+                    self,
+                    &mut wtxn,
+                    record.run_id,
+                    self.clock.now_recorded_at(),
+                )?;
+            }
             wtxn.commit()?;
             Ok(())
         })();
@@ -196,7 +206,27 @@ impl Store {
         }
 
         let mut wtxn = self.env.write_txn()?;
+        let run_id = finalize.run_id;
+        if self
+            .vault_meta
+            .get(&wtxn, &retrieval_run_provisional_key(run_id))?
+            .is_some()
+        {
+            super::retention::prune_retrieval_runs(self, &mut wtxn, 1)?;
+        }
         stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
+        if self
+            .vault_meta
+            .get(&wtxn, &retrieval_run_key(run_id))?
+            .is_some()
+        {
+            super::retention::put_retrieval_age(
+                self,
+                &mut wtxn,
+                run_id,
+                self.clock.now_recorded_at(),
+            )?;
+        }
         wtxn.commit()?;
         Ok(())
     }
@@ -394,6 +424,12 @@ fn stage_retrieval_run_with_visibility(
     record.state.validate()?;
     if let Some(raw) = target.vault_meta().get(wtxn, &key)? {
         super::turn_index::delete(target, wtxn, &decode_retrieval_run(&raw)?)?;
+        delete_retrieval_trace_fork_indexes_for_run(
+            target.vault_meta(),
+            wtxn,
+            &key,
+            record.run_id,
+        )?;
     }
     let value = encode_retrieval_run(record)?;
     let provisional_key = retrieval_run_provisional_key(record.run_id);
@@ -417,7 +453,7 @@ fn stage_retrieval_run_with_visibility(
 
 /// Stages the deletion of one retrieval-run row, its provisional marker, its
 /// outcome rows, and its trace fork indexes into `target`'s `vault_meta`.
-fn stage_retrieval_run_delete(
+pub(super) fn stage_retrieval_run_delete(
     target: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     run_id: RetrievalRunId,
@@ -435,6 +471,7 @@ fn stage_retrieval_run_delete(
     for key in outcome_keys {
         target.vault_meta().delete(wtxn, &key)?;
     }
+    super::retention::delete_retrieval_age(target, wtxn, run_id)?;
     target.vault_meta().delete(wtxn, &provisional_key)?;
     target.vault_meta().delete(wtxn, &key)?;
     Ok(())
@@ -525,7 +562,7 @@ pub(super) fn retrieval_run_id_from_key(key: &[u8]) -> Result<RetrievalRunId> {
     retrieval_run_id_from_value(bytes)
 }
 
-fn retrieval_run_id_from_value(bytes: &[u8]) -> Result<RetrievalRunId> {
+pub(super) fn retrieval_run_id_from_value(bytes: &[u8]) -> Result<RetrievalRunId> {
     let bytes: [u8; 16] = bytes
         .try_into()
         .map_err(|_| Error::CorruptedIndex("retrieval run telemetry"))?;

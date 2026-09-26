@@ -364,6 +364,7 @@ impl Store {
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             store.ensure_default_policy_manifest_on_open()?;
         }
+        store.reconcile_retrieval_telemetry_on_open()?;
         Ok(store)
     }
 }

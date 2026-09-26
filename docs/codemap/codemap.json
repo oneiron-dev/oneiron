@@ -29531,8 +29531,18 @@
      "path": "src/store/retrieval_telemetry/mod.rs",
      "purpose": "Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/retrieval_telemetry/retention.rs",
+     "purpose": "Bounded, expirable base-ledger retrieval runs and crash-orphan reconciliation",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -29542,7 +29552,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 27,
       "fn": 3
      }
     },
@@ -35234,7 +35244,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35397,7 +35407,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2088,
+   "source_files": 2089,
    "test_files": 717
   },
   "oneiron-android": {

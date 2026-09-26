@@ -1,3 +1,4 @@
+use super::retention::{RETRIEVAL_RUN_MAX_ROWS, RETRIEVAL_RUN_TTL_SECONDS};
 use super::*;
 use crate::VaultConfig;
 use crate::test_util::open_test_vault_with;
@@ -299,4 +300,242 @@ fn telemetry_config() -> VaultConfig {
         retrieval_telemetry_capture: true,
         ..VaultConfig::default()
     }
+}
+
+#[test]
+fn durable_telemetry_requires_runtime_opt_in() -> crate::Result<()> {
+    for config in [VaultConfig::device(), VaultConfig::server()] {
+        assert!(!config.retrieval_telemetry_capture);
+        let dir = tempfile::tempdir()?;
+        let vault = crate::Vault::open(dir.path(), config)?;
+        assert!(!vault.store.retrieval_telemetry_capture_enabled());
+        assert!(
+            vault
+                .query()
+                .search_text("nothing", 2)
+                .run_with_telemetry()?
+                .run_id
+                .is_none()
+        );
+        assert!(vault.retrieval_runs(10)?.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn disabled_capture_never_asks_the_telemetry_id_source() -> crate::Result<()> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct ToggleIds(AtomicBool);
+    impl crate::ports::IdGen for ToggleIds {
+        fn ulid(&self) -> [u8; 16] {
+            if self.0.load(Ordering::Relaxed) {
+                [0; 16] // Invalid EntityId; allocation would fail the query.
+            } else {
+                uuid::Uuid::now_v7().into_bytes()
+            }
+        }
+    }
+    let ids = Arc::new(ToggleIds(AtomicBool::new(false)));
+    let mut config = VaultConfig::device();
+    config.store_clock =
+        crate::ports::StoreClock::new(crate::ports::ManualClock::new(1_000_000), ids.clone());
+    let dir = tempfile::tempdir()?;
+    let vault = crate::Vault::open(dir.path(), config)?;
+    ids.0.store(true, Ordering::Relaxed);
+    let result = vault
+        .query()
+        .search_text("nothing", 2)
+        .run_with_telemetry()?;
+    assert!(result.run_id.is_none());
+    Ok(())
+}
+
+#[test]
+fn published_retention_evicts_old_runs_and_their_sidecars() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let turn = RetrievalTurn {
+        turn_id: [0xA1; 16],
+        episode_id: [0xB1; 16],
+        turn_idx: 1,
+    };
+    let mut first = record(10);
+    first.run_id = RetrievalRunId::from_bytes([1; 16]);
+    first.turn = Some(turn);
+    vault.store.record_retrieval_run(&first)?;
+    vault.store.record_retrieval_outcome(RetrievalOutcome {
+        run_id: first.run_id,
+        key: "reward".to_owned(),
+        reward: Some(1.0),
+        accepted: Some(true),
+        metadata: Default::default(),
+    })?;
+    for _ in 0..RETRIEVAL_RUN_MAX_ROWS {
+        vault.store.record_retrieval_run(&record(11))?;
+    }
+    assert_eq!(
+        vault.retrieval_runs(RETRIEVAL_RUN_MAX_ROWS + 1)?.len(),
+        RETRIEVAL_RUN_MAX_ROWS
+    );
+    assert!(vault.retrieval_run(first.run_id)?.is_none());
+    assert!(vault.retrieval_outcomes(first.run_id)?.is_empty());
+    assert!(vault.retrieval_runs_by_turn(&turn.turn_id)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn telemetry_age_expires_on_write_and_crash_orphans_sweep_on_open() -> crate::Result<()> {
+    let clock = crate::ports::ManualClock::new(1_000_000);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    config.retrieval_telemetry_capture = true;
+    let dir = tempfile::tempdir()?;
+    let published = record(1_000_000);
+    let orphan = record(1_000_000);
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        vault.store.record_retrieval_run(&published)?;
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&orphan)?;
+    }
+    let vault = crate::Vault::open_existing(dir.path(), config)?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(
+                &vault.store.env.read_txn()?,
+                &retrieval_run_key(orphan.run_id)
+            )?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(
+                &vault.store.env.read_txn()?,
+                &super::run_store::retrieval_run_provisional_key(orphan.run_id),
+            )?
+            .is_none()
+    );
+    assert!(vault.retrieval_run(published.run_id)?.is_some());
+    clock.set(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1);
+    vault
+        .store
+        .record_retrieval_run(&record(1_000_000 + RETRIEVAL_RUN_TTL_SECONDS + 1))?;
+    assert!(vault.retrieval_run(published.run_id)?.is_none());
+    assert!(
+        vault
+            .retrieval_runs(10)?
+            .iter()
+            .all(|r| r.run_id != orphan.run_id)
+    );
+    Ok(())
+}
+
+#[test]
+fn opening_pre_retention_runs_bounds_them_before_indexing() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        vault.with_write_txn(|txn| {
+            for _ in 0..RETRIEVAL_RUN_MAX_ROWS + 3 {
+                let mut run = record(vault.now_recorded_at());
+                run.turn = None;
+                vault.store.vault_meta.put(
+                    txn,
+                    &retrieval_run_key(run.run_id),
+                    &encode_retrieval_run(&run)?,
+                )?;
+            }
+            Ok(())
+        })?;
+    }
+    let vault = crate::Vault::open(dir.path(), config)?;
+    assert_eq!(
+        vault.retrieval_runs(RETRIEVAL_RUN_MAX_ROWS + 3)?.len(),
+        RETRIEVAL_RUN_MAX_ROWS
+    );
+    Ok(())
+}
+
+#[test]
+fn disabling_capture_on_reopen_keeps_recent_runs_readable() -> crate::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let run = record(10);
+    {
+        let vault = crate::Vault::open(dir.path(), config)?;
+        vault.store.record_retrieval_run(&run)?;
+    }
+    let vault = crate::Vault::open(dir.path(), VaultConfig::device())?;
+    assert!(!vault.store.retrieval_telemetry_capture_enabled());
+    assert_eq!(vault.retrieval_run(run.run_id)?, Some(run));
+    assert!(
+        vault
+            .query()
+            .search_text("nothing", 1)
+            .run_with_telemetry()?
+            .run_id
+            .is_none()
+    );
+    assert_eq!(vault.retrieval_runs(10)?.len(), 1);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -> crate::Result<()>
+{
+    use std::os::fd::AsRawFd;
+
+    let dir = tempfile::tempdir()?;
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    let run = record(10);
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&run)?;
+    }
+    let lock = std::fs::OpenOptions::new().read(true).write(true).open(
+        dir.path()
+            .join(super::retention::RETRIEVAL_TELEMETRY_LOCK_FILE),
+    )?;
+    // SAFETY: `lock` owns this live descriptor and flock receives no pointer.
+    let acquired = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+    assert_eq!(acquired, 0);
+    {
+        let vault = crate::Vault::open_existing(dir.path(), config.clone())?;
+        assert!(
+            vault
+                .store
+                .vault_meta
+                .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
+                .is_some()
+        );
+    }
+    // SAFETY: this process still owns the descriptor; explicit unlock mirrors
+    // the lease drop and avoids inherited descriptors extending a hold.
+    let released = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
+    assert_eq!(released, 0);
+    drop(lock);
+    let vault = crate::Vault::open_existing(dir.path(), config)?;
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
+            .is_none()
+    );
+    Ok(())
 }
