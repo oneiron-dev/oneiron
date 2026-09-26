@@ -816,6 +816,135 @@ fn local_refinement_yes_needs_independent_held_out_win() -> Result<()> {
     Ok(())
 }
 #[test]
+fn rejected_local_delta_cannot_activate_through_same_byte_hub_alias() -> Result<()> {
+    let fixture = Fixture::new();
+    let fork = EntityId::now();
+    fixture
+        .vault
+        .fork_skill_record(&fixture.baseline, &fork, "fixture.branch", at(10), 10)?;
+    fixture.vault.write_shared_skill_fork_package(
+        &fork,
+        &package("fixture.branch", "2", "check result"),
+        at(11),
+        11,
+    )?;
+    let submitted = package("fixture.base", "2", "check result");
+    let bytes = encode_hub_package(&submitted)?;
+    let id = fixture.vault.submit_local_skill_refinement(
+        &fixture.baseline,
+        &fork,
+        &fixture.resident,
+        &bytes,
+        at(20),
+        20,
+    )?;
+    let ask =
+        fixture
+            .vault
+            .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    assert!(matches!(
+        fixture.vault.merge_shared_skill_delta(&ask, &Useful(false), &NoReplay, at(21), 21)?,
+        SharedSkillMergeDisposition::Ruled(receipt) if !receipt.accepted
+    ));
+    let (source, publisher) = fixture.hub(SkillHubTrustTier::Verified);
+    let alias = HubRef::new(
+        source.hub_id,
+        "same-bytes",
+        HubPin::ContentHash(submitted.content_hash()?.to_hex()),
+    )?;
+    assert_eq!(
+        fixture
+            .vault
+            .import_skill_from_hub(&alias, &submitted, at(22), 22)?,
+        id
+    );
+    assert_eq!(fixture.vault.skill_hub_provenance_count(&id)?, 1);
+    assert!(
+        fixture
+            .vault
+            .prepare_marketplace_activation(id, &alias, &publisher, fixture.baseline,)
+            .is_err()
+    );
+    assert!(
+        fixture
+            .vault
+            .supersede_skill_record(&fixture.baseline, &id, at(23), 23)
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&id)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&fixture.baseline)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_skill_record(&fork)?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}
+
+#[test]
+fn local_refinement_retargeted_upstream_version_is_independent_of_branch_version() -> Result<()> {
+    let fixture = Fixture::new();
+    let mut base = fixture.vault.get_skill_record(&fixture.baseline)?.unwrap();
+    base.version = "2".to_owned();
+    fixture
+        .vault
+        .update_skill_record(&fixture.baseline, &base, at(8), 8)?;
+    let fork = EntityId::now();
+    fixture
+        .vault
+        .fork_skill_record(&fixture.baseline, &fork, "fixture.branch", at(10), 10)?;
+    fixture.vault.write_shared_skill_fork_package(
+        &fork,
+        &package("fixture.branch", "2", "check result"),
+        at(11),
+        11,
+    )?;
+    let submitted = encode_hub_package(&package("fixture.base", "3", "check result"))?;
+    let id = fixture.vault.submit_local_skill_refinement(
+        &fixture.baseline,
+        &fork,
+        &fixture.resident,
+        &submitted,
+        at(20),
+        20,
+    )?;
+    let ask =
+        fixture
+            .vault
+            .prepare_shared_skill_merge(id, fixture.resident, useful_question(id))?;
+    fixture
+        .vault
+        .approve_shared_skill_merge(&ask, &fixture.owner)?;
+    assert!(matches!(
+        fixture.vault.merge_shared_skill_delta(&ask, &Useful(true), &Replay::new(true), at(21), 21)?,
+        SharedSkillMergeDisposition::Ruled(receipt) if receipt.accepted
+    ));
+    assert_eq!(fixture.vault.get_skill_record(&id)?.unwrap().version, "3");
+    assert_eq!(fixture.vault.get_skill_record(&fork)?.unwrap().version, "2");
+    Ok(())
+}
+
+#[test]
 fn raw_package_cannot_understate_the_file_manifest_capabilities() -> Result<()> {
     let fixture = Fixture::new();
     let (mut source, publisher) = fixture.hub(SkillHubTrustTier::Verified);

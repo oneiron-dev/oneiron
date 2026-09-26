@@ -126,6 +126,14 @@ impl Vault {
         publisher: &ForeignSkillPublisher,
         evidence_skill: EntityId,
     ) -> Result<AdmissionSnapshot> {
+        // A shared delta retains its birth identity even if later imports add
+        // hub aliases for the same bytes. Marketplace consent and replay are
+        // not substitutes for its typed useful-upstream decision.
+        if self.delta_in_txn(txn, &candidate)?.is_some() {
+            return Err(invalid(
+                "shared delta must use the merge-back admission door",
+            ));
+        }
         self.check_publisher_in_txn(txn, publisher)?;
         if publisher.hub != source.hub_id || candidate == evidence_skill {
             return Err(invalid("invalid publisher or evidence baseline"));

@@ -158,7 +158,7 @@ impl Vault {
             &snapshot.package,
             &snapshot.delta,
         )?;
-        let useful_upstream = checked_useful_decision(ask, &decision)?;
+        let useful_upstream = checked_useful_decision(&ask.question, ask.resident, &decision)?;
         let (before, after) = if useful_upstream {
             replay(scorer, &snapshot)?
         } else {
@@ -363,11 +363,15 @@ fn merge_receipt_key(id: &EntityId) -> Vec<u8> {
 
 /// Do not turn a host-provided bool or a different question's verdict into
 /// authority. Abstention and malformed provenance leave the branch untouched.
-fn checked_useful_decision(ask: &SharedSkillMergeAsk, decision: &TypedDecision) -> Result<bool> {
+pub(super) fn checked_useful_decision(
+    question: &DecisionQuestion,
+    resident: EntityId,
+    decision: &TypedDecision,
+) -> Result<bool> {
     let receipt = &decision.receipt;
-    if receipt.question != ask.question.id
-        || receipt.question_version != ask.question.version
-        || receipt.principal != ask.resident
+    if receipt.question != question.id
+        || receipt.question_version != question.version
+        || receipt.principal != resident
         || receipt
             .providers
             .first()
@@ -384,7 +388,7 @@ fn checked_useful_decision(ask: &SharedSkillMergeAsk, decision: &TypedDecision) 
             != receipt
                 .band
                 .contains(decision.probability.unwrap_or_default())
-        || !ask.question.contract.accepts(&decision.answer)
+        || !question.contract.accepts(&decision.answer)
     {
         return Err(invalid(
             "unbound or malformed System One useful-upstream answer",

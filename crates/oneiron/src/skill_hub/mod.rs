@@ -5,6 +5,7 @@ mod admission;
 mod admission_guard;
 mod admission_view;
 mod bootstrap;
+mod claim_refinement;
 mod doors;
 mod folder;
 mod git_fetch;
@@ -21,6 +22,12 @@ pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
 pub(crate) use admission_guard::check_hub_skill_put;
 pub use admission_view::{HubActivationAsk, HubAskSurface, hub_ask_surface};
 pub(crate) use bootstrap::HubAdmissionProof;
+pub(crate) use claim_refinement::claim_refinement_pending_in_txn;
+pub use claim_refinement::{
+    ClaimRefinementMergeAsk, ClaimRefinementMergeDisposition, ClaimRefinementMergeReceipt,
+    HeldOutClaimReplayCase, HeldOutClaimReplayScorer, LocalClaimRefinement,
+    UsefulUpstreamClaimJudge,
+};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub(crate) use package_codec::remove_hub_package_in_txn;
@@ -33,6 +40,8 @@ pub use shared_gate::{
 
 #[cfg(test)]
 mod admission_tests;
+#[cfg(test)]
+mod claim_refinement_tests;
 #[cfg(test)]
 mod transport_tests;
 

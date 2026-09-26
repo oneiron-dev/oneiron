@@ -17,6 +17,14 @@ pub(crate) fn validate_claim_write_target_in_txn(
     id: &EntityId,
     allow_reserved: bool,
 ) -> Result<()> {
+    // A staged self.refine claim is source on its session branch, not an
+    // ordinary claim ID. Raw writes, batch writes and replay all refuse it;
+    // only its consented merge transaction can release the marker temporarily.
+    if crate::skill_hub::claim_refinement_pending_in_txn(store, txn, id)? {
+        return Err(Error::InvalidClaimBody(
+            "claim refinement requires merge-back admission",
+        ));
+    }
     if allow_reserved {
         return Ok(());
     }

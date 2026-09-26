@@ -27831,6 +27831,36 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ClaimRefinementMergeAsk",
+      "ClaimRefinementMergeDisposition",
+      "ClaimRefinementMergeReceipt",
+      "HeldOutClaimReplayCase",
+      "HeldOutClaimReplayScorer",
+      "LocalClaimRefinement",
+      "UsefulUpstreamClaimJudge"
+     ],
+     "path": "src/skill_hub/claim_refinement.rs",
+     "purpose": "Session-branch claim edits: typed usefulness, owner-held reserve, and atomic admission",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 4,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/claim_refinement_tests.rs",
+     "purpose": "Claim refinements use the same typed question and independent held-out rule",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "HubDependencyResolution",
       "HubSyncDisposition"
      ],
@@ -27932,9 +27962,9 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -28200,6 +28230,7 @@
      "path": "src/skill_hub/shared_gate.rs",
      "purpose": "Useful-upstream and held-out merge gate for submitted shared-skill deltas",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 2,
@@ -34693,7 +34724,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 47,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34898,8 +34929,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
-   "test_files": 705
+   "source_files": 2063,
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

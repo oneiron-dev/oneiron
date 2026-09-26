@@ -108,7 +108,6 @@ impl Vault {
                 let branch = super::admission_view::read_skill(self, txn, fork)?;
                 if branch.forked_from != Some(*base)
                     || branch.lifecycle_status != SkillLifecycle::Candidate
-                    || branch.version != package.record.version
                     || branch.desc != package.record.desc
                     || !same_refinement_source(
                         &self.stored_hub_package_in_txn(txn, fork)?,
