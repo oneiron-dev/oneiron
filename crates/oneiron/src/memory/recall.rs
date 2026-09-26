@@ -165,7 +165,7 @@ pub struct RetrievalMeta {
     pub quality: RetrievalQuality,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degradation: Vec<RetrievalDegradation>,
-    #[serde(default, rename = "confidenceAdjustment")]
+    #[serde(default)]
     pub confidence_adjustment: ConfidenceAdjustment,
     /// True when only sparse (lexical/graph) signals ran — no dense
     /// vector signal is available until the embedder lane lands.
