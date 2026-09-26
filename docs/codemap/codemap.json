@@ -25512,6 +25512,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ArtifactFamilyId",
+      "ArtifactFamilyKindId"
+     ],
+     "path": "src/registry/artifact_kinds.rs",
+     "purpose": "Semantic artifact kinds under the one artifact family (ARCH-0078)",
+     "surface": {
+      "enum": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "TypeByteFamily",
       "TypeByteFamilyEntry"
      ],
@@ -25542,7 +25556,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 1,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -34561,7 +34575,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair"
     },
     "registry": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,7 +34934,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {
