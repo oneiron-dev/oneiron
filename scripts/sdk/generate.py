@@ -325,6 +325,15 @@ def outputs():
         Ok(Json({result}))
         }}\n'''
     remote = HEADER + 'use super::*;\n'
+    remote += '''fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
+        client: &RemoteClient, verb: &str, input: &serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
+        let output: R = client.call(verb, input)?;
+        serde_json::to_value(output).map_err(|error| crate::error::transport_error(
+            format!("the remote SDK could not encode {verb}'s decoded result: {error}")
+        ))
+    }
+'''
     remote += 'impl OneironClient {\n'
     remote += '''pub fn agent_verb(&self, verb: &str, input: serde_json::Value) -> Result<serde_json::Value, MemoryError> {
         self.ensure_dispatch_pid()?;
@@ -332,9 +341,15 @@ def outputs():
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
             Backend::Embedded(client) => oneiron::task_verb::sdk::invoke(&client.memory(), verb, input),
-            Backend::Remote(client) => client.call(verb, &input),
-        }
+            Backend::Remote(client) => match verb {
+'''
+    for row in facade_rows:
+        output = rust_type(row['output']) if not row['output'].startswith(('Vec<', 'Option<')) else row['output'].replace('crate::', 'oneiron::')
+        remote += f'{json.dumps(row["name"])} => remote_agent_verb_output::<{output}>(client, verb, &input),\n'
+    remote += '''_ => Err(crate::error::bad_request("unknown SDK agent verb", &["Use a verb from the SDK catalog."])),
+        },
     }
+}
 '''
     remote += '''fn typed_agent_verb<R: serde::de::DeserializeOwned>(&self, verb: &str, input: serde_json::Value) -> Result<R, MemoryError> {
         match &self.backend {

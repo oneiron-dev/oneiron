@@ -1,0 +1,21 @@
+{
+  "detail": "open: repair alert on invalid package/XML; refused",
+  "environment": {
+    "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "input": {
+    "bytes": 27731,
+    "sha256": "f015d5161ac235dd6cea0901d2311154ddb0cdc7ff0ff43662af38ca501bb003"
+  },
+  "outputs": {},
+  "staged_input_sha256": "f015d5161ac235dd6cea0901d2311154ddb0cdc7ff0ff43662af38ca501bb003",
+  "status": "failed"
+}
