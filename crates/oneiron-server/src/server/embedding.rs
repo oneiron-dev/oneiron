@@ -169,8 +169,13 @@ impl SyncServer {
                     let server = Arc::clone(self);
                     let refreshed =
                         tokio::task::spawn_blocking(move || server.refresh_indexed_idle()).await;
-                    if !matches!(refreshed, Ok(Ok(()))) {
-                        tracing::warn!("indexed revision idle refresh deferred");
+                    match refreshed {
+                        Ok(Ok(report)) if !report.refreshed.is_empty() => {
+                            crate::livequery::connection::Hub::for_server(self)
+                                .indexed_published(&report.refreshed);
+                        }
+                        Ok(Ok(_)) => {}
+                        _ => tracing::warn!("indexed revision idle refresh deferred"),
                     }
                     if report.leased == 0 {
                         tokio::time::sleep(idle).await;
@@ -264,7 +269,7 @@ impl oneiron::memory::IndexedRevisionEmbedder for IndexedProvider<'_> {
     }
 }
 impl SyncServer {
-    fn refresh_indexed_idle(&self) -> oneiron::Result<()> {
+    fn refresh_indexed_idle(&self) -> oneiron::Result<oneiron::memory::IndexedRefreshReport> {
         let slot = self
             .embedder
             .as_ref()
@@ -286,7 +291,6 @@ impl SyncServer {
                 .try_into()
                 .unwrap_or(u64::MAX),
             &provider,
-        )?;
-        Ok(())
+        )
     }
 }

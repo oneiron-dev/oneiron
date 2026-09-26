@@ -872,7 +872,6 @@ async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
             .version_vector,
         cursor.version_vector
     );
-    queries.close(7).unwrap();
     let resumed = queries
         .open(7, view.clone(), Channel::View, Some(&cursor), None)
         .unwrap();
@@ -880,7 +879,6 @@ async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
         resumed.is_empty(),
         "the live edit must not appear in catch-up"
     );
-    queries.close(7).unwrap();
     server.vault().set_indexed_idle_delay_ms(0).unwrap();
     let report = server
         .vault()
@@ -891,6 +889,9 @@ async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
             .refreshed
             .contains(&(id, server.vault().indexed_revision(&id).unwrap().unwrap()))
     );
+    // Keep the logical session and ring across the index publication. A
+    // reconnect before the hub timer runs must still derive the indexed tail.
+    queries.reconnect(2).unwrap();
     let resumed = queries
         .open(7, view.clone(), Channel::View, Some(&cursor), None)
         .unwrap();
@@ -933,4 +934,86 @@ async fn subscription_resumes_at_indexed_position_while_editor_reads_live() {
     let after = source.derive(&view, Channel::View).unwrap();
     assert_eq!(after.value[0]["value_text"], before.value[0]["value_text"]);
     assert_ne!(after.cursor.version_vector, before.cursor.version_vector);
+}
+
+#[tokio::test]
+async fn indexed_publication_wakes_an_open_entity_subscription() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (_dir, server) = server();
+    let id = EntityId::from_hex("cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("indexwake old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "indexed-wake".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "indexed-wake".into(), source);
+    let tee: Arc<dyn LiveQueryTee> = queries.clone();
+    server
+        .reassert_manager
+        .materializer()
+        .attach_live_query_tee(&tee);
+    let view = ScopedView {
+        query: Some("indexwake".into()),
+        ..Default::default()
+    };
+    let opened = queries.open(7, view, Channel::View, None, None).unwrap();
+    let cursor = opened[0].cursor.clone();
+    queries.ack(7, &cursor).unwrap();
+
+    put("indexwake new");
+    assert_eq!(server.vault().indexed_revision(&id).unwrap(), Some(indexed));
+    let path = format!("e:{}", id.to_hex());
+    tee.on_materialized(
+        &path,
+        &MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+        },
+        &OriginMark::default(),
+    );
+    queries.refresh().unwrap();
+    assert!(
+        queries.pending(7).unwrap().is_empty(),
+        "live-only edit cannot push"
+    );
+
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    assert!(report.refreshed.iter().any(|(entity, _)| *entity == id));
+    hub.indexed_published(&report.refreshed);
+    queries.refresh().unwrap();
+    let pending = queries.pending(7).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].kind, "data");
+    assert_ne!(pending[0].cursor.version_vector, cursor.version_vector);
+    assert!(
+        pending[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("indexwake new")
+    );
 }

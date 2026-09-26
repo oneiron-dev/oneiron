@@ -40729,7 +40729,7 @@
      "path": "src/livequery/connection.rs",
      "purpose": "Socket attachment and bounded reconnect retention",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -40747,7 +40747,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/history.rs",
-     "purpose": "Retained scoped app payloads live in the cursor document, not the delivery ring",
+     "purpose": "Retained scoped app payloads live in a separate journal, not the cursor document",
      "surface": {
       "crate-vis": 6
      }

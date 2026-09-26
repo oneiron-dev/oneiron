@@ -255,6 +255,7 @@ impl LiveQueries {
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        let mut latest = None;
         if let Some(sub) = state.subs.get_mut(&id) {
             if sub.view != view || sub.channel != channel {
                 return Err(AppError::bad_request(
@@ -263,22 +264,27 @@ impl LiveQueries {
                 ));
             }
             if let Some(cursor) = cursor {
-                // Consult the source on reconnect even when the ring has
-                // the cursor; retention and authority can both change.
+                // A retained ring may predate an indexed publication. Re-read
+                // the authorized view before returning it, even for an acked
+                // cursor: the hub may not have drained the notice yet.
                 if self.source.can_resume(cursor)? && !sub.needs_resync {
-                    if sub.acked.as_ref() == Some(cursor) {
-                        sub.origin = origin;
-                        return Ok(sub.ring.iter().cloned().collect());
+                    let derived = self.source.derive(&view, channel)?;
+                    if fingerprint(&derived.value)? == sub.current {
+                        if sub.acked.as_ref() == Some(cursor) {
+                            sub.origin = origin;
+                            return Ok(sub.ring.iter().cloned().collect());
+                        }
+                        if let Some(position) = sub.ring.iter().rposition(|p| &p.cursor == cursor) {
+                            sub.origin = origin;
+                            sub.ring.drain(..=position);
+                            sub.bytes = push_bytes(sub.ring.make_contiguous())?;
+                            sub.budget
+                                .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
+                            sub.acked = Some(cursor.clone());
+                            return Ok(sub.ring.iter().cloned().collect());
+                        }
                     }
-                    if let Some(position) = sub.ring.iter().rposition(|p| &p.cursor == cursor) {
-                        sub.origin = origin;
-                        sub.ring.drain(..=position);
-                        sub.bytes = push_bytes(sub.ring.make_contiguous())?;
-                        sub.budget
-                            .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
-                        sub.acked = Some(cursor.clone());
-                        return Ok(sub.ring.iter().cloned().collect());
-                    }
+                    latest = Some(derived);
                 }
             } else {
                 return Err(AppError::bad_request(
@@ -292,7 +298,16 @@ impl LiveQueries {
                 Some("subscriptionId"),
             ));
         }
-        let derived = self.source.derive(&view, channel)?;
+        // The old ring must release its budget before replay plus the fresh
+        // indexed tail reserve theirs. A failed replay leaves no stale owner.
+        if state.subs.remove(&id).is_some() {
+            state.reindex();
+        }
+        let derived = if let Some(derived) = latest {
+            derived
+        } else {
+            self.source.derive(&view, channel)?
+        };
         if let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?

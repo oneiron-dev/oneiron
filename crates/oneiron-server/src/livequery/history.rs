@@ -1,4 +1,4 @@
-//! Retained scoped app payloads live in the cursor document, not the delivery ring.
+//! Retained scoped app payloads live in a separate journal, not the cursor document.
 use super::budget::{Budget, Reservation};
 use super::subscriptions::Push;
 use super::*;
