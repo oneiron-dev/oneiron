@@ -137,7 +137,7 @@ def dialog_class(titles: list[str], expected_stem: str) -> str | None:
     for title in titles:
         kind, separator, text = title.partition(':')
         if not separator or kind not in ('WINDOW', 'DIALOG'):
-            kind, text = 'LEGACY', title
+            return 'unsupported'
         low = text.lower()
         # An exact document title is not a repair prompt, even if its name
         # contains "recovery", "repair", or "permission".
@@ -341,6 +341,10 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
         allowed = {staged.name, staged.stem, 'reference.pptx', 'reference'}
         shutil.copyfile(candidate, staged)
         receipt['staged_input_sha256'] = digest(staged)
+        if (receipt['staged_input_sha256'] != receipt['input']['sha256']
+                or staged.stat().st_size != receipt['input']['bytes']):
+            receipt['detail'] = 'input changed before staging; refusing a different snapshot'
+            return receipt
         launch_hidden()
         if names := presentations():
             receipt['detail'] = f'PowerPoint has open presentation(s): {names}'
@@ -396,7 +400,7 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 break
             if status:
                 repair_alert_seen = status == 'repaired'
-                if repair_alert_seen and invalid_presentation_package(candidate):
+                if repair_alert_seen and invalid_presentation_package(staged):
                     receipt.update(status='failed', detail=f'{action}: repair alert on invalid package/XML; refused')
                 else:
                     receipt.update(status=status, detail=f'{action}: {detail}')
@@ -478,9 +482,15 @@ def classify_manifest(manifest: Path, results: Path) -> dict:
         expected = case['expected_oracle']
         inputs = receipt.get('input') if isinstance(receipt, dict) else None
         binding = inputs.get('sha256') if isinstance(inputs, dict) else None
+        snapshot = receipt.get('staged_input_sha256') if isinstance(receipt, dict) else None
+        # A clean or classified open requires proof of the bytes actually staged.
+        # Preflight refusals can be unsupported before any staging took place.
+        snapshot_error = (receipt is not None and
+                          (snapshot is not None and snapshot != binding or
+                           snapshot is None and actual != 'unsupported'))
         environment_error = (environment_mismatch(receipt.get('environment'))
                              if isinstance(receipt, dict) else None)
-        if receipt is not None and binding not in pinned:
+        if receipt is not None and (binding not in pinned or snapshot_error):
             verdict = 'fail'
         elif environment_error:
             verdict = 'inconclusive' if actual in ('unsupported', 'timed_out') else 'fail'
@@ -494,6 +504,8 @@ def classify_manifest(manifest: Path, results: Path) -> dict:
                'preservation': case['preservation']}
         if receipt is not None and binding not in pinned:
             row['binding_error'] = 'receipt input SHA-256 missing or not pinned to this case'
+        elif snapshot_error:
+            row['binding_error'] = 'staged input SHA-256 missing or differs from receipt input'
         if environment_error:
             row['environment_error'] = environment_error
         report['cases'].append(row)

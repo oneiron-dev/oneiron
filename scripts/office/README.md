@@ -76,10 +76,15 @@ configuration explicitly after checking a deliberate Mac or Office upgrade;
 never change it just to turn an unsupported result green. The committed Mac
 mini receipts show the reference values.
 
-`classify` requires each receipt's input SHA-256 to match the fixture hash or
-one of that PPTArena case's pinned original/ground-truth hashes. Missing or
-wrong-case evidence fails. Missing cases and unexpected timeouts stay
-inconclusive, and both fail the CLI exit status.
+Before PowerPoint opens a deck, the oracle checks that the private staged
+snapshot has the same SHA-256 and byte count as the initially recorded source.
+It refuses a source rewritten during preflight; package checks use the staged
+snapshot, never the caller's mutable path. `classify` requires each receipt's
+input SHA-256 to match the fixture hash or one of that PPTArena case's pinned
+original/ground-truth hashes. A classified run also needs a staged hash equal
+to its input hash. Missing or contradictory clean evidence and wrong-case
+receipts fail. Missing cases and unexpected timeouts stay inconclusive, and
+both fail the CLI exit status.
 
 ## Recorded Mac mini result
 

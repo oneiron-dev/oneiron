@@ -18,12 +18,12 @@ spec.loader.exec_module(oracle)
 
 class OfflineContracts(unittest.TestCase):
     def test_dialogs_fail_closed(self):
-        self.assertEqual(oracle.dialog_class(['Repair Presentation'], 'candidate'), 'repaired')
-        self.assertEqual(oracle.dialog_class(['PowerPoint found a problem with content in candidate.pptx'],
+        self.assertEqual(oracle.dialog_class(['DIALOG:Repair Presentation'], 'candidate'), 'repaired')
+        self.assertEqual(oracle.dialog_class(['DIALOG:PowerPoint found a problem with content in candidate.pptx'],
                                              'candidate'), 'repaired')
-        self.assertEqual(oracle.dialog_class(['Grant File Access'], 'candidate'), 'unsupported')
-        self.assertEqual(oracle.dialog_class(['unexpected prompt'], 'candidate'), 'unsupported')
-        self.assertIsNone(oracle.dialog_class(['candidate'], 'candidate'))
+        self.assertEqual(oracle.dialog_class(['DIALOG:Grant File Access'], 'candidate'), 'unsupported')
+        self.assertEqual(oracle.dialog_class(['DIALOG:unexpected prompt'], 'candidate'), 'unsupported')
+        self.assertIsNone(oracle.dialog_class(['WINDOW:candidate'], 'candidate'))
 
     def test_damage_and_hashes(self):
         clean = ROOT / 'fixtures/clean.pptx'
@@ -47,10 +47,12 @@ class OfflineContracts(unittest.TestCase):
             (Path(tmp) / 'clean').mkdir()
             (Path(tmp) / 'clean/receipt.json').write_text(json.dumps({'status': 'clean',
                 'input': {'sha256': oracle.digest(ROOT / 'fixtures/clean.pptx')},
+                'staged_input_sha256': oracle.digest(ROOT / 'fixtures/clean.pptx'),
                 'environment': APPROVED_ENV}))
             (Path(tmp) / 'damaged-candidate').mkdir()
             (Path(tmp) / 'damaged-candidate/receipt.json').write_text(json.dumps({'status': 'clean',
                 'input': {'sha256': oracle.digest(ROOT / 'fixtures/damaged.pptx')},
+                'staged_input_sha256': oracle.digest(ROOT / 'fixtures/damaged.pptx'),
                 'environment': APPROVED_ENV}))
             report = oracle.classify_manifest(ROOT / 'fixtures.json', Path(tmp))
             self.assertEqual(report['counts']['fail'], 1)
@@ -74,6 +76,7 @@ class OfflineContracts(unittest.TestCase):
             first = corpus[0]
             (results / first['id'] / 'receipt.json').write_text(json.dumps({
                 'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'staged_input_sha256': first['original']['sha256'],
                 'environment': APPROVED_ENV}))
             self.assertEqual(oracle.classify_manifest(manifest, results)['counts']['pass'], 1)
             (results / first['id'] / 'receipt.json').write_text(json.dumps({
@@ -82,19 +85,100 @@ class OfflineContracts(unittest.TestCase):
             self.assertEqual(oracle.classify_manifest(manifest, results)['counts'].get('pass', 0), 0)
             (results / first['id'] / 'receipt.json').write_text(json.dumps({
                 'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'staged_input_sha256': first['original']['sha256'],
                 'environment': APPROVED_ENV}))
             second = corpus[1]
             (results / second['id'] / 'receipt.json').write_text(json.dumps({
                 'status': 'clean', 'input': {'sha256': first['original']['sha256']},
+                'staged_input_sha256': first['original']['sha256'],
                 'environment': APPROVED_ENV}))
             self.assertEqual(oracle.classify_manifest(manifest, results)['counts'],
                              {'pass': 1, 'fail': 1})
             (results / first['id'] / 'receipt.json').write_text(json.dumps({
                 'status': 'clean', 'input': {'sha256': first['ground_truth']['sha256']},
+                'staged_input_sha256': first['ground_truth']['sha256'],
                 'environment': APPROVED_ENV}))
             self.assertEqual(oracle.classify_manifest(manifest, results)['counts']['pass'], 1)
             (results / first['id'] / 'receipt.json').write_text(json.dumps({'status': 'clean'}))
             self.assertEqual(oracle.classify_manifest(manifest, results)['counts'].get('pass', 0), 0)
+
+    def test_changed_source_during_environment_preflight_is_refused_before_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'candidate.pptx'
+            source.write_bytes((ROOT / 'fixtures/clean.pptx').read_bytes())
+            replacement = root / 'replacement.pptx'
+            with zipfile.ZipFile(source) as original, zipfile.ZipFile(replacement, 'w') as changed:
+                for member in original.infolist():
+                    body = original.read(member.filename)
+                    if member.filename == 'ppt/slides/slide1.xml':
+                        body = body.replace(b'<a:t>', b'<a:t>CHANGED: ')
+                    changed.writestr(member, body)
+            original_hash = oracle.digest(source)
+            def rewrite_during_preflight(_observer):
+                source.write_bytes(replacement.read_bytes())
+                return APPROVED_ENV.copy()
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'app_pid', return_value=None), \
+                 mock.patch.object(oracle, 'env_pin', side_effect=rewrite_during_preflight), \
+                 mock.patch.object(oracle, 'launch_hidden') as launch:
+                receipt = oracle.oracle(source, root / 'results/clean')
+            self.assertEqual(receipt['input']['sha256'], original_hash)
+            self.assertNotEqual(receipt['staged_input_sha256'], original_hash)
+            self.assertEqual(receipt['status'], 'unsupported', receipt)
+            launch.assert_not_called()
+            self.assertFalse(list((root / 'sandbox').iterdir()))
+            report = oracle.classify_manifest(ROOT / 'fixtures.json', root / 'results')
+            clean = next(row for row in report['cases'] if row['id'] == 'clean')
+            self.assertEqual(clean['verdict'], 'fail', clean)
+
+    def test_repair_package_check_uses_staged_snapshot_not_mutable_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'candidate.pptx'
+            source.write_bytes((ROOT / 'fixtures/repair.pptx').read_bytes())
+            def source_changes_after_open(staged, action, target, observer, deadline):
+                self.assertTrue(staged.exists())
+                source.write_bytes((ROOT / 'fixtures/failed.pptx').read_bytes())
+                return 'repaired', 'PowerPoint offered repair'
+            with mock.patch.object(oracle.sys, 'platform', 'darwin'), \
+                 mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
+                 mock.patch.object(oracle, 'STAGING', root / 'sandbox'), \
+                 mock.patch.object(oracle, 'observer_status', return_value=None), \
+                 mock.patch.object(oracle, 'app_pid', return_value=123), \
+                 mock.patch.object(oracle, 'presentations', return_value=[]), \
+                 mock.patch.object(oracle, 'env_pin', return_value=APPROVED_ENV.copy()), \
+                 mock.patch.object(oracle, 'launch_hidden'), \
+                 mock.patch.object(oracle, 'hide_powerpoint'), \
+                 mock.patch.object(oracle, 'run_script', side_effect=source_changes_after_open), \
+                 mock.patch.object(oracle, 'cancel_owned_repair'), \
+                 mock.patch.object(oracle, 'close_owned', return_value=None):
+                receipt = oracle.oracle(source, root / 'result')
+            self.assertTrue(oracle.invalid_presentation_package(source))
+            self.assertEqual(receipt['status'], 'repaired', receipt)
+            self.assertEqual(receipt['input']['sha256'], receipt['staged_input_sha256'])
+
+    def test_classifier_rejects_missing_or_conflicting_staged_hash(self):
+        receipt = json.loads((ROOT / 'results/mac-mini-008/clean/receipt.json').read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / 'clean'
+            folder.mkdir()
+            for staged_hash in (None, '0' * 64):
+                with self.subTest(staged_hash=staged_hash):
+                    attempt = dict(receipt)
+                    if staged_hash is None:
+                        attempt.pop('staged_input_sha256')
+                    else:
+                        attempt['staged_input_sha256'] = staged_hash
+                    (folder / 'receipt.json').write_text(json.dumps(attempt))
+                    report = oracle.classify_manifest(ROOT / 'fixtures.json', root)
+                    clean = next(row for row in report['cases'] if row['id'] == 'clean')
+                    self.assertEqual(clean['verdict'], 'fail', clean)
+                    self.assertIn('binding_error', clean)
 
     def test_incomplete_classification_cli_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -204,7 +288,6 @@ class OfflineContracts(unittest.TestCase):
     def test_ordinary_deck_titles_are_not_dialogs(self):
         for stem in ('Disaster Recovery-123-abcd', 'Repair Plan', 'Permission Review'):
             with self.subTest(stem=stem):
-                self.assertIsNone(oracle.dialog_class([stem + '.pptx'], stem))
                 self.assertIsNone(oracle.dialog_class(['WINDOW:' + stem + '.pptx'], stem))
                 # PowerPoint can label its ordinary document window AXDialog.
                 self.assertIsNone(oracle.dialog_class(['DIALOG:' + stem + '.pptx'], stem))
@@ -224,11 +307,6 @@ class OfflineContracts(unittest.TestCase):
             warning = oracle.close_owned({'candidate.pptx'})
         self.assertIsNotNone(warning)
         self.assertIn('dialog', warning.lower())
-        with mock.patch.object(oracle, 'app_pid', return_value=123), \
-             mock.patch.object(oracle, 'presentations', return_value=[]), \
-             mock.patch.object(oracle, 'hide_powerpoint'), \
-             mock.patch.object(oracle, 'windows', return_value=['Grant File Access']):
-            self.assertIn('dialog', oracle.close_owned({'candidate.pptx'}).lower())
         with tempfile.TemporaryDirectory() as tmp, \
              mock.patch.object(oracle.sys, 'platform', 'darwin'), \
              mock.patch.object(oracle, 'APP', ROOT / 'fixtures/clean.pptx'), \
@@ -291,8 +369,8 @@ class OfflineContracts(unittest.TestCase):
         proc.terminate.assert_called_once()
     def test_untitled_repair_dialog_text_is_observed(self):
         with mock.patch.object(oracle, 'command', return_value=(
-                'PowerPoint found a problem with content in candidate.pptx.\n'
-                'PowerPoint can attempt to repair the presentation.')):
+                'DIALOG:PowerPoint found a problem with content in candidate.pptx.\x1e'
+                'DIALOG:PowerPoint can attempt to repair the presentation.')):
             lines = oracle.windows('system-events', 123)
         self.assertEqual(oracle.dialog_class(lines, 'candidate'), 'repaired')
 
