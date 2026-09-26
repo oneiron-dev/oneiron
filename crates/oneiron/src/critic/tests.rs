@@ -354,3 +354,50 @@ fn critic_reliability_predicate_rejects_claim_predicate_overflow() {
 
     assert!(critic_reliability_predicate(&domain, &lens_id).is_err());
 }
+
+#[test]
+fn shared_posterior_critic_contract_checks_sources_and_samples() -> Result<()> {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut posterior = CriticReliability::prior("groundedness", "claim_authoring")?;
+    let rejected = ReliabilityOutcomeEvent::new(
+        "groundedness",
+        "claim_authoring",
+        ReliabilityOutcomeSource::CriticAgreement,
+        true,
+        10,
+    )?;
+    assert!(posterior.update(rejected).is_err());
+    assert_eq!(posterior.observations, 0);
+    posterior.update(ReliabilityOutcomeEvent::new(
+        "groundedness",
+        "claim_authoring",
+        ReliabilityOutcomeSource::HeldOutEval,
+        true,
+        11,
+    )?)?;
+    posterior.update(ReliabilityOutcomeEvent::new(
+        "groundedness",
+        "claim_authoring",
+        ReliabilityOutcomeSource::OwnerVerdict,
+        false,
+        12,
+    )?)?;
+    assert_eq!(
+        (posterior.alpha, posterior.beta, posterior.observations),
+        (2.0, 2.0, 2)
+    );
+    let mut first = StdRng::seed_from_u64(2012);
+    let mut second = StdRng::seed_from_u64(2012);
+    let draw = posterior.sample(&mut first);
+    assert!((0.0..=1.0).contains(&draw));
+    assert_eq!(draw, posterior.sample(&mut second));
+    assert!((posterior.lower_bound() - 0.132).abs() < 0.01);
+    assert!((posterior.ucb_bonus(12, 0.35) - 0.35 * (13_f64.ln()).sqrt()).abs() < 1e-12);
+    assert_eq!(
+        posterior.triage_weight(12, 0.35),
+        0.5 + posterior.ucb_bonus(12, 0.35)
+    );
+    Ok(())
+}
