@@ -2,11 +2,11 @@ name: CI
 
 # Scoped CI (owner ruling 2026-09-26: "test only the part that was relevant ... radically cut and minimize it").
 #
-# A PR or a main push builds and tests what its diff touched, and nothing else:
-#   * `changes` runs scripts/ci/ci_scope.py on the diff: the touched workspace packages, and for the `oneiron`
-#     crate the touched top-level modules (more than 12, or a crate-root file, means all of the crate).
-#   * `Checks`: fmt, then clippy -D warnings for the touched packages (plus the featureless build when `oneiron`
-#     changed); cargo-deny only when Cargo.lock or deny.toml changed; the tooling tests only when scripts/ or
+# A PR or main push tests only what its diff touched and lints the touched packages and their dependents:
+#   * `changes` runs scripts/ci/ci_scope.py on the diff: touched workspace packages, their reverse dependents,
+#     and for `oneiron` the touched top-level modules (more than 12, or a crate-root file, means all of it).
+#   * `Checks`: fmt, then clippy -D warnings for touched packages and dependents (plus the featureless build
+#     when `oneiron` changed); cargo-deny only when Cargo.lock or deny.toml changed; tooling tests only when scripts/ or
 #     .github/ changed.
 #   * `Test`: nextest for the touched packages; for `oneiron`, the lib tests of the touched modules, and the
 #     integration tests only when crates/oneiron/tests changed. No doctests on PRs.
@@ -21,12 +21,21 @@ name: CI
 # diff with nothing Rust-relevant runs their cheap steps and goes green. Draft PRs skip every job.
 # CI_PAUSED=true skips every job.
 #
-# Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on the Linux runners; the Macs
-# take only the dispatch-only macOS recipe and mutation audit. Caches are the host's: each runner's `.env` exports a persistent CARGO_TARGET_DIR,
-# CARGO_INCREMENTAL=0 and a PATH with ~/.cargo/bin; the toolchain is host rustup via rust-toolchain.toml. Never
-# set CARGO_TARGET_DIR here. `clean: true` on every checkout because `_work` persists between runs.
+# Runners: our own machines. `changes`, `Checks` and both scoped test jobs run on Linux; the Macs
+# take the dispatch-only macOS recipe, cache proof and mutation audit. Each runner keeps its
+# persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache also stores compiler results in
+# GitHub's cross-run cache. PR scoped Cargo steps unset CARGO_INCREMENTAL and select
+# incremental dev/test profiles; main, nightly, and dispatch remain non-incremental.
+# The core-only workspace wrapper speeds build/test; Linux test temp uses executable tmpfs
+# only when at least 12 GiB is free, otherwise the runner disk TMPDIR. Never set CARGO_TARGET_DIR
+# here. The toolchain is host rustup via rust-toolchain.toml. `clean: true` on every checkout because `_work` persists between runs.
 on:
   workflow_dispatch:
+    inputs:
+      cache_proof:
+        description: Run a cold-artifact shared-cache comparison instead of the full gate
+        type: boolean
+        default: false
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
@@ -36,10 +45,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: 'on'
 
 # One run per PR (a newer push cancels the older run); every main push keeps its own run.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  # A proof dispatch must not be cancelled when the PR's scoped run starts for the same SHA.
+  group: ${{ inputs.cache_proof && format('ci-proof-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -47,11 +58,12 @@ jobs:
     name: Detect changed paths
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 10
-    if: vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
       full: ${{ steps.scope.outputs.full }}
       packages: ${{ steps.scope.outputs.packages }}
+      dependents: ${{ steps.scope.outputs.dependents }}
       oneiron: ${{ steps.scope.outputs.oneiron }}
       modules: ${{ steps.scope.outputs.modules }}
       it: ${{ steps.scope.outputs.it }}
@@ -82,10 +94,13 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
+      SCOPE_DEPENDENTS: ${{ needs.changes.outputs.dependents }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
     steps:
       - uses: actions/checkout@v4
@@ -95,6 +110,13 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: Secret blocklist is a policy superset
         run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
@@ -103,9 +125,11 @@ jobs:
       - name: Format
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo fmt --check
-      - name: Clippy (touched packages; the full gate nightly)
+      - name: Clippy (touched packages and dependents; the full gate nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: scripts/ci/run_scoped.sh clippy
+        env:
+          RUSTC_WRAPPER: sccache
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh clippy
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
         run: |
@@ -134,6 +158,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -142,7 +169,9 @@ jobs:
     name: Test (macOS)
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
-    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch'
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
+    env:
+      RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/scripts/ci/rustc-threads.sh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -151,6 +180,13 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
@@ -159,11 +195,20 @@ jobs:
             cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
           fi
       - name: Workspace tests (nextest, full tier, macOS recipe)
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -175,8 +220,10 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_PACKAGES: ${{ needs.changes.outputs.packages }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
@@ -190,6 +237,15 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
@@ -201,8 +257,13 @@ jobs:
           cargo nextest --version
       - name: Tests (touched packages and modules; everything nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: scripts/ci/run_scoped.sh test
+        env:
+          RUSTC_WRAPPER: sccache
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh test
 
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
   test-linux-featureless:
     name: Test (featureless)
     runs-on: [self-hosted, linux, x64]
@@ -210,8 +271,10 @@ jobs:
     needs: changes
     if: >-
       always()
-      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && vars.CI_PAUSED != 'true' && !inputs.cache_proof && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     env:
+      CARGO_PROFILE_DEV_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+      CARGO_PROFILE_TEST_INCREMENTAL: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
       SCOPE_FULL: ${{ needs.changes.outputs.full || 'true' }}
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
       SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
@@ -223,6 +286,15 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
@@ -234,7 +306,68 @@ jobs:
           cargo nextest --version
       - name: Featureless oneiron library tests (touched modules; both process models nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: scripts/ci/run_scoped.sh featureless
+        env:
+          RUSTC_WRAPPER: sccache
+        run: env -u CARGO_INCREMENTAL scripts/ci/run_scoped.sh featureless
+
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
+  cache-proof-populate:
+    name: Cache proof (baseline and populate)
+    runs-on: [self-hosted, macos, arm64, mini]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Host-target-only baseline, then shared-cache population (fresh artifacts)
+        run: python3 scripts/audit/ci_cache_proof.py populate --output "$RUNNER_TEMP/oneiron-cache-proof-populate.json"
+      - name: Retain baseline and population receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-populate.json
+          if-no-files-found: error
+
+  cache-proof-repeat:
+    name: Cache proof (repeat)
+    needs: cache-proof-populate
+    runs-on: [self-hosted, macos, arm64, mini]
+    timeout-minutes: 45
+    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch' && inputs.cache_proof
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Isolated proof cache key
+        run: echo "SCCACHE_GHA_VERSION=proof-${{ github.run_id }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
+      - name: Read population receipt from prior job
+        uses: actions/download-artifact@v4
+        with:
+          name: cache-proof-populate-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-input
+      - name: Repeat build from fresh artifacts using shared cache
+        run: python3 scripts/audit/ci_cache_proof.py repeat --baseline "$RUNNER_TEMP/oneiron-cache-proof-input/oneiron-cache-proof-populate.json" --output "$RUNNER_TEMP/oneiron-cache-proof-repeat.json"
+      - name: Retain repeat receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-proof-repeat-${{ github.run_id }}
+          path: ${{ runner.temp }}/oneiron-cache-proof-repeat.json
+          if-no-files-found: error
 
   package:
     name: Package oneiron-server
@@ -271,7 +404,7 @@ jobs:
       contents: read
     runs-on: [self-hosted]
     timeout-minutes: 180
-    if: vars.CI_PAUSED != 'true' && github.event_name == 'workflow_dispatch'
+    if: vars.CI_PAUSED != 'true' && !inputs.cache_proof && github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # run_scoped.sh clippy|test|featureless: the cargo work of one CI job, sized by scripts/ci/ci_scope.py.
-# Scoped (PRs, main pushes): clippy and tests for the touched packages only, and for `oneiron` only the touched
-# top-level modules. Full (nightly schedule, manual dispatch, build-file changes): the complete gate.
-# Inputs (from the `changes` job): SCOPE_FULL, SCOPE_PACKAGES, SCOPE_ONEIRON, SCOPE_MODULES, SCOPE_IT.
+# Scoped (PRs, main pushes): clippy for touched packages and their reverse dependents; tests for touched
+# packages only, and for `oneiron` only the touched top-level modules. Full runs the complete gate.
+# Inputs (from the `changes` job): SCOPE_FULL, SCOPE_PACKAGES, SCOPE_DEPENDENTS, SCOPE_ONEIRON,
+# SCOPE_MODULES, SCOPE_IT.
 set -euo pipefail
 mode=${1:?clippy|test|featureless}
 full=${SCOPE_FULL:-true}
 packages=${SCOPE_PACKAGES:-}
+dependents=${SCOPE_DEPENDENTS:-}
 oneiron=${SCOPE_ONEIRON:-false}
 modules=${SCOPE_MODULES:-ALL}
 it=${SCOPE_IT:-false}
@@ -22,7 +24,15 @@ if [ "$modules" != ALL ] && [ -n "$modules" ]; then
   filter="test(/^($(echo "$modules" | tr ' ' '|'))::/)"
 fi
 
-run() { echo "+ $*"; "$@"; }
+# Keep each test command's vault/temp files isolated and clean them even on failure.
+run() {
+  echo "+ $*"
+  if [ "$mode" = test ] || [ "$mode" = featureless ]; then
+    RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" scripts/ci/with-test-tmpdir.sh "$@"
+  else
+    "$@"
+  fi
+}
 
 case "$mode" in
 clippy)
@@ -30,10 +40,10 @@ clippy)
     run cargo clippy --workspace --all-targets --all-features -- -D warnings
     run cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
     run cargo clippy -p oneiron-server --all-features -- -D warnings
-    run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+    run env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTC_WORKSPACE_WRAPPER="$PWD/scripts/ci/rustc-threads.sh" RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
     exit 0
   fi
-  pk=(); for p in $packages; do pk+=(-p "$p"); done
+  pk=(); for p in $packages $dependents; do pk+=(-p "$p"); done
   [ ${#pk[@]} -gt 0 ] && run cargo clippy "${pk[@]}" --all-targets --all-features -- -D warnings
   [ "$oneiron" = true ] && run cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
   [ ${#pk[@]} -gt 0 ] || [ "$oneiron" = true ] || echo "no Rust package changed: nothing to lint"

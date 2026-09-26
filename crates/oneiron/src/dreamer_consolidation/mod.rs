@@ -41,6 +41,7 @@ mod provenance;
 pub(crate) mod resources;
 pub mod routing;
 pub mod selection;
+mod step_charge;
 mod support;
 mod watermark;
 
