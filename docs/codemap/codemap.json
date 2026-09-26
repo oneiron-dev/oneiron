@@ -32808,10 +32808,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectRecord",
+      "ProjectRole",
       "ProjectRoom",
       "ProjectRoomChange"
      ],
@@ -32819,8 +32820,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
-      "fn": 7,
+      "crate-vis": 12,
+      "enum": 1,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -32835,7 +32837,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",

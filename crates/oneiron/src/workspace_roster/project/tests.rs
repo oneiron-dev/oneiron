@@ -62,7 +62,7 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
             .is_err()
     );
     let mut cycle = root.clone();
-    cycle.parent = Some(child_id.to_hex());
+    cycle.parents.push(child_id.to_hex());
     assert!(vault.put_project(root_id, &cycle, 12).is_err());
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -236,5 +236,95 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
         assert!(vault.get(&child)?.is_none());
         assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn project_dag_accepts_two_parents_and_diamond_but_rejects_secondary_cycles() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let left = EntityId::now();
+    let right = EntityId::now();
+    for parent in [left, right] {
+        vault.put_project(
+            parent,
+            &ProjectRecord::new(parent, Some(root), root, leader),
+            1,
+        )?;
+    }
+    let shared = EntityId::now();
+    let mut child = ProjectRecord::new(shared, Some(left), root, leader);
+    child.role = ProjectRole::Corpus;
+    child.parents.push(right.to_hex());
+    vault.put_project(shared, &child, 2)?;
+    assert_eq!(vault.project(shared)?.unwrap().parents, child.parents);
+    let linked = vault.targets(&shared, crate::edge::EdgeKind::BelongsTo, None)?;
+    assert_eq!(linked.len(), 2);
+    assert!(linked.contains(&left) && linked.contains(&right));
+    for edge in vault.edges_out(&shared)? {
+        assert_eq!(edge.weight, HUB_MEMBERSHIP_WEIGHT);
+    }
+    let mut cyclic = vault.project(right)?.unwrap();
+    cyclic.parents.push(shared.to_hex());
+    assert_eq!(
+        vault.put_project(right, &cyclic, 3).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(vault.project(right)?.unwrap().parents, vec![root.to_hex()]);
+    let mut duplicate = child.clone();
+    duplicate.parents.push(left.to_hex());
+    assert_eq!(
+        vault.put_project(shared, &duplicate, 3).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    for parent in [left, right] {
+        assert_eq!(
+            vault.batch().delete(&parent).commit().unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidProjectBody
+        );
+    }
+    child.parents.retain(|parent| parent != &right.to_hex());
+    vault.put_project(shared, &child, 4)?;
+    assert_eq!(
+        vault.targets(&shared, crate::edge::EdgeKind::BelongsTo, None)?,
+        vec![left]
+    );
+    vault.batch().delete(&right).commit()?;
+    Ok(())
+}
+
+#[test]
+fn collection_membership_is_low_weight_and_never_accepts_claims() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let asset = EntityId::now();
+    vault.put_entity(
+        &asset,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"document",
+    )?;
+    vault.put_project_member(asset, root)?;
+    let edge = vault
+        .edges_out(&asset)?
+        .into_iter()
+        .find(|edge| edge.kind == crate::edge::EdgeKind::BelongsTo && edge.target == root)
+        .expect("asset belongs to collection");
+    assert_eq!(edge.weight, HUB_MEMBERSHIP_WEIGHT);
+    assert_eq!(
+        vault.sources(&root, crate::edge::EdgeKind::BelongsTo, None)?,
+        vec![asset]
+    );
+    let claim = EntityId::now();
+    let err = vault.put_project_member(claim, root).unwrap_err();
+    assert!(matches!(err, Error::InvalidConfig(_)));
+    let err = vault
+        .put_project_member(asset, EntityId::now())
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidConfig(_)));
     Ok(())
 }

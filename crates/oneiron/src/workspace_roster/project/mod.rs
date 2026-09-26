@@ -19,14 +19,27 @@ use std::collections::BTreeSet;
 pub const PROJECT_TYPE_BYTE: u8 = 103;
 const PACK: &str = "oneiron.project";
 const ROOT: &[u8] = b"project.root.v1";
+/// A hub hop uses a smaller PPR budget than an ordinary `belongs_to` edge.
+pub(crate) const HUB_BELONGS_TO_LAMBDA: f32 = 0.05;
+const HUB_MEMBERSHIP_WEIGHT: f32 = 0.05;
 pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
 const CHANGES: &[u8] = b"project.room_changes.v1/";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectRole {
+    Project,
+    Corpus,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRecord {
+    /// Corpus is a role of the same PROJECT hub, not a new entity kind.
+    pub role: ProjectRole,
     pub schema_version: u8,
-    pub parent: Option<String>,
+    /// Parent projects. A project may belong to more than one venture.
+    pub parents: Vec<String>,
     pub claims_scope_ref: String,
     pub leader: String,
     pub board: Vec<String>,
@@ -49,7 +62,8 @@ impl ProjectRecord {
     ) -> Self {
         Self {
             schema_version: 1,
-            parent: parent.map(|p| p.to_hex()),
+            role: ProjectRole::Project,
+            parents: parent.into_iter().map(|p| p.to_hex()).collect(),
             claims_scope_ref: claims_scope_ref.to_hex(),
             leader: leader.to_hex(),
             board: vec![],
@@ -127,6 +141,29 @@ pub(crate) fn is_project_type(store: &crate::store::Store, kind: u8) -> bool {
         .structural_kind_registration(kind)
         .is_some_and(|row| row.pack == PACK && row.short_id_prefix == "pj")
 }
+/// Check the dynamic compiled-pack kind through the persisted root binding.
+/// Unseeded test stores have no root and therefore no project hubs.
+pub(crate) fn is_project_entity(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    let Some(root) = store.vault_meta().get(txn, ROOT)? else {
+        return Ok(false);
+    };
+    let Some(root_raw) = store.entities().get(txn, &root)? else {
+        return Err(Error::CorruptedIndex("project root missing"));
+    };
+    let root_header = EntityMetadataHeader::parse(&root_raw)
+        .ok_or(Error::CorruptedIndex("project root header"))?;
+    let Some(raw) = store.entities().get(txn, id.as_bytes())? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("project entity header"))?;
+    Ok(header.entity_type == root_header.entity_type && raw.len() > ENTITY_METADATA_HEADER_LEN)
+}
+
 pub(super) fn project_type(store: &crate::store::Store) -> Option<u8> {
     store
         .structural_kind_registrations()
@@ -152,6 +189,38 @@ impl Vault {
             now,
             &encode(record)?,
         )
+    }
+    /// Attach an asset to a project collection with a low-weight `belongs_to`
+    /// edge. CLAIMs never link to hubs: their sideways scope is the project id.
+    pub fn put_project_member(&self, asset: EntityId, project: EntityId) -> Result<()> {
+        self.with_write_txn(|txn| {
+            if !is_project_entity(&self.store, txn, project)? {
+                return Err(invalid());
+            }
+            let raw = self
+                .store
+                .entities
+                .get(txn, asset.as_bytes())?
+                .ok_or_else(invalid)?;
+            let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+            if !matches!(
+                header.entity_type,
+                crate::registry::ENTITY_TYPE_ASSET
+                    | crate::registry::ENTITY_TYPE_ASSET_TEXT
+                    | crate::registry::ENTITY_TYPE_CODE_ARTIFACT
+            ) || raw.len() == ENTITY_METADATA_HEADER_LEN
+            {
+                return Err(invalid());
+            }
+            crate::ports::EdgeStore::port_edge_upsert(
+                self,
+                txn,
+                &asset,
+                crate::edge::EdgeKind::BelongsTo,
+                &project,
+                HUB_MEMBERSHIP_WEIGHT,
+            )
+        })
     }
     pub fn project(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
         record(
