@@ -32823,7 +32823,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectRecord",
@@ -32835,7 +32835,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 10,
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -32850,7 +32850,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",

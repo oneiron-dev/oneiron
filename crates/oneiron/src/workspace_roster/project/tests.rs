@@ -175,11 +175,9 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
         let root = vault.root_project()?;
         let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
         let parent = EntityId::now();
-        vault.put_project(
-            parent,
-            &ProjectRecord::new(parent, Some(root), root, leader),
-            1,
-        )?;
+        let mut parent_body = ProjectRecord::new(parent, Some(root), root, leader);
+        parent_body.depth_remaining = 9;
+        vault.put_project(parent, &parent_body, 1)?;
         let child = EntityId::now();
         vault.put_project(
             child,
@@ -236,5 +234,153 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
         assert!(vault.get(&child)?.is_none());
         assert!(vault.get(&EntityId::from_hex(&body.home_room)?)?.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn only_leader_spawns_with_narrower_slice_and_decremented_depth() -> Result<()> {
+    use crate::llm::{Scope, ScopeResource};
+    use std::collections::BTreeSet;
+
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root_id = vault.root_project()?;
+    let mut root = vault.project(root_id)?.expect("root project");
+    let actor = EntityId::from_hex(&root.leader)?;
+    let bucket = ScopeResource::Bucket {
+        key: "allowed".into(),
+    };
+    let denied = ScopeResource::Bucket {
+        key: "outside".into(),
+    };
+    root.slice.readable = BTreeSet::from([bucket.clone()]);
+    vault.put_project(root_id, &root, 1)?;
+
+    let narrow = Scope {
+        project: Some(EntityId::now()),
+        readable: BTreeSet::from([bucket.clone()]),
+        ..Scope::default()
+    };
+    let child_id = EntityId::now();
+    let other_leader = EntityId::now();
+    let child =
+        vault.spawn_subproject(root_id, child_id, actor, other_leader, narrow.clone(), 2)?;
+    assert_eq!(child.parent, Some(root_id.to_hex()));
+    assert_eq!(child.leader, other_leader.to_hex());
+    assert_eq!(child.board, vec![actor.to_hex()]);
+    assert_eq!(child.depth_remaining, root.depth_remaining - 1);
+    assert_eq!(vault.project(child_id)?, Some(child.clone()));
+    assert_eq!(
+        vault
+            .project_room(EntityId::from_hex(&child.home_room)?)?
+            .unwrap()
+            .member_ids,
+        child.roster
+    );
+
+    // An occupied id is not an upsert: a second leader cannot replace this one.
+    let error = vault
+        .spawn_subproject(root_id, child_id, actor, EntityId::now(), narrow.clone(), 3)
+        .unwrap_err();
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert_eq!(vault.project(child_id)?, Some(child));
+    let error = vault
+        .spawn_subproject(
+            root_id,
+            EntityId::now(),
+            other_leader,
+            other_leader,
+            narrow.clone(),
+            3,
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+
+    let mut wider = narrow;
+    wider.readable.insert(denied);
+    let rejected_id = EntityId::now();
+    let error = vault
+        .spawn_subproject(root_id, rejected_id, actor, other_leader, wider.clone(), 3)
+        .unwrap_err();
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert!(vault.project(rejected_id)?.is_none());
+    assert!(vault.project_room(home_room_id(rejected_id))?.is_none());
+
+    // The common projector also refuses forged direct or batch writes.
+    let mut forged = ProjectRecord::new(rejected_id, Some(root_id), root_id, other_leader);
+    forged.slice = wider;
+    forged.depth_remaining = root.depth_remaining - 1;
+    assert_eq!(
+        vault
+            .put_project(rejected_id, &forged, 4)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(
+        vault
+            .batch()
+            .put(
+                &rejected_id,
+                vault.project_type_byte()?,
+                TimeRange { start: 4, end: 4 },
+                4,
+                &encode(&forged)?
+            )
+            .commit()
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(rejected_id)?.is_none());
+
+    // Moving a parent inward cannot leave its live child wider.
+    root.slice.readable.clear();
+    assert_eq!(
+        vault.put_project(root_id, &root, 5).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(
+        vault.project(root_id)?.unwrap().slice.readable,
+        BTreeSet::from([bucket])
+    );
+    Ok(())
+}
+
+#[test]
+fn project_depth_is_bounded_by_its_row_and_zero_refuses_spawn() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root_id = vault.root_project()?;
+    let mut root = vault.project(root_id)?.expect("root");
+    let actor = EntityId::from_hex(&root.leader)?;
+    assert_eq!((root.depth_limit, root.depth_remaining), (10, 10));
+    root.depth_limit = 1;
+    root.depth_remaining = 1;
+    vault.put_project(root_id, &root, 1)?;
+    let child_id = EntityId::now();
+    let child = vault.spawn_subproject(root_id, child_id, actor, actor, root.slice.clone(), 2)?;
+    assert_eq!(child.depth_remaining, 0);
+    let grandchild_id = EntityId::now();
+    let error = vault
+        .spawn_subproject(child_id, grandchild_id, actor, actor, root.slice.clone(), 3)
+        .unwrap_err();
+    assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
+    assert!(vault.project(grandchild_id)?.is_none());
+    let mut too_deep = child;
+    too_deep.depth_remaining = 1;
+    assert_eq!(
+        vault
+            .put_project(child_id, &too_deep, 4)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    too_deep = root;
+    too_deep.depth_remaining = 2;
+    assert_eq!(
+        vault.put_project(root_id, &too_deep, 5).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
     Ok(())
 }

@@ -44,6 +44,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     if body.schema_version != 1
         || body.home_room != home_room_id(id).to_hex()
         || body.roster.is_empty()
+        || body.depth_remaining > body.depth_limit
     {
         return Err(invalid());
     }
@@ -90,6 +91,48 @@ pub(crate) fn reconcile_project_rooms(
     let Some(project_kind) = project_type(store) else {
         return Ok(());
     };
+    // Validate the entire live ancestry whenever a project changes, not only
+    // the touched child: narrowing an existing parent must not strand a wider
+    // descendant. This is the same transaction for local, batch, and replay.
+    let mut project_touched = false;
+    for id in touched {
+        if let Some(raw) = store.entities.get(txn, id.as_bytes())? {
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("project projection header"))?;
+            project_touched |= header.entity_type == project_kind;
+        }
+    }
+    if project_touched {
+        for row in store.type_index.prefix_iter(txn, &[project_kind])? {
+            let (key, _) = row?;
+            let id = EntityId::from_bytes(
+                key[1..]
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("project type index"))?,
+            )?;
+            let Some(body) = record::<ProjectRecord>(store, txn, id, project_kind)? else {
+                continue;
+            };
+            if body.depth_remaining > body.depth_limit {
+                return Err(invalid());
+            }
+            if let Some(parent_id) = &body.parent {
+                let parent = dependency(
+                    store,
+                    txn,
+                    EntityId::from_hex(parent_id).map_err(|_| invalid())?,
+                    project_kind,
+                )?;
+                if body.depth_limit > parent.depth_limit
+                    || parent.depth_remaining == 0
+                    || body.depth_remaining >= parent.depth_remaining
+                    || parent.slice.attenuate(body.slice).is_err()
+                {
+                    return Err(invalid());
+                }
+            }
+        }
+    }
     let mut room_ops = Vec::new();
     for id in touched {
         let Some(raw) = store.entities.get(txn, id.as_bytes())? else {

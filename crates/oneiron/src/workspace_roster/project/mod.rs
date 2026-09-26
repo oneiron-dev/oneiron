@@ -8,7 +8,8 @@ mod tests;
 pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
+use crate::llm::Scope;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, TypeByteZone};
 use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,12 @@ pub struct ProjectRecord {
     pub schema_version: u8,
     pub parent: Option<String>,
     pub claims_scope_ref: String,
+    /// Four-axis and resource-set bounds for this project and its descendants.
+    pub slice: Scope,
+    /// Maximum allowed depth for this project (the board-controlled depth row).
+    pub depth_limit: u8,
+    /// Descendant-spawn levels left in this project's slice.
+    pub depth_remaining: u8,
     pub leader: String,
     pub board: Vec<String>,
     pub roster: Vec<String>,
@@ -51,6 +58,9 @@ impl ProjectRecord {
             schema_version: 1,
             parent: parent.map(|p| p.to_hex()),
             claims_scope_ref: claims_scope_ref.to_hex(),
+            slice: Scope::default(),
+            depth_limit: 10,
+            depth_remaining: if parent.is_none() { 10 } else { 0 },
             leader: leader.to_hex(),
             board: vec![],
             roster: vec![leader.to_hex()],
@@ -152,6 +162,63 @@ impl Vault {
             now,
             &encode(record)?,
         )
+    }
+    /// A project's leader spawns one new child under a slice no wider than its own.
+    /// The host supplies the actor id from its authenticated caller context;
+    /// this door compares it to the live leader in the creation transaction.
+    /// Project record edits outside this verb still pass the shared ancestry
+    /// projector, which refuses scope and depth widening on raw/replay writes.
+    pub fn spawn_subproject(
+        &self,
+        parent_id: EntityId,
+        child_id: EntityId,
+        actor: EntityId,
+        leader: EntityId,
+        slice: Scope,
+        now: u64,
+    ) -> Result<ProjectRecord> {
+        let kind = self.project_type_byte()?;
+        self.with_write_txn(|txn| {
+            let parent: ProjectRecord = record(&self.store, txn, parent_id, kind)?
+                .ok_or(RecordError::InvalidProjectBody("missing parent project"))?;
+            if parent.leader != actor.to_hex() {
+                return Err(RecordError::InvalidProjectBody("only the leader may spawn").into());
+            }
+            if self.store.entities.get(txn, child_id.as_bytes())?.is_some() {
+                return Err(RecordError::InvalidProjectBody("subproject id already exists").into());
+            }
+            let remaining = parent
+                .depth_remaining
+                .min(parent.depth_limit)
+                .checked_sub(1)
+                .ok_or(RecordError::InvalidProjectBody("project depth exhausted"))?;
+            parent.slice.attenuate(slice.clone()).map_err(|_| {
+                RecordError::InvalidProjectBody("subproject slice widens its parent")
+            })?;
+            let mut child = ProjectRecord::new(
+                child_id,
+                Some(parent_id),
+                EntityId::from_hex(&parent.claims_scope_ref)?,
+                leader,
+            );
+            child.slice = slice;
+            child.depth_limit = parent.depth_limit;
+            child.depth_remaining = remaining;
+            child.board.push(actor.to_hex());
+            self.batch_in()
+                .put(
+                    &child_id,
+                    kind,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &encode(&child)?,
+                )
+                .apply(txn)?;
+            Ok(child)
+        })
     }
     pub fn project(&self, id: EntityId) -> Result<Option<ProjectRecord>> {
         record(
