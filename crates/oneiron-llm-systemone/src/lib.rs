@@ -169,7 +169,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 .ok_or_else(invalid)?;
             if probs.len() != options.len()
                 || options.iter().any(|o| !probs.contains_key(o))
-                || !valid_probabilities(probs.values())
+                || !valid_probabilities(probs)
             {
                 return Err(invalid());
             }
@@ -194,7 +194,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 .ok_or_else(invalid)?;
             if probs.len() != request.score_levels.len()
                 || (0..request.score_levels.len()).any(|i| !probs.contains_key(&i.to_string()))
-                || !valid_probabilities(probs.values())
+                || !valid_probabilities(probs)
             {
                 return Err(invalid());
             }
@@ -210,7 +210,7 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
                 return Err(invalid());
             }
             let mapped = min + score / ceiling * (max - min);
-            if !mapped.is_finite() || !(min..=max).contains(&mapped) {
+            if !mapped.is_finite() || (mapped < *min || mapped > *max) {
                 return Err(invalid());
             }
             let p = value
@@ -230,8 +230,8 @@ fn parse_answer(value: &Value, request: &SeatRequest) -> oneiron::LlmResult<Seat
     })
 }
 
-fn valid_probabilities<'a>(probabilities: impl Iterator<Item = &'a Value>) -> bool {
-    probabilities.into_iter().all(|v| {
+fn valid_probabilities(probabilities: &serde_json::Map<String, Value>) -> bool {
+    probabilities.values().all(|v| {
         v.as_f64()
             .is_some_and(|p| p.is_finite() && (0.0..=1.0).contains(&p))
     })
