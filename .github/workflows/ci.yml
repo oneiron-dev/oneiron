@@ -2,13 +2,13 @@ name: CI
 
 # Triggers (2026-09-11): every non-draft pull request, every push to main,
 # and manual dispatch. There is no `paths` filter on purpose. The repository
-# ruleset on main requires the `Checks` and `Test` contexts, and a filtered
-# trigger starts no run at all, so a docs-only PR reported neither context and
-# could never merge (PR #921 had to be merged with --admin). The `changes` job
-# still detects a rust-relevant diff, but it now decides which STEPS run, not
-# whether the run happens. Both required contexts therefore always report, and
-# a docs-only run costs one checkout per job plus the cheap always-on steps
-# (code-map pin, tooling tests, typos, and the cargo-deny policy).
+# ruleset on main requires `Checks` and `Test`; after this split, add
+# `Test (featureless)` to its required checks. A filtered trigger starts no run
+# at all, so a docs-only PR reported neither context and could never merge
+# (PR #921 had to be merged with --admin). The `changes` job detects a
+# rust-relevant diff and decides which STEPS run, not whether the run happens.
+# All three PR contexts report even for docs-only changes: cargo steps skip,
+# while the always-on policy steps in `Checks` still run.
 #
 # Wave affordance: setting the repository variable CI_PAUSED=true skips
 # every job (each job's `if:` checks it). A wave that lands many commits
@@ -46,10 +46,12 @@ concurrency:
 # `self-hosted,macos,arm64` labels; the Arch box, and during a wave a rented
 # box, carry `self-hosted,linux,x64`. Since 2026-09-25 (owner: own machines
 # before a paid CI service) PR CI uses the Linux boxes as well: `changes`,
-# `checks` and `mutation-audit` take any runner, and the required `Test`
-# context is the Linux reference run. The macOS recipe runs on main pushes
-# and dispatch as `Test (macOS)`. A runner runs ONE job at a time, so the
-# cheap checks share a single job (one checkout, one slot).
+# `checks` and `mutation-audit` take any runner. The required `Test` and
+# new `Test (featureless)` contexts run on Linux in parallel: workspace
+# nextest and doctests in the former, both featureless process models in
+# the latter. The macOS recipe runs on main pushes and dispatch as
+# `Test (macOS)`. A runner runs ONE job at a time, so the cheap checks
+# share a single job (one checkout, one slot).
 #
 # Caches are the host's, not the workflow's: each runner's `.env` exports a
 # persistent CARGO_TARGET_DIR (~/ci/target), CARGO_INCREMENTAL=0 and a PATH
@@ -63,25 +65,22 @@ concurrency:
 # ~/ci/tools — a job installs one on first use and every later run reuses it.
 #
 # Gate layout: `changes` detects rust-relevant diffs and gates STEPS, never
-# jobs. `checks` (code-map pin, fmt, clippy workspace + featureless + server,
-# strict rustdoc, tool tests, typos, cargo-deny policy) and `test-linux` (named `Test`, the
-# Linux reference recipe) both run on every non-draft PR, on every push to main and on
-# dispatch, so the two required contexts always report. Inside each, the cargo steps run only when the diff
-# is rust-relevant — always on dispatch and on tags, and fail-open if the
-# detector broke (deny is the dispatch-era gate, ONE-335). A docs-only run is
-# therefore a checkout, a toolchain print and the always-on policy steps, and
-# it goes green on real work rather than on an absent report. Main pushes
-# were added 2026-09-09: PR CI validates the merge result against main AS IT
-# WAS, so a merge burst can land a state no `checks` run ever saw, and a
-# direct push to main saw none at all. The runners are ours, so the honest
-# fix is to re-run the gate on the commit that actually became main rather
-# than to reason about when it is safe to skip. It also gives the advisory
-# policy a second, regular route: a newly published RUSTSEC advisory no
-# longer waits for someone to open a PR. On a main push `test` keeps its
-# rust-diff gate at the job level (fail-open if the detector breaks; tag pushes
-# always run); `test-linux` runs the unfiltered suite on the Linux reference
-# host for main pushes and dispatch only; `package` (publish-integrity) runs
-# on release tags only.
+# jobs, for the PR checks. `checks` (code-map pin, fmt, clippy workspace +
+# featureless + server, strict rustdoc, tool tests, typos, cargo-deny policy),
+# `test-linux` (named `Test`: workspace nextest and doctests), and
+# `test-linux-featureless` (named `Test (featureless)`: shared-process libtest
+# followed by per-test-process nextest) run on every non-draft PR, every push
+# to main, and dispatch. All three contexts report on docs-only PRs, with
+# cargo steps gated on a rust-relevant diff (always on dispatch and tags,
+# fail-open if the detector broke). Always-on policy steps in `Checks` still
+# run. Main pushes were added 2026-09-09: PR CI validates the merge result
+# against main AS IT WAS, so a merge burst can land a state no `checks` run
+# ever saw, and a direct push to main saw none at all. Re-run the gate on the
+# commit that actually became main. It also gives the advisory policy a
+# second, regular route: a newly published RUSTSEC advisory no longer waits
+# for someone to open a PR. On a main push `test` keeps its rust-diff gate at
+# the job level (fail-open if the detector breaks; tag pushes always run);
+# `package` (publish-integrity) runs on release tags only.
 #
 # Every job's `if:` starts with the pause/draft guard from the header,
 #   vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -237,10 +236,8 @@ jobs:
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 90
     needs: changes
-    # PRs: EVERY non-draft one, because `Test` is a required context and a
-    # job that never starts never reports it. The rust-diff gate moved down to
-    # the heavy steps below, so a docs-only PR pays one checkout and a
-    # toolchain print and goes green.
+    # PRs: skipped; the Linux `Test` and `Test (featureless)` contexts
+    # report on every non-draft PR instead. No change to this macOS recipe.
     # Dispatch: always (a manual run is the full gate).
     # Main pushes: rust diffs (the changes job
     # runs the same filter on push), but fail OPEN — if the detector job
@@ -399,15 +396,62 @@ jobs:
       - name: Workspace tests (nextest, full tier, bench included)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast
+      - name: Doctests
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
+
+  test-linux-featureless:
+    name: Test (featureless)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 90
+    needs: changes
+    # Run both featureless process models independently of the Linux workspace
+    # suite. Keep the same PR/main/dispatch gate and rust-diff step gates as
+    # `Test` so even a docs-only PR reports this required context.
+    if: >-
+      always()
+      && vars.CI_PAUSED != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+      && (
+        github.event_name == 'workflow_dispatch'
+        || github.event_name == 'pull_request'
+        || (github.event_name == 'push' && (
+          startsWith(github.ref, 'refs/tags/')
+          || needs.changes.outputs.rust == 'true'
+          || needs.changes.result != 'success'
+        ))
+      )
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - name: Shared compiler cache (sccache 0.15.0)
+        run: |
+          cargo install --locked sccache@0.15.0 --root "$HOME/ci/tools"
+          echo "RUSTC_WRAPPER=$HOME/ci/tools/bin/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$HOME/ci/sccache" >> "$GITHUB_ENV"
+          echo "SCCACHE_CACHE_SIZE=10G" >> "$GITHUB_ENV"
+          "$HOME/ci/tools/bin/sccache" --version
+      - name: Toolchain (host rustup, pinned by rust-toolchain.toml)
+        run: |
+          rustup show active-toolchain
+          cargo --version
+      # nextest is part of the host contract; if a host lacks it, install the
+      # pinned copy under ~/ci/tools once and reuse it on every later run.
+      - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: |
+          echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/ci/tools/bin:$PATH"
+          if ! cargo nextest --version >/dev/null 2>&1; then
+            cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
+          fi
+          cargo nextest --version
       - name: Featureless oneiron library tests
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
-      - name: Doctests
-        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
-        run: cargo test --doc --workspace --exclude oneiron-bench --all-features
 
   package:
     name: Package oneiron-server
