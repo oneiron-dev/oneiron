@@ -11,43 +11,78 @@ version=importlib.metadata.version("pypdfium2")
 def result(status,detail,code):
  print(json.dumps({"reader":"pdfium","version":version,"mode":"parse","status":status,"detail":detail})); raise SystemExit(code)
 
-def gap_is_signature_contents(data, b, c, end, sig, raw):
- # The excluded bytes must be the *same signature object's* hex /Contents,
- # not simply any gap in a parseable signed prefix. PDFium supplies its
- # decoded contents; the raw gap supplies the exact on-disk boundaries.
- if not re.search(rb"/Contents[ \t\n\f\r\x00]*$", data[max(0,b-64):b]):
-  return False
- gap=data[b:c]
- encoded=re.fullmatch(rb"<([0-9a-fA-F \t\n\f\r\x00]+)>", gap)
- if not encoded:
-  return False
- hex_bytes=re.sub(rb"[ \t\n\f\r\x00]", b"", encoded.group(1))
- if not hex_bytes or len(hex_bytes)%2:
-  return False
+def signature_source_offsets(path):
+ # PDFium exposes decoded /Contents and ByteRange but no source offset or
+ # signature dictionary reference. Use the pinned strict PDF parser for the
+ # xref identity only; this is still a structural, not a CMS, check.
+ from pyhanko.pdf_utils.reader import PdfFileReader
+ from pyhanko.pdf_utils.generic import ByteStringObject
+ with open(path,"rb") as stream:
+  reader=PdfFileReader(stream,strict=True)
+  sources=[]
+  for signature in reader.embedded_signatures:
+   ref=signature.sig_object.container_ref
+   if ref is None:
+    return []
+   offset=reader.xrefs.get_historical_ref(ref,signature.signed_revision)
+   source_value=signature.sig_object.raw_get("/Contents")
+   if not isinstance(source_value,ByteStringObject):
+    return []  # Indirect or non-hex contents: no proven source span.
+   sources.append((tuple(signature.byte_range),bytes(source_value),
+                   ref.idnum,ref.generation,offset))
+  return sources
+
+def contents_name(name):
+ # PDF name escapes are legal: /Con#74ents is /Contents.
+ def unescape(match):
+  return bytes.fromhex(match.group(1).decode("ascii"))
+ return re.sub(rb"#([0-9A-Fa-f]{2})",unescape,name)==b"Contents"
+
+def gap_is_signature_contents(data,b,c,end,values,sig,raw,sources):
  size=raw.FPDFSignatureObj_GetContents(sig,None,0)
- if size!=len(hex_bytes)//2:
+ if not size:
   return False
  contents=(ctypes.c_ubyte*size)()
  if raw.FPDFSignatureObj_GetContents(sig,contents,size)!=size:
   return False
  decoded=bytes(contents)
- if decoded!=bytes.fromhex(hex_bytes.decode("ascii")):
+ # An equal blob elsewhere in the file cannot stand in for this signature.
+ owners=[(obj,gen,offset) for rng,blob,obj,gen,offset in sources
+         if rng==tuple(values) and blob==decoded]
+ if len(owners)!=1:
   return False
- # Reject ambiguous copies even if the hex blob uses different case or
- # whitespace. The one matching /Contents string must occupy exactly this gap.
- matches=0
- for item in re.finditer(rb"/Contents[ \t\n\f\r\x00]*(<([0-9a-fA-F \t\n\f\r\x00]+)>)", data[:end]):
-  candidate=re.sub(rb"[ \t\n\f\r\x00]", b"", item.group(2))
-  if len(candidate)==len(hex_bytes) and bytes.fromhex(candidate.decode("ascii"))==decoded:
-   matches+=1
-   if item.span(1)!=(b,c):
-    return False
- return matches==1
+ obj,gen,offset=owners[0]
+ if not isinstance(offset,int) or not 0<=offset<b<c<=end:
+  return False  # E.g. an object stream has no raw dictionary span here.
+ header=re.match(rb"[ \t\n\f\r]*"+str(obj).encode()+rb"[ \t\n\f\r]+"
+                 +str(gen).encode()+rb"[ \t\n\f\r]+obj\b",data[offset:])
+ if not header:
+  return False
+ tail=re.search(rb"\bendobj\b",data[offset:end])
+ if not tail or c>offset+tail.start():
+  return False
+ # Inspect only the xref-selected signature dictionary, never global text.
+ # Accept a single direct hex value named /Contents (including PDF name
+ # escapes), whose source span is precisely the excluded ByteRange interval.
+ matches=[]
+ region=data[offset+header.end():offset+tail.start()]
+ for item in re.finditer(rb"/([A-Za-z0-9#]+)[ \t\n\f\r]*(<([0-9A-Fa-f \t\n\f\r]+)>)",region):
+  if contents_name(item.group(1)):
+   matches.append((offset+header.end()+item.start(2),
+                   offset+header.end()+item.end(2),item.group(3)))
+ if len(matches)!=1 or matches[0][:2]!=(b,c):
+  return False
+ hex_bytes=re.sub(rb"[ \t\n\f\r]",b"",matches[0][2])
+ return bool(hex_bytes) and len(hex_bytes)%2==0 and bytes.fromhex(hex_bytes.decode("ascii"))==decoded
 
 try:
  raw=pdfium.raw
  with open(sys.argv[1],"rb") as f: data=f.read()
  doc=pdfium.PdfDocument(sys.argv[1])
+ try:
+  sources=signature_source_offsets(sys.argv[1])
+ except ModuleNotFoundError as e:
+  doc.close(); result("unavailable","signature source parser unavailable: "+str(e),77)
  required=("FPDF_GetSignatureCount","FPDF_GetSignatureObject","FPDFSignatureObj_GetByteRange","FPDFSignatureObj_GetContents")
  missing=[name for name in required if not hasattr(raw,name)]
  if missing:
@@ -73,7 +108,7 @@ try:
   # parsed revision does not itself prove that the revision was signed.
   well_formed=(a==0 and b>0 and c>b and d>0 and end<=len(data)
                and data[:end].rstrip(b"\0\t\n\f\r ").endswith(b"%%EOF")
-               and gap_is_signature_contents(data,b,c,end,sig,raw))
+               and gap_is_signature_contents(data,b,c,end,vals,sig,raw,sources))
   if not well_formed:
    covers.append(False); continue
   # Parse the exact signed prefix and find this ByteRange in that revision.

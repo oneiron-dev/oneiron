@@ -99,3 +99,51 @@ writer.write(unsigned)
 reverse_first = sign(unsigned.getvalue(), 'ProbeSignature1')
 reverse_last = sign(reverse_first, 'ProbeSignature2')
 (out.parent / 'reverse-fields.pdf').write_bytes(reverse_last)
+
+# An earlier signed revision with an object-identity trap: escaped PDF name
+# /Con#74ents denotes /Contents in signature object 6; the equal literal
+# blob in unrelated object 7 must never count as the signature's gap.
+hex_contents = re.search(rb'/Contents\s*(<[0-9A-Fa-f]+>)', second).group(1)
+placeholder = b'[' + b' '.join([b'0'*10]*4) + b']'
+
+def contents_binding_fixture(name, escaped, decoy):
+    key = b'/Con#74ents' if escaped else b'/Contents'
+    objects = [
+        b'<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>',
+        b'<< /Type /Pages /Count 1 /Kids [3 0 R] >>',
+        b'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>',
+        b'<< /Fields [5 0 R] /SigFlags 3 >>',
+        b'<< /FT /Sig /T (ProbeSignature) /V 6 0 R >>',
+        b'<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached '
+        + key + b' ' + hex_contents + b' /ByteRange ' + placeholder + b' >>',
+        b'<< /Contents ' + hex_contents + b' >>' if decoy else b'<< /Note (control) >>',
+    ]
+    data = bytearray(b'%PDF-1.7\n')
+    offsets = [0]
+    for index, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data += f'{index} 0 obj\n'.encode() + obj + b'\nendobj\n'
+    xref = len(data)
+    data += b'xref\n0 8\n0000000000 65535 f \n'
+    for offset in offsets[1:]:
+        data += f'{offset:010d} 00000 n \n'.encode()
+    data += f'trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n'.encode()
+    end = len(data)
+    actual_b = data.index(hex_contents, offsets[6])
+    gap_b = data.index(hex_contents, offsets[7]) if decoy else actual_b
+    gap_c = gap_b + len(hex_contents)
+    values = [0, gap_b, gap_c, end - gap_c]
+    data = data.replace(placeholder, b'[' + b' '.join(f'{v:010d}'.encode() for v in values) + b']')
+    assert len(data) == end
+    info = len(data)
+    data += b'8 0 obj\n<< /Producer (unsigned metadata revision) >>\nendobj\n'
+    next_xref = len(data)
+    data += (f'xref\n8 1\n{info:010d} 00000 n \ntrailer\n'
+             f'<< /Size 9 /Root 1 0 R /Info 8 0 R /Prev {xref} >>\n'
+             f'startxref\n{next_xref}\n%%EOF\n').encode()
+    (out.parent / name).write_bytes(data)
+
+contents_binding_fixture('normal-contents.pdf', False, False)
+contents_binding_fixture('escaped-normal-contents.pdf', True, False)
+contents_binding_fixture('literal-duplicate.pdf', False, True)
+contents_binding_fixture('escaped-contents-decoy.pdf', True, True)

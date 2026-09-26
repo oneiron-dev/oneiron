@@ -51,6 +51,19 @@ class MultiSignatureReaderTests(unittest.TestCase):
                 self.assertEqual(report["status"], "fail")
                 self.assertIn("signed_revision_coverage", report["detail"])
 
+    def test_pdfium_binds_gap_to_xref_selected_signature_object(self):
+        for fixture in ("normal-contents.pdf", "escaped-normal-contents.pdf"):
+            with self.subTest(fixture=fixture):
+                code, report = self.reader("pdfium", fixture)
+                self.assertEqual(code, 0, report)
+                self.assertIn("signed_revision_coverage=true", report["detail"])
+        for fixture in ("literal-duplicate.pdf", "escaped-contents-decoy.pdf"):
+            with self.subTest(fixture=fixture):
+                code, report = self.reader("pdfium", fixture)
+                self.assertEqual(code, 1, report)
+                self.assertEqual(report["status"], "fail")
+                self.assertIn("signed_revision_coverage=[False]", report["detail"])
+
     def test_final_coverage_does_not_depend_on_field_order(self):
         for name in ("pdfbox", "dss"):
             with self.subTest(reader=name):
