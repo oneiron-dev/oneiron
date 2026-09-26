@@ -1365,6 +1365,99 @@ fn projected_contact_scope_preserves_lattice_containment_and_silent_reuse() {
     );
 }
 
+#[test]
+fn registry_shows_distinct_contact_clearances_and_revokes_only_the_selected_bound() {
+    use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner) = owner_vault();
+    let wide_scope = Scope::top();
+    let mut narrow_scope = Scope::top();
+    narrow_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(crate::claim::base_world_id())]));
+    narrow_scope.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(entity(0x31))]));
+    narrow_scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Private);
+
+    let project = |scope: Scope| {
+        disclosure_grant_from_disclosure_scope(
+            &DisclosureScope::new(scope, "health", 1).expect("clearance"),
+            "contact:doctor",
+            "health",
+        )
+        .expect("projection")
+        .bound()
+        .clone()
+    };
+    let wide = project(wide_scope.clone());
+    let narrow = project(narrow_scope.clone());
+    let wide_ref = wide.digest().to_hex();
+    let narrow_ref = narrow.digest().to_hex();
+    assert_ne!(wide_ref, narrow_ref);
+    vault
+        .create_standing_grant(&owner, wide)
+        .expect("mint wide");
+    vault
+        .create_standing_grant(&owner, narrow)
+        .expect("mint narrow");
+
+    let query = ConsentRegistryQuery::new(16, false);
+    let registry = vault.consent_registry(query).expect("registry");
+    assert_eq!(
+        registry,
+        vault.consent_registry_lens(query).expect("receipt lens")
+    );
+    assert_eq!(registry.rows.len(), 2);
+    let wide_row = registry
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == wide_ref)
+        .expect("wide row");
+    let narrow_row = registry
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == narrow_ref)
+        .expect("narrow row");
+    assert_eq!(wide_row.subject, narrow_row.subject);
+    assert_eq!(wide_row.class, narrow_row.class);
+    assert_ne!(
+        wide_row.selectors, narrow_row.selectors,
+        "review must distinguish the world, project and sensitivity limits"
+    );
+    assert_eq!(wide_row.scope.as_ref(), Some(&wide_scope));
+    assert_eq!(narrow_row.scope.as_ref(), Some(&narrow_scope));
+    assert!(narrow_row.selectors.contains(&format!(
+        "worlds:{}",
+        crate::claim::base_world_id().to_hex()
+    )));
+    assert!(
+        narrow_row
+            .selectors
+            .contains(&format!("projects:{}", entity(0x31).to_hex()))
+    );
+    assert!(
+        narrow_row
+            .selectors
+            .contains(&"sensitivity:private".to_owned())
+    );
+
+    vault
+        .revoke_consent_grant(&owner, &narrow_row.revoke_action.grant_ref)
+        .expect("one-tap narrow revoke");
+    let active = vault.consent_registry(query).expect("active registry");
+    assert_eq!(active.rows.len(), 1);
+    assert_eq!(active.rows[0].grant_ref, wide_ref);
+    let audit = vault
+        .consent_registry(ConsentRegistryQuery::new(16, true))
+        .expect("audit");
+    assert_eq!(audit.rows.len(), 2);
+    let revoked = audit
+        .rows
+        .iter()
+        .find(|row| row.grant_ref == narrow_ref)
+        .expect("revoked row");
+    assert_eq!(revoked.status, ConsentGrantStatus::Revoked);
+    assert_eq!(revoked.scope.as_ref(), Some(&narrow_scope));
+}
+
 /// The consent contract allocates NO entity type and NO type byte: its rows
 /// live under a `vault_meta` prefix owned by this module.
 #[test]
