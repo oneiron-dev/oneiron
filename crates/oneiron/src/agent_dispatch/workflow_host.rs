@@ -64,7 +64,8 @@ impl AgentDispatcher<'_> {
         self.dispatchable_definition_in_txn(&txn, &input.target)?;
         // A leaf placed on another worker, or not yet ready at the recorded
         // clock, is not this host's to run.
-        let ClaimOutcome::Claimed(attempt) = queue.claim_id_in_txn(
+        let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
+            self.vault,
             &mut txn,
             active.id,
             ClaimAttempt {
@@ -90,7 +91,8 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
-        queue.complete_in_txn(
+        crate::ports::JobQueue::port_job_complete(
+            self.vault,
             &mut txn,
             CompleteAttempt {
                 id: status.attempt.id,

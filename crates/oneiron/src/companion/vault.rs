@@ -10,7 +10,7 @@ use super::queue::{
 use super::register::CompanionRegister;
 use super::store::{companion_record_any_id_for_key_in_txn, companion_record_id_for_key_in_txn};
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
 use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
@@ -239,7 +239,8 @@ impl Vault {
         } else {
             let task = CompanionTask::new(CompanionTaskKind::GoodbyeArtifact, ended.key())?;
             let payload = encode_companion_task_payload(&task)?;
-            let outcome = AttemptQueue::new(self).enqueue_in_txn(
+            let outcome = crate::ports::JobQueue::port_job_enqueue(
+                self,
                 &mut wtxn,
                 EnqueueAttempt {
                     kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),

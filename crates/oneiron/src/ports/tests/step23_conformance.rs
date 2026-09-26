@@ -172,6 +172,61 @@ fn jobs<P: Backend>(ports: &P) -> Result<()> {
     ));
     ports.commit(txn)
 }
+/// Point claiming is required by ordered workflows: an unrelated earlier
+/// ready job must remain unleased, on both storage implementations.
+fn point_claim<P: Backend>(ports: &P) -> Result<()> {
+    let mut txn = ports.write()?;
+    let first = ports.port_job_enqueue(
+        &mut txn,
+        EnqueueAttempt {
+            kind: "ports.point".into(),
+            payload: b"first".to_vec(),
+            dedupe_key: None,
+            run_id: None,
+            now: 999,
+        },
+    )?;
+    let second = ports.port_job_enqueue(
+        &mut txn,
+        EnqueueAttempt {
+            kind: "ports.point".into(),
+            payload: b"second".to_vec(),
+            dedupe_key: None,
+            run_id: None,
+            now: 999,
+        },
+    )?;
+    let EnqueueOutcome::Enqueued(first) = first else {
+        panic!("first")
+    };
+    let EnqueueOutcome::Enqueued(second) = second else {
+        panic!("second")
+    };
+    let input = ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 999,
+    };
+    let ClaimOutcome::Claimed(claimed) =
+        ports.port_job_claim_id(&mut txn, second.id, input.clone())?
+    else {
+        panic!("point claim")
+    };
+    assert_eq!(claimed.id, second.id);
+    assert_eq!(claimed.claimed_at, Some(100));
+    let ClaimOutcome::Claimed(other) =
+        ports.port_job_claim(&mut txn, Some("ports.point"), input)?
+    else {
+        panic!("other ready job")
+    };
+    assert_eq!(other.id, first.id);
+    ports.commit(txn)
+}
+#[test]
+fn point_claim_does_not_steal_other_job_lmdb_and_memory() -> Result<()> {
+    let (_temp, vault, memory, _clock) = fixtures();
+    point_claim(&vault)?;
+    point_claim(&memory)
+}
 #[test]
 fn audit_and_reference_counted_blobs_lmdb_and_memory() -> Result<()> {
     let (_temp, vault, memory, _clock) = fixtures();

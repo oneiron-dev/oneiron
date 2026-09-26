@@ -107,19 +107,22 @@ pub(crate) fn verified_blocked_reports(
 /// The single terminal transition. `AlreadyFailed` means a concurrent failure
 /// input won it, so the loser routes NOTHING — no healer dispatch, no card, no
 /// surface — and returns the existing typed transition error.
-pub(super) fn fail_once(
-    queue: &AttemptQueue<'_>,
-    input: &HandleAttemptFailure,
-) -> Result<AttemptRecord> {
-    new_failure(queue.fail(fail_request(input))?)
+pub(super) fn fail_once(vault: &Vault, input: &HandleAttemptFailure) -> Result<AttemptRecord> {
+    new_failure(vault.with_write_txn(|txn| {
+        crate::ports::JobQueue::port_job_fail(vault, txn, fail_request(input))
+    })?)
 }
 
 pub(super) fn fail_once_in_txn(
-    queue: &AttemptQueue<'_>,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     input: &HandleAttemptFailure,
 ) -> Result<AttemptRecord> {
-    new_failure(queue.fail_in_txn(txn, fail_request(input))?)
+    new_failure(crate::ports::JobQueue::port_job_fail(
+        vault,
+        txn,
+        fail_request(input),
+    )?)
 }
 
 fn fail_request(input: &HandleAttemptFailure) -> FailAttempt {

@@ -470,6 +470,46 @@ impl JobQueue for Memory {
         record.updated_at = now;
         Ok(ClaimOutcome::Claimed(record.clone()))
     }
+    fn port_job_claim_id(
+        &self,
+        txn: &mut MemoryWrite,
+        id: AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        if input.lease_owner.is_empty() {
+            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+                "lease owner must not be empty",
+            )));
+        }
+        let now = self.clock.now_recorded_at();
+        let record = txn
+            .jobs
+            .get_mut(id.as_bytes())
+            .ok_or_else(|| transition("claim_id", "missing"))?;
+        if !matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
+            return Err(transition("claim_id", "not_ready"));
+        }
+        if record.scheduled_at.or(record.backoff_until).unwrap_or(0) > input.now.min(now)
+            || record
+                .placement
+                .as_ref()
+                .and_then(|placement| placement.worker.as_deref())
+                .is_some_and(|worker| worker != input.lease_owner)
+        {
+            return Ok(ClaimOutcome::Empty);
+        }
+        record.state = AttemptState::Leased;
+        record.scheduled_at = None;
+        record.backoff_until = None;
+        record.lease_owner = Some(input.lease_owner);
+        record.attempt_count = record
+            .attempt_count
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("attempt count"))?;
+        record.claimed_at = Some(now);
+        record.updated_at = now;
+        Ok(ClaimOutcome::Claimed(record.clone()))
+    }
     fn port_job_complete(
         &self,
         txn: &mut MemoryWrite,

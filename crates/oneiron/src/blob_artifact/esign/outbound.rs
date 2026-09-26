@@ -77,7 +77,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
             for recipient in &state.document.recipients {
                 if self.command.verb == EsignOutboundVerb::Remind && state.recipients[&recipient.id].signing == SigningStatus::Completed { continue; }
                 let payload = serde_json::to_vec(&serde_json::json!({"document": id.to_hex(), "recipient": recipient.id, "dispatch_ref": request.intent_ref})).map_err(|_| invalid("delivery encoding"))?;
-                crate::attempt_queue::AttemptQueue::new(self.vault).enqueue_in_txn(txn, crate::attempt_queue::EnqueueAttempt {
+                crate::ports::JobQueue::port_job_enqueue(self.vault, txn, crate::attempt_queue::EnqueueAttempt {
                     kind: "esign.delivery".into(), payload,
                     dedupe_key: Some(format!("{}:{}", request.intent_ref, recipient.id)),
                     run_id: None, now: self.now,

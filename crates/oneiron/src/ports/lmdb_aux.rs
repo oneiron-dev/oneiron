@@ -254,6 +254,14 @@ impl JobQueue for Vault {
     ) -> Result<ClaimOutcome> {
         AttemptQueue::new(self).port_job_claim(txn, kind, input)
     }
+    fn port_job_claim_id(
+        &self,
+        txn: &mut RwTxn<'_>,
+        id: crate::attempt_queue::AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        AttemptQueue::new(self).port_job_claim_id(txn, id, input)
+    }
     fn port_job_complete(
         &self,
         txn: &mut RwTxn<'_>,
