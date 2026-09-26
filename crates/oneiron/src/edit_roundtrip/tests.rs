@@ -1239,3 +1239,61 @@ fn omitted_and_explicit_internal_modes_are_equivalent_but_external_refuses() {
         "external mode must still fail: {report:?}"
     );
 }
+
+#[test]
+fn defined_function_names_survive_all_formula_write_verbs() {
+    let set_cell = EditOp::SetCell {
+        sheet: "Sheet1".into(),
+        cell: CellRef::new(2, 1),
+        before: None,
+        after: CellValue::Formula {
+            expr: r"\XLOOKUP(1)".into(),
+            cached: None,
+        },
+    };
+    let set_range = EditOp::SetRange {
+        sheet: "Sheet1".into(),
+        range: RangeRef::new(CellRef::new(2, 1), CellRef::new(2, 1)),
+        writes: vec![CellWrite {
+            cell: CellRef::new(2, 1),
+            before: None,
+            after: CellValue::Formula {
+                expr: "名前XLOOKUP(1)".into(),
+                cached: None,
+            },
+        }],
+    };
+    let formula_column = EditOp::AddFormulaColumn {
+        sheet: "Sheet1".into(),
+        column: 3,
+        header: None,
+        formula: "LET(éXLOOKUP,LAMBDA(x,x),éXLOOKUP(1))".into(),
+    };
+    let plan = EditPlan::new(vec![set_cell.clone(), set_range.clone(), formula_column]);
+    let serialized = super::formula::serialize_plan(&plan);
+    assert_eq!(serialized.ops[0], set_cell);
+    assert_eq!(serialized.ops[1], set_range);
+    assert_eq!(
+        serialized.ops[2],
+        EditOp::AddFormulaColumn {
+            sheet: "Sheet1".into(),
+            column: 3,
+            header: None,
+            formula: "_xlfn.LET(éXLOOKUP,_xlfn.LAMBDA(x,x),éXLOOKUP(1))".into(),
+        }
+    );
+}
+
+#[test]
+fn named_lambda_calls_in_changed_worksheet_pass_formula_gate() {
+    let mut parts = base_parts();
+    parts[1].1 = r#"<workbook><sheets><sheet name="Sheet1" sheetId="1"/></sheets><definedNames><definedName name="\XLOOKUP">_xlfn.LAMBDA(x,x)</definedName><definedName name="名前XLOOKUP">_xlfn.LAMBDA(x,x)</definedName></definedNames></workbook>"#.as_bytes();
+    let before = opc::read(&xlsx_bytes(&parts)).unwrap();
+    let mut after = before.clone();
+    after.upsert(SHEET_PART, r#"<worksheet><sheetData><row r="1"><c r="A1"><f>\XLOOKUP(1)+名前XLOOKUP(2)</f><v>3</v></c></row></sheetData></worksheet>"#.as_bytes().to_vec());
+    let report = validate(&before, &after, OfficeFormat::Xlsx);
+    assert!(
+        report.ok,
+        "valid named LAMBDA calls must not be rewritten: {report:?}"
+    );
+}

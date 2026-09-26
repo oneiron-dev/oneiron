@@ -236,13 +236,27 @@ pub(super) fn prefix_functions(formula: &str) -> String {
             }
             continue;
         }
-        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+        // Excel names can begin with a Unicode letter, underscore or
+        // backslash; subsequent letters and digits are not ASCII-only. Read
+        // the *whole* identifier so a built-in suffix of a defined LAMBDA
+        // name (e.g. \XLOOKUP or 名前XLOOKUP) is never treated as a call.
+        let ch = formula[i..]
+            .chars()
+            .next()
+            .expect("nonempty formula suffix");
+        if ch.is_alphabetic() || matches!(ch, '_' | '\\') {
             let start = i;
-            i += 1;
-            while i < bytes.len()
-                && (bytes[i].is_ascii_alphanumeric() || matches!(bytes[i], b'_' | b'.'))
-            {
-                i += 1;
+            i += ch.len_utf8();
+            while i < bytes.len() {
+                let next = formula[i..]
+                    .chars()
+                    .next()
+                    .expect("nonempty identifier suffix");
+                if next.is_alphanumeric() || matches!(next, '_' | '.') {
+                    i += next.len_utf8();
+                } else {
+                    break;
+                }
             }
             let name = &formula[start..i];
             let mut next = i;
@@ -272,7 +286,7 @@ pub(super) fn prefix_functions(formula: &str) -> String {
                 }
             }
         } else {
-            i += 1;
+            i += ch.len_utf8();
         }
     }
     out.push_str(&formula[copy_from..]);
@@ -282,6 +296,23 @@ pub(super) fn prefix_functions(formula: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::prefix_functions;
+
+    #[test]
+    fn defined_names_are_consumed_as_whole_identifiers() {
+        for name in [
+            r"\XLOOKUP(1)",
+            "名前XLOOKUP(1)",
+            "éXLOOKUP(1)",
+            "MYXLOOKUP(1)",
+        ] {
+            assert_eq!(prefix_functions(name), name);
+        }
+        let source = "LET(éXLOOKUP,LAMBDA(x,x),éXLOOKUP(1))";
+        let expected = "_xlfn.LET(éXLOOKUP,_xlfn.LAMBDA(x,x),éXLOOKUP(1))";
+        assert_eq!(prefix_functions(source), expected);
+        assert_eq!(prefix_functions(expected), expected);
+        assert_eq!(prefix_functions("XLOOKUP(1)"), "_xlfn.XLOOKUP(1)");
+    }
 
     #[test]
     fn structured_headers_are_not_functions_even_when_nested_or_escaped() {
