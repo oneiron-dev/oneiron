@@ -3,9 +3,86 @@
 use super::fixtures as support;
 use super::*;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
-use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, WriteActor};
+use crate::{EdgeActorClass, EdgeKind, EntityId, ErrorKind, Vault, WriteActor};
 use proptest::prelude::*;
 use support::*;
+
+#[test]
+fn dag_test_policy_keeps_the_default_manifest() {
+    let (_dir, vault, _conv, actor) = fixture();
+    grant(&vault, actor, false);
+    let id = crate::gate::default_policy_manifest_id().unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        crate::gate::default_policy_manifest().unwrap()
+    );
+}
+
+#[test]
+fn dag_test_policy_refuses_an_actor_the_vault_does_not_hold() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let missing = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
+    assert!(
+        crate::conversation_dag::test_support::put_dag_test_policy(&vault, missing, true).is_err()
+    );
+    let mismatch = WriteActor::new(actor.entity_ref(), EdgeActorClass::System);
+    assert!(
+        crate::conversation_dag::test_support::put_dag_test_policy(&vault, mismatch, true).is_err()
+    );
+}
+
+#[test]
+fn dag_test_policy_refuses_a_manifest_id_owned_by_an_actor() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "test-id", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": []
+    });
+    assert!(
+        crate::conversation_dag::test_support::put_test_policy_manifest(
+            &vault,
+            actor,
+            actor.entity_ref(),
+            &policy,
+        )
+        .is_err()
+    );
+    assert_eq!(
+        vault.get_entity_type(&actor.entity_ref()).unwrap(),
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+}
+
+#[test]
+fn dag_test_policy_refuses_undecodable_policy_before_writing() {
+    let (_dir, vault, _conv, actor) = fixture();
+    let id = EntityId::now();
+    assert!(
+        crate::conversation_dag::test_support::put_test_policy_manifest(
+            &vault,
+            actor,
+            id,
+            &serde_json::Value::Null,
+        )
+        .is_err()
+    );
+    assert_eq!(vault.get_entity_type(&id).unwrap(), None);
+    assert!(
+        !vault
+            .manifest_contributions()
+            .unwrap()
+            .iter()
+            .any(|row| row.id == id.to_hex())
+    );
+}
 
 #[test]
 fn forks_rewrite_canonical_and_preserve_old_branch_and_pages() {
@@ -493,6 +570,78 @@ fn branch_scope_with_forks_includes_siblings_but_not_retained_sub_sessions() {
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }
 
+// The cycle is disconnected from the only root but remains within the same
+// conversation. This reaches the Kahn walk, not the multiple-roots guard.
+fn legacy_conversations_with_cycle() -> (tempfile::TempDir, Vault, EntityId, EntityId, EntityId) {
+    let (dir, vault, _unused, _actor) = fixture();
+    let cyclic = EntityId::from_bytes([0x01; 16]).unwrap();
+    let healthy = EntityId::from_bytes([0xfe; 16]).unwrap();
+    let root = EntityId::now();
+    let a = EntityId::now();
+    let b = EntityId::now();
+    let healthy_root = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &cyclic,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("cyclic"),
+        )
+        .put(
+            &healthy,
+            ENTITY_TYPE_CONVERSATION,
+            time(1),
+            1,
+            &body("healthy"),
+        )
+        .put(&root, ENTITY_TYPE_TURN, time(1), 1, &body("root"))
+        .put(&a, ENTITY_TYPE_TURN, time(2), 2, &body("cycle-a"))
+        .put(&b, ENTITY_TYPE_TURN, time(3), 3, &body("cycle-b"))
+        .put(
+            &healthy_root,
+            ENTITY_TYPE_TURN,
+            time(1),
+            1,
+            &body("healthy-root"),
+        )
+        .edge_checked(&root, &cyclic, 1.0)
+        .edge_checked(&a, &cyclic, 1.0)
+        .edge_checked(&b, &cyclic, 1.0)
+        .edge_checked(&healthy_root, &healthy, 1.0)
+        .edge_with_value_fields(&a, EdgeKind::Parent, &b, super::writes::value(2))
+        .edge_with_value_fields(&b, EdgeKind::Parent, &a, super::writes::value(3))
+        .commit()
+        .unwrap();
+    (dir, vault, cyclic, healthy, healthy_root)
+}
+
+#[test]
+fn maintenance_skips_a_cyclic_conversation_and_migrates_the_rest() {
+    let (_dir, vault, cyclic, healthy, healthy_root) = legacy_conversations_with_cycle();
+    assert!(matches!(
+        vault.migrate_conversation_dag(&cyclic).unwrap_err(),
+        crate::error::Error::Record(crate::error::RecordError::InvalidConversationDag(reason))
+            if reason.contains("cycle")
+    ));
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_migrated, 1);
+    assert_eq!(vault.head(&healthy).unwrap(), Some(healthy_root));
+    // The skipped write transaction did not adopt HEAD or mark the cyclic DAG.
+    assert!(matches!(
+        vault.migrate_conversation_dag(&cyclic).unwrap_err(),
+        crate::error::Error::Record(crate::error::RecordError::InvalidConversationDag(_))
+    ));
+}
+
+#[test]
+fn maintenance_names_the_skipped_conversation() {
+    let (_dir, vault, cyclic, _healthy, _healthy_root) = legacy_conversations_with_cycle();
+    let report = vault.maintain().migrate_conversation_dags().run().unwrap();
+    assert_eq!(report.conversation_dags_skipped_invalid, vec![cyclic]);
+}
+
 #[test]
 fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
     let (_dir, vault, conv, _actor) = fixture();
@@ -541,7 +690,7 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
     }
     let report = vault.maintain().migrate_conversation_dags().run().unwrap();
     assert_eq!(report.conversation_dags_migrated, 2);
-    assert_eq!(report.conversation_dags_skipped_invalid, 1);
+    assert_eq!(report.conversation_dags_skipped_invalid, vec![conv]);
     for (conversation, turn) in healthy {
         assert_eq!(vault.head(&conversation).unwrap(), Some(turn));
     }
@@ -563,7 +712,7 @@ fn migration_rejects_disconnected_received_roots_without_adopting_the_forest() {
         .unwrap();
     let report = vault.maintain().migrate_conversation_dags().run().unwrap();
     assert_eq!(report.conversation_dags_migrated, 1);
-    assert_eq!(report.conversation_dags_skipped_invalid, 0);
+    assert!(report.conversation_dags_skipped_invalid.is_empty());
     assert!(!vault.migrate_conversation_dag(&conv).unwrap());
     assert_eq!(
         vault

@@ -3,21 +3,13 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
-    pub fn tasks_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
-        self.inner
-            .agent_verb("tasks.ack", input)
-            .map_err(facade_error)
+    pub fn cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("cancel", input).map_err(facade_error)
     }
     #[napi]
-    pub fn tasks_cancel(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+    pub fn describe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
-            .agent_verb("tasks.cancel", input)
-            .map_err(facade_error)
-    }
-    #[napi]
-    pub fn tasks_check(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
-        self.inner
-            .agent_verb("tasks.check", input)
+            .agent_verb("describe", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -27,9 +19,9 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
-    pub fn tasks_expand(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+    pub fn tasks_update(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
-            .agent_verb("tasks.expand", input)
+            .agent_verb("tasks.update", input)
             .map_err(facade_error)
     }
     #[napi]

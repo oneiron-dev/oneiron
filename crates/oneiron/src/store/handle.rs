@@ -482,6 +482,11 @@ pub(super) fn seed_default_policy_manifest_in_txn(
 }
 
 impl Store {
+    /// Upload staging shares the registered vault root and its storage budget.
+    pub(crate) fn lfs_staging_directory(&self) -> std::path::PathBuf {
+        self.owner._registered_path.path.join("lfs-staging")
+    }
+
     /// Captures one segment-aware snapshot and applies it to every database
     /// accessor in this logical read transaction.
     pub(crate) fn session_view(

@@ -174,7 +174,9 @@ mod cb_x {
             .map(str::to_owned)
             .collect::<Vec<_>>();
         expected.sort();
-        assert_eq!(expected.len(), 25);
+        // 24 since ARCH-0067's 2026-09-22 amendment folded `tasks.check` and
+        // `tasks.expand` into the one `describe` row.
+        assert_eq!(expected.len(), 24);
         assert_eq!(variant.verb_table, expected);
         assert_eq!(variant.generated_tool_names, expected);
         assert_eq!(variant.hand_written_tools, 0);

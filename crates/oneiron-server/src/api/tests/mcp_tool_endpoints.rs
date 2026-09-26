@@ -454,7 +454,7 @@ async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
             "id": id,
             "method": "tools/call",
             "params": {
-                "name": "tasks.check",
+                "name": "describe",
                 "arguments": mcp_merge_args(
                     mcp_endpoint_envelope(actor_ref, "read_tasks"),
                     json!({ "cache": { "ttl_ms": "__oneiron_raw_ttl__" } }),
@@ -485,7 +485,7 @@ async fn mcp_tool_call_preserves_request_number_text_at_advertised_integers() {
     );
     assert_eq!(
         body["result"]["structuredContent"]["tool"],
-        Value::from("tasks.check")
+        Value::from("describe")
     );
 
     // One above the ceiling, and a value that is not an integer at all, are
@@ -524,7 +524,7 @@ async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "verb-1",
-            "tasks.check",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_tasks"),
                 json!({ "page": { "limit": 7 }, "cache": { "ttl_ms": 60_000 } }),
@@ -539,9 +539,9 @@ async fn mcp_tool_first_verb_call_carries_scope_page_and_cache_metadata() {
         "unexpected MCP error: {body:?}"
     );
     let structured = &body["result"]["structuredContent"];
-    assert_eq!(structured["tool"], Value::from("tasks.check"));
-    assert_eq!(structured["family"], Value::from("tasks"));
-    assert_eq!(structured["verb"], Value::from("check"));
+    assert_eq!(structured["tool"], Value::from("describe"));
+    assert_eq!(structured["family"], Value::from("handle"));
+    assert_eq!(structured["verb"], Value::from("describe"));
     assert_eq!(structured["output"]["kind"], Value::from("tasks_section"));
     assert_mcp_result_metadata(&structured["meta"]);
     assert_eq!(structured["meta"]["page"]["granted"], Value::from(7));

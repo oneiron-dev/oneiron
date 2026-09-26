@@ -158,7 +158,7 @@ impl Vault {
                 crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
             if existing.scope != read_grant.scope
                 || existing.principal_ref != desired.actor_ref
-                || !existing.is_active()
+                || existing.effective_status_at(now) != AccessGrantStatus::Active
             {
                 return Err(invalid_autonomy());
             }
@@ -429,7 +429,8 @@ impl Vault {
         if identity_ref != mode.identity_ref
             || grant.principal_ref != actor
             || !crate::federation::grant_scope::admits_preset(&grant.authority_scope, "read")
-            || !grant.is_active()
+            || grant.effective_status_at(self.store.clock.now_recorded_at())
+                != AccessGrantStatus::Active
             || grant.created_at > at
         {
             return Err(invalid_autonomy());

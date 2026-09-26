@@ -145,6 +145,11 @@ pub(super) fn execute_temporal(
         let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
             continue;
         };
+        if config.query_occurred_range.is_some_and(|(start, end)| {
+            !super::support::intervals_overlap(meta.occurred_start, meta.occurred_end, start, end)
+        }) {
+            continue;
+        }
         scored.push(score_temporal_candidate(id, meta, config, &scoring));
     }
 
@@ -196,13 +201,27 @@ pub(super) fn collect_temporal_candidates(
 
     match config.anchor_mode {
         TemporalAnchorMode::Occurred => {
-            collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
+            collect_occurred_candidates(
+                store,
+                rtxn,
+                occurred_collection,
+                metadata_cache,
+                config.query_occurred_range,
+                out,
+            )?;
         }
         TemporalAnchorMode::Learned => {
             collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
         }
         TemporalAnchorMode::Auto | TemporalAnchorMode::Both => {
-            collect_occurred_candidates(store, rtxn, occurred_collection, out)?;
+            collect_occurred_candidates(
+                store,
+                rtxn,
+                occurred_collection,
+                metadata_cache,
+                config.query_occurred_range,
+                out,
+            )?;
             collect_index_candidates(store, TimeAxis::Learned, rtxn, learned_collection, out)?;
         }
     }
@@ -223,6 +242,16 @@ pub(super) fn collect_temporal_candidates(
             let Some(meta) = metadata_cache.get(store, rtxn, &id)? else {
                 continue;
             };
+            if config.query_occurred_range.is_some_and(|(start, end)| {
+                !super::support::intervals_overlap(
+                    meta.occurred_start,
+                    meta.occurred_end,
+                    start,
+                    end,
+                )
+            }) {
+                continue;
+            }
             spanners.push(score_temporal_candidate(id, meta, config, scoring));
 
             if spanners.len() > trim_threshold {
@@ -317,10 +346,95 @@ fn collect_occurred_candidates(
     store: &Store,
     rtxn: &RoTxn<'_>,
     collection: TemporalIndexCollectionContext,
+    metadata_cache: &mut EntityMetadataCache,
+    query_range: Option<(u64, u64)>,
     out: &mut HashSet<EntityId>,
 ) -> Result<()> {
-    collect_index_candidates(store, TimeAxis::OccurredStart, rtxn, collection, out)?;
-    collect_index_candidates(store, TimeAxis::OccurredEnd, rtxn, collection, out)?;
+    for axis in [TimeAxis::OccurredStart, TimeAxis::OccurredEnd] {
+        if let Some(range) = query_range {
+            // Widened temporal scans include nearby non-overlapping rows.
+            // Do not let them consume a scan cap before the occurred filter.
+            collect_query_occurred_candidates(
+                store,
+                axis,
+                rtxn,
+                collection,
+                metadata_cache,
+                range,
+                out,
+            )?;
+        } else {
+            collect_index_candidates(store, axis, rtxn, collection, out)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_query_occurred_candidates(
+    store: &Store,
+    axis: TimeAxis,
+    rtxn: &RoTxn<'_>,
+    collection: TemporalIndexCollectionContext,
+    metadata_cache: &mut EntityMetadataCache,
+    query_range: (u64, u64),
+    out: &mut HashSet<EntityId>,
+) -> Result<()> {
+    let TemporalIndexCollectionContext {
+        window_start,
+        window_end,
+        anchor_mid,
+        cap,
+    } = collection;
+    if cap == 0 || window_start > window_end {
+        return Ok(());
+    }
+    let forward = store.port_entity_timeline(
+        rtxn,
+        TimelineQuery {
+            axis,
+            start: std::ops::Bound::Included(anchor_mid),
+            end: std::ops::Bound::Included(window_end),
+            ..Default::default()
+        },
+    )?;
+    let backward = store.port_entity_timeline(
+        rtxn,
+        TimelineQuery {
+            axis,
+            start: std::ops::Bound::Included(window_start),
+            end: std::ops::Bound::Excluded(anchor_mid),
+            reverse: true,
+            ..Default::default()
+        },
+    )?;
+    let mut rows = Vec::<TemporalIndexRow>::with_capacity(cap.min(MAX_TEMPORAL_SEEK_BUFFER));
+    let trim_threshold = cap.saturating_mul(2).max(1);
+    for entry in forward.chain(backward) {
+        let time = entry?;
+        let Some(meta) = metadata_cache.get(store, rtxn, &time.id)? else {
+            continue;
+        };
+        if !super::support::intervals_overlap(
+            meta.occurred_start,
+            meta.occurred_end,
+            query_range.0,
+            query_range.1,
+        ) {
+            continue;
+        }
+        rows.push(TemporalIndexRow {
+            timestamp: time.timestamp,
+            id: time.id,
+        });
+        if rows.len() > trim_threshold {
+            rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
+            rows.truncate(cap);
+        }
+    }
+    rows.sort_unstable_by(|a, b| compare_temporal_index_rows(a, b, anchor_mid));
+    for row in rows.into_iter().take(cap) {
+        out.insert(row.id);
+    }
     Ok(())
 }
 

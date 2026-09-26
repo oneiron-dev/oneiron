@@ -19,7 +19,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/access_grant/codec.rs` | src | m | 2 fn · 2 const · 21 crate-vis | — | Pinned AccessGrant body/scope key sets and fail-closed MessagePack codec |
 | `src/access_grant/context.rs` | src | m | 3 struct · 3 fn · 1 crate-vis | AccessContext, AccessLimited, GrantedData | Relationship read authority built from live grants and stored membership evidence |
 | `src/access_grant/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | AccessGrant control-plane record substrate |
-| `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 19 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
+| `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 18 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | s | 1 struct · 1 enum · 3 fn | AccessRequest, AccessRequestStatus | Durable request/response lifecycle |
 | `src/access_grant/tests.rs` | test | L | — | — | — |
 | `src/access_grant/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
@@ -151,7 +151,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 2 const · 6 crate-vis | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
 | `src/authority/constants.rs` | src | s | 2 type · 15 const · 72 crate-vis | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 2 fn · 11 crate-vis | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
-| `src/authority/device.rs` | src | s | 1 struct · 7 crate-vis | DeviceAuthority | Device authority material and the folded-device consent predicates |
+| `src/authority/device.rs` | src | s | 1 struct · 8 crate-vis | DeviceAuthority | Device authority material and the folded-device consent predicates |
 | `src/authority/entry_transition.rs` | src | m | 4 crate-vis | — | Per-entry state transition and the consent / quorum / widen-delay predicates |
 | `src/authority/federation_pact.rs` | src | m | 3 struct · 4 enum · 5 fn · 2 crate-vis | FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, FederationPactState, FederationPactStatus | Federation lifecycle and pact types |
 | `src/authority/first_seen_clock.rs` | src | s | 17 crate-vis | — | First-seen sidecar keys and the per-vault logical observation clock |
@@ -957,7 +957,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/reply.rs` | src | s | 2 struct · 3 fn | ReplyStrip, Thread | Revision-bound reply strips |
 | `src/conversation_dag/scopes.rs` | src | s | 1 fn · 1 crate-vis | — | Exact, capped scope resolution over a single transaction snapshot |
 | `src/conversation_dag/test_support.rs` | src | s | 2 fn | — | Test-only policy fixture shared by engine and HTTP acceptance tests |
-| `src/conversation_dag/tests/mod.rs` | test | m | — | — | Observable DAG invariants, legacy adoption and rejection atomicity |
+| `src/conversation_dag/tests/mod.rs` | test | L | — | — | Observable DAG invariants, legacy adoption and rejection atomicity |
 | `src/conversation_dag/tests/replay.rs` | test | m | — | — | Observable session-carrier replay without exporting local membership indexes |
 | `src/conversation_dag/types.rs` | src | s | 6 struct · 1 enum | AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector | Door inputs and snapshot results |
 | `src/conversation_dag/writes.rs` | src | m | 5 fn · 3 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
@@ -1301,7 +1301,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/fusion/tests.rs` | test | m | — | — | — |
 | `src/gate/auto_signals.rs` | src | s | 1 crate-vis | — | Receipt-derived rate and failure streak supplied to the existing auto checker |
 | `src/gate/bundle.rs` | src | m | 4 fn · 5 const | — | — |
-| `src/gate/ceiling.rs` | src | m | 36 crate-vis | — | — |
+| `src/gate/ceiling.rs` | src | m | 37 crate-vis | — | — |
 | `src/gate/confirm.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 const · 10 crate-vis | CriticalWriteConfirmBinding, CriticalWriteConfirmResolution | — |
 | `src/gate/constants.rs` | src | s | 77 crate-vis | — | — |
 | `src/gate/decision.rs` | src | m | 28 crate-vis | — | — |
@@ -1329,7 +1329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/foreign_agent.rs` | src | m | 3 fn · 1 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
-| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 5 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
+| `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 6 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
 | `src/gate/mod.rs` | src | s | 3 re-export · 25 crate-vis | — | DEC-0005 Gate policy manifest resolver |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
@@ -1360,7 +1360,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/tests/external_effect_grants.rs` | test | m | — | — | External-effect grants: scoped, standing, and outbound MCP grants plus counterparty contacts |
 | `src/gate/tests/gate_door.rs` | test | L | — | — | Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance |
 | `src/gate/tests/isolation_persona.rs` | test | m | — | — | Persona-core isolation: isolated classes, session floor, and replay and source rules |
-| `src/gate/tests/manifest_authenticity.rs` | test | s | — | — | — |
+| `src/gate/tests/manifest_authenticity.rs` | test | m | — | — | — |
 | `src/gate/tests/manifest_auto.rs` | test | m | — | — | Manifest-granted auto write: first-party, dreamer, and foreign tool output |
 | `src/gate/tests/mod.rs` | test | s | — | — | — |
 | `src/gate/tests/pending_lookup.rs` | test | s | — | — | — |
@@ -1773,7 +1773,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/lfs/scanner.rs` | src | s | 2 crate-vis | — | Bounded credential scanning across transport and content-defined boundaries |
 | `src/origin/lfs/store.rs` | src | m | 2 struct · 12 fn · 5 const · 7 crate-vis | LfsPutOutcome, VaultLfsObject | Object plane: Vault adapter methods, shared expectation gate, key builders, record codec |
 | `src/origin/lfs/tests.rs` | test | m | — | — | Inline contract suite: digest/round-trip, put/dedup/refusal, fail-closed corruption, ref attach/detach… |
-| `src/origin/lfs/upload.rs` | src | s | 1 fn · 1 crate-vis | — | Bounded streaming ingress: validate before publishing, then commit small chunk transactions |
+| `src/origin/lfs/upload.rs` | src | s | 2 fn · 1 crate-vis | — | Bounded streaming ingress: validate before publishing, then commit small chunk transactions |
 | `src/origin/mod.rs` | src | s | 8 mod · 1 re-export | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `src/origin/publication/mod.rs` | src | s | 2 re-export | — | The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910) |
 | `src/origin/publication/publication_codec.rs` | src | m | 5 fn · 16 crate-vis | — | Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders |
@@ -2238,7 +2238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/settings/model_versioning/tests.rs` | test | s | — | — | — |
 | `src/settings/tests.rs` | test | s | — | — | — |
 | `src/share.rs` | src | m | 3 struct · 5 fn · 10 crate-vis | ResolvedShare, Share, ShareViewerScope | Revocable brief read grants |
-| `src/share/tests.rs` | test | m | 1 crate-vis | — | — |
+| `src/share/tests.rs` | test | m | 2 crate-vis | — | — |
 | `src/share/tests/recipient_class.rs` | test | m | — | — | — |
 | `src/side_table/codec.rs` | src | s | 8 crate-vis | — | The value codecs a side table may declare |
 | `src/side_table/decls/mod.rs` | src | s | 4 crate-vis | — | The declaration list: every prefix a module keeps rows under in `vault_meta` or `sync_state`, one entry each |
@@ -2282,7 +2282,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/admission_view.rs` | src | m | 1 struct · 1 enum · 8 fn · 3 crate-vis | HubActivationAsk, HubAskSurface | Engine-computed install asks: trust changes presentation, never authorization |
 | `src/skill_hub/archive.rs` | src | s | 1 crate-vis | — | Offline archive import is another Candidate birth, never an activation ticket |
 | `src/skill_hub/bootstrap.rs` | src | s | 6 crate-vis | — | Build-embedded bootstrap skills; import and activation commit together on first open |
-| `src/skill_hub/bootstrap/tests.rs` | test | s | — | — | — |
+| `src/skill_hub/bootstrap/tests.rs` | test | m | — | — | — |
 | `src/skill_hub/doors.rs` | src | m | 2 enum · 8 fn · 1 const · 4 crate-vis | HubDependencyResolution, HubSyncDisposition | — |
 | `src/skill_hub/folder.rs` | src | s | 4 crate-vis | — | Strict portable SKILL.md frontmatter subset used by real hub transports |
 | `src/skill_hub/fork_source.rs` | src | s | 1 crate-vis | — | A fork copies real files and edits source identity before hashing the new tree |
@@ -2361,7 +2361,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/sidecar.rs` | src | s | 5 crate-vis | — | Pending-deletion recovery sidecar Store methods and codec |
 | `src/store/gate_decision/types.rs` | src | s | 4 struct · 3 fn · 14 crate-vis | GateDecisionId, GateDecisionRecord, GateSystemNoticeAction, GateSystemNoticeRecord | Gate-decision ledger record shapes, id type, and version and bound consts |
 | `src/store/gate_decision/vet.rs` | src | m | 5 crate-vis | — | Gate-decision record, notice, and receipt-reason validators |
-| `src/store/handle.rs` | src | m | 4 struct · 10 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
+| `src/store/handle.rs` | src | m | 4 struct · 11 crate-vis | RawDatabases, Store, StoreCore, StoreOwner | The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]… |
 | `src/store/key_encoding.rs` | src | s | 3 fn · 4 crate-vis | — | Foundational byte-layout codecs with crate-wide fan-out: the edge / temporal / type index key encoders and… |
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/mod.rs` | src | s | 1 mod · 11 re-export · 8 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
@@ -2533,7 +2533,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_authority.rs` | src | m | 2 struct · 1 enum · 3 fn · 2 const · 6 crate-vis | TaskAuthorityFact, TaskAuthorityFactKind, TaskAuthorityState | Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities |
 | `src/task_verb/ask_facade.rs` | src | m | 6 fn · 2 crate-vis | — | Async scope-authority asks over existing consult TASKs |
 | `src/task_verb/ask_outcome_tests.rs` | test | m | — | — | — |
-| `src/task_verb/ask_record.rs` | src | m | 18 crate-vis | — | Protected replicated ask facts |
+| `src/task_verb/ask_record.rs` | src | m | 19 crate-vis | — | Protected replicated ask facts |
+| `src/task_verb/ask_record/tests.rs` | test | s | — | — | — |
 | `src/task_verb/ask_settlement.rs` | src | m | 6 crate-vis | — | Atomic ask cutoffs and the fixed human-word reducers |
 | `src/task_verb/ask_tests.rs` | test | L | — | — | — |
 | `src/task_verb/ask_types.rs` | src | m | 16 struct · 14 enum · 5 fn · 2 crate-vis | AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide, TaskAskDecision, TaskAskDefault +22 | Typed asks: response coverage, decision reducers, and policy-bound revisions |
@@ -2559,12 +2560,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/owner_index_tests.rs` | test | s | — | — | — |
 | `src/task_verb/presence_scan.rs` | src | m | 15 crate-vis | — | — |
 | `src/task_verb/production_ports_tests.rs` | test | s | — | — | — |
-| `src/task_verb/query_facade.rs` | src | m | 6 fn · 2 crate-vis | — | — |
+| `src/task_verb/query_facade.rs` | src | m | 5 fn · 2 crate-vis | — | — |
 | `src/task_verb/rate_limit.rs` | src | s | 1 fn · 8 crate-vis | — | — |
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 1 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
-| `src/task_verb/route_receipts.rs` | src | s | 5 struct · 4 enum · 3 fn · 2 const · 1 crate-vis | TaskAckReceipt, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskResultInput, TaskRouteLane, TaskRouteOutcome +1 | — |
+| `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 1 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/scheduling.rs` | src | s | 3 crate-vis | — | Live TASK dependency and symbol readiness at every attempt-claim door |
-| `src/task_verb/sdk.rs` | src | s | 13 struct | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest, RoomEntry +5 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/task_verb/sdk.rs` | src | s | 14 struct | BoardExpandRequest, BoardRefreshRequest, BoardSubscriptionRequest, DescribeRequest, EmptyRequest, RecallRequest, ReceiptsRequest, RoomClaimRequest +6 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/task_verb/sdk_generated.rs` | src | m | 30 fn | — | — |
 | `src/task_verb/symbol_lease.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | SymbolLease, SymbolLeaseOutcome | Node-local time-held symbol declarations and atomic queue ordering |
 | `src/task_verb/symbol_lease_tests.rs` | test | s | — | — | — |
@@ -2581,7 +2582,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/tests/magistrate_route_result.rs` | test | L | — | — | Task verb tests: Magistrate verdicts and provenance, counter and terminal projection, assignee routing… |
 | `src/task_verb/tests/mod.rs` | test | s | 1 crate-vis | — | — |
 | `src/task_verb/tests/presence_scan.rs` | test | m | — | — | Task verb tests: Presence paging, scan caps, board-scan resilience and dangling-job rendering |
-| `src/task_verb/tests/support.rs` | test | L | 59 crate-vis | — | Shared fixtures and helpers for the task_verb tests |
+| `src/task_verb/tests/support.rs` | test | L | 60 crate-vis | — | Shared fixtures and helpers for the task_verb tests |
 | `src/task_verb/verb_catalog.rs` | src | s | 1 enum · 11 fn · 1 const | AgentVerb | — |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 enum · 6 fn · 2 crate-vis | TaskAssignee, TaskKind, TaskTtl | — |
 | `src/task_verb/wave_port.rs` | src | m | 1 struct · 3 fn | VaultWaveTaskPort | Vault-backed, atomic wave plan application through the ordinary TASK doors |
@@ -2801,6 +2802,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/relay_attestation_compilefail/c_byo_variant_does_not_exist.rs` | test | s | — | — | (c) External-privacy proof ONLY: the hosted-edge domain type is private to the crate, so it cannot even be… |
 | `tests/secret_custody_compilefail/a_metadata_has_no_value_field.rs` | test | s | — | — | (a) `SecretCustodyMetadata` — the value-less projection returned by `Vault::get_secret_metadata` and… |
 | `tests/secret_custody_compilefail/b_record_struct_literal_private_value_bytes.rs` | test | s | — | — | (b) `SecretCustodyRecord` cannot be struct-literalled out of crate: both `value_bytes` and `manifest_ref`… |
+| `tests/temporal_query_window.rs` | test | s | — | — | Query-derived occurred windows must not lose their eligible hit to learned-time candidates |
 | `tests/type_boundaries_compilefail.rs` | test | s | — | — | Compile-fail proofs of three type boundaries from external-crate positions |
 | `tests/vault_read_parity.rs` | test | L | — | — | ONE-1433 adapter parity suite: one read contract whose behavior does not change with deployment topology |
 | `tests/voice_segment_sync.rs` | test | s | — | — | The recorder's engine contract (VOX-08) |

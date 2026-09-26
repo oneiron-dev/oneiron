@@ -181,7 +181,9 @@ pub(super) fn scrub_local_claim_carriers(
 ) -> Result<bool> {
     let entities = doc.get_map("entities");
     let edges = doc.get_map("edges");
-    let (mut keys, ids) = withheld_claim_carriers(vault, &entities, &edges)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let (mut keys, ids) = withheld_claim_carriers(vault, &rtxn, &entities, &edges)?;
+    drop(rtxn);
     if keys.is_empty() && ids.is_empty() {
         return Ok(false);
     }

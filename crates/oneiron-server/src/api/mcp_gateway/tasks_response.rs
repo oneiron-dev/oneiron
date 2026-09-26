@@ -71,6 +71,32 @@ fn mcp_tasks_section(
     ))
 }
 
+/// `describe`'s MCP result: the section arm through the scoped TASKS
+/// projection above, the card arm as the engine encodes it, one page of lines.
+fn mcp_describe_result(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+    description: oneiron::task_verb::TaskDescription,
+) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
+    match description {
+        oneiron::task_verb::TaskDescription::Section(section) => {
+            mcp_tasks_section(server, actor, section)
+        }
+        oneiron::task_verb::TaskDescription::Card { lines } => {
+            let source = crate::mcp::McpPageSource::complete(lines.len());
+            let value = serde_json::to_value(oneiron::task_verb::TaskDescription::Card { lines })
+                .map_err(|_| {
+                McpGatewayError::new(
+                    -32603,
+                    "engine_error",
+                    "typed agent result cannot be encoded",
+                )
+            })?;
+            Ok((value, source))
+        }
+    }
+}
+
 /// One GENERATED verb tool call.
 pub(crate) async fn execute_mcp_generated_verb(
     server: &Arc<SyncServer>,
@@ -79,8 +105,8 @@ pub(crate) async fn execute_mcp_generated_verb(
 ) -> Result<Value, McpGatewayError> {
     let argument_digest = crate::mcp::mcp_page_argument_digest(&args.payload);
     // Every continuable READ producer, and only those: a mutating or one-row
-    // verb refuses a cursor at the pre-dispatch door below. `tasks.expand` is a
-    // read whose rows are an enumerable set, so it continues under the same
+    // verb refuses a cursor at the pre-dispatch door below. A `describe` card is
+    // a read whose lines are an enumerable set, so it continues under the same
     // retained-snapshot protocol as the board/task pages (ONE-1704 repair).
     let continuable = args.tool.continuable();
     // This is deliberately before the board/tasks producer. A cursor presented
@@ -127,12 +153,15 @@ pub(crate) async fn execute_mcp_generated_verb(
                 // Establish the board epoch before reading a continuable
                 // task set. The result itself is retained below, so a
                 // later continuation never re-reads mutable task rows.
-                let task_epoch =
-                    if args.tool.family == crate::mcp::McpVerbFamily::Tasks && continuable {
-                        Some(mcp_current_board(server, actor).await?.epoch)
-                    } else {
-                        None
-                    };
+                let task_epoch = if matches!(
+                    args.tool.family,
+                    crate::mcp::McpVerbFamily::Tasks | crate::mcp::McpVerbFamily::Handle
+                ) && continuable
+                {
+                    Some(mcp_current_board(server, actor).await?.epoch)
+                } else {
+                    None
+                };
                 let (output, source, carrier, epoch) =
                     execute_mcp_agent_verb(server, &args, actor).await?;
                 (output, source, carrier, epoch.or(task_epoch))
@@ -419,13 +448,13 @@ async fn execute_mcp_agent_verb(
             })
             .await
         }
-        "tasks.ack" => {
+        "cancel" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
                     .map_err(|_| invalid())?;
 
             let output =
-                oneiron::task_verb::sdk::tasks_ack(&memory, input).map_err(mcp_facade_error)?;
+                oneiron::task_verb::sdk::cancel(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             let value = serde_json::to_value(output).map_err(|_| {
                 McpGatewayError::new(
@@ -436,30 +465,14 @@ async fn execute_mcp_agent_verb(
             })?;
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
-        "tasks.cancel" => {
-            let input: oneiron::task_verb::sdk::TaskRequest =
-                serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
+        "describe" => {
+            let input: oneiron::task_verb::sdk::DescribeRequest =
+                serde_json::from_value(json!({"task_ref":a.task_ref.clone()}))
                     .map_err(|_| invalid())?;
 
             let output =
-                oneiron::task_verb::sdk::tasks_cancel(&memory, input).map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(1);
-            let value = serde_json::to_value(output).map_err(|_| {
-                McpGatewayError::new(
-                    -32603,
-                    "engine_error",
-                    "typed agent result cannot be encoded",
-                )
-            })?;
-            Ok((value, source, McpCarrierPolicy::Drain, None))
-        }
-        "tasks.check" => {
-            let input: oneiron::task_verb::sdk::EmptyRequest =
-                serde_json::from_value(json!({})).map_err(|_| invalid())?;
-
-            let output =
-                oneiron::task_verb::sdk::tasks_check(&memory, input).map_err(mcp_facade_error)?;
-            let (value, source) = mcp_tasks_section(server, actor, output)?;
+                oneiron::task_verb::sdk::describe(&memory, input).map_err(mcp_facade_error)?;
+            let (value, source) = mcp_describe_result(server, actor, output)?;
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "tasks.create" => {
@@ -480,14 +493,14 @@ async fn execute_mcp_agent_verb(
             })?;
             Ok((value, source, McpCarrierPolicy::Drain, None))
         }
-        "tasks.expand" => {
+        "tasks.update" => {
             let input: oneiron::task_verb::sdk::TaskRequest =
                 serde_json::from_value(json!({"task_ref":a.task_ref.clone().ok_or_else(invalid)?}))
                     .map_err(|_| invalid())?;
 
             let output =
-                oneiron::task_verb::sdk::tasks_expand(&memory, input).map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(output.len());
+                oneiron::task_verb::sdk::tasks_update(&memory, input).map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             let value = serde_json::to_value(output).map_err(|_| {
                 McpGatewayError::new(
                     -32603,

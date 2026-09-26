@@ -525,8 +525,17 @@ mod tests {
             }
         }
         let dir = tempfile::tempdir().unwrap();
-        let vault =
-            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        // The claim and the real HTTP door must read the same clock. A wall
+        // second sampled after the authority clock's first observation can be
+        // one second ahead at a boundary, making a fresh lease look unissued.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let clock = oneiron::store::ports::ManualClock::new(now);
+        let mut vault_config = oneiron::VaultConfig::device();
+        vault_config.store_clock = clock.bundle();
+        let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
         let config = secret_config();
         let pusher = principal();
         let token = scoped_token(&config, "core:read,core:write", Some(&pusher));
@@ -579,10 +588,6 @@ mod tests {
             );
             let repo_dir = root.join("demo.git");
             stock_git(&repo_dir, &["remote", "remove", "origin"]);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
             let mut leases = CheckoutLeaseService::new(vault.as_ref(), Facts, Liveness::default());
             let grant = leases
                 .claim(CheckoutClaimRequest {
@@ -595,7 +600,9 @@ mod tests {
                     },
                     holder_ref: pusher.clone(),
                     task_class: CheckoutTaskClass::Build,
-                    ttl_secs: Some(600),
+                    // The test proves admission and stale epoch, not expiry.
+                    // Leave ample time for a busy CI host to finish the push.
+                    ttl_secs: Some(24 * 60 * 60),
                     now,
                 })
                 .unwrap();
@@ -661,7 +668,11 @@ mod tests {
             )));
             assert!(!stock_git(&tree, &["config", "--list"]).contains(&token));
             leases
-                .reclaim_idempotent(grant.checkout_id, principal(), now + 601)
+                .reclaim_idempotent(
+                    grant.checkout_id,
+                    principal(),
+                    lease.lease_expires_at.unwrap() + 1,
+                )
                 .unwrap();
             let stale = std::process::Command::new("git")
                 .current_dir(&tree)

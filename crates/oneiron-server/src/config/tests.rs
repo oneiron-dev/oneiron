@@ -43,6 +43,26 @@ fn usage_mode_config_file_key_fails_closed() {
 }
 
 #[test]
+fn lfs_object_cap_merges_from_file_env_and_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("oneiron.toml");
+    std::fs::write(&config_path, "max_lfs_object_bytes = 1024\n").unwrap();
+    let env = EnvConfig::from_pairs([
+        ("ONEIRON_CONFIG", config_path.to_str().unwrap()),
+        ("ONEIRON_MAX_LFS_OBJECT_BYTES", "2048"),
+    ])
+    .unwrap();
+    let flags =
+        TestCli::try_parse_from(["oneiron-server", "--max-lfs-object-bytes", "4096"]).unwrap();
+    let resolved = resolve_serve_config_with_sources(&flags.serve, env, None).unwrap();
+    assert_eq!(
+        resolved.sync_server_config().max_lfs_object_bytes,
+        Some(4096)
+    );
+    assert_eq!(ServeConfig::default().max_lfs_object_bytes, None);
+}
+
+#[test]
 fn lease_vault_id_merges_into_sync_server_config() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("oneiron.toml");

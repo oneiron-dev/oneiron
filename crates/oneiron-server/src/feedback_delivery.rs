@@ -93,6 +93,9 @@ impl HttpFeedbackTransport {
         {
             return Err(FeedbackDeliveryError::RouteMismatch);
         }
+        if request.execution.space_posting.is_some() {
+            return Err(FeedbackDeliveryError::RouteMismatch);
+        }
         let mut post = self
             .client
             .post(&self.config.endpoint)

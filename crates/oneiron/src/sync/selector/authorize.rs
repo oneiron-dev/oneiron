@@ -262,15 +262,18 @@ pub(super) fn filter_window_doc(
         return Err(selector_err(SelectorError::GrantWrongType));
     }
     let grant = decode_federation_grant_body(&grant_raw[ENTITY_METADATA_HEADER_LEN..])?;
-    // Opens its own read txn, so it runs before the export snapshot below.
-    let (_, claims_withheld) =
-        withheld_claim_carriers(vault, &source.get_map("entities"), &source.get_map("edges"))?;
-    // One read snapshot for the whole export: facet scope, coreference
+    // One read snapshot for the whole export: withheld claims, facet scope, coreference
     // consent, causal admission, and record stamps all read through this
     // `rtxn`. Opening nested read txns on this thread would fail with
     // `Storage(Mdb(BadRslot))` under LMDB's single-slot rule, so the scope
     // doors take the txn instead of opening their own.
     let rtxn = vault.store.env.read_txn()?;
+    let (_, claims_withheld) = withheld_claim_carriers(
+        vault,
+        &rtxn,
+        &source.get_map("entities"),
+        &source.get_map("edges"),
+    )?;
     let mut scope_error = None;
     let out = create_window_doc("selector", key);
     let source_entities = source.get_map("entities");

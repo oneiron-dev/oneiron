@@ -601,6 +601,7 @@ fn task_outside_read_floor() -> (
     read.verbs = ScopeAxis::Some(["read".to_owned()].into());
     oneiron::conversation_dag::test_support::put_test_policy_manifest(
         &vault,
+        oneiron::WriteActor::new(owner, EdgeActorClass::Human),
         EntityId::now(),
         &json!({
             "schema_version": "1.2", "pack_id": "task-read-floor", "pack_version": "1",
@@ -691,10 +692,41 @@ async fn post_task_verb(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// ARCH-0067's 2026-09-22 amendment renamed the four task rows. The old
+/// routes are gone, while the same credential still reaches the new ones.
 #[tokio::test]
-async fn http_tasks_check_omits_a_task_outside_the_callers_read_floor() {
+async fn retired_task_routes_are_not_found() {
+    let (_dir, server, recipe, _, _) = task_outside_read_floor();
+    let status = |verb: &'static str| {
+        let server = Arc::clone(&server);
+        let recipe = recipe.clone();
+        async move {
+            crate::build_app(Arc::clone(&server))
+                .oneshot(crate::test_credentials::bind_request(
+                    &server,
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/v1/core/facade/{verb}"))
+                        .header("Authorization", recipe)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from("{}"))
+                        .unwrap(),
+                ))
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    for verb in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
+        assert_eq!(status(verb).await, StatusCode::NOT_FOUND, "{verb}");
+    }
+    assert_eq!(status("describe").await, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn http_describe_omits_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, _, task) = task_outside_read_floor();
-    let (_, section) = post_task_verb(&server, &recipe, "tasks.check", json!({})).await;
+    let (_, section) = post_task_verb(&server, &recipe, "describe", json!({})).await;
     assert!(
         section["rows"]
             .as_array()
@@ -706,12 +738,12 @@ async fn http_tasks_check_omits_a_task_outside_the_callers_read_floor() {
 }
 
 #[tokio::test]
-async fn http_tasks_expand_refuses_a_task_outside_the_callers_read_floor() {
+async fn http_describe_card_refuses_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, _, task) = task_outside_read_floor();
     let (status, _) = post_task_verb(
         &server,
         &recipe,
-        "tasks.expand",
+        "describe",
         json!({"task_ref": task.to_hex()}),
     )
     .await;
@@ -719,24 +751,23 @@ async fn http_tasks_expand_refuses_a_task_outside_the_callers_read_floor() {
 }
 
 #[tokio::test]
-async fn http_tasks_ack_writes_nothing_on_a_task_outside_the_callers_read_floor() {
+async fn http_tasks_update_writes_nothing_on_a_task_outside_the_callers_read_floor() {
     let (_dir, server, recipe, owner, task) = task_outside_read_floor();
     post_task_verb(
         &server,
         &recipe,
-        "tasks.ack",
+        "tasks.update",
         json!({"task_ref": task.to_hex()}),
     )
     .await;
     // A failed task stays on the owner's board until its ack bit is set.
-    assert!(
-        server
-            .vault
-            .memory(owner, EdgeActorClass::Human)
-            .tasks_check()
-            .unwrap()
-            .rows
-            .iter()
-            .any(|row| row.id == task.to_hex())
-    );
+    let oneiron::task_verb::TaskDescription::Section(section) = server
+        .vault
+        .memory(owner, EdgeActorClass::Human)
+        .describe(None)
+        .unwrap()
+    else {
+        panic!("describe without a task returns the TASKS section");
+    };
+    assert!(section.rows.iter().any(|row| row.id == task.to_hex()));
 }

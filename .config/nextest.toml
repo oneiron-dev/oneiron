@@ -63,9 +63,9 @@ not (
 )
 """
 
-# Inner-loop only: all tests, the existing #[ignore] set, no retries.
-# Not a substitute for mandatory shared-process `cargo test --lib` verification.
-# Use NEXTEST_USER_CONFIG_FILE=none and --test-threads 8 --retries 0 explicitly.
+# CI runs this full-filter, zero-retry process-per-test tier beside the
+# mandatory shared-process featureless `cargo test --lib` step. The two
+# process models complement each other; neither replaces the other.
 [profile.featureless]
 default-filter = "all()"
 retries = 0

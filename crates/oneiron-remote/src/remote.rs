@@ -208,7 +208,7 @@ impl RemoteClient {
             // the difference between a caller seeing a typed failure and a
             // caller seeing a default-constructed result they will trust.
             transport_error(format!(
-                "the server answered {status} with a body this verb could not decode: {error}"
+                "the server answered {status} for {verb} with a body this verb could not decode: {error}"
             ))
         })
     }

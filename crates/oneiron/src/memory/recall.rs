@@ -498,12 +498,10 @@ impl Memory<'_> {
                             },
                         );
                     }
-                    if effective != Effort::Light {
-                        pipeline = pipeline
-                            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
-                            .boost_salience()
-                            .boost_confidence();
-                    }
+                    pipeline = pipeline
+                        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                        .boost_salience()
+                        .boost_confidence();
                     let retrieval = pipeline.run_for_pack()?;
                     let hits = retrieval.scores;
                     let total = hits.len() as u64;
@@ -562,7 +560,10 @@ impl Memory<'_> {
                             builder = builder
                                 .hydrate(false)
                                 .include_edges(false)
-                                .field_profile(FieldProfile::Minimal);
+                                .field_profile(FieldProfile::Minimal)
+                                .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                                .boost_salience()
+                                .boost_confidence();
                         }
                         Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
                             builder = builder

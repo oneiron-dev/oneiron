@@ -26,14 +26,13 @@ export interface TaskAskSettlement {group_ref: string; reference: string; revisi
 export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
 export type TaskAskWait = { Pending: {trap_ref: string} } | { Ready: TaskAskResult } | {Park: {wait_id: string; effect: string; reason: string; prompt: string | null}};
+export type TaskDescription = {kind: "tasks_section"; rows: unknown[]; overflow: {known_omitted_rows: number; source_exhausted: boolean} | null} | {kind: "task_card"; lines: string[]};
+export interface TaskCancelReceipt {approval: "auto" | "proposed" | "approved" | "rejected"; effected: boolean; proposal_ref: string | null; gate_decision_ref: string | null; status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned" | null; cancel_requested: boolean; forced: boolean}
 export function agentVerbs(invoke: AgentInvoke) {
   return {
 tasks: {
-ack(turn: Record<string, unknown>): unknown { return invoke("tasksAck", turn) as unknown },
-cancel(turn: Record<string, unknown>): unknown { return invoke("tasksCancel", turn) as unknown },
-check(): {rows: unknown[]; overflow: unknown | null} { return invoke("tasksCheck", {}) as {rows: unknown[]; overflow: unknown | null} },
 create(turn: Record<string, unknown>): unknown { return invoke("tasksCreate", turn) as unknown },
-expand(turn: Record<string, unknown>): unknown { return invoke("tasksExpand", turn) as unknown },
+update(turn: Record<string, unknown>): unknown { return invoke("tasksUpdate", turn) as unknown },
 ask(spec: TaskAskSpec): TaskAskReceipt { return invoke("tasksAsk", spec) as TaskAskReceipt },
 wait(handle: TaskAskHandle, stepKey = "sdk.wait"): TaskAskWait { return invoke("tasksWait", {handle, step_key: stepKey}) as TaskAskWait },
 answer(handle: TaskAskHandle, word: TaskAskWord): TaskAskAnswer { return invoke("tasksAnswer", {handle, word}) as TaskAskAnswer },
