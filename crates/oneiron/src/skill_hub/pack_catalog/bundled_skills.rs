@@ -95,9 +95,20 @@ pub(super) fn pack_skill_hub_ref(
     folder: &str,
     hash: crate::skill::SkillContentHash,
 ) -> Result<HubRef> {
+    // Hash the structured, validated source ref and length-frame the folder:
+    // both are independently bounded, but concatenating them could exceed
+    // HubRef's 4096-byte ref_string limit after the owner approved the pack.
+    let mut source = Vec::new();
+    rmpv::encode::write_value(&mut source, &pack_ref.to_value()?)
+        .map_err(|_| invalid("pack skill source ref encoding"))?;
+    let mut alias = blake3::Hasher::new_derive_key("oneiron.pack-skill.provenance.v1");
+    for part in [source.as_slice(), folder.as_bytes()] {
+        alias.update(&(part.len() as u64).to_be_bytes());
+        alias.update(part);
+    }
     HubRef::new(
         pack_ref.hub_id,
-        format!("{}/skills/{folder}", pack_ref.ref_string),
+        format!("pack-skill:{}", alias.finalize().to_hex()),
         HubPin::ContentHash(hash.to_hex()),
     )
 }

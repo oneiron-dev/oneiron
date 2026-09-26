@@ -1,5 +1,11 @@
 //! Pack-aware lens mount decision, evaluated against the live vault on each render.
-use crate::{Vault, entity_id::EntityId, error::Result};
+use crate::{
+    Vault,
+    entity_id::EntityId,
+    error::{ArtifactError, Error, Result},
+    registry::ENTITY_TYPE_SKILL,
+    vault::{LiveEntityRow, live_entity_row_in_txn},
+};
 
 /// A host-supplied code-lens binding. The engine owns no workbench catalog or
 /// screen inventory; the host supplies only bindings it can actually render.
@@ -49,7 +55,8 @@ impl Vault {
         else {
             return Ok(true);
         };
-        let Some(install) = self.installed_pack(pack_name)? else {
+        let txn = self.store.env.read_txn()?;
+        let Some(install) = self.mounted_pack_in_txn(&txn, pack_name)? else {
             return Ok(false);
         };
         if !install
@@ -59,8 +66,20 @@ impl Vault {
         {
             return Ok(false);
         }
-        Ok(self
-            .get_skill_record(skill_id)?
-            .is_some_and(|skill| skill.lifecycle_status.loads_as_canon()))
+        // A soft erase leaves a valid type-7 header without a SKILL body.
+        // Resolve deletion before decoding, in the same snapshot as the pack.
+        let LiveEntityRow::Live { entity_type, body } =
+            live_entity_row_in_txn(&self.store, &txn, skill_id)?
+        else {
+            return Ok(false);
+        };
+        if entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "entity is not a type-7 SKILL",
+            )));
+        }
+        Ok(crate::skill::decode_skill_record(&body)?
+            .lifecycle_status
+            .loads_as_canon())
     }
 }
