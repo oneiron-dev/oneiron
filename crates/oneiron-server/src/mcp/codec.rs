@@ -428,10 +428,13 @@ fn collect_advertised_integer_tokens(
         return Ok(());
     }
     match &node.kind {
-        McpRawJsonKind::Object(entries) => {
+        McpRawJsonKind::Object(_) => {
             if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-                for (key, entry) in entries {
-                    if let Some(property) = properties.get(key) {
+                // Match the parsed `Value`: the last occurrence of a key is
+                // live. Shadowed values never reach typed admission, so they
+                // must not trigger a raw-number rejection either.
+                for (key, property) in properties {
+                    if let Some(entry) = node.entry(key) {
                         collect_advertised_integer_tokens(property, entry, text, rewrites)?;
                     }
                 }

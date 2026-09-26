@@ -3354,6 +3354,55 @@ fn raw_board_expand_refuses_high_precision_fractional_epochs() {
     }
 }
 
+/// Duplicate object keys use the same last-occurrence value as `serde_json`.
+/// A discarded fractional epoch (or discarded whole arguments object) is not
+/// an admitted field; a live fractional epoch must still fail closed.
+#[test]
+fn raw_board_expand_integer_walk_ignores_shadowed_object_members() {
+    let expand = registered_surface(McpSurfaceMode::ToolFirst)
+        .resolve("board.expand")
+        .expect("board.expand is registered");
+    let mut args = endpoint_envelope("read_board");
+    args["arguments"] = json!({ "key": "TASKS", "frame_epoch": 1 });
+    let base = args.to_string();
+    let shadowed_field = base.replacen(
+        "\"frame_epoch\":1",
+        "\"frame_epoch\":1.5,\"frame_epoch\":1",
+        1,
+    );
+    let shadowed_parent = base.replacen(
+        "\"arguments\":",
+        "\"arguments\":{\"key\":\"TASKS\",\"frame_epoch\":1.5},\"arguments\":",
+        1,
+    );
+    let live_fraction = base.replacen(
+        "\"frame_epoch\":1",
+        "\"frame_epoch\":1,\"frame_epoch\":1.5",
+        1,
+    );
+    for raw in [shadowed_field, shadowed_parent] {
+        assert_ne!(raw, base, "a duplicate was inserted");
+        let parsed: Value = serde_json::from_str(&raw).expect("valid JSON");
+        let expected = validate_mcp_endpoint_tool_args(expand, parsed)
+            .expect("parsed arguments select the final integer epoch");
+        let actual = validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(raw))
+            .expect("raw arguments must select the same epoch");
+        assert_eq!(actual, expected);
+        let McpValidatedToolArgs::Verb(verb) = actual else {
+            panic!("board.expand is a verb")
+        };
+        assert_eq!(verb.payload.arguments.frame_epoch, Some(1));
+    }
+    assert_ne!(live_fraction, base, "a live fractional epoch was inserted");
+    assert!(matches!(
+        validate_mcp_endpoint_tool_args(expand, McpToolArguments::from_raw_json(live_fraction)),
+        Err(McpToolValidationError::Decode {
+            tool: "board.expand",
+            ..
+        })
+    ));
+}
+
 /// The same raw boundary at the advertised 32-bit positions: restating a
 /// spelling never widens a field, so THIS field's own ceiling still decides.
 #[test]
