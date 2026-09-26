@@ -166,8 +166,8 @@ pub enum DurableStepError {
     /// finalize window (ONE-1305); memoized hits still return.
     #[error("durable step refused: wake pass is in its finalize window")]
     FinalizeRefused,
-    /// The in-flight call lost the race against the wake-pass deadline: the
-    /// lease was aborted and the attempt parked at the hard cut (ONE-1305).
+    /// Hard-cut signal still handled by attempt executors. An admitted LLM
+    /// call no longer emits it when the wake-pass deadline expires.
     #[error("durable step hard cut at the wake-pass deadline")]
     DeadlineHardCut,
 }
@@ -306,8 +306,8 @@ pub struct DurableStepContext<'a> {
     pub envelope_actor: WriteActor,
     pub subject: EntityId,
     /// The wake-pass deadline (ONE-1305): Some inside wake passes. Enables
-    /// the finalize-window refusal for NEW steps, the mid-call deadline
-    /// race, and the budget legibility envelope on finished outcomes.
+    /// the finalize-window refusal for NEW steps and the budget legibility
+    /// envelope on finished outcomes. Admitted calls may finish after expiry.
     pub deadline: Option<&'a WakePassDeadline>,
     pub now_ms: u64,
 }
