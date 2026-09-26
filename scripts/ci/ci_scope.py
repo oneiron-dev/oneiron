@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Decide what a CI run builds and tests (owner ruling 2026-09-26: test only what changed).
 
-PR and main-push runs are scoped to the diff: clippy and tests for the touched
-workspace packages, and for the `oneiron` crate only the touched top-level
-modules. The nightly schedule and manual dispatch run everything (`full`).
+PR and main-push runs are scoped to the diff: clippy for touched workspace
+packages and their reverse dependents, tests for touched packages, and for the
+`oneiron` crate only the touched top-level modules. The nightly schedule and
+manual dispatch run everything (`full`).
 
 Usage: ci_scope.py [--base REV] [--head REV] [--full]. Writes key=value lines
 to $GITHUB_OUTPUT when set, and always prints them.
@@ -12,6 +13,7 @@ Outputs:
   rust      true when anything Rust-relevant changed
   full      true when the whole suite must run (schedule, dispatch, build files)
   packages  space-separated touched workspace packages (clippy and tests)
+  dependents space-separated transitive workspace reverse dependents (clippy only)
   oneiron   true when crates/oneiron changed
   modules   touched top-level oneiron modules, or ALL
   it        true when oneiron's integration tests or their support changed
@@ -19,9 +21,11 @@ Outputs:
   pytools   true when CI or tooling scripts changed
 """
 import argparse
+import json
 import os
 import re
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,9 +65,42 @@ def workspace_excluded(crate_dir):
     return crate_dir in ("heed", "paste")
 
 
+@lru_cache(maxsize=1)
+def workspace_reverse_dependencies():
+    """Map each workspace package to its direct dependents, including dev dependencies."""
+    result = subprocess.run(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    metadata = json.loads(result.stdout)
+    members = set(metadata["workspace_members"])
+    packages = [p for p in metadata["packages"] if p["id"] in members]
+    by_path = {str(Path(p["manifest_path"]).parent): p["name"] for p in packages}
+    reverse = {p["name"]: set() for p in packages}
+    for package in packages:
+        for dependency in package["dependencies"]:
+            name = by_path.get(dependency.get("path"))
+            if name and name != package["name"]:
+                reverse[name].add(package["name"])
+    return reverse
+
+
+def reverse_dependents(touched):
+    if not touched:
+        return []
+    reverse = workspace_reverse_dependencies()
+    seen = set(touched)
+    pending = list(touched)
+    while pending:
+        for dependent in reverse.get(pending.pop(), set()) - seen:
+            seen.add(dependent)
+            pending.append(dependent)
+    return sorted(seen - set(touched))
+
+
 def scope(files, force_full):
-    out = {"rust": False, "full": force_full, "packages": [], "oneiron": False, "modules": set(),
-           "it": False, "deny": False, "pytools": False}
+    out = {"rust": False, "full": force_full, "packages": [], "dependents": [], "oneiron": False,
+           "modules": set(), "it": False, "deny": False, "pytools": False}
     for f in files:
         if f in FULL_PATHS or f.startswith(FULL_PREFIXES):
             out["full"] = True
@@ -92,6 +129,8 @@ def scope(files, force_full):
                     out["modules"].add("ALL")
     if out["full"]:
         out["rust"] = True
+    else:
+        out["dependents"] = reverse_dependents(out["packages"])
     if "ALL" in out["modules"] or len(out["modules"]) > MAX_MODULES:
         out["modules"] = {"ALL"}
     return out
@@ -115,6 +154,7 @@ def main():
         f"rust={str(s['rust']).lower()}",
         f"full={str(s['full']).lower()}",
         f"packages={' '.join(s['packages'])}",
+        f"dependents={' '.join(s['dependents'])}",
         f"oneiron={str(s['oneiron']).lower()}",
         f"modules={' '.join(sorted(s['modules']))}",
         f"it={str(s['it']).lower()}",

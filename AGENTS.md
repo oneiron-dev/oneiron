@@ -190,8 +190,9 @@ Every workflow runs on our own runners since 2026-09-08 (HYG-06b) — hosts, lab
 contract are under *Self-hosted runners* below. All of them honour `CI_PAUSED`.
 
 - `ci.yml` — scoped CI (owner ruling 2026-09-26: test only what changed). `pull_request` (non-draft) and
-  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints only the touched packages (plus the
-  featureless build when `oneiron` changed), `Test` runs nextest for the touched packages and only the touched
+  `push` to `main` run `scripts/ci/ci_scope.py` on the diff; `Checks` lints the touched packages and their
+  transitive workspace reverse dependents with `--all-targets` (plus the featureless build when `oneiron`
+  changed), `Test` runs nextest for the touched packages and only the touched
   top-level `oneiron` modules (integration tests only when `crates/oneiron/tests` changed; no doctests), and
   `Test (featureless)` runs the shared-process `cargo test` lane for those modules. `cargo-deny` runs only
   when `Cargo.lock` or `deny.toml` changed, the tooling tests only when `scripts/` or `.github/` changed.
