@@ -16,9 +16,9 @@ pub use self::snapshot::{
     encode_codebase_snapshot,
 };
 pub(crate) use self::store::{
-    codebase_candidate_matches_filters, codebase_candidate_matches_scope_key,
-    delete_codebase_snapshot_in_txn, entity_id_from_hash_material,
-    reconcile_codebase_snapshot_after_code_artifact_put,
+    codebase_artifact_snapshot_matches_in_txn, codebase_candidate_matches_filters,
+    codebase_candidate_matches_scope_key, delete_codebase_snapshot_in_txn,
+    entity_id_from_hash_material, reconcile_codebase_snapshot_after_code_artifact_put,
 };
 // Test-only seam: the sibling test module names these bare through
 // `use super::*`, as it did when they were private items of the flat file.

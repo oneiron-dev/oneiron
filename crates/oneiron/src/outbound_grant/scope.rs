@@ -65,6 +65,8 @@ pub enum StandingOutboundGrantScope {
         brief_ref: String,
         verb_class: String,
     },
+    /// Publish updates to one artifact, never to another artifact or verb.
+    ArtifactPublish { artifact: String },
     /// Payload-aware standing authority for one external tool.
     ScopedMcp {
         server: String,
@@ -136,6 +138,13 @@ impl StandingOutboundGrantScope {
             }),
             // A calendar disclosure grant authorizes a READ at a rung. It must
             // never become a standing permission to send.
+            GrantMintIntentScope::ArtifactPublish { artifact } => {
+                crate::artifact_hosting::validate_artifact_id(artifact)
+                    .map_err(|_| invalid_grant())?;
+                Ok(Self::ArtifactPublish {
+                    artifact: artifact.clone(),
+                })
+            }
             GrantMintIntentScope::Calendar { .. } => Err(invalid_grant()),
         }
     }
@@ -149,6 +158,7 @@ impl StandingOutboundGrantScope {
             Self::Channel { .. } => "always_this_channel",
             Self::BriefVerbClass { .. } => "brief_verb_class",
             Self::ScopedMcp { .. } => "scoped_mcp",
+            Self::ArtifactPublish { .. } => "artifact_publish",
             Self::BookingPageInvites { .. } => "booking_page_invites",
             Self::ChannelIdentityEnvelope { .. } => "channel_identity_envelope",
         }
@@ -190,7 +200,12 @@ impl StandingOutboundGrantScope {
         if is_mcp_channel(channel) {
             return false;
         }
+        // A public artifact must never inherit a general send/contact grant.
+        if channel == "artifact" && verb == "publish" {
+            return matches!(self, Self::ArtifactPublish { artifact } if counterparty == Some(artifact.as_str()));
+        }
         match self {
+            Self::ArtifactPublish { .. } => false,
             Self::Contact { contact_ref } => {
                 counterparty.is_some_and(|counterparty| refs_match(contact_ref, counterparty))
             }
@@ -217,6 +232,9 @@ impl StandingOutboundGrantScope {
 
 pub(super) fn validate_scope(scope: &StandingOutboundGrantScope) -> Result<()> {
     match scope {
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            crate::artifact_hosting::validate_artifact_id(artifact).map_err(|_| invalid_grant())?;
+        }
         StandingOutboundGrantScope::Contact { contact_ref } => non_empty_str(contact_ref)?,
         StandingOutboundGrantScope::VerbClass { verb_class } => non_empty_str(verb_class)?,
         StandingOutboundGrantScope::Channel { channel } => non_empty_str(channel)?,

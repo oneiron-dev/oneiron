@@ -5,6 +5,8 @@
 //! channel URL, while direct fork-hash mounts remain read-only and replayable.
 
 use heed::RwTxn;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::code_artifact::CodeArtifactClass;
@@ -14,15 +16,23 @@ use crate::codebase::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result, SecretError};
+use crate::gate::{
+    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateOutcome,
+    GateProvenanceHandles,
+};
+use crate::outbound::OutboundDispatchPipeline;
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
+use crate::store::GateDecisionId;
+use crate::write_envelope::WriteActor;
 
 pub const ARTIFACT_POINTER_CHANNELS: [&str; 2] = ["published", "preview"];
-pub const ARTIFACT_PUBLISH_VERB_FEATURE: &str = "artifact-publish-verb";
 
 const ARTIFACT_POINTER_KEY_PREFIX: &[u8] = b"artifact:pointer:v1:";
+const ARTIFACT_PUBLISH_ADMISSION_PREFIX: &[u8] = b"artifact:publish:admission:v1:";
 const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
 const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
 
@@ -130,7 +140,10 @@ pub struct ArtifactPublishVerbRequest {
     pub artifact: String,
     pub channel: ArtifactPointerChannel,
     pub fork_hash: CodebaseForkHash,
-    pub standing_grant: bool,
+    pub actor: WriteActor,
+    /// Stable, caller-selected identity for retrying one exact publish action.
+    pub publish_id: EntityId,
+    pub occurred_at: u64,
 }
 
 impl ArtifactPublishVerbRequest {
@@ -139,13 +152,17 @@ impl ArtifactPublishVerbRequest {
         artifact: impl Into<String>,
         channel: ArtifactPointerChannel,
         fork_hash: CodebaseForkHash,
-        standing_grant: bool,
+        actor: WriteActor,
+        publish_id: EntityId,
+        occurred_at: u64,
     ) -> Self {
         Self {
             artifact: artifact.into(),
             channel,
             fork_hash,
-            standing_grant,
+            actor,
+            publish_id,
+            occurred_at,
         }
     }
 }
@@ -162,31 +179,30 @@ pub enum ArtifactPublishVerbStatus {
 pub struct ArtifactPublishVerbOutcome {
     pub status: ArtifactPublishVerbStatus,
     pub pointer: Option<ArtifactPointer>,
-    pub dispatcher_feature_enabled: bool,
-    pub reason: &'static str,
+    /// Only an admitted publish has a share-style, replayable receipt.
+    pub receipt: Option<ReceiptRecord>,
+    pub gate_decision_ref: String,
+}
+
+/// Immutable admission for a publish. The pointer can be repointed or removed,
+/// but the receipt of the earlier public effect must survive both actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ArtifactPublishAdmission {
+    artifact: String,
+    channel: u8,
+    fork_hash: CodebaseForkHash,
+    code_artifact_id: EntityId,
+    actor: EntityId,
+    actor_class: String,
+    gate_id: GateDecisionId,
+    occurred_at: u64,
+    stale_taint_override: bool,
 }
 
 impl Vault {
-    /// Publishes a channel pointer at a resolved snapshot.
-    ///
-    /// SECRET-04 (ONE-1922) adds the taint gate, and only the gate: the
-    /// artifact's stored taint refs are compared against the custody
-    /// records' CURRENT generations right here, at the check — read-time
-    /// invalidation (ARCH-0069 S7, amended 2026-08-05). An artifact whose
-    /// secrets have rotated or been revoked reads `TaintedStale` and the
-    /// publish refuses with [`SecretError::TaintedArtifactStale`](crate::error::SecretError::TaintedArtifactStale).
-    ///
-    /// It is a DIAL, not a wall. When the resolved policy key
-    /// `secret.taint.allow_stale_publish` is on, the publish proceeds and
-    /// the pointer row is STAMPED, so the override is durable evidence
-    /// rather than an unrecorded decision. `TaintedLive` publishes
-    /// unstamped and ungated: live tainted exhaust is not stale exhaust.
-    ///
-    /// The dial is resolved and the state derived inside the SAME write
-    /// transaction that puts the row, so a rotation landing mid-publish
-    /// cannot slip a stale pointer past a check taken against an older
-    /// reading. No receipt plane is minted here — the publish gate is the
-    /// whole of this ticket's business in this module.
+    /// Test-only direct pointer setup. Production publishes through the
+    /// outbound dispatcher's Gate and receipts the public effect.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn publish_artifact_pointer(
         &self,
         artifact: &str,
@@ -197,34 +213,9 @@ impl Vault {
             .resolve_artifact_snapshot_by_fork(artifact, fork_hash)?
             .ok_or(Error::EntityNotFound)?;
         let mut wtxn = self.store.env.write_txn()?;
-        let refs = exhaust_taint_refs_in_txn(&self.store, &wtxn, &snapshot_ref.code_artifact_id)?;
-        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, &wtxn, &refs)? {
-            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
-            ArtifactTaintState::TaintedStale => {
-                if !allow_stale_publish_in_txn(&self.store, &wtxn)? {
-                    return Err(Error::Secret(SecretError::TaintedArtifactStale {
-                        artifact: artifact.to_owned(),
-                    }));
-                }
-                true
-            }
-        };
-        put_artifact_pointer_in_txn(
-            &self.store,
-            &mut wtxn,
-            artifact,
-            channel,
-            fork_hash,
-            stale_taint_override,
-        )?;
+        let pointer = publish_artifact_pointer_in_txn(self, &mut wtxn, &snapshot_ref, channel)?;
         wtxn.commit()?;
-        Ok(ArtifactPointer {
-            artifact: artifact.to_owned(),
-            channel,
-            fork_hash: *fork_hash,
-            code_artifact_id: snapshot_ref.code_artifact_id,
-            stale_taint_override,
-        })
+        Ok(pointer)
     }
 
     pub fn unpublish_artifact_pointer(
@@ -346,33 +337,7 @@ impl Vault {
         &self,
         request: &ArtifactPublishVerbRequest,
     ) -> Result<ArtifactPublishVerbOutcome> {
-        validate_artifact_id(&request.artifact)?;
-        self.resolve_artifact_snapshot_by_fork(&request.artifact, &request.fork_hash)?
-            .ok_or(Error::EntityNotFound)?;
-        if request.standing_grant && cfg!(feature = "artifact-publish-verb") {
-            let pointer = self.publish_artifact_pointer(
-                &request.artifact,
-                request.channel,
-                &request.fork_hash,
-            )?;
-            return Ok(ArtifactPublishVerbOutcome {
-                status: ArtifactPublishVerbStatus::Published,
-                pointer: Some(pointer),
-                dispatcher_feature_enabled: true,
-                reason: "standing grant accepted under artifact-publish-verb; artifact pointer published locally",
-            });
-        }
-        let reason = if request.standing_grant {
-            "standing grant present, but artifact-publish-verb is disabled; publish verb parks as Proposed"
-        } else {
-            "standing grant required; OF-327 outbound dispatcher is not landed; publish verb parks as Proposed"
-        };
-        Ok(ArtifactPublishVerbOutcome {
-            status: ArtifactPublishVerbStatus::Proposed,
-            pointer: None,
-            dispatcher_feature_enabled: cfg!(feature = "artifact-publish-verb"),
-            reason,
-        })
+        OutboundDispatchPipeline.dispatch_artifact_publish(self, request)
     }
 }
 
@@ -478,7 +443,7 @@ fn snapshot_file_entry<'a>(
     snapshot.files.get(index)
 }
 
-fn validate_artifact_id(artifact: &str) -> Result<()> {
+pub(crate) fn validate_artifact_id(artifact: &str) -> Result<()> {
     validate_bounded_text(
         artifact,
         CODEBASE_PROJECT_ID_MAX_BYTES,
@@ -534,6 +499,12 @@ fn hex_nibble(byte: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[path = "artifact_hosting/publish.rs"]
+mod publish;
+pub(crate) use self::publish::artifact_publish_receipts;
+#[cfg(any(test, feature = "test-hooks"))]
+use self::publish::publish_artifact_pointer_in_txn;
 
 #[cfg(test)]
 mod tests;

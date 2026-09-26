@@ -286,6 +286,10 @@ pub enum GrantMintIntentScope {
         brief_ref: String,
         verb_class: String,
     },
+    /// Allows publishing updates to exactly one artifact.
+    ArtifactPublish {
+        artifact: String,
+    },
     /// One calendar shared at one rung with the intent's `principal_ref`.
     Calendar {
         calendar_ref: String,

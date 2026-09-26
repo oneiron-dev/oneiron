@@ -276,6 +276,12 @@ fn encode_scope(scope: &StandingOutboundGrantScope) -> Value {
             SCOPE_KIND_SCOPED_MCP
         }
         StandingOutboundGrantScope::BookingPageInvites { .. } => SCOPE_KIND_BOOKING_PAGE_INVITES,
+        StandingOutboundGrantScope::ArtifactPublish { artifact } => {
+            return Value::Map(vec![
+                (Value::from("kind"), Value::from("artifact_publish")),
+                (Value::from("artifact"), Value::from(artifact.clone())),
+            ]);
+        }
         StandingOutboundGrantScope::ChannelIdentityEnvelope {
             identity_ref,
             envelope_ref,
@@ -337,6 +343,12 @@ pub(super) fn decode_scope(value: &Value) -> Result<StandingOutboundGrantScope> 
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
+    if required_value(entries, "kind")?.as_str() == Some("artifact_publish") {
+        validate_keys(entries, &["kind", "artifact"])?;
+        return Ok(StandingOutboundGrantScope::ArtifactPublish {
+            artifact: decode_canonical_non_empty_string(required_value(entries, "artifact")?)?,
+        });
+    }
     if required_value(entries, "kind")?.as_str() == Some("channel_identity_envelope") {
         validate_keys(
             entries,

@@ -171,7 +171,6 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 [features]
 code-sandbox-wasmtime = ["dep:wasmtime"]
 image-station-ocr = ["dep:ocrs", "dep:rten"]
-artifact-publish-verb = []
 # CODE-01 (ONE-1429): the isolating microVM backend for foreign/ingested guest
 # code. Linux-only (Firecracker is a KVM VMM), off by default, and even with
 # the feature on `FirecrackerBackend::detect` returns None unless the host

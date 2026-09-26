@@ -1173,7 +1173,8 @@
      "path": "src/artifact_hosting.rs",
      "purpose": "Local artifact hosting over pinned CODE_ARTIFACT snapshots",
      "surface": {
-      "const": 2,
+      "const": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 12,
       "struct": 5
@@ -1181,6 +1182,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/publish.rs",
+     "purpose": "The OF-327 artifact-publish dispatch door and its share-style receipt projection",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/artifact_hosting/tests.rs",
@@ -9145,7 +9156,7 @@
      "path": "src/codebase/store.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 9
      }
     },
@@ -33672,7 +33683,7 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -34920,7 +34931,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 706
   },
   "oneiron-android": {
