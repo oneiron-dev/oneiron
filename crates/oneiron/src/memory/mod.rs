@@ -45,6 +45,7 @@ mod outbound;
 mod reads;
 mod recall;
 mod structural;
+mod subscriptions;
 mod support;
 mod witness;
 
@@ -101,6 +102,7 @@ pub use structural::{
     EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
     TextIndexField,
 };
+pub use subscriptions::{MemorySubscriptionOwner, ScopedView};
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub(crate) use witness::MessageStreamRuntime;
 pub use witness::{
