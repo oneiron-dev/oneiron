@@ -19758,7 +19758,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -19793,6 +19793,27 @@
       "fn": 2,
       "struct": 7
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "StandingAnswer"
+     ],
+     "path": "src/llm/decision/questions/standing.rs",
+     "purpose": "Explicit graph-unit backfill for a standing question",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/standing_tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34499,7 +34520,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35054,8 +35075,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2070,
-   "test_files": 710
+   "source_files": 2071,
+   "test_files": 711
   },
   "oneiron-android": {
    "files": [
