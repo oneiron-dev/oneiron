@@ -1032,8 +1032,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/conflict.rs` | src | m | 8 struct · 10 fn · 5 crate-vis | CollapsedEvidence, ConflictIdentity, ConflictSet, ConsolidationBucketKey, ConsolidationBucketPlan, PriorHead, SwarmChildReturn, SwarmEvidenceRef | — |
 | `src/dreamer_consolidation/executor.rs` | src | m | 1 struct | ConsolidationExecutor | — |
 | `src/dreamer_consolidation/executor/extraction.rs` | src | s | 2 crate-vis | — | Extraction request/response projection for one admitted branch |
+| `src/dreamer_consolidation/executor/merge_resolution.rs` | src | s | 2 crate-vis | — | JSON merge outcome decoding for the scoped consolidation judge |
 | `src/dreamer_consolidation/executor/retry.rs` | src | s | 1 crate-vis | — | Fresh source reads for scheduled selection retries, within the original partition |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 2 crate-vis | — | Explicit PERSON outputs from the production extraction response |
+| `src/dreamer_consolidation/failure_rules.rs` | src | s | 1 fn · 5 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 1 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 9 re-export · 2 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
@@ -1053,6 +1055,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/support.rs` | src | s | 10 const · 32 crate-vis | — | — |
 | `src/dreamer_consolidation/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/dreamer_consolidation/tests/contradictions.rs` | test | s | — | — | — |
+| `src/dreamer_consolidation/tests/failure_rules.rs` | test | s | — | — | A resident-authored policy changes what the real executor can publish on fatal fallback |
 | `src/dreamer_consolidation/tests/late_budget.rs` | test | m | — | — | Real wake-driver accounting across late step checkpoint and resume |
 | `src/dreamer_consolidation/tests/persistent_conflicts.rs` | test | s | — | — | Persistence, rerun idempotence, prior-head and topic partition laws |
 | `src/dreamer_consolidation/tests/person_extraction.rs` | test | s | — | — | — |

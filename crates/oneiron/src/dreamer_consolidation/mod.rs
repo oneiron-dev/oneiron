@@ -32,6 +32,7 @@ pub(crate) mod branch_scope;
 mod conflict;
 mod executor;
 mod extracted_people;
+mod failure_rules;
 mod gap;
 mod judge_context;
 mod open_conflict;
