@@ -31,6 +31,9 @@ mod tombstones;
 #[cfg(test)]
 pub(in crate::sync) use self::companion_identity::INJECT_LOCAL_ENDPOINT_FAILURE;
 pub(crate) use self::companion_identity::ingest_replicated_identity_topology_event_in_txn;
+pub(in crate::sync) use self::companion_identity::{
+    CompanionCrdtScrub, companion_register_sync_admitted, scrub_local_only_companions_from_crdt,
+};
 pub use self::companion_identity::{
     encode_edge_value_for_crdt, format_edge_key, parse_edge_key, parse_edge_value,
 };
@@ -45,7 +48,6 @@ pub(crate) use self::observers::{
     DELETION_TOMBSTONE_ORIGIN, persist_window_update, persist_window_update_in_txn,
     with_deletion_tombstone_observer_a_suppressed,
 };
-pub(in crate::sync) use self::tombstones::admitted_concurrent_delete_protected_header;
 
 #[cfg(test)]
 mod diagnostic_tests;
@@ -53,7 +55,7 @@ mod diagnostic_tests;
 mod tests;
 
 #[cfg(test)]
-use self::{childof::*, edges::*, entities::*, observers::*};
+use self::{childof::*, edges::*, observers::*};
 
 // The flat bridge.rs module used to provide these names to the sibling test
 // modules through `use super::*`: its own private import header. After the

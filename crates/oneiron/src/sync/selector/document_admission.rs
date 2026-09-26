@@ -211,7 +211,7 @@ impl StoredSelection<'_, '_> {
                 }) {
                     continue;
                 }
-                if !facets.contains(&edge.target) {
+                if !facets.contains(&crate::federation::ScopeId(edge.target)) {
                     return Ok(None);
                 }
                 seed = true;

@@ -1,13 +1,12 @@
 //! Tombstone pass of forward rematerialization: reason-aware replay of window tombstones.
 
-use super::super::bridge;
-use super::super::loro_support::{map_for_each_tombstone_value, map_get_bytes};
+use super::super::loro_support::map_for_each_tombstone_value;
 use super::super::quarantine::{self, QuarantineContainer};
 use super::{RematCtx, RematLedger};
 
-use crate::deletion::decode_tombstone_value;
 use crate::entity_id::EntityId;
-use crate::error::{Error, RegistryError};
+use crate::error::Error;
+use crate::sync::ingest::{TombstoneStep, classify_tombstone};
 
 /// Outcome of the tombstone pass. The error is DEFERRED past the marker
 /// bookkeeping txn (Trap 2): the caller runs that txn first and only then
@@ -28,6 +27,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     let entities_map = &ctx.entities_map;
     let tombstones_map = &ctx.tombstones_map;
     let marked = &ledger.marked;
+    let protected_admissions = &ledger.protected_admissions;
     let terminal_quarantines = &mut ledger.terminal_quarantines;
     let mut count = ledger.count;
 
@@ -56,50 +56,30 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         if tombstone_error.is_some() {
             return;
         }
-        let id = match EntityId::from_hex(key) {
-            Ok(id) => id,
-            Err(_) => {
-                if let Err(err) = quarantine::quarantine_rejected_op(
+        let (id, hard_tombstone) = match classify_tombstone(vault, entities_map, key, value) {
+            TombstoneStep::Refuse { id, err } => {
+                match quarantine::quarantine_rejected_op(
                     vault,
                     window_key.as_str(),
                     QuarantineContainer::Tombstones,
                     key,
-                    &Error::InvalidKey,
+                    &err,
                     value,
                 ) {
-                    tombstone_error = Some(err);
+                    Ok(_) => terminal_quarantines.extend(id),
+                    Err(quarantine_err) => tombstone_error = Some(quarantine_err),
                 }
                 return;
             }
+            TombstoneStep::Replay { id, hard } => (id, hard),
         };
-
-        // The entity pass may have rejected or not yet materialized a
-        // concurrent protected record. Its CRDT envelope is still enough
-        // to deny delete authority: quarantine the tombstone before the
-        // headerless replay path can mint a permanent `dt:` marker.
-        if matches!(vault.read_entity_header(&id), Ok(None))
-            && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
-            && let Some(header) = bridge::admitted_concurrent_delete_protected_header(&entity_blob)
-        {
-            let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                header.entity_type,
-            ));
-            if let Err(quarantine_err) = quarantine::quarantine_rejected_op(
-                vault,
-                window_key.as_str(),
-                QuarantineContainer::Tombstones,
-                key,
-                &rejection,
-                value,
-            ) {
-                tombstone_error = Some(quarantine_err);
-            } else {
-                terminal_quarantines.push(id);
-            }
+        // The entity pass admitted a delete-protected row at this id, and its
+        // ingest step already refused every tombstone naming it into `x:`.
+        if protected_admissions.contains(&id) {
+            terminal_quarantines.push(id);
             return;
         }
 
-        let hard_tombstone = decode_tombstone_value(value).is_hard();
         match quarantine::apply_replayed_tombstone_for_sync(vault, &id, value) {
             Ok(outcome) => {
                 if outcome.changed_local_state() {

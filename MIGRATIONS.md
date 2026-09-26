@@ -232,5 +232,11 @@ entities, consolidation claims, home rooms, projected `comm.*` claims, connector
 commitment and calendar actors, commitment instances, lead-source entities and
 claims, ask records) differs from what this engine derives.
 
+The same version gives each federation pact scope one spelling per lattice point
+(T51): a world set holding only the base world is written `{"kind":"base"}`, where
+`{"kind":"worlds","ids":[<base>]}` also meant it. The old spelling still decodes,
+but the slip pact-bound check, authority-log entry decode and the pact digest
+re-encode and compare bytes, so an entry or slip written with it is refused.
+
 **There is no migration pass.** An ABI 20 vault fails closed at the ABI gate;
 Oneiron is pre-launch, so recreate affected development vaults.

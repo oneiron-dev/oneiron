@@ -15929,7 +15929,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 2,
       "re-export": 11
      }
@@ -15955,17 +15955,13 @@
      "kind": "src",
      "notable": [
       "FederationDirectionScope",
-      "FederationPactScope",
-      "FederationScopeBands",
-      "FederationScopeFacets",
-      "FederationScopeWorlds"
+      "FederationPactScope"
      ],
      "path": "src/federation/pact_scope.rs",
-     "purpose": "Pact direction-scope lattice (worlds/facets/bands axes) and canonical codec",
+     "purpose": "Pact direction scope: the worlds, facets and bands axes as `ScopeAxis` lattices, and their one canonical codec",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
-      "enum": 3,
+      "crate-vis": 5,
       "fn": 6,
       "re-export": 1,
       "struct": 2
@@ -16042,10 +16038,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Scope",
+      "ScopeAtom",
       "ScopeAxis",
       "ScopeId",
       "Sensitivity",
@@ -16056,7 +16053,8 @@
      "surface": {
       "enum": 3,
       "fn": 13,
-      "struct": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -16078,7 +16076,6 @@
      "path": "src/federation/selector_kind.rs",
      "purpose": "Replication vocabulary keyed on declared classification and family, never byte ranges",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 6
      }
@@ -21145,9 +21142,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/base.rs",
-     "purpose": "Base witness program: container resolve, K7 door, batch write, text ops, session bump",
+     "purpose": "Base witness landing: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -21166,7 +21163,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/mod.rs",
-     "purpose": "Witness/turn-ingestion verbs: conversation/turn/message witnessing, off-record session routing, and the…",
+     "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
       "crate-vis": 5,
       "re-export": 2
@@ -21176,10 +21173,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/memory/witness/session.rs",
-     "purpose": "Off-record session witness route: overlay journal staging, shell reservation, post-flip base arm",
+     "path": "src/memory/witness/program.rs",
+     "purpose": "The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/session.rs",
+     "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
+     "surface": {
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -21790,7 +21797,7 @@
      "path": "src/off_record/lifecycle/mod.rs",
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 2
      }
     },
@@ -21876,7 +21883,7 @@
      "path": "src/off_record/mod.rs",
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 2
      }
     },
@@ -29750,7 +29757,7 @@
      "path": "src/sync/bridge/companion_identity.rs",
      "purpose": "Companion-register admission/scrub, identity topology ingest, and edge key/value helpers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -29773,13 +29780,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/entities.rs",
-     "purpose": "Entity-delta materialization and the per-entity blob writer",
+     "purpose": "Observer B's entity driver: one batch transaction per delta, each entity through the shared ingest entry…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -29837,9 +29844,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/tombstones.rs",
-     "purpose": "Tombstone materialization, savepoint batching, and protected-header handling",
+     "purpose": "Observer B's tombstone driver: classification through the shared ingest entry, then one batch transaction…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 1
      }
     },
     {
@@ -30187,6 +30194,36 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/entity.rs",
+     "purpose": "The entity-ingest ladder: one admission for every replicated entities-map value",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/mod.rs",
+     "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/tombstone.rs",
+     "purpose": "The tombstone classification every replicated tombstone takes before replay",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -30673,6 +30710,14 @@
     },
     {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/tests.rs",
+     "purpose": "Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EncodedFrame",
@@ -30782,11 +30827,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/entity_pass.rs",
-     "purpose": "Entity pass of forward rematerialization: materialize window entity blobs into LMDB",
+     "purpose": "Entity pass of forward rematerialization: every window entity blob through the shared ingest entry, one…",
      "surface": {
       "crate-vis": 1
      }
@@ -32933,7 +32978,7 @@
      "path": "src/workspace_roster/project/projection.rs",
      "purpose": "The write-time projector shared by local batches and sync materialization",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -34584,7 +34629,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34983,7 +35028,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 101,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35118,8 +35163,8 @@
    },
    "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2083,
-   "test_files": 706
+   "source_files": 2087,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [

@@ -514,11 +514,11 @@ pub(super) fn scope_entity(byte: u8) -> EntityId {
 }
 
 pub(super) fn symmetric_scope(
-    facets: crate::federation::FederationScopeFacets,
-    bands: crate::federation::FederationScopeBands,
+    facets: ScopeAxis<ScopeId>,
+    bands: ScopeAxis<SelectorRange>,
 ) -> FederationPactScope {
     let half = FederationDirectionScope {
-        worlds: crate::federation::FederationScopeWorlds::All,
+        worlds: ScopeAxis::All,
         facets,
         bands,
     };
@@ -531,14 +531,14 @@ pub(super) fn symmetric_scope(
 pub(super) fn default_pact_scope() -> FederationPactScope {
     FederationPactScope {
         lo_to_hi: FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::All,
-            facets: crate::federation::FederationScopeFacets::All,
-            bands: crate::federation::FederationScopeBands::All,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         },
         hi_to_lo: FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::Base,
-            facets: crate::federation::FederationScopeFacets::All,
-            bands: crate::federation::FederationScopeBands::All,
+            worlds: base_world_axis(),
+            facets: ScopeAxis::All,
+            bands: ScopeAxis::All,
         },
     }
 }
@@ -874,14 +874,11 @@ pub(super) fn totality_ops(
     fixture: &PactFixture,
 ) -> Vec<(&'static str, FederationLifecycleAction)> {
     let narrowed = FederationDirectionScope {
-        worlds: crate::federation::FederationScopeWorlds::Base,
-        facets: crate::federation::FederationScopeFacets::All,
-        bands: crate::federation::FederationScopeBands::All,
+        worlds: base_world_axis(),
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
-    let repact_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let repact_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     vec![
         ("connect", connect_action(fixture)),
         (

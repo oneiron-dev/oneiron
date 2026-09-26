@@ -5,7 +5,6 @@ use std::collections::HashSet;
 use loro::{CommitOptions, LoroDoc, LoroMap};
 
 use super::BRIDGE_ORIGIN;
-use super::entities::materialize_entity_blob_in_txn;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -15,8 +14,12 @@ use crate::edge::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{ClaimError, SyncError};
+use crate::sync::ingest::{EntityStep, IngestCtx, ingest_entity_in_txn};
 use crate::sync::loro_support::{
     map_delete, map_for_each_bytes, map_get_bytes, tombstone_map_contains_id,
+};
+use crate::sync::quarantine::{
+    QuarantineContainer, quarantine_rejected_op_in_txn, remote_rejection_reason,
 };
 use crate::sync::quota;
 use crate::{Error, Result, Vault};
@@ -143,36 +146,7 @@ fn validate_replicated_identity_topology_record_before_mutation(
         })
 }
 
-pub(super) fn ensure_companion_register_kind_for_entity_delta(
-    vault: &Vault,
-    delta: &loro::event::MapDelta<'_>,
-) -> Result<()> {
-    for new_val in delta.updated.values() {
-        let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = new_val else {
-            continue;
-        };
-        let Some(header) = EntityMetadataHeader::parse(blob) else {
-            continue;
-        };
-        if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-            || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        {
-            continue;
-        }
-        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-            &blob[ENTITY_METADATA_HEADER_LEN..]
-        } else {
-            &[]
-        };
-        if companion_register_sync_admitted(data).unwrap_or(false) {
-            vault.ensure_companion_register_kind()?;
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
+pub(in crate::sync) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
     let record = decode_companion_record_body(data)?;
     Ok(record.sensitivity != crate::federation::Sensitivity::Restricted)
 }
@@ -194,13 +168,13 @@ pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool>
     Ok(!companion_register_sync_admitted(data)?)
 }
 
-pub(super) struct CompanionCrdtScrub {
+pub(in crate::sync) struct CompanionCrdtScrub {
     entity_key: String,
     id: EntityId,
 }
 
 impl CompanionCrdtScrub {
-    pub(super) fn new(entity_key: impl Into<String>, id: EntityId) -> Self {
+    pub(in crate::sync) fn new(entity_key: impl Into<String>, id: EntityId) -> Self {
         Self {
             entity_key: entity_key.into(),
             id,
@@ -208,7 +182,7 @@ impl CompanionCrdtScrub {
     }
 }
 
-pub(super) fn scrub_local_only_companions_from_crdt(
+pub(in crate::sync) fn scrub_local_only_companions_from_crdt(
     doc: &LoroDoc,
     scrubs: &[CompanionCrdtScrub],
 ) -> Result<()> {
@@ -321,9 +295,8 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // ARCH-0038 requires purged. Presence is ANY-value (fail closed):
     // non-binary tombstones gate too. Without the dt: leg, a crafted
     // tombstone removal would make the silent gate-skip read as "ready" and
-    // push an edge op against a missing endpoint;
-    // `materialize_entity_blob_in_txn` re-checks both as the structural
-    // fail-closed gate before its put.
+    // push an edge op against a missing endpoint; the ingest ladder
+    // re-checks both as the structural fail-closed gate before its put.
     //
     // Value-agnostic, entity-canonical tombstone presence (a non-binary
     // tombstone decodes HARD downstream; a case-shifted hex key still
@@ -355,11 +328,10 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
         return Ok(EndpointHydration::Deferred);
     };
-    // Structural pre-validation of the REMOTE blob (mirrors the entity
-    // delta path's decode-before-local-read ordering): an unparsable
-    // endpoint blob is remote garbage, distinguished from the LOCAL
-    // `CorruptedIndex` that `materialize_entity_blob_in_txn` would conflate
-    // it with at the caller's classification.
+    // Structural pre-validation of the REMOTE blob (the ingest ladder's
+    // decode-before-local-read ordering): an unparsable endpoint blob is
+    // remote garbage, rejected with the edge, and never conflated with a
+    // LOCAL `CorruptedIndex` at the caller's classification.
     if EntityMetadataHeader::parse(&blob).is_none() {
         return Ok(EndpointHydration::RejectedBlob);
     }
@@ -369,26 +341,37 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // Late body/project validation can fail after staging. The edge batch
     // quarantines remote failures and commits siblings, so hydration needs
     // the same per-entity rollback boundary as the entity-delta observer.
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones_map);
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-    let materialized = materialize_entity_blob_in_txn(
-        vault,
-        &mut savepoint,
-        tombstones_map,
-        window_key,
-        &hex_id,
-        &blob,
-        lease_vault_id,
-    )?;
+    let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
+    if let EntityStep::Quarantine(refusal) = step {
+        drop(savepoint);
+        // A typed remote rejection of the endpoint rejects the edge with it
+        // (the caller quarantines the edge op). A malformed pack envelope
+        // stays unclassified, so the endpoint's own refusal is recorded here
+        // and the edge waits.
+        if remote_rejection_reason(&refusal.err).is_some() {
+            return Err(refusal.err);
+        }
+        quarantine_rejected_op_in_txn(
+            vault,
+            wtxn,
+            window_key,
+            QuarantineContainer::Entities,
+            &hex_id,
+            &refusal.err,
+            &blob,
+        )?;
+        return Ok(EndpointHydration::Deferred);
+    }
     savepoint.commit()?;
-    if !materialized {
+    if step.written().is_none() {
         return Ok(EndpointHydration::Deferred);
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
     // edge-batch swallow site can flag a durable rm: marker (parity guard +
-    // heal-on-write discharge) if this write is later rolled back. `blob` is
-    // moved into the variant after `materialize_entity_blob_in_txn` borrowed
-    // it.
+    // heal-on-write discharge) if this write is later rolled back.
     Ok(EndpointHydration::Hydrated(blob))
 }
 

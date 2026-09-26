@@ -11,7 +11,6 @@ use super::loro_support::{self, doc_from_snapshot, doc_version_vector, import_do
 use super::pack_sync;
 use super::quarantine;
 use super::queue;
-use super::quota;
 use super::schema::{self, create_window_doc};
 use super::types::{self, WindowKey};
 use super::window_rows::{

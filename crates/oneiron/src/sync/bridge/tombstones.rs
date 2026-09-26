@@ -1,20 +1,19 @@
-//! Tombstone materialization, savepoint batching, and protected-header handling.
+//! Observer B's tombstone driver: classification through the shared ingest entry, then one
+//! batch transaction with a savepoint per tombstone.
 
 #[cfg(test)]
 use std::cell::Cell;
 
-use loro::{LoroDoc, LoroMap};
+use loro::LoroDoc;
 
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::RegistryError;
-use crate::sync::loro_support::{map_get_bytes, tombstone_values_for_id};
+use crate::sync::ingest::{TombstoneStep, classify_tombstone};
 use crate::sync::quarantine::{
     self, QuarantineContainer, quarantine_rejected_op, quarantine_rejected_op_in_txn,
     remote_rejection_reason,
 };
 use crate::sync::queue::scrub_receiver_outbox_on_remote_hard_delete_in_txn;
-use crate::{Error, Result, SyncProtocolValidation, Vault};
+use crate::{Error, SyncProtocolValidation, Vault};
 
 /// Materialize tombstone changes — apply deletes to LMDB.
 ///
@@ -54,78 +53,38 @@ pub(super) fn materialize_tombstones_from_delta(
     for (key, new_val) in &delta.updated {
         match new_val {
             Some(value) => {
-                // New tombstone added
-                let id = match EntityId::from_hex(key.as_ref()) {
-                    Ok(id) => id,
-                    Err(_) => {
-                        let payload = match value {
-                            loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes)) => {
-                                bytes.to_vec()
-                            }
-                            _ => Vec::new(),
-                        };
-                        if let Err(e) = quarantine_rejected_op(
-                            vault,
-                            window_key,
-                            QuarantineContainer::Tombstones,
-                            key.as_ref(),
-                            &Error::InvalidKey,
-                            &payload,
-                        ) {
-                            tracing::error!(
-                                tombstone = %key,
-                                error = %e,
-                                "observer-b: failed to persist tombstone quarantine record"
-                            );
-                        }
-                        continue;
-                    }
-                };
-
-                // A non-binary tombstone value has no decodable reason —
-                // it replays as the empty value, which decodes HARD
-                // (fail-closed: over-purge, never under-delete).
+                // New tombstone added. A non-binary tombstone value has no
+                // decodable reason — it replays as the empty value, which
+                // decodes HARD (fail-closed: over-purge, never under-delete).
                 let raw_value: &[u8] = match value {
                     loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)) => blob,
                     _ => &[],
                 };
-
-                // Protection must not depend on observer callback order.
-                // A concurrent engine-authored blob may not have reached
-                // LMDB yet, so inspect its envelope directly and quarantine
-                // the tombstone before the headerless hard-delete path can
-                // mint a permanent `dt:` marker.
-                if matches!(vault.read_entity_header(&id), Ok(None))
-                    && let Some(entity_blob) = map_get_bytes(&entities_map, &id.to_hex())
-                    && let Some(header) = admitted_concurrent_delete_protected_header(&entity_blob)
-                {
-                    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(
-                        header.entity_type,
-                    ));
-                    if let Err(quarantine_err) = quarantine_rejected_op(
-                        vault,
-                        window_key,
-                        QuarantineContainer::Tombstones,
-                        key.as_ref(),
-                        &rejection,
-                        raw_value,
-                    ) {
-                        tracing::error!(
-                            tombstone = %key,
-                            window = %window_key,
-                            error = %quarantine_err,
-                            "observer-b: failed to quarantine concurrent protected-record tombstone"
-                        );
+                match classify_tombstone(vault, &entities_map, key.as_ref(), raw_value) {
+                    TombstoneStep::Refuse { err, .. } => {
+                        if let Err(quarantine_err) = quarantine_rejected_op(
+                            vault,
+                            window_key,
+                            QuarantineContainer::Tombstones,
+                            key.as_ref(),
+                            &err,
+                            raw_value,
+                        ) {
+                            tracing::error!(
+                                tombstone = %key,
+                                window = %window_key,
+                                error = %quarantine_err,
+                                "observer-b: failed to persist tombstone quarantine record"
+                            );
+                        }
                     }
-                    continue;
+                    TombstoneStep::Replay { id, hard } => staged.push(TombstoneWork {
+                        id,
+                        crdt_key: key.as_ref().to_string(),
+                        raw_value: raw_value.to_vec(),
+                        hard,
+                    }),
                 }
-
-                staged.push(TombstoneWork {
-                    id,
-                    crdt_key: key.as_ref().to_string(),
-                    raw_value: raw_value.to_vec(),
-                    hard: crate::deletion::decode_tombstone_value(raw_value).is_hard(),
-                });
             }
             None => {
                 // Tombstone REMOVAL delta: no engine version ever emits one
@@ -402,47 +361,4 @@ thread_local! {
 #[cfg(test)]
 fn note_tombstone_batch_top_level_txn() {
     TOMBSTONE_BATCH_TOP_LEVEL_TXNS.with(|count| count.set(count.get().saturating_add(1)));
-}
-
-pub(super) fn quarantine_and_neutralize_protected_tombstone_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    tombstones_map: &LoroMap,
-    window_key: &str,
-    id: &EntityId,
-    entity_type: u8,
-) -> Result<()> {
-    let rejection = Error::Registry(RegistryError::MaintenanceKindNotWritable(entity_type));
-    let crdt_key = id.to_hex();
-    for tombstone in tombstone_values_for_id(tombstones_map, id) {
-        quarantine_rejected_op_in_txn(
-            vault,
-            wtxn,
-            window_key,
-            QuarantineContainer::Tombstones,
-            &crdt_key,
-            &rejection,
-            &tombstone,
-        )?;
-    }
-    vault.neutralize_delete_protected_marker_in_txn(wtxn, id, entity_type)?;
-    Ok(())
-}
-
-/// Classifies a concurrent peer envelope for tombstone protection only after
-/// running the same deterministic body predicate as replicated type-76
-/// ingestion. Other established protected kinds retain their existing
-/// classification; type-76 must never gain protection from its header alone.
-pub(in crate::sync) fn admitted_concurrent_delete_protected_header(
-    blob: &[u8],
-) -> Option<EntityMetadataHeader> {
-    let header = EntityMetadataHeader::parse(blob)?;
-    if !crate::registry::is_delete_protected_engine_record(header.entity_type) {
-        return None;
-    }
-    if header.entity_type == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
-        let data = &blob[ENTITY_METADATA_HEADER_LEN..];
-        crate::identity_topology::decode_replicated_identity_topology_event_body(data).ok()?;
-    }
-    Some(header)
 }

@@ -339,8 +339,8 @@ impl BatchBuilder<'_> {
     /// still runs the full D18 structural validation on every type-0 body, so
     /// ungrammatical predicates and malformed bodies fail typed even here.
     ///
-    /// Production replay (`window::forward_rematerialize`,
-    /// `bridge::materialize_entity_blob_in_txn` and the other sync doors)
+    /// Production replay (`sync::ingest::ingest_entity_in_txn`, which forward
+    /// rematerialization and Observer B share, and the other sync doors)
     /// applies it in the caller's transaction, where the type byte and the
     /// occurred range meet `validate_put_type` and `apply_put`, and a
     /// federated import tier ([`Self::with_import_tier`]) sends the body

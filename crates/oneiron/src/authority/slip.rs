@@ -160,18 +160,9 @@ impl VerifiedSlip {
                 .get(grant)
                 .is_none_or(|ids| ids.len() != 1)
             || !requested.is_narrowing_of(&effective)
-            || matches!(
-                effective.worlds,
-                crate::federation::FederationScopeWorlds::Bottom
-            )
-            || matches!(
-                effective.facets,
-                crate::federation::FederationScopeFacets::Bottom
-            )
-            || matches!(
-                effective.bands,
-                crate::federation::FederationScopeBands::Bottom
-            )
+            || effective.worlds.is_bottom()
+            || effective.facets.is_bottom()
+            || effective.bands.is_bottom()
         {
             return Err(invalid_authority());
         }

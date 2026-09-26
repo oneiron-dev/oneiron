@@ -55,7 +55,35 @@ impl<'de, T: Ord + Deserialize<'de>> Deserialize<'de> for ScopeAxis<T> {
         })
     }
 }
-impl<T: Ord + Clone> ScopeAxis<T> {
+/// One member of a powerset axis. Members are disjoint by default, so the axis
+/// is the plain powerset; a kind whose members nest (a band classification
+/// holds its families) overrides both methods.
+pub trait ScopeAtom: Ord + Clone {
+    /// Whether this member includes `other`; every member includes itself.
+    fn includes(&self, other: &Self) -> bool {
+        self == other
+    }
+    /// Whether the members of `wide` together cover this one.
+    fn covered_by(&self, wide: &BTreeSet<Self>) -> bool {
+        wide.contains(self)
+    }
+}
+impl ScopeAtom for ScopeId {}
+impl ScopeAtom for u8 {}
+impl ScopeAtom for String {}
+
+impl<T: Ord> FromIterator<T> for ScopeAxis<T> {
+    /// Collects a named set; an empty collection is bottom, never all.
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let values: BTreeSet<T> = iter.into_iter().collect();
+        if values.is_empty() {
+            Self::Bottom
+        } else {
+            Self::Some(values)
+        }
+    }
+}
+impl<T: ScopeAtom> ScopeAxis<T> {
     #[must_use]
     pub fn is_bottom(&self) -> bool {
         matches!(self, Self::Bottom) || matches!(self, Self::Some(values) if values.is_empty())
@@ -65,7 +93,7 @@ impl<T: Ord + Clone> ScopeAxis<T> {
         match self {
             Self::Bottom => false,
             Self::All => true,
-            Self::Some(values) => values.contains(value),
+            Self::Some(values) => value.covered_by(values),
         }
     }
     #[must_use]
@@ -75,10 +103,12 @@ impl<T: Ord + Clone> ScopeAxis<T> {
         }
         match (self, other) {
             (_, Self::All) => true,
-            (Self::Some(a), Self::Some(b)) => a.is_subset(b),
+            (Self::Some(a), Self::Some(b)) => a.iter().all(|value| value.covered_by(b)),
             _ => false,
         }
     }
+    /// The narrower member of every pair where one includes the other, less
+    /// any member another kept member includes; disjoint sets meet at bottom.
     #[must_use]
     pub fn meet(&self, other: &Self) -> Self {
         if self.is_bottom() || other.is_bottom() {
@@ -88,12 +118,17 @@ impl<T: Ord + Clone> ScopeAxis<T> {
             (Self::All, rhs) => rhs.clone(),
             (lhs, Self::All) => lhs.clone(),
             (Self::Some(a), Self::Some(b)) => {
-                let values: BTreeSet<_> = a.intersection(b).cloned().collect();
-                if values.is_empty() {
-                    Self::Bottom
-                } else {
-                    Self::Some(values)
-                }
+                let narrower = |from: &BTreeSet<T>, wide: &BTreeSet<T>| {
+                    from.iter()
+                        .filter(|value| wide.iter().any(|w| w.includes(value)))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                let kept: BTreeSet<T> = narrower(a, b).into_iter().chain(narrower(b, a)).collect();
+                kept.iter()
+                    .filter(|value| !kept.iter().any(|w| w != *value && w.includes(value)))
+                    .cloned()
+                    .collect()
             }
             _ => Self::Bottom,
         }

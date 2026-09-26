@@ -14,8 +14,11 @@ pub const MAX_DBS: u32 = 32;
 /// (BLAKE3 derive-key over the domain, length-prefixed parts, UUID version 8).
 /// Ids derived before it (the owner PERSON and its facets, bootstrap skills,
 /// projector claims, home rooms, ask records, calendar and connector actors)
-/// no longer match what this engine derives. ABI 20 vaults fail closed at the
-/// ABI gate — there is no migration pass; rebuild the vault.
+/// no longer match what this engine derives. The same version writes a pact
+/// world set holding only the base world as `base` (it had two spellings), so
+/// an authority-log entry or slip carrying the old `worlds` spelling is
+/// refused where its bytes are re-encoded and compared. ABI 20 vaults fail
+/// closed at the ABI gate — there is no migration pass; rebuild the vault.
 ///
 /// v20: the pairing link row stores an 8-character code hashed at rest with
 /// the server origin and the intended holder in place of the 64-hex ticket,

@@ -33,12 +33,8 @@ fn lifecycle_dag() -> LifecycleDag {
     let fixture = pact_fixture_with_scope(
         200,
         symmetric_scope(
-            crate::federation::FederationScopeFacets::Some(vec![
-                facet(0x21),
-                facet(0x22),
-                facet(0x23),
-            ]),
-            crate::federation::FederationScopeBands::All,
+            ScopeAxis::from_iter([facet(0x21), facet(0x22), facet(0x23)].map(ScopeId)),
+            ScopeAxis::All,
         ),
     );
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
@@ -54,12 +50,9 @@ fn lifecycle_dag() -> LifecycleDag {
             fixture.grant_ref,
             1,
             FederationDirectionScope {
-                worlds: crate::federation::FederationScopeWorlds::All,
-                facets: crate::federation::FederationScopeFacets::Some(vec![
-                    facet(0x21),
-                    facet(0x22),
-                ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Semantic]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet(0x21), facet(0x22)].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Semantic]),
             },
         ),
     );
@@ -73,12 +66,9 @@ fn lifecycle_dag() -> LifecycleDag {
             fixture.grant_ref,
             1,
             FederationDirectionScope {
-                worlds: crate::federation::FederationScopeWorlds::All,
-                facets: crate::federation::FederationScopeFacets::Some(vec![
-                    facet(0x22),
-                    facet(0x23),
-                ]),
-                bands: crate::federation::FederationScopeBands::Some(vec![SelectorRange::Core]),
+                worlds: ScopeAxis::All,
+                facets: ScopeAxis::from_iter([facet(0x22), facet(0x23)].map(ScopeId)),
+                bands: ScopeAxis::from_iter([SelectorRange::Core]),
             },
         ),
     );
@@ -93,10 +83,7 @@ fn lifecycle_dag() -> LifecycleDag {
 
     let pact_two = [0xB2; 32];
     let grant_two = scope_entity(0x32);
-    let scope_two = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_two = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let connect_two = lifecycle_entry(
         &fixture,
         vec![connect_hash],
@@ -105,8 +92,8 @@ fn lifecycle_dag() -> LifecycleDag {
     );
     let connect_two_hash = authority_entry_hash(&connect_two).unwrap();
     let left_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![facet(0x21)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([facet(0x21)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let left_nonce = [0x72; 16];
     let repact_left = lifecycle_entry(
@@ -116,8 +103,8 @@ fn lifecycle_dag() -> LifecycleDag {
         repact_action_with(&fixture, pact_two, grant_two, 2, &left_scope, left_nonce),
     );
     let right_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::Some(vec![facet(0x22)]),
-        crate::federation::FederationScopeBands::All,
+        ScopeAxis::from_iter([facet(0x22)].map(ScopeId)),
+        ScopeAxis::All,
     );
     let right_nonce = [0x73; 16];
     let repact_right = lifecycle_entry(
@@ -136,10 +123,7 @@ fn lifecycle_dag() -> LifecycleDag {
 
     let pact_three = [0xB3; 32];
     let grant_three = scope_entity(0x33);
-    let scope_three = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_three = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let nonce_three = [0x74; 16];
     let connect_three = lifecycle_entry(
         &fixture,
@@ -158,8 +142,8 @@ fn lifecycle_dag() -> LifecycleDag {
             grant_three,
             2,
             &symmetric_scope(
-                crate::federation::FederationScopeFacets::Some(vec![facet(0x23)]),
-                crate::federation::FederationScopeBands::All,
+                ScopeAxis::from_iter([facet(0x23)].map(ScopeId)),
+                ScopeAxis::All,
             ),
             [0x75; 16],
         ),
@@ -182,10 +166,7 @@ fn lifecycle_dag() -> LifecycleDag {
     let pact_four = [0xB4; 32];
     let grant_four_a = scope_entity(0x34);
     let grant_four_b = scope_entity(0x35);
-    let scope_four = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let scope_four = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let nonce_four = [0x76; 16];
     let connect_four_a = lifecycle_entry(
         &fixture,
@@ -296,9 +277,9 @@ fn federation_lifecycle_dag_merges_pacts_fail_closed() {
     assert_eq!(
         p1.effective_scope,
         FederationDirectionScope {
-            worlds: crate::federation::FederationScopeWorlds::All,
-            facets: crate::federation::FederationScopeFacets::Some(vec![scope_entity(0x22)]),
-            bands: crate::federation::FederationScopeBands::Bottom,
+            worlds: ScopeAxis::All,
+            facets: ScopeAxis::from_iter([scope_entity(0x22)].map(ScopeId)),
+            bands: ScopeAxis::Bottom,
         }
     );
 
@@ -565,10 +546,7 @@ fn federation_divergent_binding_heals_under_the_surviving_grant_only() {
     let loser = grant_a.max(grant_b);
 
     // A repact naming the DISCARDED binding must not heal.
-    let heal_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let heal_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let bad_heal = lifecycle_entry(
         &fixture,
         vec![connect_a_hash, connect_b_hash],
@@ -809,10 +787,7 @@ fn federation_three_way_divergence_heals_to_global_tiebreak_winner() {
 
     // A heal naming a non-winner rejects; the winner heal restores exactly
     // the winner.
-    let heal_scope = symmetric_scope(
-        crate::federation::FederationScopeFacets::All,
-        crate::federation::FederationScopeBands::All,
-    );
+    let heal_scope = symmetric_scope(ScopeAxis::All, ScopeAxis::All);
     let loser = grants.iter().copied().max().unwrap();
     let bad_heal = lifecycle_entry(
         &fixture,

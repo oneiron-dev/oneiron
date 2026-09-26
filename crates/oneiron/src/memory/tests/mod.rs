@@ -916,3 +916,167 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
     assert!(calendar.value.is_none());
     assert_eq!(calendar.receipt.suppressed_count, 0);
 }
+
+// ── T51 · one witness program, the session its parameter ─────────────────
+
+/// A pinned recorded time with fresh ids: two vaults on it stamp every write
+/// with the same time without sharing an id sequence.
+struct PinnedClock(u64);
+
+impl crate::ports::Clock for PinnedClock {
+    fn now_recorded_at(&self) -> u64 {
+        self.0
+    }
+}
+
+impl crate::ports::IdGen for PinnedClock {
+    fn ulid(&self) -> [u8; 16] {
+        uuid::Uuid::now_v7().into_bytes()
+    }
+}
+
+/// Every stored row naming one id: its entity row and its edges both ways.
+#[derive(Debug, Clone, PartialEq)]
+struct RowsNaming {
+    entity: Option<Vec<u8>>,
+    edges: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// The rows naming `id` in `dbs` (base, or a room's composed view).
+fn rows_naming(
+    dbs: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> RowsNaming {
+    let entity = dbs
+        .entities()
+        .get(rtxn, id.as_bytes())
+        .expect("entity row")
+        .map(|row| row.to_vec());
+    let mut edges = Vec::new();
+    for table in [dbs.edges_out(), dbs.edges_in()] {
+        for row in table.prefix_iter(rtxn, id.as_bytes()).expect("edge scan") {
+            let (key, value) = row.expect("edge row");
+            edges.push((key.to_vec(), value.to_vec()));
+        }
+    }
+    RowsNaming { entity, edges }
+}
+
+/// `witness` and `witness_into_session` are one program with the session as
+/// its parameter. The same turn witnessed through a room and without one
+/// stores the same rows: the conversation, TURN and MESSAGE entities, every
+/// edge naming them or the actor, and the text postings. What differs is the
+/// session link: the room's rows reach base only through a promote whose
+/// receipt names the room, and the promoted closure leaves the actor's
+/// `AuthoredBy` edge in the room (ONE-1730).
+#[test]
+fn witness_and_session_witness_run_one_program() {
+    const ROOM: &str = "sess-one-witness-program";
+    // A live turn: witnessed at the instant both vaults record. The room
+    // stamps an edge at the witness time and a base write at the recorded
+    // time, so a backdated turn would differ in that stamp alone.
+    const AT: u64 = 1_790_000_000;
+    const NEEDLE: &str = "oneprogramneedle";
+    let clock = std::sync::Arc::new(PinnedClock(AT));
+    let open_pinned = || {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = VaultConfig {
+            store_clock: crate::ports::StoreClock::new(clock.clone(), clock.clone()),
+            ..VaultConfig::default()
+        };
+        let vault = crate::Vault::open(dir.path(), config).expect("open vault");
+        (dir, vault)
+    };
+    let message_id = EntityId::from_bytes([0x6C; 16]).expect("message id");
+    let turn_in = |conversation_ref: String, turn_ref: Option<String>| {
+        let mut message = witness_message(0, WitnessAuthor::User, NEEDLE);
+        message.id = Some(message_id.to_hex());
+        WitnessTurn {
+            conversation_ref,
+            turn_ref,
+            messages: vec![message],
+            occurred_at: AT,
+        }
+    };
+
+    // Through the room.
+    let (_room_dir, room_vault) = open_pinned();
+    let (session, actor) = session_witness_fixture(&room_vault, ROOM, 0x6A);
+    let receipt = facade_for(&room_vault, actor)
+        .witness_into_session(&session, &turn_in(String::new(), None), None)
+        .expect("session witness");
+    let turn_id = EntityId::from_hex(
+        receipt
+            .receipt_ref
+            .strip_prefix("witness:")
+            .expect("receipt ref names the turn"),
+    )
+    .expect("turn id");
+    let conversation_id = session.overlay_conversation_shell().expect("room shell");
+    let ids = [conversation_id, turn_id, message_id, actor];
+    let room_rows = {
+        let view = session.read_view().expect("read view");
+        let rtxn = room_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&view, &rtxn, &id))
+    };
+    let room_postings = session.search_text(NEEDLE, 10).expect("room search");
+
+    // Without a session: the same ids, straight into base.
+    let (_base_dir, base_vault) = open_pinned();
+    assert_eq!(put_person(&base_vault, 0x6A), actor);
+    facade_for(&base_vault, actor)
+        .witness(&turn_in(conversation_id.to_hex(), Some(turn_id.to_hex())))
+        .expect("base witness");
+    let base_rows = {
+        let rtxn = base_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&base_vault.store, &rtxn, &id))
+    };
+    for ((id, base), room) in ids.iter().zip(&base_rows).zip(&room_rows) {
+        assert!(base.entity.is_some(), "{} is stored", id.to_hex());
+        assert_eq!(base, room, "rows naming {}", id.to_hex());
+    }
+    let base_postings = base_vault.search_text(NEEDLE, 10).expect("base search");
+    assert_eq!(base_postings, room_postings);
+    assert_eq!(
+        base_postings.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        vec![message_id]
+    );
+
+    // The session link.
+    assert_eq!(room_vault.get_raw(&turn_id).expect("base get"), None);
+    session.promote_turn(&turn_id).expect("promote the turn");
+    assert_eq!(
+        room_vault
+            .off_record_promote_receipt(&turn_id)
+            .expect("promote receipt")
+            .map(|receipt| receipt.session_ref),
+        Some(ROOM.to_owned())
+    );
+    assert!(
+        base_vault
+            .off_record_promote_receipt(&turn_id)
+            .expect("promote receipt")
+            .is_none()
+    );
+    let promoted_rows = {
+        let rtxn = room_vault.store.env.read_txn().expect("read txn");
+        ids.map(|id| rows_naming(&room_vault.store, &rtxn, &id))
+    };
+    for ((id, base), promoted) in ids.iter().zip(&base_rows).zip(&promoted_rows) {
+        let mut unattributed = base.clone();
+        unattributed.edges.retain(|(key, _)| {
+            crate::edge::parse_strict_edge_record_key(key)
+                .expect("edge key")
+                .1
+                != EdgeKind::AuthoredBy
+        });
+        assert_eq!(
+            &unattributed,
+            promoted,
+            "promoted rows naming {}",
+            id.to_hex()
+        );
+    }
+    session.close().expect("close session");
+}

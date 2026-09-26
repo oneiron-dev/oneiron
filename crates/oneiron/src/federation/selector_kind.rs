@@ -1,5 +1,7 @@
 //! Replication vocabulary keyed on declared classification and family, never byte ranges.
 
+use std::collections::BTreeSet;
+
 use crate::registry::{
     EntityClassification, EntityTypeRegistryEntry, TypeByteFamily, entity_type_registry_entry,
     family_matches,
@@ -42,25 +44,6 @@ impl SelectorRange {
             }
             _ => false,
         }
-    }
-
-    pub(super) fn covered_by(self, bands: &[Self]) -> bool {
-        if bands.iter().any(|wide| wide.includes(self)) {
-            return true;
-        }
-        let classification = match self {
-            Self::Core => EntityClassification::Core,
-            Self::Maintenance => EntityClassification::Maintenance,
-            Self::Semantic | Self::Family(_) => return false,
-        };
-        crate::registry::TYPE_BYTE_FAMILIES
-            .iter()
-            .filter(|entry| entry.family.classification() == classification)
-            .all(|entry| {
-                bands
-                    .iter()
-                    .any(|wide| wide.includes(Self::Family(entry.family)))
-            })
     }
 
     /// Sorts, deduplicates and removes redundant family scopes.
@@ -134,6 +117,35 @@ impl SelectorRange {
             "pack/pack_overflow" => Some(Self::Family(TypeByteFamily::PackOverflow)),
             _ => None,
         }
+    }
+}
+
+/// The band axis of the pact lattice: a classification includes its families,
+/// and a set naming every family of a classification covers the classification.
+impl super::scope::ScopeAtom for SelectorRange {
+    fn includes(&self, other: &Self) -> bool {
+        SelectorRange::includes(*self, *other)
+    }
+
+    fn covered_by(&self, wide: &BTreeSet<Self>) -> bool {
+        if wide
+            .iter()
+            .any(|band| SelectorRange::includes(*band, *self))
+        {
+            return true;
+        }
+        let classification = match self {
+            Self::Core => EntityClassification::Core,
+            Self::Maintenance => EntityClassification::Maintenance,
+            Self::Semantic | Self::Family(_) => return false,
+        };
+        crate::registry::TYPE_BYTE_FAMILIES
+            .iter()
+            .filter(|entry| entry.family.classification() == classification)
+            .all(|entry| {
+                wide.iter()
+                    .any(|band| SelectorRange::includes(*band, Self::Family(entry.family)))
+            })
     }
 }
 

@@ -11,8 +11,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Result, SyncSelectorValidation as SelectorError};
 use crate::federation::{
-    FederationDirectionScope, FederationGrantScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, decode_federation_grant_body,
+    FederationDirectionScope, FederationGrantScope, ScopeAxis, ScopeId, base_world_axis,
+    decode_federation_grant_body,
 };
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::sync::bridge::parse_edge_key;
@@ -120,9 +120,9 @@ pub(super) fn resolve_selector_position(
     ceiling: &FederationDirectionScope,
 ) -> Result<FederationDirectionScope> {
     let worlds = match selector.world {
-        SyncSelectorWorld::All => FederationScopeWorlds::All,
-        SyncSelectorWorld::Base => FederationScopeWorlds::Base,
-        SyncSelectorWorld::World(id) => FederationScopeWorlds::Worlds(vec![id.entity_id()]),
+        SyncSelectorWorld::All => ScopeAxis::All,
+        SyncSelectorWorld::Base => base_world_axis(),
+        SyncSelectorWorld::World(id) => ScopeAxis::Some(BTreeSet::from([ScopeId(id.entity_id())])),
     };
     if !worlds.is_narrowing_of(&ceiling.worlds)
         || !selector.facets.within(&ceiling.facets)
@@ -145,9 +145,9 @@ pub(super) fn ceiling_for_grant(
     grant_id: &EntityId,
 ) -> FederationDirectionScope {
     effective_scope_for_grant(fold, grant_id).unwrap_or(FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     })
 }
 

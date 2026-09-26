@@ -767,19 +767,18 @@ fn slip_mint_signed_wire_is_fieldwise_and_rejects_noncanonical_fields() {
 #[test]
 fn pact_caveats_meet_and_recheck_live_grant_state() {
     use crate::federation::{
-        FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-        FederationScopeWorlds,
+        FederationDirectionScope, FederationPactScope, ScopeAxis, ScopeId, base_world_axis,
     };
     let (_dir, vault, issuer, root) = fixture();
     let mut fold = vault.authority_fold().unwrap();
     let grant = crate::EntityId::from_bytes([41; 16]).unwrap();
     let wide = FederationDirectionScope {
-        worlds: FederationScopeWorlds::All,
-        facets: FederationScopeFacets::All,
-        bands: FederationScopeBands::All,
+        worlds: ScopeAxis::All,
+        facets: ScopeAxis::All,
+        bands: ScopeAxis::All,
     };
     let narrow = FederationDirectionScope {
-        worlds: FederationScopeWorlds::Base,
+        worlds: base_world_axis(),
         ..wide.clone()
     };
     fold.federation_pacts.insert(
@@ -844,7 +843,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         .get_mut(&[42; 32])
         .unwrap()
         .effective_scope
-        .facets = FederationScopeFacets::Bottom;
+        .facets = ScopeAxis::Bottom;
     assert!(
         slip.verify(
             issuer.secret(),
@@ -896,9 +895,9 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
     let mut slip = root;
     for id in [47, 48] {
         slip.attenuate(caveat(FederationDirectionScope {
-            facets: FederationScopeFacets::Some(vec![
-                crate::EntityId::from_bytes([id; 16]).unwrap(),
-            ]),
+            facets: ScopeAxis::from_iter(
+                [crate::EntityId::from_bytes([id; 16]).unwrap()].map(ScopeId),
+            ),
             ..wide.clone()
         }))
         .unwrap();
