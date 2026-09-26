@@ -66,6 +66,38 @@ class CiWorkflowTests(unittest.TestCase):
             self.assertIn("github.event_name == 'workflow_dispatch'", gate)
             self.assertNotIn("pull_request", gate)
 
+    def test_shared_compiler_cache_is_pinned_and_reported_in_each_compiler_job(self):
+        self.assertIn("  SCCACHE_GHA_ENABLED: 'on'", self.lines)
+        self.assertIn(
+            "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}",
+            self.text,
+        )
+        for job in ("checks", "test", "test-linux", "test-linux-featureless"):
+            lines = self.job_lines(job)
+            self.assertIn(
+                "        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9",
+                lines,
+                job,
+            )
+            self.assertIn("      - name: Shared compiler cache key", lines, job)
+            self.assertIn("        id: sccache", lines, job)
+            self.assertIn('          version: "v0.15.0"', lines, job)
+            self.assertIn("        if: always() && steps.sccache.outcome == 'success'", lines, job)
+            self.assertIn("          RUSTC_WRAPPER: sccache", lines, job)
+            self.assertIn("        run: sccache --show-stats", lines, job)
+        # Tool installers must not use the compiler wrapper: only the checked build/test steps do.
+        self.assertEqual(self.text.count("          RUSTC_WRAPPER: sccache"), 6)
+
+    def test_full_tier_nextest_commands_are_not_replaced_by_cache_setup(self):
+        self.assertIn(
+            "run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast",
+            self.text,
+        )
+        self.assertIn(
+            "run cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full --no-fail-fast",
+            self.runner,
+        )
+
     def test_workflow_guard_is_executed_by_python_check(self):
         self.assertIn("python3 -m unittest discover -s scripts/tests -p 'test_ci_workflow.py' -v", self.text)
 

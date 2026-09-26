@@ -22,9 +22,9 @@ name: CI
 # draft until its review passes, then one CI run gates the merge). CI_PAUSED=true skips every job.
 #
 # Runners: our own machines. `changes` and `Checks` run on the Macs, so the Linux runners take only the two
-# Linux test jobs. Caches are the host's: each runner's `.env` exports a persistent CARGO_TARGET_DIR,
-# CARGO_INCREMENTAL=0 and a PATH with ~/.cargo/bin; the toolchain is host rustup via rust-toolchain.toml. Never
-# set CARGO_TARGET_DIR here. `clean: true` on every checkout because `_work` persists between runs.
+# Linux test jobs. Each runner keeps its persistent CARGO_TARGET_DIR and CARGO_INCREMENTAL=0; sccache
+# additionally stores compilation results in GitHub's cross-run cache. Never set CARGO_TARGET_DIR here.
+# The toolchain is host rustup via rust-toolchain.toml. `clean: true` on every checkout because `_work` persists.
 on:
   workflow_dispatch:
   pull_request:
@@ -36,6 +36,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: 'on'
 
 # One run per PR (a newer push cancels the older run); every main push keeps its own run.
 concurrency:
@@ -95,6 +96,13 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: Secret blocklist is a policy superset
         run: python3 scripts/check-secret-blocklist.py
       - name: Code map is current
@@ -105,6 +113,8 @@ jobs:
         run: cargo fmt --check
       - name: Clippy (touched packages; the full gate nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
         run: scripts/ci/run_scoped.sh clippy
       - name: typos 1.45.1 (host-local pin under ~/ci/tools)
         if: ${{ !cancelled() }}
@@ -134,6 +144,9 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p 'test_quickjs_build.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_federation_burst_audit.py' -v
           python3 -m unittest discover -s scripts/tests -p 'test_fleet_regression.py' -v
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -151,6 +164,13 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         run: |
           echo "$HOME/ci/tools/bin" >> "$GITHUB_PATH"
@@ -159,11 +179,20 @@ jobs:
             cargo install --locked cargo-nextest@0.9.137 --root "$HOME/ci/tools"
           fi
       - name: Workspace tests (nextest, full tier, macOS recipe)
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo nextest run --workspace --exclude oneiron-napi --exclude oneiron-bench --all-features --profile full --no-fail-fast
       - name: Featureless oneiron library tests
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo test -p oneiron --lib --no-default-features
       - name: Featureless oneiron library tests (nextest, no retries)
+        env:
+          RUSTC_WRAPPER: sccache
         run: cargo nextest run -p oneiron --lib --no-default-features --profile featureless --no-fail-fast --retries 0
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
       - name: Cap the build cache
         if: always()
         run: scripts/ci/cap-target-cache.sh 20
@@ -190,6 +219,15 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
@@ -201,8 +239,13 @@ jobs:
           cargo nextest --version
       - name: Tests (touched packages and modules; everything nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
         run: scripts/ci/run_scoped.sh test
 
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
   test-linux-featureless:
     name: Test (featureless)
     runs-on: [self-hosted, linux, x64]
@@ -223,6 +266,15 @@ jobs:
         run: |
           rustup show active-toolchain
           cargo --version
+      - name: Shared compiler cache key
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        run: echo "SCCACHE_GHA_VERSION=ci-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}" >> "$GITHUB_ENV"
+      - name: sccache 0.15.0 (GitHub Actions shared cache)
+        id: sccache
+        if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.15.0"
       - name: cargo-nextest (host copy, else a pinned install under ~/ci/tools)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
         run: |
@@ -234,8 +286,13 @@ jobs:
           cargo nextest --version
       - name: Featureless oneiron library tests (touched modules; both process models nightly)
         if: ${{ !cancelled() && (needs.changes.outputs.rust == 'true' || needs.changes.result != 'success') }}
+        env:
+          RUSTC_WRAPPER: sccache
         run: scripts/ci/run_scoped.sh featureless
 
+      - name: Compiler cache stats
+        if: always() && steps.sccache.outcome == 'success'
+        run: sccache --show-stats
   package:
     name: Package oneiron-server
     runs-on: [self-hosted, linux, x64]

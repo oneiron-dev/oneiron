@@ -1,10 +1,23 @@
 # Engine audit lanes
 
-Pins are in `tools.json`. The CI compiler lanes use sccache 0.15.0, a persistent
-host cache plus shared GitHub cache storage keyed by OS, architecture, Rust pin
-and lockfile. Full-tier nextest commands are unchanged. `--show-stats` records
-hit counts. Do not infer speedup from the existence of the configuration: retain
-repeat-build logs and compare clean-checkout wall times.
+Pins are in `tools.json`. The CI compiler lanes use sccache 0.15.0 with GitHub
+Actions cache storage, in addition to each runner's persistent host target dir.
+`SCCACHE_GHA_VERSION` namespaces entries by OS, architecture, the Rust toolchain
+file, and Cargo.lock; the pinned setup action exposes GitHub's cache runtime
+token to sccache. Full-tier nextest commands are unchanged. `--show-stats`
+records hit counts in each compiler job. The setup action also prints its
+post-run statistics.
+
+For evidence, retain the first CI job's compile step duration and `Compiler
+cache stats` output, then the same steps from a repeat run with the same cache
+namespace. A warm host `CARGO_TARGET_DIR` can skip compilation altogether, so
+zero hits on such a run are inconclusive. To compare *clean-checkout compilation*
+wall times, use fresh run-owned artifact targets on the same OS/architecture and
+identical source/toolchain/lockfile, first without sccache and then with the
+populated shared cache. Never erase a runner's persistent target to make the
+comparison. Record job URLs, host, revision, cache namespace, exact commands,
+wall times, and Rust hit counts; the local `cache-baseline.json` proves only
+host-local cold-artifact reuse, not CI shared-cache speedup.
 
 `python3 scripts/audit/cache.py` measures three serial `cargo check` builds of
 oneiron-server (including the core): uncached, cache population, and repeat. Each
