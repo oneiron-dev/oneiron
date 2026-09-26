@@ -529,6 +529,7 @@ mod tests {
 
     fn test_vault_config() -> VaultConfig {
         let mut cfg = VaultConfig::device();
+        cfg.retrieval_telemetry_capture = true;
         cfg.map_size = 32 * 1024 * 1024;
         cfg.dimensions = 4;
         cfg.max_readers = 16;
