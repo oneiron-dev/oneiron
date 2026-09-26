@@ -306,7 +306,7 @@ fn received_parent_conversation(
 }
 
 #[cfg(feature = "sync")]
-fn validate_received_parent(
+pub(crate) fn validate_received_parent(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
@@ -368,14 +368,14 @@ fn validate_received_parent(
 }
 
 #[cfg(feature = "sync")]
-pub(crate) fn validate_received_edge(
+pub(crate) fn validate_received_edge_shape(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
     kind: EdgeKind,
     target: EntityId,
     value: crate::edge::DecodedEdgeValue,
-) -> Result<ReceivedEdgeAdmission> {
+) -> Result<()> {
     use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
     use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -445,6 +445,19 @@ pub(crate) fn validate_received_edge(
             ));
         }
     }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_edge(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<ReceivedEdgeAdmission> {
+    validate_received_edge_shape(store, txn, source, kind, target, value)?;
     if kind == EdgeKind::Parent {
         validate_received_parent(store, txn, source, target)
     } else {

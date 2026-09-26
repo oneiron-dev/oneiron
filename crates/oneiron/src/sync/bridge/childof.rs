@@ -181,7 +181,7 @@ pub(super) fn replayed_child_of_candidates(
 }
 
 #[derive(Clone)]
-pub(super) struct PendingChildOfOp {
+pub(super) struct PendingEdgeOp {
     index: usize,
     src: EntityId,
     tgt: EntityId,
@@ -199,8 +199,9 @@ pub(super) fn apply_materialized_edge_ops(
     window_key: &str,
 ) -> Result<()> {
     debug_assert_eq!(ops.len(), metas.len());
-    let mut child_of_adds = Vec::<PendingChildOfOp>::new();
-    let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
+    let mut child_of_adds = Vec::<PendingEdgeOp>::new();
+    let mut child_of_deletes = Vec::<PendingEdgeOp>::new();
+    let mut parent_adds = Vec::<PendingEdgeOp>::new();
 
     for (index, op) in ops.into_iter().enumerate() {
         // ARCH-0052 P6: no incident-edge membership walk here. A replicated
@@ -213,7 +214,7 @@ pub(super) fn apply_materialized_edge_ops(
             | BatchOp::Edge { src, kind, tgt, .. }
                 if *kind == EdgeKind::ChildOf =>
             {
-                child_of_adds.push(PendingChildOfOp {
+                child_of_adds.push(PendingEdgeOp {
                     index,
                     src: *src,
                     tgt: *tgt,
@@ -221,7 +222,18 @@ pub(super) fn apply_materialized_edge_ops(
                 });
             }
             BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
-                child_of_deletes.push(PendingChildOfOp {
+                child_of_deletes.push(PendingEdgeOp {
+                    index,
+                    src: *src,
+                    tgt: *tgt,
+                    op,
+                });
+            }
+            BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+            | BatchOp::Edge { src, kind, tgt, .. }
+                if *kind == EdgeKind::Parent =>
+            {
+                parent_adds.push(PendingEdgeOp {
                     index,
                     src: *src,
                     tgt: *tgt,
@@ -338,10 +350,78 @@ pub(super) fn apply_materialized_edge_ops(
             Ok(()) => {}
         }
     }
+
+    // Parent is checked only after this delta's ChildOf winners have landed.
+    // Apply each accepted Parent before checking the next one: the read in
+    // validate_received_parent now sees every earlier candidate in this
+    // SAME transaction, so cardinality and cycles cannot hide in `ops`.
+    parent_adds
+        .sort_by_key(|entry| Store::encode_edge_key(&entry.src, EdgeKind::Parent, &entry.tgt));
+    for pending in parent_adds {
+        match crate::conversation_dag::validate_received_parent(
+            &vault.store,
+            &*wtxn,
+            pending.src,
+            pending.tgt,
+        ) {
+            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Admit) => {}
+            Ok(crate::conversation_dag::ReceivedEdgeAdmission::Deferred) => {
+                // The dependency is genuinely in a later window. Keep a
+                // durable retry until forward remat can heal this source.
+                crate::sync::quarantine::set_replay_remat_marker_in_txn(
+                    vault,
+                    wtxn,
+                    window_key,
+                    &pending.src,
+                )?;
+                continue;
+            }
+            Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
+                quarantine_edge_apply_failure(
+                    vault,
+                    wtxn,
+                    window_key,
+                    &metas[pending.index],
+                    &rejected,
+                )?;
+                continue;
+            }
+            Err(local) => return Err(local),
+        }
+        let apply_result = batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            wtxn,
+            vec![pending.op],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            false,
+        );
+        match apply_result {
+            Err(e) if remote_rejection_reason(&e).is_none() => return Err(e),
+            Err(e) => {
+                quarantine_edge_apply_failure(vault, wtxn, window_key, &metas[pending.index], &e)?;
+            }
+            Ok(()) => {
+                // A later replay can satisfy a Parent that left an rm: retry
+                // obligation. Consume only replay-origin markers; a stronger
+                // unproven delete-safety marker must survive this write.
+                crate::sync::quarantine::clear_replay_remat_marker_in_txn(
+                    vault,
+                    wtxn,
+                    window_key,
+                    &pending.src,
+                )?;
+            }
+        }
+    }
     Ok(())
 }
 
-fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
+fn child_of_components(ops: &[PendingEdgeOp]) -> Vec<Vec<PendingEdgeOp>> {
     let mut adjacency = HashMap::<EntityId, HashSet<EntityId>>::new();
     for op in ops {
         adjacency.entry(op.src).or_default().insert(op.tgt);
@@ -383,20 +463,17 @@ fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
     components
 }
 
-fn pending_child_of_sort_key(op: &PendingChildOfOp) -> [u8; 33] {
+fn pending_child_of_sort_key(op: &PendingEdgeOp) -> [u8; 33] {
     Store::encode_edge_key(&op.src, EdgeKind::ChildOf, &op.tgt)
 }
 
-fn cmp_pending_child_of_ops(
-    left: &PendingChildOfOp,
-    right: &PendingChildOfOp,
-) -> std::cmp::Ordering {
+fn cmp_pending_child_of_ops(left: &PendingEdgeOp, right: &PendingEdgeOp) -> std::cmp::Ordering {
     pending_child_of_sort_key(left)
         .cmp(&pending_child_of_sort_key(right))
         .then_with(|| left.index.cmp(&right.index))
 }
 
-fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
+fn child_of_component_sort_key(component: &[PendingEdgeOp]) -> [u8; 33] {
     component
         .iter()
         .map(pending_child_of_sort_key)

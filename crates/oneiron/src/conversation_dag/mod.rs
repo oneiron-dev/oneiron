@@ -7,7 +7,10 @@
 mod admission;
 mod graph;
 #[cfg(feature = "sync")]
-pub(crate) use admission::{ReceivedEdgeAdmission, validate_received_edge};
+pub(crate) use admission::{
+    ReceivedEdgeAdmission, validate_received_edge, validate_received_edge_shape,
+    validate_received_parent,
+};
 pub(crate) use admission::{
     guard_record_put, keep_membership_pin, pin_membership, pin_typed_record,
     validate_local_membership,
