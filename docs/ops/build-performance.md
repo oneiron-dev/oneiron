@@ -110,10 +110,14 @@ env NEXTEST_USER_CONFIG_FILE=none cargo nextest run -p oneiron --lib \
 This includes all non-ignored featureless library tests, including the slow set.
 The CLI pin overrides inherited `NEXTEST_RETRIES`; user-config suppression applies
 only to this command. It is not full verification, does not emit `VERIFY-OK`, and
-must not replace the mandatory shared-process libtest lane. Both CI test jobs run
-the shared-process `cargo test` lane and the per-test-process nextest lane, in
-that order. The CI nextest commands pin `--retries 0` even if the runner exports
-`NEXTEST_RETRIES`; they do not suppress user configuration or set eight threads.
+must not replace the mandatory shared-process libtest lane. On Linux,
+`Test (featureless)` runs the shared-process `cargo test` lane and the
+per-test-process nextest lane, in that order, in parallel with `Test` (workspace
+nextest and doctests). The main-push/dispatch-only `Test (macOS)` recipe still
+runs both featureless lanes in the same order. Both CI featureless nextest steps
+pin `--retries 0` even if the runner exports `NEXTEST_RETRIES`; they do not
+suppress user configuration or set eight threads. The new Linux context must
+be added to the main ruleset's required checks after merge.
 
 These **local inner-loop measurements** are a latency/compute choice, not
 equivalent gate coverage. On the **Mac mini at eight slots**, with `CARGO_INCREMENTAL=0` and `debug=1`, three paired
