@@ -317,6 +317,140 @@ fn git_wire_ignores_hostile_repository_configuration() {
 
 #[cfg(unix)]
 #[test]
+fn git_wire_refuses_repository_filter_before_staging_a_file() {
+    use std::io::Write;
+
+    let repo = init_repo();
+    let program_dir = tempfile::tempdir().expect("filter fixture");
+    let marker = program_dir.path().join("filter-executed");
+    let filter = program_dir.path().join("clean-filter");
+    write_executable(
+        &filter,
+        &format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    );
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=untrusted\n",
+    )
+    .expect("write attributes");
+    let mut config = fs::OpenOptions::new()
+        .append(true)
+        .open(repo.path().join(".git/config"))
+        .expect("open repository config");
+    writeln!(
+        config,
+        "\n[filter \"untrusted\"]\n  clean = {}",
+        filter.display()
+    )
+    .expect("configure clean filter");
+    fs::write(repo.path().join("README.md"), "changed\n").expect("change input");
+
+    let args = ["add", "--", "README.md"].map(str::to_owned);
+    let refused = run_bridged_git_argv(repo.path(), &args);
+    assert!(
+        matches!(
+            refused,
+            Err(crate::error::Error::Code(
+                CodeError::InvalidRepoMutationRecord(_)
+            ))
+        ),
+        "repository filter configuration must fail closed before git add"
+    );
+    assert!(!marker.exists(), "the filter command must never execute");
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_rejects_conditional_worktree_smudge_filter() {
+    use std::io::Write;
+
+    let (_vault_dir, vault) = open_test_vault();
+    let repo = init_repo();
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=conditional\n",
+    )
+    .expect("write attributes");
+    run_git(repo.path(), &["add", "--", ".gitattributes"]);
+    let mut commit = TEST_IDENTITY.to_vec();
+    commit.extend_from_slice(&["commit", "-m", "attributes"]);
+    run_git(repo.path(), &commit);
+    let head = GitOid::parse_hex(trimmed(run_git(
+        repo.path(),
+        &["rev-parse", "--verify", "HEAD"],
+    )))
+    .expect("head");
+
+    let fixture = tempfile::tempdir().expect("filter fixture");
+    let marker = fixture.path().join("smudge-executed");
+    let filter = fixture.path().join("smudge-filter");
+    write_executable(
+        &filter,
+        &format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    );
+    let included = fixture.path().join("conditional.cfg");
+    fs::write(
+        &included,
+        format!("[filter \"conditional\"]\n smudge = {}\n", filter.display()),
+    )
+    .expect("write conditional config");
+    let mut config = fs::OpenOptions::new()
+        .append(true)
+        .open(repo.path().join(".git/config"))
+        .expect("open repository config");
+    writeln!(
+        config,
+        "\n[includeIf \"gitdir:{}/.git/worktrees/\"]\n path = {}",
+        repo.path().display(),
+        included.display()
+    )
+    .expect("configure conditional include");
+
+    let wire = new_wire(&vault);
+    let proven = open(&wire, &repo);
+    let result = wire.add_worktree(&proven, &fixture.path().join("tree"), &head, 100);
+    assert!(
+        result.is_err(),
+        "conditional worktree filter must be refused"
+    );
+    assert!(
+        !marker.exists(),
+        "worktree smudge command must never execute"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn git_wire_config_change_after_snapshot_cannot_execute_filter() {
+    let repo = init_repo();
+    let fixture = tempfile::tempdir().expect("filter fixture");
+    let marker = fixture.path().join("race-executed");
+    let filter = fixture.path().join("late-filter");
+    write_executable(
+        &filter,
+        &format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    );
+    fs::write(
+        repo.path().join(".gitattributes"),
+        "README.md filter=late\n",
+    )
+    .expect("write attributes");
+    fs::write(repo.path().join("README.md"), "new content\n").expect("change input");
+    let appended = format!("\n[filter \"late\"]\n clean = {}\n", filter.display());
+    let env = GitWireProcessEnv::capture()
+        .expect("process env")
+        .with_config_change_for_test(repo.path().join(".git/config"), appended.into_bytes());
+    let args = ["add", "--", "README.md"].map(OsString::from);
+
+    assert!(
+        spawn_git(&env, repo.path(), &args, None).is_err(),
+        "an operation with changed config must not report success"
+    );
+    assert!(!marker.exists(), "late filter command must never execute");
+}
+
+#[cfg(unix)]
+#[test]
 fn git_wire_bounds_child_runtime_and_output() {
     let dir = tempfile::tempdir().expect("fake git dir");
     let slow = dir.path().join("slow-git");
