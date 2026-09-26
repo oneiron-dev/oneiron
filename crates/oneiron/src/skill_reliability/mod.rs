@@ -37,16 +37,9 @@
 //! this ledger. That is why there is no companion special-case here: the input
 //! set is attributed outcomes, and companion surfaces produce none.
 //!
-//! **No shared Beta module exists yet, deliberately.** The OF-184 registry
-//! entry lists ONE-1248/1249/1250, but those tickets are PsychProfile storage,
-//! SKILL provenance fields and CompactionPacket validation — none of them mints
-//! shared posterior machinery. The only landed Beta/UCB code is
-//! [`crate::critic::CriticReliability`], which is lens-scoped and carries its
-//! own outcome-source policy. [`SkillReliabilityPosterior`] therefore MIRRORS
-//! that shape (α, β, apply, mean, UCB) in ~40 lines without importing it;
-//! extracting one shared trait is a job for whichever ticket actually owns
-//! OF-184, and should be done with both call sites in hand rather than by
-//! guessing a seam from one.
+//! The [`crate::posterior::Posterior`] interface shares sampling, bounds and
+//! update/bonus entry points with critic reliability. Attribution remains here:
+//! only receipt-backed wins and routed skill defects reach this posterior.
 
 mod codec;
 mod executor;

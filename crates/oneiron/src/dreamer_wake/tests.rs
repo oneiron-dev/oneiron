@@ -648,9 +648,8 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
             attempt: &DreamerAdmittedAttempt,
             ctx: &mut WakeAttemptContext<'_>,
         ) -> Result<DreamerAttemptExecution> {
-            // Simulates the ONE-1305 step-layer deadline race exactly: the
-            // step layer parks at the ceiling under its hard-cut owner, then
-            // the error (not Park) escapes the executor.
+            // Simulates an executor error after an already-recorded hard-cut
+            // park. This checks recovery of that error path, not LLM preemption.
             self.clock.store(180_001, Ordering::SeqCst);
             DreamerRunnerStore::new(ctx.vault).park_attempt(ParkDreamerAttempt {
                 attempt_id: attempt.status.attempt.id,
@@ -714,12 +713,9 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     assert!(envelope.wrap_up);
     assert_eq!(envelope.finalize_by_ms, Some(10_000));
 
-    // Segment 2 — hard cut through the ERROR path: the step layer parks the
-    // running attempt at the ceiling and its DeadlineHardCut error is propagated
-    // by the executor (a host that does not map it to Park). The driver must
-    // still run the whole release sequence — budget-reservation refund,
-    // park/publish bookkeeping, and the CheckpointReached milestone — and
-    // stop DeadlineHardCut instead of bailing with the error.
+    // Segment 2 — hard cut through an executor ERROR after an existing park.
+    // The driver still refunds the reservation, publishes the park, and writes
+    // CheckpointReached instead of bailing with the error.
     let (clock, deadline) = injected_clock(100_000);
     let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline).with_milestone_author(author);
     let mut exec = HardCutExecutor {
@@ -770,6 +766,58 @@ fn graceful_wrap_then_hard_cut_sequencing() -> Result<()> {
     assert_eq!(cleaned.stale_requeued, 1, "hard-cut lease reclaimed");
     let status = store.status(queued.attempt.id)?.expect("attempt status");
     assert_eq!(status.attempt.state, AttemptState::Queued);
+    Ok(())
+}
+
+#[test]
+fn late_terminal_checkpoint_parks_and_charges_without_marking_done() -> Result<()> {
+    struct LateTerminal {
+        clock: Arc<AtomicU64>,
+    }
+    impl DreamerAttemptExecutor for LateTerminal {
+        async fn execute(
+            &mut self,
+            _attempt: &DreamerAdmittedAttempt,
+            _ctx: &mut WakeAttemptContext<'_>,
+        ) -> Result<DreamerAttemptExecution> {
+            self.clock.store(180_001, Ordering::SeqCst);
+            Ok(DreamerAttemptExecution::ParkWithSpend {
+                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
+                completed_units: 50,
+                step_hashes: Vec::new(),
+            })
+        }
+    }
+
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let queued = enqueue_micro(&store, "late-terminal", 10)?;
+    let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+    let (clock, deadline) = injected_clock(0);
+    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline)
+        .with_milestone_author(milestone_author(&vault, 5)?);
+    let report = block_on_ready(driver.run_wake_pass(
+        run_input(DreamerConsolidationScope::Micro, node_id, 20),
+        &mut LateTerminal { clock },
+        &WakeCancellation::new(),
+    ))?;
+    assert_eq!(report.completed, 0);
+    assert_eq!(report.parked, 1);
+    assert_eq!(report.stop, WakePassStop::DeadlineHardCut);
+    let parked = store
+        .parked_attempt(queued.attempt.id)?
+        .expect("checkpointed attempt");
+    assert_eq!(parked.reason, DREAMER_HARD_CUT_PARK_REASON);
+    let budget = store.budget("wake")?.expect("wake budget");
+    assert_eq!(budget.reserved_units, 0);
+    assert_eq!(budget.remaining_units, 10_000 - 50);
+    assert_eq!(
+        store
+            .latest_durable_milestone(queued.attempt.id)?
+            .expect("checkpoint")
+            .kind,
+        DreamerMilestoneKind::CheckpointReached
+    );
     Ok(())
 }
 

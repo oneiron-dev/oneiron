@@ -21,10 +21,27 @@ pub(super) fn package_from_files(files: Vec<HubFile>) -> Result<HubPackage> {
             return serde_json::from_str(value)
                 .map_err(|_| invalid("invalid quoted frontmatter scalar"));
         }
+        if let Some(quoted) = value.strip_prefix('\'') {
+            let inner = quoted
+                .strip_suffix('\'')
+                .ok_or_else(|| invalid("unterminated single-quoted frontmatter scalar"))?;
+            let mut decoded = String::with_capacity(inner.len());
+            let mut chars = inner.chars();
+            while let Some(c) = chars.next() {
+                if c == '\'' && chars.next() != Some('\'') {
+                    return Err(invalid("single quote must be doubled in a quoted scalar"));
+                }
+                decoded.push(c);
+            }
+            if decoded.is_empty() {
+                return Err(invalid("empty frontmatter scalar"));
+            }
+            return Ok(decoded);
+        }
         if value.is_empty()
             || value
                 .chars()
-                .any(|c| matches!(c, '\'' | '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
+                .any(|c| matches!(c, '&' | '*' | '!' | '{' | '[' | '|' | '>' | '#'))
         {
             return Err(invalid("unsupported YAML scalar"));
         }
@@ -74,30 +91,52 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
     let mut caps = SkillCapabilitySurface::default();
     let mut call_fields = serde_json::Map::new();
     let mut in_call = false;
+    let mut metadata_block = false;
+    let mut metadata_keys = std::collections::BTreeSet::new();
     for line in front.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
             continue;
         }
         if line.starts_with(char::is_whitespace) {
-            if !in_call || !line.starts_with("  ") || line.starts_with("   ") {
-                return Err(invalid("unsupported nested YAML frontmatter"));
-            }
-            let (key, value) = line
-                .trim_start()
+            let nested = line
+                .strip_prefix("  ")
+                .filter(|rest| !rest.starts_with(char::is_whitespace))
+                .ok_or_else(|| invalid("unsupported nested YAML frontmatter"))?;
+            let (key, value) = nested
                 .split_once(':')
-                .ok_or_else(|| invalid("invalid call field"))?;
-            if !matches!(key, "reference" | "arguments" | "returns")
-                || call_fields
-                    .insert(key.to_owned(), call_field_value(value.trim())?)
-                    .is_some()
-            {
-                return Err(invalid(
-                    "call must have unique reference, arguments and returns fields",
-                ));
+                .ok_or_else(|| invalid("invalid nested frontmatter field"))?;
+            if in_call {
+                if !matches!(key, "reference" | "arguments" | "returns")
+                    || call_fields
+                        .insert(key.to_owned(), call_field_value(value.trim())?)
+                        .is_some()
+                {
+                    return Err(invalid(
+                        "call must have unique reference, arguments and returns fields",
+                    ));
+                }
+            } else if metadata_block {
+                if key.is_empty()
+                    || !key
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
+                    || value.trim().is_empty()
+                    || value
+                        .trim_start()
+                        .chars()
+                        .next()
+                        .is_some_and(|c| matches!(c, '[' | '{' | '!' | '&' | '*' | '|' | '>'))
+                    || !metadata_keys.insert(key)
+                {
+                    return Err(invalid("unsupported metadata scalar"));
+                }
+            } else {
+                return Err(invalid("nested YAML requires call or metadata block"));
             }
             continue;
         }
         in_call = false;
+        metadata_block = false;
         let (key, value) = line
             .split_once(':')
             .ok_or_else(|| invalid("invalid frontmatter field"))?;
@@ -121,6 +160,7 @@ fn frontmatter_fields(front: &str) -> Result<ParsedFrontmatter<'_>> {
                     call_fields = object;
                 }
             }
+            "metadata" if value.is_empty() => metadata_block = true,
             "metadata" => {
                 let _: BTreeMap<String, String> = serde_json::from_str(value)
                     .map_err(|_| invalid("metadata requires a JSON string map"))?;
