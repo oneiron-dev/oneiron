@@ -28536,6 +28536,30 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AxisArm",
+      "AxisScores",
+      "ConfidenceInterval",
+      "GoalAxisBandit",
+      "GoalAxisPlan",
+      "GoalAxisReport",
+      "GoalAxisScorer",
+      "OnlineAxisMeasurement",
+      "OnlineAxisOutcome",
+      "OnlineAxisSample"
+     ],
+     "path": "src/skill_optimize/goal_axes.rs",
+     "purpose": "Goal-axis measurements for the future goal-record admission door",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 6,
+      "trait": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -28558,7 +28582,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -34826,7 +34850,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35024,7 +35048,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2068,
+   "source_files": 2069,
    "test_files": 710
   },
   "oneiron-android": {

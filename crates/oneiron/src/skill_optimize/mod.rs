@@ -129,6 +129,7 @@
 mod brief;
 mod dials;
 mod gate;
+mod goal_axes;
 mod job;
 mod selection;
 mod tier;
@@ -141,6 +142,10 @@ pub use self::brief::{
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
+};
+pub use self::goal_axes::{
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
+    GoalAxisScorer, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
 };
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
