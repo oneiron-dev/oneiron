@@ -25287,7 +25287,7 @@
       "enum": 2,
       "fn": 7,
       "mod": 1,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 2
      }
     },
@@ -25454,6 +25454,16 @@
      "notable": [],
      "path": "src/recovery/redaction.rs",
      "purpose": "Cursor-independent redaction of a resolved, hash-bound canonical text span",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/snapshot_writer.rs",
+     "purpose": "Off-hot-path publication of canonical Layer-1 window artifacts",
      "surface": {
       "fn": 1
      }
@@ -34532,7 +34542,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -34898,7 +34908,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {

@@ -147,6 +147,68 @@ fn canonical_carry_list_round_trips_with_blake3_and_fresh_documents() -> Result<
 }
 
 #[test]
+fn canonical_snapshot_writer_persists_per_document_entries_and_head_receipts() -> Result<()> {
+    let fixture = fixture()?;
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    let second = fixture
+        .vault
+        .create_note(
+            "research",
+            "another document",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .unwrap();
+    let window = note_window(&fixture.vault, &[owner, fixture.note, second])?;
+    let expected = capture_canonical_window(&fixture.vault, "2026-09", &window)?;
+    assert_eq!(expected.doc_snapshots.len(), 2);
+    assert_eq!(expected.document_heads.len(), 2);
+    assert_eq!(expected.head_move_receipts.len(), 1);
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    let digest = write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path)?;
+    let disk_bytes = fs::read(&path)?;
+    assert_eq!(digest, *blake3::hash(&disk_bytes).as_bytes());
+    let RecoveryArtifactLoad::Ready(artifact) =
+        load_recovery_artifact(&path, CANONICAL_SNAPSHOT_ARTIFACT_TYPE)?
+    else {
+        panic!("published artifact must validate");
+    };
+    assert_eq!(artifact.payload(), canonical::pack(&expected)?);
+    let read_back = CanonicalSnapshot::decode(&disk_bytes)?;
+    assert_eq!(read_back, expected);
+    assert_eq!(disk_bytes, read_back.encode()?);
+    assert_eq!(read_back.blake3()?, digest);
+    for doc in &read_back.doc_snapshots {
+        assert_eq!(doc.rebuild()?.get_text("body").to_string(), doc.text);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o600);
+    }
+    assert!(matches!(
+        write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path),
+        Err(Error::ConcurrentWrite(_))
+    ));
+    assert_eq!(fs::read(&path)?, disk_bytes);
+    assert_eq!(fs::read_dir(dir.path())?.count(), 1);
+    Ok(())
+}
+
+#[test]
+fn canonical_snapshot_writer_refuses_invalid_capture_without_publishing() -> Result<()> {
+    let fixture = fixture()?;
+    let window = LoroDoc::new();
+    window.get_text("entities").insert(0, "invalid").unwrap();
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    assert!(write_canonical_window_snapshot(&fixture.vault, "2026-09", &window, &path).is_err());
+    assert!(!path.exists());
+    assert_eq!(fs::read_dir(dir.path())?.count(), 0);
+    Ok(())
+}
+
+#[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;
