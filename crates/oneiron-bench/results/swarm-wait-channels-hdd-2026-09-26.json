@@ -1,0 +1,338 @@
+{
+  "interval_ms": 50,
+  "samples": {
+    "Mixed:100:trial1": 129,
+    "Mixed:100:trial2": 69,
+    "Mixed:100:trial3": 91,
+    "Mixed:10:trial1": 560,
+    "Mixed:10:trial2": 116,
+    "Mixed:10:trial3": 950,
+    "Mixed:1:trial1": 266,
+    "Mixed:1:trial2": 240,
+    "Mixed:1:trial3": 384,
+    "Mixed:300:trial1": 63,
+    "Mixed:300:trial2": 17,
+    "Mixed:300:trial3": 233,
+    "Recall:100:trial1": 12,
+    "Recall:100:trial2": 12,
+    "Recall:100:trial3": 41,
+    "Recall:10:trial1": 24,
+    "Recall:10:trial2": 47,
+    "Recall:10:trial3": 22,
+    "Recall:1:trial1": 350,
+    "Recall:1:trial2": 66,
+    "Recall:1:trial3": 55,
+    "Recall:300:trial1": 2,
+    "Recall:300:trial2": 1,
+    "Recall:300:trial3": 7,
+    "Write:100:trial1": 71,
+    "Write:100:trial2": 23,
+    "Write:100:trial3": 39,
+    "Write:10:trial1": 599,
+    "Write:10:trial2": 562,
+    "Write:10:trial3": 580,
+    "Write:1:trial1": 1331,
+    "Write:1:trial2": 757,
+    "Write:1:trial3": 1146,
+    "Write:300:trial1": 1,
+    "Write:300:trial3": 5
+  },
+  "scope": "all tasks including leader, full-thread prefix only; no draining tail",
+  "wait_channels": {
+    "Mixed:100:trial1": {
+      "D:0": 2,
+      "D:blk_mq_get_tag": 35,
+      "D:folio_wait_bit_common": 23,
+      "D:jbd2_log_wait_commit": 2,
+      "D:rq_qos_wait": 66,
+      "R:0": 2,
+      "R:folio_wait_bit_common": 1,
+      "R:rq_qos_wait": 1,
+      "S:futex_do_wait": 12897
+    },
+    "Mixed:100:trial2": {
+      "D:0": 2,
+      "D:blk_mq_get_tag": 2,
+      "D:folio_wait_bit_common": 18,
+      "D:rq_qos_wait": 44,
+      "R:0": 2,
+      "R:folio_wait_bit_common": 1,
+      "R:rq_qos_wait": 1,
+      "S:futex_do_wait": 6899
+    },
+    "Mixed:100:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 32,
+      "D:rq_qos_wait": 57,
+      "R:0": 2,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 9098
+    },
+    "Mixed:10:trial1": {
+      "D:0": 4,
+      "D:blk_mq_get_tag": 106,
+      "D:folio_wait_bit_common": 99,
+      "D:jbd2_log_wait_commit": 4,
+      "D:rq_qos_wait": 342,
+      "R:0": 3,
+      "R:blk_mq_get_tag": 1,
+      "R:futex_do_wait": 1,
+      "S:futex_do_wait": 5600
+    },
+    "Mixed:10:trial2": {
+      "D:0": 7,
+      "D:folio_wait_bit_common": 32,
+      "D:jbd2_log_wait_commit": 2,
+      "D:rq_qos_wait": 70,
+      "R:0": 2,
+      "R:rq_qos_wait": 5,
+      "S:futex_do_wait": 1158
+    },
+    "Mixed:10:trial3": {
+      "D:0": 12,
+      "D:blk_mq_get_tag": 590,
+      "D:folio_wait_bit_common": 177,
+      "D:jbd2_log_wait_commit": 27,
+      "D:rq_qos_wait": 132,
+      "R:0": 4,
+      "R:blk_mq_get_tag": 4,
+      "R:folio_wait_bit_common": 3,
+      "R:futex_do_wait": 2,
+      "R:rq_qos_wait": 2,
+      "S:0": 1,
+      "S:futex_do_wait": 9496
+    },
+    "Mixed:1:trial1": {
+      "D:0": 5,
+      "D:blk_mq_get_tag": 24,
+      "D:folio_wait_bit_common": 77,
+      "D:jbd2_log_wait_commit": 3,
+      "D:rq_qos_wait": 150,
+      "R:0": 3,
+      "R:rq_qos_wait": 4,
+      "S:futex_do_wait": 266
+    },
+    "Mixed:1:trial2": {
+      "D:0": 6,
+      "D:blk_mq_get_tag": 3,
+      "D:folio_wait_bit_common": 75,
+      "D:jbd2_log_wait_commit": 2,
+      "D:rq_qos_wait": 148,
+      "R:0": 3,
+      "R:jbd2_log_wait_commit": 1,
+      "R:rq_qos_wait": 2,
+      "S:futex_do_wait": 240
+    },
+    "Mixed:1:trial3": {
+      "D:0": 10,
+      "D:blk_mq_get_tag": 13,
+      "D:folio_wait_bit_common": 67,
+      "D:jbd2_log_wait_commit": 3,
+      "D:rq_qos_wait": 283,
+      "R:0": 6,
+      "R:folio_wait_bit_common": 2,
+      "S:futex_do_wait": 384
+    },
+    "Mixed:300:trial1": {
+      "D:0": 2,
+      "D:blk_mq_get_tag": 5,
+      "D:folio_wait_bit_common": 8,
+      "D:rq_qos_wait": 47,
+      "R:rq_qos_wait": 1,
+      "S:futex_do_wait": 18900
+    },
+    "Mixed:300:trial2": {
+      "D:blk_mq_get_tag": 2,
+      "D:folio_wait_bit_common": 5,
+      "D:rq_qos_wait": 10,
+      "R:rq_qos_wait": 1,
+      "S:futex_do_wait": 5099
+    },
+    "Mixed:300:trial3": {
+      "D:0": 1,
+      "D:blk_mq_get_tag": 78,
+      "D:folio_wait_bit_common": 20,
+      "D:rq_qos_wait": 133,
+      "R:blk_mq_get_tag": 1,
+      "S:futex_do_wait": 69900
+    },
+    "Recall:100:trial1": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 5,
+      "D:rq_qos_wait": 5,
+      "R:folio_wait_bit_common": 2,
+      "S:futex_do_wait": 1199
+    },
+    "Recall:100:trial2": {
+      "D:folio_wait_bit_common": 5,
+      "D:rq_qos_wait": 8,
+      "R:0": 1,
+      "R:futex_do_wait": 1,
+      "S:futex_do_wait": 1197
+    },
+    "Recall:100:trial3": {
+      "D:folio_wait_bit_common": 15,
+      "D:rq_qos_wait": 25,
+      "S:futex_do_wait": 4101
+    },
+    "Recall:10:trial1": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 11,
+      "D:rq_qos_wait": 12,
+      "R:0": 1,
+      "S:futex_do_wait": 239
+    },
+    "Recall:10:trial2": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 23,
+      "D:rq_qos_wait": 21,
+      "R:folio_wait_bit_common": 1,
+      "R:futex_do_wait": 1,
+      "R:rq_qos_wait": 1,
+      "S:0": 2,
+      "S:futex_do_wait": 467
+    },
+    "Recall:10:trial3": {
+      "D:folio_wait_bit_common": 12,
+      "D:rq_qos_wait": 9,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 220
+    },
+    "Recall:1:trial1": {
+      "D:0": 7,
+      "D:blk_mq_get_tag": 40,
+      "D:folio_wait_bit_common": 67,
+      "D:jbd2_log_wait_commit": 57,
+      "D:rq_qos_wait": 176,
+      "R:0": 1,
+      "R:blk_mq_get_tag": 1,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 350
+    },
+    "Recall:1:trial2": {
+      "D:0": 5,
+      "D:folio_wait_bit_common": 32,
+      "D:jbd2_log_wait_commit": 1,
+      "D:rq_qos_wait": 21,
+      "R:0": 5,
+      "R:rq_qos_wait": 2,
+      "S:futex_do_wait": 66
+    },
+    "Recall:1:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 27,
+      "D:jbd2_log_wait_commit": 4,
+      "D:rq_qos_wait": 20,
+      "R:0": 1,
+      "R:rq_qos_wait": 2,
+      "S:futex_do_wait": 55
+    },
+    "Recall:300:trial1": {
+      "R:0": 1,
+      "S:futex_do_wait": 601
+    },
+    "Recall:300:trial2": {
+      "D:rq_qos_wait": 1,
+      "S:futex_do_wait": 300
+    },
+    "Recall:300:trial3": {
+      "D:folio_wait_bit_common": 5,
+      "D:rq_qos_wait": 2,
+      "S:futex_do_wait": 2099
+    },
+    "Write:100:trial1": {
+      "D:folio_wait_bit_common": 13,
+      "D:rq_qos_wait": 57,
+      "R:rq_qos_wait": 1,
+      "S:futex_do_wait": 7100
+    },
+    "Write:100:trial2": {
+      "D:folio_wait_bit_common": 3,
+      "D:rq_qos_wait": 20,
+      "S:futex_do_wait": 2300
+    },
+    "Write:100:trial3": {
+      "D:folio_wait_bit_common": 3,
+      "D:rq_qos_wait": 33,
+      "R:rq_qos_wait": 2,
+      "S:futex_do_wait": 3900
+    },
+    "Write:10:trial1": {
+      "D:0": 12,
+      "D:blk_mq_get_tag": 147,
+      "D:folio_wait_bit_common": 71,
+      "D:jbd2_log_wait_commit": 29,
+      "D:rq_qos_wait": 331,
+      "R:0": 7,
+      "R:folio_wait_bit_common": 2,
+      "R:rq_qos_wait": 1,
+      "S:0": 1,
+      "S:futex_do_wait": 5988
+    },
+    "Write:10:trial2": {
+      "D:0": 6,
+      "D:blk_mq_get_tag": 1,
+      "D:folio_wait_bit_common": 93,
+      "D:jbd2_log_wait_commit": 5,
+      "D:rq_qos_wait": 440,
+      "R:0": 8,
+      "R:futex_do_wait": 1,
+      "R:rq_qos_wait": 8,
+      "S:futex_do_wait": 5620
+    },
+    "Write:10:trial3": {
+      "D:0": 6,
+      "D:blk_mq_get_tag": 61,
+      "D:folio_wait_bit_common": 92,
+      "D:jbd2_log_wait_commit": 10,
+      "D:rq_qos_wait": 404,
+      "R:0": 3,
+      "R:folio_wait_bit_common": 1,
+      "R:rq_qos_wait": 3,
+      "S:0": 2,
+      "S:futex_do_wait": 5798
+    },
+    "Write:1:trial1": {
+      "D:0": 7,
+      "D:blk_mq_get_tag": 270,
+      "D:folio_wait_bit_common": 136,
+      "D:jbd2_log_wait_commit": 52,
+      "D:rq_qos_wait": 845,
+      "R:0": 11,
+      "R:blk_mq_get_tag": 1,
+      "R:jbd2_log_wait_commit": 1,
+      "R:rq_qos_wait": 8,
+      "S:futex_do_wait": 1331
+    },
+    "Write:1:trial2": {
+      "D:0": 15,
+      "D:blk_mq_get_tag": 3,
+      "D:folio_wait_bit_common": 100,
+      "D:jbd2_log_wait_commit": 16,
+      "D:rq_qos_wait": 608,
+      "R:0": 6,
+      "R:rq_qos_wait": 9,
+      "S:futex_do_wait": 757
+    },
+    "Write:1:trial3": {
+      "D:0": 15,
+      "D:blk_mq_get_tag": 408,
+      "D:folio_wait_bit_common": 153,
+      "D:jbd2_log_wait_commit": 60,
+      "D:rq_qos_wait": 484,
+      "R:0": 13,
+      "R:blk_mq_get_tag": 3,
+      "R:folio_wait_bit_common": 2,
+      "R:rq_qos_wait": 8,
+      "S:futex_do_wait": 1146
+    },
+    "Write:300:trial1": {
+      "D:rq_qos_wait": 1,
+      "S:futex_do_wait": 300
+    },
+    "Write:300:trial3": {
+      "D:rq_qos_wait": 5,
+      "S:futex_do_wait": 1500
+    }
+  }
+}

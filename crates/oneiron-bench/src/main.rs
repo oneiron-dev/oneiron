@@ -23,6 +23,7 @@
 //!   real-traffic cache hit rates and a descriptive NVMe fsync row, each
 //!   reported on its own axis. Accuracy and cost stay BEAM-owned.
 //!
+//! * `swarm` — seeded one-vault, in-process write/recall/mixed agent curve.
 //! * `fleet` — authenticated fleet writes, recall and real held sockets, plus
 //!   paired full/resumed PPR measurements and receipt-derived regression floors.
 //!
@@ -42,6 +43,7 @@ mod fleet;
 mod interface_bench;
 mod perf;
 mod retrieval_trace_export;
+mod swarm;
 mod vector;
 
 fn main() -> ExitCode {
@@ -75,6 +77,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "eval" => eval::run(rest),
         [cmd, rest @ ..] if cmd == "perf" => perf::run(rest),
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
+        [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -137,6 +140,10 @@ fn print_help() {
                                        synthetic_smoke and never a publication\n\
                                        candidate (see `perf --help`)\n\
           fleet --help                authenticated fleet load and PPR pair receipts\n\
+          swarm --matrix              three seeded trials each of write, recall,\n\
+                                       mixed at 1/10/100/300 agents; JSONL\n\
+          swarm --mode write|recall|mixed --agents 1|10|100|300\n\
+                                       one seeded single-vault trial as JSON\n\
           vector                      ARCH-0019 vector perf/recall harness\n\
                                        [--n 1k|10k] [--dim 1024|4096] [--seed N]\n\
                                        [--queries N] [--churn none|refresh|delete|both]\n\

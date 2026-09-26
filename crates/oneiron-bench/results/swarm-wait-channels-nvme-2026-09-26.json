@@ -1,0 +1,304 @@
+{
+  "interval_ms": 50,
+  "samples": {
+    "Mixed:100:trial1": 44,
+    "Mixed:100:trial2": 29,
+    "Mixed:100:trial3": 23,
+    "Mixed:10:trial1": 163,
+    "Mixed:10:trial2": 372,
+    "Mixed:10:trial3": 140,
+    "Mixed:1:trial1": 148,
+    "Mixed:1:trial2": 139,
+    "Mixed:1:trial3": 138,
+    "Mixed:300:trial1": 9,
+    "Mixed:300:trial2": 8,
+    "Mixed:300:trial3": 1,
+    "Recall:100:trial1": 73,
+    "Recall:100:trial2": 90,
+    "Recall:100:trial3": 36,
+    "Recall:10:trial1": 113,
+    "Recall:10:trial2": 168,
+    "Recall:10:trial3": 131,
+    "Recall:1:trial1": 180,
+    "Recall:1:trial2": 150,
+    "Recall:1:trial3": 148,
+    "Recall:300:trial1": 7,
+    "Recall:300:trial2": 1,
+    "Recall:300:trial3": 10,
+    "Write:100:trial1": 9,
+    "Write:100:trial2": 14,
+    "Write:100:trial3": 5,
+    "Write:10:trial1": 39,
+    "Write:10:trial2": 25,
+    "Write:10:trial3": 53,
+    "Write:1:trial2": 41,
+    "Write:1:trial3": 117,
+    "Write:300:trial1": 1,
+    "Write:300:trial2": 1,
+    "Write:300:trial3": 1
+  },
+  "scope": "all tasks including leader, full-thread prefix only; no draining tail",
+  "wait_channels": {
+    "Mixed:100:trial1": {
+      "D:jbd2_log_wait_commit": 1,
+      "D:submit_bio_wait": 40,
+      "R:0": 3,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 4399
+    },
+    "Mixed:100:trial2": {
+      "D:folio_wait_bit_common": 2,
+      "D:submit_bio_wait": 27,
+      "R:0": 1,
+      "S:futex_do_wait": 2899
+    },
+    "Mixed:100:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 1,
+      "D:submit_bio_wait": 20,
+      "R:submit_bio_wait": 1,
+      "S:futex_do_wait": 2300
+    },
+    "Mixed:10:trial1": {
+      "D:0": 2,
+      "D:folio_wait_bit_common": 12,
+      "D:jbd2_log_wait_commit": 6,
+      "D:rq_qos_wait": 17,
+      "D:submit_bio_wait": 117,
+      "R:0": 9,
+      "R:submit_bio_wait": 1,
+      "S:0": 1,
+      "S:futex_do_wait": 1628
+    },
+    "Mixed:10:trial2": {
+      "D:0": 4,
+      "D:do_get_write_access": 6,
+      "D:folio_wait_bit_common": 51,
+      "D:jbd2_log_wait_commit": 21,
+      "D:rq_qos_wait": 155,
+      "D:submit_bio_wait": 125,
+      "D:wait_transaction_locked": 1,
+      "R:0": 9,
+      "R:folio_wait_bit_common": 1,
+      "R:submit_bio_wait": 1,
+      "S:futex_do_wait": 3718
+    },
+    "Mixed:10:trial3": {
+      "D:0": 2,
+      "D:folio_wait_bit_common": 5,
+      "D:jbd2_log_wait_commit": 4,
+      "D:submit_bio_wait": 126,
+      "R:0": 3,
+      "R:folio_wait_bit_common": 2,
+      "S:futex_do_wait": 1398
+    },
+    "Mixed:1:trial1": {
+      "D:0": 8,
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 22,
+      "D:submit_bio_wait": 105,
+      "R:0": 8,
+      "R:jbd2_log_wait_commit": 1,
+      "R:submit_bio_wait": 3,
+      "S:futex_do_wait": 148
+    },
+    "Mixed:1:trial2": {
+      "D:0": 2,
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 19,
+      "D:submit_bio_wait": 107,
+      "R:0": 4,
+      "R:folio_wait_bit_common": 4,
+      "R:submit_bio_wait": 2,
+      "S:futex_do_wait": 139
+    },
+    "Mixed:1:trial3": {
+      "D:0": 1,
+      "D:jbd2_log_wait_commit": 14,
+      "D:submit_bio_wait": 120,
+      "R:0": 2,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 138
+    },
+    "Mixed:300:trial1": {
+      "D:folio_wait_bit_common": 2,
+      "D:submit_bio_wait": 8,
+      "S:futex_do_wait": 2699
+    },
+    "Mixed:300:trial2": {
+      "D:submit_bio_wait": 8,
+      "S:futex_do_wait": 2400
+    },
+    "Mixed:300:trial3": {
+      "D:submit_bio_wait": 2,
+      "S:futex_do_wait": 299
+    },
+    "Recall:100:trial1": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 3,
+      "D:jbd2_log_wait_commit": 1,
+      "D:submit_bio_wait": 65,
+      "R:0": 3,
+      "R:futex_do_wait": 1,
+      "R:submit_bio_wait": 1,
+      "S:0": 2,
+      "S:futex_do_wait": 7296
+    },
+    "Recall:100:trial2": {
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 5,
+      "D:rq_qos_wait": 2,
+      "D:submit_bio_wait": 81,
+      "S:futex_do_wait": 9001
+    },
+    "Recall:100:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 1,
+      "D:submit_bio_wait": 34,
+      "S:futex_do_wait": 3600
+    },
+    "Recall:10:trial1": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 7,
+      "D:rq_qos_wait": 4,
+      "D:submit_bio_wait": 95,
+      "R:0": 6,
+      "R:folio_wait_bit_common": 2,
+      "R:submit_bio_wait": 1,
+      "S:futex_do_wait": 1126
+    },
+    "Recall:10:trial2": {
+      "D:0": 2,
+      "D:folio_wait_bit_common": 4,
+      "D:jbd2_log_wait_commit": 11,
+      "D:rq_qos_wait": 16,
+      "D:submit_bio_wait": 130,
+      "R:0": 4,
+      "S:0": 2,
+      "S:futex_do_wait": 1679
+    },
+    "Recall:10:trial3": {
+      "D:0": 2,
+      "D:folio_wait_bit_common": 2,
+      "D:jbd2_log_wait_commit": 11,
+      "D:submit_bio_wait": 112,
+      "R:0": 3,
+      "R:folio_wait_bit_common": 2,
+      "R:futex_do_wait": 1,
+      "R:submit_bio_wait": 1,
+      "S:0": 2,
+      "S:futex_do_wait": 1305
+    },
+    "Recall:1:trial1": {
+      "D:0": 4,
+      "D:folio_wait_bit_common": 15,
+      "D:jbd2_log_wait_commit": 11,
+      "D:rq_qos_wait": 25,
+      "D:submit_bio_wait": 120,
+      "R:0": 5,
+      "S:futex_do_wait": 180
+    },
+    "Recall:1:trial2": {
+      "D:0": 7,
+      "D:jbd2_log_wait_commit": 13,
+      "D:submit_bio_wait": 120,
+      "R:0": 4,
+      "R:folio_wait_bit_common": 1,
+      "R:submit_bio_wait": 5,
+      "S:futex_do_wait": 150
+    },
+    "Recall:1:trial3": {
+      "D:0": 4,
+      "D:folio_wait_bit_common": 2,
+      "D:jbd2_log_wait_commit": 9,
+      "D:rq_qos_wait": 4,
+      "D:submit_bio_wait": 121,
+      "R:0": 6,
+      "R:submit_bio_wait": 2,
+      "S:futex_do_wait": 148
+    },
+    "Recall:300:trial1": {
+      "D:0": 1,
+      "D:submit_bio_wait": 3,
+      "S:futex_do_wait": 2103
+    },
+    "Recall:300:trial2": {
+      "S:futex_do_wait": 301
+    },
+    "Recall:300:trial3": {
+      "D:submit_bio_wait": 11,
+      "S:futex_do_wait": 2999
+    },
+    "Write:100:trial1": {
+      "D:folio_wait_bit_common": 1,
+      "D:submit_bio_wait": 8,
+      "R:0": 1,
+      "S:futex_do_wait": 899
+    },
+    "Write:100:trial2": {
+      "D:folio_wait_bit_common": 1,
+      "D:submit_bio_wait": 11,
+      "R:0": 2,
+      "S:futex_do_wait": 1400
+    },
+    "Write:100:trial3": {
+      "D:submit_bio_wait": 5,
+      "S:futex_do_wait": 500
+    },
+    "Write:10:trial1": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 3,
+      "D:submit_bio_wait": 31,
+      "R:0": 3,
+      "S:futex_do_wait": 390
+    },
+    "Write:10:trial2": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 1,
+      "D:jbd2_log_wait_commit": 3,
+      "D:submit_bio_wait": 18,
+      "R:0": 2,
+      "S:futex_do_wait": 250
+    },
+    "Write:10:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 2,
+      "D:jbd2_log_wait_commit": 11,
+      "D:submit_bio_wait": 32,
+      "R:0": 7,
+      "R:folio_wait_bit_common": 1,
+      "S:futex_do_wait": 529
+    },
+    "Write:1:trial2": {
+      "D:0": 1,
+      "D:jbd2_log_wait_commit": 11,
+      "D:submit_bio_wait": 27,
+      "R:0": 1,
+      "R:submit_bio_wait": 1,
+      "S:futex_do_wait": 41
+    },
+    "Write:1:trial3": {
+      "D:0": 1,
+      "D:folio_wait_bit_common": 6,
+      "D:jbd2_log_wait_commit": 16,
+      "D:submit_bio_wait": 85,
+      "R:0": 7,
+      "R:submit_bio_wait": 2,
+      "S:futex_do_wait": 117
+    },
+    "Write:300:trial1": {
+      "D:submit_bio_wait": 2,
+      "S:futex_do_wait": 299
+    },
+    "Write:300:trial2": {
+      "D:submit_bio_wait": 1,
+      "S:futex_do_wait": 300
+    },
+    "Write:300:trial3": {
+      "D:submit_bio_wait": 1,
+      "S:futex_do_wait": 300
+    }
+  }
+}
