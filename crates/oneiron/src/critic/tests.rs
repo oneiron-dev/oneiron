@@ -390,14 +390,62 @@ fn shared_posterior_critic_contract_checks_sources_and_samples() -> Result<()> {
     );
     let mut first = StdRng::seed_from_u64(2012);
     let mut second = StdRng::seed_from_u64(2012);
-    let draw = posterior.sample(&mut first);
+    let draw = posterior.sample(&mut first)?;
     assert!((0.0..=1.0).contains(&draw));
-    assert_eq!(draw, posterior.sample(&mut second));
+    assert_eq!(draw, posterior.sample(&mut second)?);
     assert!((posterior.lower_bound() - 0.132).abs() < 0.01);
     assert!((posterior.ucb_bonus(12, 0.35) - 0.35 * (13_f64.ln()).sqrt()).abs() < 1e-12);
     assert_eq!(
         posterior.triage_weight(12, 0.35),
         0.5 + posterior.ucb_bonus(12, 0.35)
     );
+    Ok(())
+}
+
+#[test]
+fn critic_posterior_sample_rejects_invalid_deserialized_parameters() {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(2012);
+    for alpha in [0.0, -1.0] {
+        let posterior: CriticReliability = serde_json::from_value(serde_json::json!({
+            "lens_id": "groundedness", "domain": "claim_authoring",
+            "alpha": alpha, "beta": 1.0, "observations": 0
+        }))
+        .expect("deserialization does not validate reliability fields");
+        assert!(matches!(
+            posterior.sample(&mut rng),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+}
+
+#[test]
+fn critic_posterior_extreme_valid_priors_have_finite_bounds_and_safe_samples() -> Result<()> {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(2012);
+    for (alpha, beta, expected_bound) in [
+        (1e308, 1e308, 0.5),
+        (1e-200, 1e-200, 0.0),
+        (3.0, 1.0, 0.75 - 1.645 * (0.0375_f64).sqrt()),
+    ] {
+        let posterior = CriticReliability::new("groundedness", "claim_authoring", alpha, beta, 0)?;
+        let bound = posterior.lower_bound();
+        assert!(bound.is_finite() && (0.0..=1.0).contains(&bound));
+        assert!((bound - expected_bound).abs() < 1e-12);
+        match posterior.sample(&mut rng) {
+            Ok(draw) => assert!(draw.is_finite() && (0.0..=1.0).contains(&draw)),
+            Err(Error::InvalidConfig(_)) => {}
+            Err(other) => panic!("unexpected sample error: {other}"),
+        }
+    }
+    assert!(matches!(
+        CriticReliability::new("groundedness", "claim_authoring", 1e308, 1e308, 0)?
+            .sample(&mut rng),
+        Err(Error::InvalidConfig(_))
+    ));
     Ok(())
 }
