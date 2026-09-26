@@ -60,6 +60,13 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("run cargo test --doc --workspace --exclude oneiron-bench --all-features", self.runner)
         self.assertIn("schedule | workflow_dispatch) python3 scripts/ci/ci_scope.py --full ;;", self.text)
 
+    def test_atom_fuzz_runs_on_lens_changes_and_the_nightly_gate(self):
+        job = "\n".join(self.job_lines("test-linux"))
+        self.assertIn("Fuzz atom codec and render (golden corpus)", job)
+        self.assertIn("needs.changes.outputs.full == 'true'", job)
+        self.assertIn("contains(format(' {0} ', needs.changes.outputs.modules), ' lens ')", job)
+        self.assertIn("timeout 1200s cargo test -j 8 -p oneiron --lib --all-features lens::tests::atom_fuzz::sustained_atom_codec_render_fuzz -- --ignored --exact", job)
+
     def test_macos_recipe_and_mutation_audit_are_dispatch_only(self):
         for job in ("test", "mutation-audit"):
             gate = next(l for l in self.job_lines(job) if l.startswith("    if: "))

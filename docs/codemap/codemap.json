@@ -18975,6 +18975,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lens/tests/atom_fuzz.rs",
+     "purpose": "Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -34316,7 +34324,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34900,7 +34908,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2062,
-   "test_files": 705
+   "test_files": 706
   },
   "oneiron-android": {
    "files": [

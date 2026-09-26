@@ -1518,6 +1518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/mediation/surface_dispatch.rs` | src | s | 1 fn | — | Native SurfaceEvent adapter into the existing frame-validated write plan |
 | `src/lens/mod.rs` | src | s | 6 re-export | — | Closed generated-lens atom vocabulary |
 | `src/lens/self_ui.rs` | src | m | 8 struct · 2 enum · 1 fn · 5 crate-vis | ButtonControl, SegmentedControl, SelectControl, SelfUiAction, SelfUiControl, SelfUiOption, SelfUiValue, SliderControl +2 | The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value… |
+| `src/lens/tests/atom_fuzz.rs` | test | s | — | — | Corpus-driven, sustained mutation fuzzing of the atom wire and escaped renderer |
 | `src/lens/tests/genui_render.rs` | test | m | — | — | Generated-UI render-protocol tests: cards, segments, prebuilt shorthand, and tree construction |
 | `src/lens/tests/genui_validation.rs` | test | L | — | — | Generated-lens validation tests: closed enums, URL bans, unsafe atoms, budgets, and size caps |
 | `src/lens/tests/instrument.rs` | test | s | — | — | End-to-end Instrument safety and WorldSet read confinement |
