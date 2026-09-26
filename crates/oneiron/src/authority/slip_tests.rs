@@ -1229,3 +1229,105 @@ fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
     );
     assert!(verify(&vault, &issuer, &slip).is_err());
 }
+
+#[cfg(feature = "sync")]
+#[test]
+fn generic_sync_state_mutations_cannot_change_a_warm_authority_view() {
+    let (_dir, vault, _issuer, root) = fixture();
+    let fold = vault.authority_fold().unwrap();
+    let mint_hash = fold.slips.mints[&root.claims.slip_id].entry_hash;
+    let sidecar = authority_first_seen_sync_key(&mint_hash);
+    assert!(
+        vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+    let original = vault.sync_state_get(&sidecar).unwrap();
+    assert!(original.is_some());
+    for key in [
+        sidecar.as_str(),
+        authority_first_seen_clock_sync_key(),
+        "authlog:cache_generation:v1",
+        "authlog:seq_observation:forged",
+        "peerauth:forged",
+    ] {
+        let error = vault.sync_state_put(key, &[9]).unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        let error = vault.sync_state_delete(key).unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        let mut txn = vault.store.env.write_txn().unwrap();
+        let error = vault
+            .sync_state_put_in_write_txn(&mut txn, key, &[9])
+            .unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        txn.abort();
+    }
+    assert_eq!(vault.sync_state_get(&sidecar).unwrap(), original);
+    assert!(
+        vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+}
+
+#[test]
+fn uncommitted_slip_mint_is_visible_only_to_its_writer_and_abort_discards_it() {
+    let (_dir, vault, issuer, root) = fixture();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [88; 32];
+    claims.parent_id = Some(root.claims.slip_id);
+    claims.ttl_secs = 60;
+    claims.expires_at = claims.issued_at + 60;
+    let id = claims.slip_id;
+    vault.authority_fold().unwrap(); // warm the committed view
+    assert!(!vault.capability_slip_id_is_live(&id).unwrap());
+
+    std::thread::scope(|scope| {
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let (check, checked) = std::sync::mpsc::sync_channel(0);
+        let vault = &vault;
+        let reader = scope.spawn(move || {
+            let snapshot = vault.store.env.read_txn().unwrap();
+            let before = vault.authority_view_readonly_in_txn(&snapshot).unwrap();
+            assert!(!before.slip_is_live(&id));
+            ready.send(before.generation()).unwrap();
+            checked.recv().unwrap();
+            assert!(
+                !vault
+                    .authority_view_readonly_in_txn(&snapshot)
+                    .unwrap()
+                    .slip_is_live(&id)
+            );
+        });
+        let prior_generation = started.recv().unwrap();
+        let mut writer = vault.store.env.write_txn().unwrap();
+        let slip = vault
+            .mint_slip_in_txn(&mut writer, &issuer, claims)
+            .unwrap();
+        assert_eq!(slip.claims.slip_id, id);
+        let inside = vault.authority_view_readonly_in_txn(&writer).unwrap();
+        assert!(inside.generation() > prior_generation);
+        assert!(inside.slip_is_live(&id));
+        check.send(()).unwrap();
+        reader.join().unwrap();
+        writer.abort();
+    });
+    assert!(!vault.capability_slip_id_is_live(&id).unwrap());
+    assert!(
+        !vault
+            .authority_fold()
+            .unwrap()
+            .slips
+            .mints
+            .contains_key(&id)
+    );
+}

@@ -141,6 +141,7 @@ impl Store {
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            authority_fold_cache: Mutex::new(None),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),

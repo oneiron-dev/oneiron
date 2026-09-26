@@ -648,6 +648,7 @@ pub(in crate::batch) fn apply_put(
             replicated,
             mutation_recorded_at,
         )?;
+        crate::authority::advance_authority_cache_generation(store, wtxn)?;
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;

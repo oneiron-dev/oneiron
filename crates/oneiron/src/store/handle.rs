@@ -129,6 +129,8 @@ pub struct StoreCore {
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// Exact fold of one committed authority generation and observation context.
+    pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.

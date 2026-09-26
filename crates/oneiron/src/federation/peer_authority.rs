@@ -93,6 +93,7 @@ pub fn admit_peer_authority_log_entry(
             )));
         }
         vault.store.sync_state.put(wtxn, &key, bytes)?;
+        crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
         Ok(())
     })
 }
