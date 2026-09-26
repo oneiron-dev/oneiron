@@ -58,6 +58,7 @@ mod evidence;
 mod filter;
 mod lifecycle;
 mod membership;
+mod memory_watch;
 mod pack_drift;
 mod storage;
 mod support;
@@ -94,6 +95,7 @@ pub use self::membership::{
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,
     next_membership_epoch,
 };
+pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
 pub use self::pack_drift::{
     PackDrift, PackDriftResolution, PackMigrationMap, PackPredicateRewrite, put_pack_migration_map,
     repair_pack_drift,

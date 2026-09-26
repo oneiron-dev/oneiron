@@ -150,6 +150,8 @@ pub(crate) enum Channel {
     View,
     Receipts,
     PendingConsent,
+    /// Human owner feed of durable per-entry SAVED_QUERY watches.
+    OwnerFeed,
     // Reserved, explicitly rejected rather than aliasing a different stream.
     MemoryBoard,
     Gap,

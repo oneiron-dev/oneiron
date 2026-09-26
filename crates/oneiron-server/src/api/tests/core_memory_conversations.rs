@@ -125,6 +125,26 @@ async fn v1_core_memory_timeline_scrubs_filtered_supersession_links() {
         )
         .expect("seed subject");
     seed_active_claim(&server, old, subject, "osaka", 100);
+    // History skips this stale predecessor under the actor's retrieval floor,
+    // and scrubs its id from the visible successor's links.
+    let mut old_body = server
+        .vault
+        .get_claim(&old)
+        .expect("read old")
+        .expect("old");
+    old_body.stale = true;
+    server
+        .vault
+        .put_claim(
+            &old,
+            &old_body,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("stale old");
     seed_active_claim(&server, new, subject, "tokyo", 200);
     server
         .vault
@@ -1052,4 +1072,89 @@ async fn localized_platform_announcement_exposes_original_text_toggle() {
         Value::from(PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE)
     );
     assert_eq!(read_body["show_original"], Value::from(false));
+}
+
+#[tokio::test]
+async fn owner_watch_persists_and_timeline_renders_stored_before_after() {
+    let (_dir, server) = auth_test_server();
+    oneiron::campaign::register_crm_pack(
+        &server.vault,
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .expect("register saved query");
+    let owner = seeded_test_entity_id(0x1261_0900);
+    let old = seeded_test_entity_id(0x1261_0901);
+    let new = seeded_test_entity_id(0x1261_0902);
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .expect("owner");
+    crate::test_credentials::bind_owner(&server.vault, "secret", owner);
+    seed_active_claim(&server, old, owner, "before", 100);
+    seed_active_claim(&server, new, owner, "after", 200);
+    let bearer = test_bearer(&format!(
+        "principal_ref={};actor_class=human",
+        owner.to_hex()
+    ));
+    let path = format!("/v1/core/memory/{}/watch", old.to_hex());
+    let (status, enabled) = route_json(
+        server.clone(),
+        core_request_with_authz("PUT", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{enabled:#}");
+    assert_eq!(enabled["watched"], true);
+    assert!(enabled["query_ref"].is_string());
+    let (status, repeated) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{repeated:#}");
+    assert_eq!(repeated, enabled);
+    let (status, denied) = route_json(
+        server.clone(),
+        core_request_with_principal_ref("GET", &path, "core:read", &owner.to_hex(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied:#}");
+    server
+        .vault
+        .supersede_claim(&new, &old, 777)
+        .expect("supersession");
+    let timeline = format!("/v1/core/memory/{}/timeline?view=full", old.to_hex());
+    let (status, result) = route_json(
+        server.clone(),
+        core_request_with_authz("GET", &timeline, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result:#}");
+    let records = result["records"].as_array().expect("timeline rows");
+    assert_eq!(records.len(), 2, "{result:#}");
+    assert_eq!(records[0]["state"], "superseded");
+    assert_eq!(records[1]["state"], "live");
+    let change = &records[1]["changes"][0];
+    assert_eq!(change["before_id"], old.to_hex());
+    assert_eq!(change["after_id"], new.to_hex());
+    assert_eq!(change["before"], records[0]["item"]);
+    assert_eq!(change["after"], records[1]["item"]);
+    let (status, disabled) = route_json(
+        server.clone(),
+        core_request_with_authz("DELETE", &path, bearer.clone(), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{disabled:#}");
+    assert_eq!(disabled["watched"], false);
+    let (status, off) =
+        route_json(server, core_request_with_authz("GET", &path, bearer, None)).await;
+    assert_eq!(status, StatusCode::OK, "{off:#}");
+    assert_eq!(off["watched"], false);
 }

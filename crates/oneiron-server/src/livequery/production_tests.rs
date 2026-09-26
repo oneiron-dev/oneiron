@@ -805,3 +805,140 @@ async fn disjoint_entity_document_subscriptions_only_push_the_changed_view() {
     assert_eq!(queries.pending(3).unwrap().len(), 1);
     assert!(queries.pending(2).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn owner_feed_uses_persisted_watches_and_refuses_agent_subscribers() {
+    let (_dir, server) = server();
+    oneiron::campaign::register_crm_pack(
+        server.vault(),
+        107,
+        108,
+        oneiron::registry::TypeByteFamily::Productivity,
+    )
+    .unwrap();
+    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let anchor = EntityId::now();
+    let body = oneiron::ClaimBody::new(
+        "profile.name",
+        oneiron::ClaimSubject::Entity(actor),
+        rmpv::Value::from("Original name"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    server
+        .vault()
+        .put_claim(
+            &anchor,
+            &body,
+            oneiron::TimeRange { start: AT, end: AT },
+            AT,
+        )
+        .unwrap();
+    crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
+    let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
+    let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
+    assert!(owner.is_owner_grade());
+    let source = BoundSource::new(Arc::downgrade(&server), owner.clone(), "watch-doc".into());
+    let initial = source
+        .derive(&ScopedView::default(), Channel::OwnerFeed)
+        .unwrap();
+    assert_eq!(initial.value, json!([]));
+    let subscribed = subscriptions::LiveQueries::new(
+        17,
+        Arc::new(BoundSource::new(
+            Arc::downgrade(&server),
+            owner,
+            "watch-subscribed".into(),
+        )),
+    );
+    subscribed
+        .open(3, ScopedView::default(), Channel::OwnerFeed, None, None)
+        .unwrap();
+    let watch = oneiron::saved_query::set_memory_watch(server.vault(), actor, anchor, true, AT + 1)
+        .unwrap()
+        .unwrap();
+    // A local LMDB write has no Loro tee event. The bounded poll still
+    // generates a normal retained sub.data push without an explicit mirror.
+    subscribed.owner_feed_poll_now();
+    subscribed.refresh().unwrap();
+    let active = source
+        .derive(&ScopedView::default(), Channel::OwnerFeed)
+        .unwrap();
+    let buffered = subscribed.buffered().unwrap();
+    assert!(
+        buffered.iter().any(|push| {
+            push.kind == "data"
+                && push
+                    .result
+                    .as_ref()
+                    .is_some_and(|result| result[0]["query_ref"] == watch.query_ref.to_hex())
+        }),
+        "buffered={buffered:?}; direct={:?}",
+        active.value
+    );
+    assert_eq!(active.value[0]["query_ref"], watch.query_ref.to_hex());
+    assert_eq!(active.value[0]["timeline"]["anchor_id"], anchor.to_hex());
+    assert!(
+        active
+            .dependencies
+            .contains(&format!("e:{}", anchor.to_hex()))
+    );
+    let next = EntityId::now();
+    let mut successor = server.vault().get_claim(&anchor).unwrap().unwrap();
+    successor.value = rmpv::Value::from("Updated name");
+    server
+        .vault()
+        .put_claim(
+            &next,
+            &successor,
+            oneiron::TimeRange {
+                start: AT + 2,
+                end: AT + 2,
+            },
+            AT + 2,
+        )
+        .unwrap();
+    server
+        .vault()
+        .supersede_claim(&next, &anchor, AT + 3)
+        .unwrap();
+    subscribed.owner_feed_poll_now();
+    subscribed.refresh().unwrap();
+    assert!(subscribed.buffered().unwrap().iter().any(|push| {
+        push.kind == "data"
+            && push.result.as_ref().is_some_and(|result| {
+                result[0]["timeline"]["records"]
+                    .as_array()
+                    .is_some_and(|rows| rows.len() == 2)
+            })
+    }));
+    let agent = crate::test_credentials::authenticate(
+        &server,
+        &format!("principal_ref={ACTOR};actor_class=agent;jti=watch-agent"),
+    );
+    let Err(denied) = BoundSource::new(Arc::downgrade(&server), agent, "agent-doc".into())
+        .derive(&ScopedView::default(), Channel::OwnerFeed)
+    else {
+        panic!("agent must not subscribe to owner feed")
+    };
+    assert_eq!(error_body(denied)["code"], "FORBIDDEN");
+    let false_human = crate::test_credentials::authenticate(
+        &server,
+        &format!("principal_ref={MACHINE};actor_class=human;jti=watch-false-human"),
+    );
+    let Err(denied) = BoundSource::new(Arc::downgrade(&server), false_human, "machine-doc".into())
+        .derive(&ScopedView::default(), Channel::OwnerFeed)
+    else {
+        panic!("human claim on a MACHINE must not grant owner feed")
+    };
+    assert_eq!(error_body(denied)["code"], "FORBIDDEN");
+    oneiron::saved_query::set_memory_watch(server.vault(), actor, anchor, false, AT + 2).unwrap();
+    assert_eq!(
+        source
+            .derive(&ScopedView::default(), Channel::OwnerFeed)
+            .unwrap()
+            .value,
+        json!([])
+    );
+}

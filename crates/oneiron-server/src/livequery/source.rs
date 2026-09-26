@@ -63,6 +63,26 @@ impl BoundSource {
     }
 }
 
+fn owner_feed_principal(
+    auth: &CoreAuth,
+    vault: &oneiron::Vault,
+) -> Result<oneiron::EntityId, AppError> {
+    if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
+        return Err(AppError::forbidden(
+            "owner feed requires a human owner",
+            ["Use an owner-grade human credential."],
+        ));
+    }
+    let principal = auth.principal_ref().ok_or_else(AppError::unauthorized)?;
+    let owner = oneiron::EntityId::from_hex(principal)
+        .map_err(|_| AppError::bad_request("invalid owner principal", Some("principal_ref")))?;
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .verify_owner()
+        .map_err(AppError::from)?;
+    Ok(owner)
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ViewFilter {
@@ -88,6 +108,17 @@ impl LiveQuerySource for BoundSource {
                 "channel does not support query, facet, kind or predicate",
                 Some("scopedView"),
             ));
+        }
+        // An owner feed is never a route to an agent's board. Reject its
+        // subscription even before deriving or retaining any view state.
+        if channel == Channel::OwnerFeed {
+            owner_feed_principal(&self.auth, server.vault())?;
+            if view.world_ref.is_some() || filter.limit.is_some() {
+                return Err(AppError::bad_request(
+                    "owner feed is vault-wide and unpaged",
+                    Some("scopedView"),
+                ));
+            }
         }
         // The same verified principal/class pair binds RPC and subscription reads.
         let memory = bound_memory(server.vault(), &self.auth)?;
@@ -140,6 +171,44 @@ impl LiveQuerySource for BoundSource {
                 )
                 .map_err(|_| AppError::internal_server_error("scoped consent read failed"))?,
             ),
+            Channel::OwnerFeed => {
+                dependencies.insert("owner-feed".to_owned());
+                let owner = owner_feed_principal(&self.auth, server.vault())?;
+                let mut updates = Vec::new();
+                for watch in oneiron::saved_query::memory_watches(server.vault(), owner)
+                    .map_err(|_| AppError::internal_server_error("memory watches read failed"))?
+                {
+                    // A query definition changing from inactive to active must
+                    // invalidate an already-open feed, not only the watched row.
+                    dependencies.insert(format!("e:{}", watch.query_ref.to_hex()));
+                    let read = crate::api::scoped_read_for_core_auth(server.vault(), &self.auth)
+                        .map_err(AppError::from)?;
+                    let timeline = read.memory_timeline(&watch.anchor).map_err(|_| {
+                        AppError::internal_server_error("watched timeline read failed")
+                    })?;
+                    for record in &timeline.value.records {
+                        dependencies.insert(format!("e:{}", record.id.to_hex()));
+                    }
+                    let response = crate::api::core_memory_timeline_response(
+                        &read,
+                        timeline,
+                        crate::projection::View::Full,
+                    )
+                    .map_err(AppError::from)?;
+                    let response = serde_json::to_value(response).map_err(|_| {
+                        AppError::internal_server_error("watched timeline encoding failed")
+                    })?;
+                    if response["records"]
+                        .as_array()
+                        .is_some_and(|rows| !rows.is_empty())
+                    {
+                        updates.push(
+                            json!({"query_ref":watch.query_ref.to_hex(),"timeline":response}),
+                        );
+                    }
+                }
+                serde_json::to_value(updates)
+            }
             Channel::MemoryBoard | Channel::Gap => {
                 return Err(AppError::not_implemented("reserved subscription channel"));
             }

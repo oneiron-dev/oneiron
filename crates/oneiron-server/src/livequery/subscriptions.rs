@@ -8,6 +8,7 @@ use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
 pub(super) const MAX_SUBSCRIPTIONS: usize = 128;
@@ -139,6 +140,7 @@ pub(crate) struct LiveQueries {
     state: Mutex<State>,
     invalidations: Mutex<VecDeque<(String, MaterializedDiffSummary, OriginMark)>>,
     invalidation_gap: AtomicBool,
+    last_owner_feed_poll: Mutex<Instant>,
 }
 
 struct State {
@@ -201,7 +203,16 @@ impl LiveQueries {
             }),
             invalidations: Mutex::new(VecDeque::new()),
             invalidation_gap: AtomicBool::new(false),
+            last_owner_feed_poll: Mutex::new(Instant::now()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owner_feed_poll_now(&self) {
+        *self
+            .last_owner_feed_poll
+            .lock()
+            .expect("owner feed poll lock") = Instant::now() - Duration::from_secs(2);
     }
 
     pub(crate) fn control(&self, request: SubRequest) -> Result<Vec<Push>, AppError> {
@@ -487,6 +498,11 @@ impl LiveQueries {
                     continue;
                 }
                 for id in ids {
+                    // The synthetic local-LMDB poll is not a Loro change.
+                    // It must never re-derive unrelated recall/receipt subs.
+                    if path == "owner-feed" && state.subs[id].channel != Channel::OwnerFeed {
+                        continue;
+                    }
                     if !relevant
                         && !self.source.membership_changed(
                             &state.subs[id].view,
@@ -583,6 +599,35 @@ impl LiveQueries {
             }
         }
         if let Err(error) = self.materialized(&ready) {
+            self.require_resync();
+            return Err(error);
+        }
+        // Local LMDB claim/SAVED_QUERY commits do not pass through the Loro
+        // materialization tee. Re-derive the owner-only feed on a bounded
+        // cadence, through the same retained sub and cursor machinery. A
+        // durable watch therefore works after restart and on local writes too.
+        let poll = {
+            let mut last = self
+                .last_owner_feed_poll
+                .lock()
+                .map_err(|_| state_error())?;
+            if last.elapsed() >= Duration::from_secs(1) {
+                *last = Instant::now();
+                true
+            } else {
+                false
+            }
+        };
+        if poll
+            && let Err(error) = self.materialized(&[(
+                "owner-feed".to_owned(),
+                MaterializedDiffSummary {
+                    containers: Vec::new(),
+                    bytes: 0,
+                },
+                OriginMark::default(),
+            )])
+        {
             self.require_resync();
             return Err(error);
         }

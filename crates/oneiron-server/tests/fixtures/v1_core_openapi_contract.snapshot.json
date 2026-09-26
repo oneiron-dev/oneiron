@@ -3444,12 +3444,26 @@
         "type": "string"
       },
       "CoreMemoryTimelineRecord": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "supersedes",
+          "superseded_by",
+          "changes"
+        ],
         "properties": {
           "body_bytes": {
             "type": [
               "integer",
               "null"
             ]
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoreMemoryChange"
+            }
           },
           "deletion": {
             "oneOf": [
@@ -3462,11 +3476,11 @@
             ]
           },
           "entity_type": {
-            "format": "int32",
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "format": "int32"
           },
           "id": {
             "type": "string"
@@ -3478,49 +3492,42 @@
             ]
           },
           "learned_at": {
-            "format": "int64",
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "format": "int64"
           },
           "occurred_end": {
-            "format": "int64",
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "format": "int64"
           },
           "occurred_start": {
-            "format": "int64",
             "type": [
               "integer",
               "null"
-            ]
+            ],
+            "format": "int64"
           },
           "state": {
             "$ref": "#/components/schemas/CoreMemoryTimelineRecordState"
           },
           "superseded_by": {
+            "type": "array",
             "items": {
               "type": "string"
-            },
-            "type": "array"
+            }
           },
           "supersedes": {
+            "type": "array",
             "items": {
               "type": "string"
-            },
-            "type": "array"
+            }
           }
-        },
-        "required": [
-          "id",
-          "state",
-          "supersedes",
-          "superseded_by"
-        ],
-        "type": "object"
+        }
       },
       "CoreMemoryTimelineRecordState": {
         "enum": [
@@ -4801,6 +4808,46 @@
           "full"
         ],
         "type": "string"
+      },
+      "CoreMemoryChange": {
+        "type": "object",
+        "required": [
+          "before_id",
+          "after_id",
+          "before",
+          "after"
+        ],
+        "properties": {
+          "after": {
+            "type": "object"
+          },
+          "after_id": {
+            "type": "string"
+          },
+          "before": {
+            "type": "object"
+          },
+          "before_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CoreMemoryWatchResponse": {
+        "type": "object",
+        "required": [
+          "watched"
+        ],
+        "properties": {
+          "query_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "watched": {
+            "type": "boolean"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -5963,6 +6010,161 @@
             "CoreBearer": []
           }
         ]
+      }
+    },
+    "/v1/core/memory/{id}/watch": {
+      "get": {
+        "operationId": "core_memory_watch_read",
+        "security": [
+          {
+            "CoreBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Read the owner's durable per-entry watch flag.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreMemoryWatchResponse"
+            }
+          },
+          "400": {
+            "description": "Invalid id or SAVED_QUERY kind not registered.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Human owner binding or required scope absent.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Claim not found or not readable.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "core_memory_watch_enable",
+        "security": [
+          {
+            "CoreBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Enable the owner's durable per-entry watch flag.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreMemoryWatchResponse"
+            }
+          },
+          "400": {
+            "description": "Invalid id or SAVED_QUERY kind not registered.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Human owner binding or required scope absent.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Claim not found or not readable.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "core_memory_watch_disable",
+        "security": [
+          {
+            "CoreBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestSchema": null,
+        "responses": {
+          "200": {
+            "description": "Disable the owner's durable per-entry watch flag.",
+            "schema": {
+              "$ref": "#/components/schemas/CoreMemoryWatchResponse"
+            }
+          },
+          "400": {
+            "description": "Invalid id or SAVED_QUERY kind not registered.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "401": {
+            "description": "Missing or invalid core auth.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "403": {
+            "description": "Human owner binding or required scope absent.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          },
+          "404": {
+            "description": "Claim not found or not readable.",
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
+          }
+        }
       }
     }
   }

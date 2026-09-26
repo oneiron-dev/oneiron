@@ -7493,7 +7493,7 @@
      "path": "src/claim/scoped_read/graph_reads.rs",
      "purpose": "Receipted graph and timeline reads under the resolved actor floor",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -26284,11 +26284,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MemoryWatch"
+     ],
+     "path": "src/saved_query/memory_watch.rs",
+     "purpose": "Owner-bound per-claim watches stored as SAVED_QUERY definitions",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -34582,7 +34595,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "saved_query": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34899,7 +34912,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2062,
+   "source_files": 2063,
    "test_files": 705
   },
   "oneiron-android": {
@@ -38889,7 +38902,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -39189,7 +39202,7 @@
      "path": "src/api/memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -39253,7 +39266,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -40555,7 +40568,7 @@
      "path": "src/livequery/subscriptions.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -41364,7 +41377,7 @@
      "path": "src/test_credentials.rs",
      "purpose": "Request fixtures mint real logged slips before crossing the production router",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
