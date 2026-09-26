@@ -9,7 +9,7 @@ use super::{MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptRecord, ReceiptScan};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
@@ -74,10 +74,21 @@ fn decode(id: EntityId, body: &[u8]) -> Result<Option<SuppressionAsset>> {
     Ok(Some(asset))
 }
 
+/// Incoming bytes have no store dependency. Relabel ONLY this untrusted
+/// decode failure as a remote rejection; the same decoder reading an already
+/// stored row still reports local `CorruptedIndex` and fails closed.
+fn decode_incoming(id: EntityId, data: &[u8]) -> Result<Option<SuppressionAsset>> {
+    decode(id, data).map_err(|_| {
+        Error::Record(RecordError::InvalidSuppressionReceiptBody(
+            "malformed or mismatched carrier",
+        ))
+    })
+}
+
 /// Stateless half of shared local/replicated admission. Other ASSETs are
 /// opaque; a body claiming this domain must decode and bind its exact ID.
 pub(crate) fn validate_suppression_asset_body(id: &EntityId, data: &[u8]) -> Result<()> {
-    decode(*id, data).map(|_| ())
+    decode_incoming(*id, data).map(|_| ())
 }
 
 /// The one ASSET put door covers both a malformed new carrier and an ordinary
@@ -96,15 +107,17 @@ pub(crate) fn validate_suppression_asset_put(
             .ok_or(Error::CorruptedIndex("outbound suppression prior header"))?;
         if header.entity_type == ENTITY_TYPE_ASSET
             && prior[ENTITY_METADATA_HEADER_LEN..].starts_with(MAGIC)
-            && (entity_type != ENTITY_TYPE_ASSET
+        {
+            // A corrupt STORED carrier is never blamed on an incoming peer.
+            decode(*id, &prior[ENTITY_METADATA_HEADER_LEN..])?;
+            if entity_type != ENTITY_TYPE_ASSET
                 || prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
                 || header.occurred_start != occurred.start
                 || header.occurred_end != occurred.end
-                || header.learned_at != learned_at)
-        {
-            return Err(Error::InvalidConfig(
-                "outbound suppression asset is immutable".into(),
-            ));
+                || header.learned_at != learned_at
+            {
+                return Err(Error::Record(RecordError::SuppressionReceiptDivergence));
+            }
         }
     }
     if entity_type == ENTITY_TYPE_ASSET {
@@ -150,11 +163,16 @@ pub(crate) fn reject_suppression_asset_delete(
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("outbound suppression delete header"))?;
     if header.entity_type == ENTITY_TYPE_ASSET
-        && (raw[ENTITY_METADATA_HEADER_LEN..].starts_with(MAGIC)
-            || store.vault_meta.get(txn, &index_key(id))?.is_some())
+        && raw[ENTITY_METADATA_HEADER_LEN..].starts_with(MAGIC)
     {
-        return Err(Error::InvalidConfig(
-            "outbound suppression asset is immutable".into(),
+        // Corrupt STORED bytes stay local/fail-closed. A valid carrier named
+        // by a remote tombstone is a typed refusal of that incoming operation.
+        decode(*id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+        return Err(Error::Record(RecordError::SuppressionReceiptDivergence));
+    }
+    if store.vault_meta.get(txn, &index_key(id))?.is_some() {
+        return Err(Error::CorruptedIndex(
+            "outbound suppression index without carrier",
         ));
     }
     Ok(())

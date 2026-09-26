@@ -160,6 +160,22 @@ fn remote_rejection_reason_classifies_secret_scan_denials_only() {
         .as_deref(),
         Some("InvalidDiagnosticBody")
     );
+    assert_eq!(
+        remote_rejection_reason(&Error::Record(RecordError::InvalidSuppressionReceiptBody(
+            "incoming body"
+        )))
+        .as_deref(),
+        Some("InvalidSuppressionReceiptBody")
+    );
+    assert_eq!(
+        remote_rejection_reason(&Error::Record(RecordError::SuppressionReceiptDivergence))
+            .as_deref(),
+        Some("SuppressionReceiptDivergence")
+    );
+    assert_eq!(
+        remote_rejection_reason(&Error::CorruptedIndex("outbound suppression asset")),
+        None
+    );
 }
 
 /// Pinned retention decision: 4096 rows, ≤30 days.
@@ -1774,4 +1790,195 @@ fn quarantine_record_never_retains_the_crdt_key_string() {
         !raw.windows(needle.len()).any(|w| w == needle),
         "no fragment of the crdt key may reach the persisted x: row"
     );
+}
+
+#[derive(serde::Serialize)]
+struct SuppressionCarrierFixture<'a> {
+    intent_id: [u8; 32],
+    receipt: &'a crate::receipt::ReceiptRecord,
+}
+
+fn suppression_carrier_fixture(divergent: bool) -> (EntityId, Vec<u8>) {
+    use crate::receipt::{ReceiptKind, ReceiptRecord};
+    let intent_id = [0x91; 32];
+    let mut fields = std::collections::BTreeMap::from([
+        ("suppression".to_owned(), "dedupe".to_owned()),
+        ("dedupe_key".to_owned(), "peer-key".to_owned()),
+    ]);
+    if divergent {
+        fields.insert("peer_change".to_owned(), "different".to_owned());
+    }
+    let receipt = ReceiptRecord {
+        receipt_id: format!(
+            "outbound:suppression:{}",
+            crate::entity_id::bytes_to_hex_lower(&intent_id)
+        ),
+        receipt_kind: ReceiptKind::Outbound,
+        occurred_at: LEARNED_AT,
+        actor: Some("peer-agent".to_owned()),
+        on_behalf_of: None,
+        outcome: "suppressed".to_owned(),
+        job_ref: None,
+        trigger_ref: None,
+        policy_trace: Vec::new(),
+        fields,
+    };
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron.outbound.suppression.asset.v1\0");
+    hash.update(&intent_id);
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let id = EntityId::from_bytes(bytes).expect("fixture id");
+    let mut body = b"oneiron:outbound-suppression:v1\0".to_vec();
+    body.extend(
+        rmp_serde::to_vec_named(&SuppressionCarrierFixture {
+            intent_id,
+            receipt: &receipt,
+        })
+        .expect("encode suppression fixture"),
+    );
+    (id, body)
+}
+
+fn exercise_suppression_remote_quarantine(observer: bool, divergent: bool) -> crate::Result<()> {
+    let (_dir, vault) = test_vault_with_dir();
+    let materializer = Arc::new(Materializer::new());
+    let window_key = WindowKey::new(WINDOW);
+    let doc = create_window_doc("test-user", &window_key);
+    let good = EntityId::now();
+    let (bad, payload) = if divergent {
+        let (id, original) = suppression_carrier_fixture(false);
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            &original,
+        )?;
+        (id, suppression_carrier_fixture(true).1)
+    } else {
+        (
+            EntityId::now(),
+            b"oneiron:outbound-suppression:v1\0".to_vec(),
+        )
+    };
+    let original = vault.get_raw(&bad)?;
+    let subscriptions = observer
+        .then(|| crate::sync::bridge::register_observer_b(&doc, &vault, &materializer, WINDOW));
+    let entities = doc.get_map("entities");
+    map_insert_bytes(
+        &entities,
+        &bad.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            &payload,
+        ),
+    )?;
+    map_insert_bytes(
+        &entities,
+        &good.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            b"unrelated valid asset",
+        ),
+    )?;
+    doc.commit();
+    if !observer {
+        forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+    }
+    assert_eq!(
+        vault.get_raw(&bad)?,
+        original,
+        "rejected peer payload may not replace the committed carrier"
+    );
+    assert_eq!(
+        vault.get(&good)?.as_deref(),
+        Some(b"unrelated valid asset".as_slice()),
+        "the valid sibling must materialize despite the rejected carrier"
+    );
+    let records = quarantined_records(&vault)?;
+    assert_eq!(records.len(), 1, "one remote row is quarantined");
+    assert_eq!(
+        records[0].1.reason_code,
+        if divergent {
+            "SuppressionReceiptDivergence"
+        } else {
+            "InvalidSuppressionReceiptBody"
+        }
+    );
+    forward_rematerialize(&vault, &doc, &materializer, &window_key)?;
+    assert_eq!(vault.get_raw(&bad)?, original);
+    assert_eq!(
+        vault.get(&good)?.as_deref(),
+        Some(b"unrelated valid asset".as_slice())
+    );
+    drop(subscriptions);
+    Ok(())
+}
+
+#[test]
+fn observer_b_quarantines_malformed_suppression_and_commits_valid_sibling() -> crate::Result<()> {
+    exercise_suppression_remote_quarantine(true, false)
+}
+
+#[test]
+fn forward_remat_quarantines_malformed_suppression_and_commits_valid_sibling() -> crate::Result<()>
+{
+    exercise_suppression_remote_quarantine(false, false)
+}
+
+#[test]
+fn observer_b_quarantines_divergent_suppression_and_keeps_original() -> crate::Result<()> {
+    exercise_suppression_remote_quarantine(true, true)
+}
+
+#[test]
+fn forward_remat_quarantines_divergent_suppression_and_keeps_original() -> crate::Result<()> {
+    exercise_suppression_remote_quarantine(false, true)
+}
+
+#[test]
+fn remote_suppression_tombstone_quarantines_without_erasing_receipt() -> crate::Result<()> {
+    let (_dir, vault) = test_vault_with_dir();
+    let (id, body) = suppression_carrier_fixture(false);
+    vault.put_entity(
+        &id,
+        crate::registry::ENTITY_TYPE_ASSET,
+        valid_time_range(),
+        LEARNED_AT,
+        &body,
+    )?;
+    let original = vault.get_raw(&id)?;
+    let doc = create_window_doc("test-user", &WindowKey::new(WINDOW));
+    let sibling = EntityId::now();
+    map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1")?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &sibling.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            b"unrelated asset",
+        ),
+    )?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &WindowKey::new(WINDOW))?;
+    assert_eq!(vault.get_raw(&id)?, original);
+    assert_eq!(
+        vault.get(&sibling)?.as_deref(),
+        Some(b"unrelated asset".as_slice())
+    );
+    let rows = quarantined_records(&vault)?;
+    assert!(
+        rows.iter()
+            .any(|(_, row)| row.reason_code == "SuppressionReceiptDivergence")
+    );
+    Ok(())
 }
