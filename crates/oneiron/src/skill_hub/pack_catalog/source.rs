@@ -67,19 +67,23 @@ impl PackSource {
                     ));
                 }
             }
-            let refs: Vec<String> = serde_json::from_slice(
+            let refs: Vec<crate::agent_def::AgentSkillReference> = serde_json::from_slice(
                 &files
                     .iter()
                     .find(|file| file.path == "skills.json")
                     .expect("checked")
                     .content,
             )
-            .map_err(|_| invalid("agent skills.json must be a hash array"))?;
+            .map_err(|_| invalid("agent skills.json must be native structured references"))?;
             if refs.len() > 128 {
                 return Err(invalid("too many agent skill references"));
             }
+            let mut seen = std::collections::BTreeSet::new();
             for reference in refs {
-                SkillContentHash::parse_hex(&reference)?;
+                reference.validate()?;
+                if !seen.insert(reference.entity_id().to_owned()) {
+                    return Err(invalid("duplicate agent skill reference"));
+                }
             }
         }
         let mut sections = Vec::new();

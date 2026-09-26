@@ -480,7 +480,7 @@
      "path": "src/agent_def/portable.rs",
      "purpose": "Canonical, inert AGENT_PACK facets derived from real definitions and selected rows",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -7238,9 +7238,9 @@
      "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 17,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -10759,6 +10759,7 @@
      "kind": "src",
      "notable": [
       "AdmittedPluginSection",
+      "PackSectionRegistration",
       "PluginSectionAdmission",
       "PluginSectionRegistry"
      ],
@@ -10767,8 +10768,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 9,
-      "struct": 2
+      "fn": 11,
+      "struct": 3
      }
     },
     {
@@ -10878,7 +10879,7 @@
      "purpose": "Pure plugin renderers and the pending-proposal section",
      "surface": {
       "const": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -10932,7 +10933,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -27759,7 +27760,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -27973,11 +27974,11 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "fn": 5
+      "fn": 7
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -27988,6 +27989,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BundledSkillPermissions",
       "PackCandidateReason",
       "PackFitPolicy",
       "PackFitVerdict",
@@ -28002,7 +28004,7 @@
      "surface": {
       "enum": 3,
       "fn": 5,
-      "struct": 4,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -28013,7 +28015,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Bundled skills traverse the same pinned hub import, scanner and provenance doors",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -39139,7 +39141,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {

@@ -205,6 +205,10 @@ pub(super) async fn mcp_current_board(
         let mut registry = server.mcp_registry.lock().await;
         registry.board_snapshot_epoch(&actor.stream_connection, state_hash)
     };
+    let packs = mcp_visible_pack_inventory(server, actor)?;
+    super::board_observations::read_set(server, actor)
+        .await
+        .observe_pack_inventory(&packs);
     Ok(McpBoardState {
         sections,
         scope_label,
@@ -303,7 +307,143 @@ fn mcp_board_sections(
     let [tasks_section, agents_section] =
         oneiron::context_board::assemble_task_agent_sections(&tasks, &agents)
             .map_err(mcp_board_frame_error)?;
-    Ok((vec![verb_section, tasks_section, agents_section], omissions))
+    let mut sections = vec![verb_section, tasks_section, agents_section];
+    let packs = mcp_visible_pack_inventory(server, actor)?;
+    let rows: Vec<String> = packs
+        .iter()
+        .map(|(name, hash)| {
+            format!(
+                "{}: {}",
+                oneiron::context_board::quoted_leaf(name),
+                oneiron::context_board::quoted_leaf(hash)
+            )
+        })
+        .collect();
+    sections.push(
+        oneiron::context_board::BoardSection::new(
+            "PACKS".to_owned(),
+            Vec::new(),
+            rows,
+            vec![format!("count: {}", packs.len())],
+            oneiron::context_board::SectionPolicy {
+                pinned: false,
+                shed_rank: Some(oneiron::context_board::ShedRank::PluginSections),
+            },
+        )
+        .map_err(mcp_board_frame_error)?,
+    );
+    sections.extend(mcp_pack_sections(server, actor)?);
+    Ok((sections, omissions))
+}
+
+/// Only the implemented, read-only claim family can enter this host's board.
+/// Other typed pack recipes stay installed as source, not invented board data.
+struct McpPackSectionBindings;
+impl oneiron::context_board::SectionBindingResolver for McpPackSectionBindings {
+    fn state_family_exists(&self, family: &oneiron::context_board::StateFamilyRef) -> bool {
+        family.family == "claim" && family.version == 1
+    }
+    fn authority_lane_exists(&self, authority: &oneiron::context_board::AuthorityLaneRef) -> bool {
+        authority.0 == "read"
+    }
+    fn budget_policy_exists(&self, budget: &oneiron::context_board::BudgetPolicyRef) -> bool {
+        budget.0 == oneiron::context_board::PLUGIN_SECTION_BUDGET_POLICY_REF
+    }
+}
+
+pub(super) fn mcp_visible_pack_inventory(
+    server: &SyncServer,
+    actor: &McpResolvedActor,
+) -> Result<Vec<(String, String)>, McpGatewayError> {
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    let mut visible = Vec::new();
+    for pack in server
+        .vault
+        .installed_packs()
+        .map_err(|error| mcp_engine_error("pack inventory failed", error))?
+    {
+        if mcp_scope_admits_row(&server.vault, actor, &read, &pack.source_id)? {
+            visible.push((pack.pack_name, pack.content_hash));
+        }
+    }
+    Ok(visible)
+}
+
+fn mcp_pack_sections(
+    server: &Arc<SyncServer>,
+    actor: &McpResolvedActor,
+) -> Result<Vec<oneiron::context_board::BoardSection>, McpGatewayError> {
+    use oneiron::context_board::{
+        PluginSectionRegistry, PluginSectionRow, PluginSectionSnapshot, SectionId,
+        render_pack_sections,
+    };
+    let registry = PluginSectionRegistry::rebuild(&server.vault, &McpPackSectionBindings).map_err(
+        |error| McpGatewayError::new(-32603, "board_render_failed", format!("{error:?}")),
+    )?;
+    let read = mcp_scoped_read(&server.vault, actor)?;
+    let mut snapshots = Vec::new();
+    let mut visible = Vec::new();
+    for entry in registry.pack_sections() {
+        if !mcp_scope_admits_row(&server.vault, actor, &read, &entry.source_id)? {
+            continue;
+        }
+        let mut rows = Vec::new();
+        for id in server
+            .vault
+            .pack_section_claim_ids(&entry.pack_name, &entry.section.section_id)
+            .map_err(|error| mcp_engine_error("pack section claim inventory failed", error))?
+        {
+            if !mcp_scope_admits_row(&server.vault, actor, &read, &id.to_hex())? {
+                continue;
+            }
+            let Some((kind, _, body)) = read
+                .get_entity_parts_with_receipt(&id, None)
+                .map_err(|error| mcp_engine_error("pack section claim read failed", error))?
+                .value
+            else {
+                continue;
+            };
+            if kind != oneiron::registry::ENTITY_TYPE_CLAIM {
+                continue;
+            }
+            let claim = oneiron::claim::decode_claim_body(&body, false)
+                .map_err(|error| mcp_engine_error("pack section claim decode failed", error))?;
+            if claim.lifecycle != oneiron::claim::ClaimLifecycleStatus::Active
+                || !matches!(
+                    claim.approval,
+                    oneiron::claim::ClaimApprovalStatus::Approved
+                        | oneiron::claim::ClaimApprovalStatus::Auto
+                )
+                || claim.stale
+            {
+                continue;
+            }
+            rows.push(PluginSectionRow {
+                row_id: id.to_hex(),
+                cells: vec![
+                    claim.predicate,
+                    format!("{:?}", claim.value).chars().take(256).collect(),
+                ],
+            });
+        }
+        snapshots.push(PluginSectionSnapshot {
+            section_id: SectionId(entry.section.section_id.clone()),
+            rows,
+        });
+        visible.push(entry.section.section_id.clone());
+    }
+    let rendered = render_pack_sections(&registry, &snapshots).map_err(|error| {
+        McpGatewayError::new(-32603, "board_render_failed", format!("{error:?}"))
+    })?;
+    Ok(registry
+        .pack_sections()
+        .zip(rendered)
+        .filter_map(|(entry, section)| {
+            visible
+                .contains(&entry.section.section_id)
+                .then_some(section)
+        })
+        .collect())
 }
 
 /// Narrows one TASKS section to the credential's registered world/facet.

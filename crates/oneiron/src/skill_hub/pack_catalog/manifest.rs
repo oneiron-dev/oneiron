@@ -28,6 +28,8 @@ pub struct PackManifest {
     pub license: Option<String>,
     pub kind: PackKind,
     pub adapter: Option<PackAdapter>,
+    /// Native AGENT_PACK facet slots, validated against the exporter layout.
+    pub facets: Option<std::collections::BTreeMap<String, String>>,
     /// Predicate declarations are byteless. They never allocate a type byte.
     pub predicates: BTreeSet<String>,
     /// Runtime structural shapes, by global name; handles are local, never in PACK.md.
@@ -59,6 +61,7 @@ impl PackManifest {
                     | "license"
                     | "kind"
                     | "adapter"
+                    | "facets"
                     | "predicates"
                     | "kinds"
                     | "grants"
@@ -132,6 +135,24 @@ impl PackManifest {
         if kind == PackKind::Connector && adapter.is_none() {
             return Err(invalid("connector pack requires an adapter"));
         }
+        let facets: Option<std::collections::BTreeMap<String, String>> = fields
+            .get("facets")
+            .map(|value| {
+                serde_json::from_str(value)
+                    .map_err(|_| invalid("agent facets must be a JSON string map"))
+            })
+            .transpose()?;
+        if let Some(slots) = &facets {
+            let expected = std::collections::BTreeMap::from([
+                ("identity".to_owned(), "identity.md".to_owned()),
+                ("policy".to_owned(), "policy.md".to_owned()),
+                ("skills".to_owned(), "skills.json".to_owned()),
+                ("knowledge".to_owned(), "knowledge/selected.json".to_owned()),
+            ]);
+            if kind != PackKind::Agent || *slots != expected {
+                return Err(invalid("agent facet mapping disagrees with native slots"));
+            }
+        }
         let name = required("name")?;
         validate_name(&name)?;
         let predicates = list("predicates")?;
@@ -152,6 +173,7 @@ impl PackManifest {
             license: fields.get("license").map(|v| scalar(v)).transpose()?,
             kind,
             adapter,
+            facets,
             predicates,
             kinds,
             requested_grants: list("grants")?,

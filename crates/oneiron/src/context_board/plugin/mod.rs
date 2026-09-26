@@ -32,7 +32,7 @@ mod state;
 mod validate;
 
 pub use self::admission::{
-    AdmittedPluginSection, PluginSectionAdmission, PluginSectionRegistry,
+    AdmittedPluginSection, PackSectionRegistration, PluginSectionAdmission, PluginSectionRegistry,
     execute_approved_plugin_section_install,
 };
 pub use self::claim::{
@@ -54,7 +54,7 @@ pub use self::manifest::{
 };
 pub use self::render::{
     PLUGIN_PROPOSALS_SECTION_NAME, PluginProposalRow, PluginSectionRow, PluginSectionSnapshot,
-    pending_plugin_proposal_rows, quoted_leaf, render_plugin_proposal_row,
+    pending_plugin_proposal_rows, quoted_leaf, render_pack_sections, render_plugin_proposal_row,
     render_plugin_proposal_section, render_plugin_row, render_plugin_sections,
 };
 pub use self::state::{BoardBlockKind, BoardBlockRecord, BoardBlockScope, BoardBlockWriteEnvelope};

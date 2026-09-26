@@ -353,6 +353,31 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
 
 #[test]
 fn generic_transports_capture_real_pack_sources_without_installing() -> Result<()> {
+    struct LyingAdapter {
+        hub: EntityId,
+        endpoint: String,
+        source: PackSource,
+    }
+    impl SkillHubAdapter for LyingAdapter {
+        fn hub_id(&self) -> EntityId {
+            self.hub
+        }
+        fn kind(&self) -> SkillHubKind {
+            SkillHubKind::HttpIndex
+        }
+        fn endpoint(&self) -> Option<&str> {
+            Some(&self.endpoint)
+        }
+        fn fetch_package(&self, _: &HubRef) -> Result<HubPackage> {
+            Err(crate::Error::EntityNotFound)
+        }
+    }
+    impl PackSourceAdapter for LyingAdapter {
+        fn fetch_pack_source(&self, _: &HubRef) -> Result<PackSource> {
+            Ok(self.source.clone())
+        }
+    }
+
     use super::pack_catalog::{PackSource, PackSourceAdapter};
     let tree = vec![HubFile::new("PACK.md", b"---\nname: alice.mail\ndescription: fixture\nversion: 1\nkind: connector\nadapter: built-in:email\n---\nReal source bytes\n".to_vec()),
         HubFile::new("knowledge/guide.md", b"Imported content is evidence.\n".to_vec())];
@@ -422,8 +447,21 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
     let publisher = vault.admit_skill_publisher(&owner, "publisher:pack", hub)?;
     let (id, pinned) = vault.fetch_pack_from_adapter(&http, &reference, &publisher, at, 4)?;
     assert_eq!(pinned, reference);
-    assert_eq!(vault.get_pack_source(&id)?, Some(source));
+    assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     assert!(vault.installed_pack("alice.mail")?.is_none());
+    // A third-party adapter cannot launder B through a requested hash for A.
+    let liar = LyingAdapter {
+        hub,
+        endpoint: server.index_url(),
+        source,
+    };
+    let wrong = HubRef::new(hub, "pack", HubPin::ContentHash("ab".repeat(32)))?;
+    assert!(
+        vault
+            .fetch_pack_from_adapter(&liar, &wrong, &publisher, at, 5)
+            .is_err()
+    );
+    assert_eq!(vault.list_pack_sources()?.len(), 1);
     routes.insert("/knowledge/guide.md".into(), (200, b"drift".to_vec()));
     let drift = StaticHttp::new(routes);
     assert!(
@@ -469,7 +507,10 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     let hub_id = EntityId::now();
     let endpoint = repository.path().to_str().expect("utf8 repo");
     let adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &commit)?;
-    let reference = HubRef::new(hub_id, "skills/example", HubPin::Commit(commit))?;
+    // macOS may alias /var to /private/var; configure the canonical endpoint
+    // exposed by the adapter, not the fixture's pre-canonical temp path.
+    let endpoint = adapter.endpoint().expect("configured git endpoint");
+    let reference = HubRef::new(hub_id, "skills/example", HubPin::Commit(commit.clone()))?;
     let mut config = crate::VaultConfig::device();
     config.dimensions = 4;
     config.map_size = 16 * 1024 * 1024;
@@ -509,7 +550,8 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     };
     assert_eq!(receipt.content_hash, source.content_hash().to_hex());
     assert_eq!(receipt.hub_ref, "skills/example");
-    assert_eq!(receipt.pin_type, "content_hash");
+    assert_eq!(receipt.pin_type, "commit");
+    assert_eq!(receipt.pin_value, commit);
     assert_eq!(receipt.permissions.grants, ["mail.read"]);
     assert_eq!(receipt.skills.len(), 1);
     let skill = EntityId::from_hex(&receipt.skills[0])?;

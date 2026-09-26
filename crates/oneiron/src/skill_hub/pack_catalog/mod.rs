@@ -29,8 +29,8 @@ mod admission_types;
 mod bundled_skills;
 mod schema;
 pub use admission_types::{
-    PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk, PackInstallDisposition,
-    PackInstallReceipt, PackInstallStatus, PackPermissions,
+    BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
+    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
 };
 #[cfg(test)]
 mod admission_tests;

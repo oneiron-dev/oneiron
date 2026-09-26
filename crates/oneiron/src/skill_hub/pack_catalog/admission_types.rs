@@ -15,6 +15,8 @@ pub trait PackFitPolicy {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackPermissions {
+    pub bundled_skills: Vec<BundledSkillPermissions>,
+    pub widening_bundled_skills: Vec<BundledSkillPermissions>,
     pub grants: Vec<String>,
     pub wakes: Vec<String>,
     pub section_verbs: Vec<String>,
@@ -24,6 +26,16 @@ pub struct PackPermissions {
     pub widening_wakes: Vec<String>,
     pub widening_section_verbs: Vec<String>,
     pub widening_section_authorities: Vec<String>,
+}
+/// A skill's requested capability surface, keyed by the authored skill identity.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundledSkillPermissions {
+    pub skill_id: String,
+    pub bins: Vec<String>,
+    pub env: Vec<String>,
+    pub mcp: Vec<String>,
+    pub allowed_tools: Vec<String>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackFitVerdict {

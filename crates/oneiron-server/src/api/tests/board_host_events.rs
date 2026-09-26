@@ -569,3 +569,181 @@ async fn board_host_narrow_connector_never_delivers_a_rider() {
     .await;
     assert_mcp_structured_error(&refused, "mcp_scope_refused");
 }
+
+#[tokio::test]
+async fn board_host_pack_install_is_changed_line_and_live_section_next_render() {
+    use oneiron::skill_hub::pack_catalog::{
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSource,
+        PackSourceAdapter,
+    };
+    use oneiron::skill_hub::{
+        HubFile, HubPackage, HubPin, HubRef, HubSyncPolicy, SkillHubAdapter, SkillHubKind,
+        SkillHubRecord, SkillHubTrustTier,
+    };
+    struct Adapter {
+        hub: oneiron::EntityId,
+        source: PackSource,
+    }
+    impl SkillHubAdapter for Adapter {
+        fn hub_id(&self) -> oneiron::EntityId {
+            self.hub
+        }
+        fn kind(&self) -> SkillHubKind {
+            SkillHubKind::Git
+        }
+        fn endpoint(&self) -> Option<&str> {
+            Some("https://example.invalid/board-pack")
+        }
+        fn fetch_package(&self, _: &HubRef) -> oneiron::Result<HubPackage> {
+            Err(oneiron::Error::EntityNotFound)
+        }
+    }
+    impl PackSourceAdapter for Adapter {
+        fn fetch_pack_source(&self, _: &HubRef) -> oneiron::Result<PackSource> {
+            Ok(self.source.clone())
+        }
+    }
+    struct Fit;
+    impl PackFitPolicy for Fit {
+        fn evaluate(
+            &self,
+            _: &PackSource,
+            card: &PackPermissions,
+        ) -> oneiron::Result<PackFitVerdict> {
+            assert_eq!(card.section_authorities, ["read"]);
+            Ok(PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: true,
+            })
+        }
+    }
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let actor = seeded_test_entity_id(0x2477_9111);
+    for credential in ["pack-main", "pack-other"] {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
+    let initial = board_mcp_call(&server, "pack-main", actor, "setup_oneiron", json!({})).await;
+    assert!(
+        !initial["result"]["structuredContent"]["board"]["keyframe"]
+            .as_str()
+            .unwrap()
+            .contains("alice.board.panel")
+    );
+    let core_before = core_board(&server, &actor.to_hex(), "pack-session").await;
+    assert_eq!(core_before["changed"], json!([]));
+    let section = json!({"section_id":"alice.board.panel", "state_family":{"family":"claim","version":1},
+        "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
+    let source = PackSource::from_files(vec![
+        HubFile::new("PACK.md", b"---\nname: alice.board\ndescription: board pack\nversion: 1\nkind: capability\npredicates: [\"alice.board.topic\"]\n---\nBoard pack\n"),
+        HubFile::new("knowledge/sections/alice.board.panel.json", serde_json::to_vec(&section).unwrap()),
+    ]).unwrap();
+    let owner_id = oneiron::EntityId::now();
+    let occurred = oneiron::TimeRange { start: 4, end: 4 };
+    server
+        .vault
+        .put_entity(
+            &owner_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            4,
+            b"owner",
+        )
+        .unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_id,
+            "principal:board-pack",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let hub = oneiron::EntityId::now();
+    server
+        .vault
+        .configure_skill_hub(
+            &owner,
+            &hub,
+            &SkillHubRecord::new(
+                SkillHubKind::Git,
+                "https://example.invalid/board-pack",
+                SkillHubTrustTier::Verified,
+                HubSyncPolicy::ContentHashFrozen,
+            )
+            .unwrap(),
+            occurred,
+            4,
+        )
+        .unwrap();
+    let publisher = server
+        .vault
+        .admit_skill_publisher(&owner, "publisher:board-pack", hub)
+        .unwrap();
+    let reference = HubRef::new(
+        hub,
+        "packs/alice.board",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )
+    .unwrap();
+    let PackInstallDisposition::Installed(receipt) = server
+        .vault
+        .install_pack_from_adapter(
+            &Adapter { hub, source },
+            &reference,
+            &publisher,
+            &Fit,
+            occurred,
+            4,
+        )
+        .unwrap()
+    else {
+        panic!("post-fit board pack")
+    };
+    let row = seeded_test_entity_id(0x2477_9112);
+    server
+        .vault
+        .put_claim(
+            &row,
+            &oneiron::ClaimBody::new(
+                "alice.board.topic",
+                oneiron::ClaimSubject::Entity(actor),
+                rmpv::Value::from("board topic"),
+                0.9,
+                oneiron::ClaimApprovalStatus::Auto,
+                oneiron::ClaimLifecycleStatus::Active,
+            ),
+            oneiron::TimeRange { start: 5, end: 5 },
+            5,
+        )
+        .unwrap();
+    let setup = board_mcp_call(&server, "pack-main", actor, "setup_oneiron", json!({})).await;
+    let keyframe = setup["result"]["structuredContent"]["board"]["keyframe"]
+        .as_str()
+        .unwrap();
+    assert!(keyframe.contains("alice.board.panel"), "{keyframe}");
+    assert!(keyframe.contains("alice.board.topic"), "{keyframe}");
+    assert!(keyframe.contains("alice.board: installed:"), "{keyframe}");
+    assert!(keyframe.contains(&receipt.content_hash));
+    let other = board_mcp_call(&server, "pack-other", actor, "setup_oneiron", json!({})).await;
+    assert!(
+        !other["result"]["structuredContent"]["board"]["keyframe"]
+            .as_str()
+            .unwrap()
+            .contains("alice.board: installed:")
+    );
+    let core_after = core_board(&server, &actor.to_hex(), "pack-session").await;
+    assert!(
+        core_after["changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line
+                .as_str()
+                .unwrap_or_default()
+                .contains("alice.board: installed:"))
+    );
+}

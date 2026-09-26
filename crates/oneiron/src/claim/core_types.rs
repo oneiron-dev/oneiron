@@ -403,7 +403,7 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// * `pred` must satisfy the D17 grammar; reserved `edge.*` and `skill.*`
 ///   predicates are rejected unless `allow_reserved_predicate` is set
 ///   (crate-private door / read path).
-pub(crate) fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
+pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<ClaimBody> {
     #[cfg(test)]
     CLAIM_BODY_DECODE_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 

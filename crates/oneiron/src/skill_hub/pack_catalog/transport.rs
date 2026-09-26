@@ -35,12 +35,17 @@ impl Vault {
                 "pack adapter does not match configured publisher source",
             ));
         }
+        reference.validate()?;
+        if matches!(reference.pin, HubPin::None) {
+            return Err(invalid("pack fetch requires a pinned hub reference"));
+        }
         let source = adapter.fetch_pack_source(reference)?;
-        let pinned = HubRef::new(
-            reference.hub_id,
-            reference.ref_string.clone(),
-            HubPin::ContentHash(source.content_hash().to_hex()),
-        )?;
+        if let HubPin::ContentHash(requested) = &reference.pin
+            && *requested != source.content_hash().to_hex()
+        {
+            return Err(invalid("requested pack content hash drift"));
+        }
+        let pinned = reference.clone();
         self.with_write_txn(|txn| {
             self.check_publisher_in_txn(txn, publisher)?;
             if self.hub_record_in_txn(txn, &reference.hub_id)? != configuration {

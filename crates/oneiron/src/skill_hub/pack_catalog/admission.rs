@@ -1,7 +1,8 @@
 //! Post-fit installation of pinned pack source; requested powers stay inert.
 use super::{
-    PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk, PackInstallDisposition,
-    PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource, invalid,
+    BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
+    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions, PackSource,
+    invalid,
 };
 use crate::{
     Vault,
@@ -35,7 +36,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             self.installed_pack_in_txn(&txn, &source.manifest.name)?
         };
-        let permissions = pack_permissions(&source, prior.as_ref());
+        let permissions = pack_permissions(&source, prior.as_ref())?;
         let verdict = policy.evaluate(&source, &permissions)?;
         if !verdict.fits {
             return Err(invalid("pack did not pass fit"));
@@ -85,6 +86,9 @@ impl Vault {
             } else { PackInstallStatus::Active };
             if status == PackInstallStatus::Active {
                 self.activate_pack_skills_in_txn(txn, &skills, at)?;
+                if let Some(prior) = self.installed_pack_in_txn(txn, &source.manifest.name)? {
+                    self.supersede_pack_skills_in_txn(txn, &prior, &skills, at)?;
+                }
             }
             let receipt = PackInstallReceipt {
                 source_id: ask.source_id.to_hex(),
@@ -95,7 +99,11 @@ impl Vault {
                 hub_id: ask.hub.hub_id.to_hex(),
                 hub_ref: ask.hub.ref_string.clone(),
                 pin_type: ask.hub.pin.pin_type().to_owned(),
-                pin_value: source.content_hash().to_hex(),
+                pin_value: match &ask.hub.pin {
+                    HubPin::Semver(value) | HubPin::Tag(value) | HubPin::Commit(value)
+                    | HubPin::ContentHash(value) => value.clone(),
+                    HubPin::None => return Err(invalid("pack install requires a pinned hub reference")),
+                },
                 publisher: ask.publisher.identity().to_owned(),
                 permissions: ask.permissions.clone(),
                 sections: source.sections().to_vec(),
@@ -141,6 +149,70 @@ impl Vault {
                 .put(txn, &install_key(&source.manifest.name), &bytes)?;
             Ok(PackInstallDisposition::Installed(Box::new(receipt)))
         })
+    }
+    /// Active installations only, verified against their still-live exact source.
+    /// A Candidate never enters the section/board projection.
+    pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for entry in self
+            .store
+            .vault_meta
+            .prefix_iter(&txn, b"pack.install.v1/")?
+        {
+            if rows.len() >= 4096 {
+                return Err(invalid("installed pack catalog exceeds bound"));
+            }
+            let (key, _) = entry?;
+            let name = std::str::from_utf8(&key[b"pack.install.v1/".len()..])
+                .map_err(|_| invalid("pack install catalog name corrupt"))?;
+            let receipt = self
+                .installed_pack_in_txn(&txn, name)?
+                .ok_or_else(|| invalid("pack install catalog missing"))?;
+            let source_id = EntityId::from_hex(&receipt.source_id)?;
+            let source = self
+                .pack_source_in_txn(&txn, &source_id)?
+                .ok_or_else(|| invalid("installed pack source missing"))?;
+            if receipt.sections != source.sections() || receipt.status != PackInstallStatus::Active
+            {
+                return Err(invalid("installed pack sections disagree with source"));
+            }
+            rows.push(receipt);
+        }
+        Ok(rows)
+    }
+    /// Claim-family state for one Active pack section, limited to the pack's
+    /// own declared predicates. Hosts must still scope each returned id before
+    /// serving any row; this is an inventory door, not read authority.
+    pub fn pack_section_claim_ids(
+        &self,
+        pack_name: &str,
+        section_id: &str,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let pack = self
+            .installed_pack_in_txn(&txn, pack_name)?
+            .ok_or_else(|| invalid("pack section is not installed"))?;
+        if !pack.sections.iter().any(|section| {
+            section.section_id == section_id
+                && section.state_family.family == "claim"
+                && section.state_family.version == 1
+                && section.authority_lane.0 == "read"
+        }) {
+            return Err(invalid("pack section has no claim reader"));
+        }
+        let mut ids = Vec::new();
+        for predicate in &pack.predicates {
+            for (id, _) in self.claims_with_predicate_in_txn(&txn, predicate)? {
+                if ids.len() >= 128 {
+                    break;
+                }
+                ids.push(id);
+            }
+        }
+        ids.sort_by_key(|id| *id.as_bytes());
+        ids.dedup();
+        Ok(ids)
     }
     pub fn candidate_pack(&self, source: &PackSource) -> Result<Option<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
@@ -210,7 +282,7 @@ impl Vault {
             .pack_source_in_txn(txn, &ask.source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
         let prior = self.installed_pack_in_txn(txn, &source.manifest.name)?;
-        if pack_permissions(&source, prior.as_ref()) != ask.permissions {
+        if pack_permissions(&source, prior.as_ref())? != ask.permissions {
             return Err(invalid("pack permission card drift"));
         }
         Ok(source)
@@ -231,11 +303,12 @@ impl Vault {
         let source = self
             .pack_source_in_txn(txn, &source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
-        let HubPin::ContentHash(hash) = &hub.pin else {
-            return Err(invalid("pack install requires verified source-tree pin"));
-        };
-        if *hash != source.content_hash().to_hex() {
-            return Err(invalid("pack source pin drift"));
+        match &hub.pin {
+            HubPin::ContentHash(hash) if *hash != source.content_hash().to_hex() => {
+                return Err(invalid("pack source pin drift"));
+            }
+            HubPin::None => return Err(invalid("pack install requires a pinned hub reference")),
+            _ => {}
         }
         let alias_key = super::transport::source_hub_alias_key(&source_id, hub)?;
         let expected = serde_json::to_vec(&(publisher.identity(), publisher.grant_ref()))
@@ -264,7 +337,10 @@ fn candidate_key(source: &PackSource) -> Vec<u8> {
     ]
     .concat()
 }
-fn pack_permissions(source: &PackSource, prior: Option<&PackInstallReceipt>) -> PackPermissions {
+fn pack_permissions(
+    source: &PackSource,
+    prior: Option<&PackInstallReceipt>,
+) -> Result<PackPermissions> {
     let mut section_verbs = std::collections::BTreeSet::new();
     let mut section_authorities = std::collections::BTreeSet::new();
     for section in source.sections() {
@@ -283,7 +359,68 @@ fn pack_permissions(source: &PackSource, prior: Option<&PackInstallReceipt>) -> 
             .collect()
     };
     let empty: &[String] = &[];
-    PackPermissions {
+    let mut folders = std::collections::BTreeMap::<String, Vec<crate::skill_hub::HubFile>>::new();
+    for file in source.files() {
+        if let Some(relative) = file.path.strip_prefix("skills/") {
+            let (folder, path) = relative
+                .split_once('/')
+                .ok_or_else(|| invalid("pack skill must have a folder"))?;
+            folders
+                .entry(folder.to_owned())
+                .or_default()
+                .push(crate::skill_hub::HubFile::new(path, file.content.clone()));
+        }
+    }
+    let mut bundled_skills = Vec::<BundledSkillPermissions>::new();
+    for files in folders.into_values() {
+        let package = super::super::folder::package_from_files(files)?;
+        let caps = &package.capabilities;
+        let skill = BundledSkillPermissions {
+            skill_id: package.record.skill_id,
+            bins: caps.bins.iter().cloned().collect(),
+            env: caps.env.iter().cloned().collect(),
+            mcp: caps.mcp.iter().cloned().collect(),
+            allowed_tools: caps.allowed_tools.iter().cloned().collect(),
+        };
+        if bundled_skills
+            .iter()
+            .any(|prior| prior.skill_id == skill.skill_id)
+        {
+            return Err(invalid("duplicate bundled skill identity"));
+        }
+        bundled_skills.push(skill);
+    }
+    bundled_skills.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
+    let mut widening_bundled_skills = Vec::new();
+    for skill in &bundled_skills {
+        let previous = prior.and_then(|receipt| {
+            receipt
+                .permissions
+                .bundled_skills
+                .iter()
+                .find(|previous| previous.skill_id == skill.skill_id)
+        });
+        let widening = BundledSkillPermissions {
+            skill_id: skill.skill_id.clone(),
+            bins: added(&skill.bins, previous.map_or(empty, |prior| &prior.bins)),
+            env: added(&skill.env, previous.map_or(empty, |prior| &prior.env)),
+            mcp: added(&skill.mcp, previous.map_or(empty, |prior| &prior.mcp)),
+            allowed_tools: added(
+                &skill.allowed_tools,
+                previous.map_or(empty, |prior| &prior.allowed_tools),
+            ),
+        };
+        if !widening.bins.is_empty()
+            || !widening.env.is_empty()
+            || !widening.mcp.is_empty()
+            || !widening.allowed_tools.is_empty()
+        {
+            widening_bundled_skills.push(widening);
+        }
+    }
+    Ok(PackPermissions {
+        bundled_skills,
+        widening_bundled_skills,
         widening_grants: added(&grants, prior.map_or(empty, |row| &row.permissions.grants)),
         widening_wakes: added(&wakes, prior.map_or(empty, |row| &row.permissions.wakes)),
         widening_section_verbs: added(
@@ -298,5 +435,5 @@ fn pack_permissions(source: &PackSource, prior: Option<&PackInstallReceipt>) -> 
         wakes,
         section_verbs,
         section_authorities,
-    }
+    })
 }

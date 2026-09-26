@@ -118,6 +118,35 @@ pub fn render_plugin_sections(
     Ok(sections)
 }
 
+/// Pack-origin sections render from a fresh Active-pack projection, never from
+/// a fabricated Approved section-install claim. Until a typed state provider
+/// supplies rows, the honest visible section is an empty budgeted working set;
+/// requested verbs and authority remain permissions, not installed grants.
+pub fn render_pack_sections(
+    registry: &PluginSectionRegistry,
+    snapshots: &[PluginSectionSnapshot],
+) -> PluginResult<Vec<BoardSection>> {
+    registry
+        .pack_sections()
+        .map(|entry| {
+            let policy = section_policy_for_budget_ref(&entry.section.budget_policy)?;
+            let rows: Vec<String> = snapshots
+                .iter()
+                .find(|snapshot| snapshot.section_id.0 == entry.section.section_id)
+                .map(|snapshot| snapshot.rows.iter().map(render_plugin_row).collect())
+                .unwrap_or_default();
+            BoardSection::new(
+                entry.section.section_id.clone(),
+                Vec::new(),
+                rows.clone(),
+                vec![format!("count: {}", rows.len())],
+                policy,
+            )
+            .map_err(Into::into)
+        })
+        .collect()
+}
+
 /// Pending typed data for ONE-1707's PROPOSALS projection. It is NOT an
 /// admitted section and NOT install authority: it can neither accept consent
 /// nor register a section.
