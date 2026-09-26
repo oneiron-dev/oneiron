@@ -42,11 +42,10 @@ impl DreamerRunnerStore<'_> {
     /// A memoized response is paid on replay only if it has no such receipt.
     pub(crate) fn checkpoint_step_charged(
         &self,
-        budget_id: &str,
         attempt_id: AttemptId,
         step_hash: &[u8; 32],
     ) -> Result<bool> {
-        let key = budget_step_charge_key(budget_id, attempt_id, step_hash)?;
+        let key = budget_step_charge_key(attempt_id, step_hash);
         let rtxn = self.vault.store.env.read_txn()?;
         match self.vault.store.vault_meta.get(&rtxn, &key)?.as_deref() {
             None => Ok(false),
@@ -57,14 +56,40 @@ impl DreamerRunnerStore<'_> {
         }
     }
 
-    /// Settle real usage and pin the charged step identities in ONE transaction.
-    /// An absent reservation cannot mint receipts for usage the ledger did not pay.
+    /// Retire paid-step receipts when their attempt can no longer replay.
+    pub(in crate::dreamer_runner) fn cleanup_step_receipts_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt_id: AttemptId,
+    ) -> Result<()> {
+        let prefix = budget_step_charge_prefix(attempt_id);
+        let keys: Vec<Vec<u8>> = self
+            .vault
+            .store
+            .vault_meta
+            .prefix_iter(&*wtxn, &prefix)?
+            .map(|row| row.map(|(key, _)| key.to_vec()))
+            .collect::<std::result::Result<_, _>>()?;
+        for key in keys {
+            self.vault.store.vault_meta.delete(wtxn, &key)?;
+        }
+        Ok(())
+    }
+
+    /// Settle real usage, pin charged step identities, and park atomically.
+    /// A failure at any door rolls back all three writes.
     pub(crate) fn settle_checkpoint_budget(
         &self,
         input: SettleDreamerBudget,
         step_hashes: &[[u8; 32]],
+        park: ParkDreamerAttempt,
     ) -> Result<DreamerBudgetSettlementOutcome> {
-        self.vault.with_write_txn(|wtxn| {
+        if park.attempt_id != input.child_attempt {
+            return Err(invalid_dreamer_runner(
+                "checkpoint park target differs from settlement",
+            ));
+        }
+        let settled = self.vault.with_write_txn(|wtxn| {
             let settled = self.settle_budget_in_txn(wtxn, input.clone())?;
             if !matches!(settled, DreamerBudgetSettlementOutcome::Settled(_)) {
                 return Err(invalid_dreamer_runner(
@@ -72,13 +97,16 @@ impl DreamerRunnerStore<'_> {
                 ));
             }
             for hash in step_hashes {
-                let key = budget_step_charge_key(&input.budget_id, input.child_attempt, hash)?;
+                let key = budget_step_charge_key(input.child_attempt, hash);
                 if self.vault.store.vault_meta.get(wtxn, &key)?.is_some() {
                     return Err(invalid_dreamer_runner("checkpoint step charged twice"));
                 }
                 self.vault.store.vault_meta.put(wtxn, &key, &[1])?;
             }
+            self.park_attempt_in_txn(wtxn, park)?;
             Ok(settled)
-        })
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(settled)
     }
 }

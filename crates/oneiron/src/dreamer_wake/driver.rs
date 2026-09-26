@@ -11,7 +11,7 @@ use crate::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt,
     DreamerAdmissionOutcome, DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerMilestoneKind,
-    DreamerRunnerStore, SettleDreamerBudget,
+    DreamerRunnerStore, ParkDreamerAttempt, SettleDreamerBudget,
 };
 use crate::error::Result;
 use crate::llm::{
@@ -651,8 +651,14 @@ impl<'a> DreamerWakeDriver<'a> {
                             now: input.now,
                         },
                         &step_hashes,
+                        ParkDreamerAttempt {
+                            attempt_id,
+                            reason: reason.clone(),
+                            park_owner: input.lease_owner.clone(),
+                            now: input.now,
+                        },
                     )?;
-                    self.park_attempt(attempt_id, reason, input.lease_owner.clone(), input.now)?;
+                    self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
                     self.write_milestone(
                         attempt_id,
                         DreamerMilestoneKind::CheckpointReached,

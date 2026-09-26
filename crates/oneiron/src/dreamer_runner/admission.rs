@@ -16,10 +16,11 @@ use crate::error::{Error, Result};
 
 use super::claim_authoring::{DreamerClaimAuthoringBudgetTrap, DreamerClaimAuthoringGateDecision};
 use super::codec::{
-    budget_key, budget_reservation_key, budget_step_charge_key, decode_budget_record,
-    decode_budget_reservation, decode_home_node_designation, encode_budget_record,
-    encode_budget_reservation, encode_home_node_designation, invalid_dreamer_runner,
-    validate_budget_id, validate_budget_record, validate_budget_reservation,
+    budget_key, budget_reservation_key, budget_step_charge_key, budget_step_charge_prefix,
+    decode_budget_record, decode_budget_reservation, decode_home_node_designation,
+    encode_budget_record, encode_budget_reservation, encode_home_node_designation,
+    invalid_dreamer_runner, validate_budget_id, validate_budget_record,
+    validate_budget_reservation,
 };
 use super::constants::{
     DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_ACTOR, DREAMER_CLAIM_AUTHORING_BUDGET_TRAP_NOTE,
@@ -33,8 +34,8 @@ use super::types::{
     DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerBudgetRecord, DreamerBudgetReservation,
     DreamerBudgetReserveOutcome, DreamerBudgetSettlement, DreamerBudgetSettlementOutcome,
     DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
-    DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ReserveDreamerBudget,
-    SettleDreamerBudget,
+    DreamerHomeNodeDesignation, DreamerMilestoneKind, DreamerReservedBudget, ParkDreamerAttempt,
+    ReserveDreamerBudget, SettleDreamerBudget,
 };
 
 struct DreamerKindAdmissionResult {

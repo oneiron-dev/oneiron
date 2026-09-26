@@ -655,24 +655,18 @@ pub(super) fn budget_reservation_key(budget_id: &str, attempt_id: AttemptId) -> 
     Ok(out)
 }
 
-/// A checkpoint receipt is scoped to one budget, attempt, and canonical step.
-pub(super) fn budget_step_charge_key(
-    budget_id: &str,
-    attempt_id: AttemptId,
-    step_hash: &[u8; 32],
-) -> Result<Vec<u8>> {
-    validate_budget_id(budget_id)?;
-    let mut out = Vec::with_capacity(
-        DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX.len() + 2 + budget_id.len() + 16 + 32,
-    );
+/// Receipts follow the stable attempt/step memo identity across wake budgets.
+pub(super) fn budget_step_charge_prefix(attempt_id: AttemptId) -> Vec<u8> {
+    let mut out = Vec::with_capacity(DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX.len() + 16);
     out.extend_from_slice(DREAMER_PRIVATE_BUDGET_STEP_CHARGE_PREFIX);
-    let len = u16::try_from(budget_id.len())
-        .map_err(|_| invalid_dreamer_runner("dreamer budget_id exceeds 128 bytes"))?;
-    out.extend_from_slice(&len.to_be_bytes());
-    out.extend_from_slice(budget_id.as_bytes());
     out.extend_from_slice(attempt_id.as_bytes());
+    out
+}
+
+pub(super) fn budget_step_charge_key(attempt_id: AttemptId, step_hash: &[u8; 32]) -> Vec<u8> {
+    let mut out = budget_step_charge_prefix(attempt_id);
     out.extend_from_slice(step_hash);
-    Ok(out)
+    out
 }
 
 pub(super) fn run_tree_key(attempt_id: AttemptId) -> Vec<u8> {

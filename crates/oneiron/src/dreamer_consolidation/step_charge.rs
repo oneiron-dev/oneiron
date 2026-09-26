@@ -27,14 +27,12 @@ impl StepChargeTally {
     pub(super) fn record_terminal(
         &mut self,
         vault: &Vault,
-        budget_id: &str,
         attempt_id: AttemptId,
         step_hash: [u8; 32],
         usage: &LlmUsage,
     ) -> Result<()> {
         if self.step_hashes.contains(&step_hash)
-            || DreamerRunnerStore::new(vault)
-                .checkpoint_step_charged(budget_id, attempt_id, &step_hash)?
+            || DreamerRunnerStore::new(vault).checkpoint_step_charged(attempt_id, &step_hash)?
         {
             return Ok(());
         }

@@ -34,6 +34,7 @@ fn wake_input(node_id: u64, now: u64) -> RunWakePass {
 enum LateCall {
     ExtractionOnly,
     ExtractionThenMerge,
+    ExtractionThenMergeNewBudget,
     Merge,
     InvalidJson,
     NativeInvalidJson,
@@ -75,7 +76,10 @@ fn run_case(case: LateCall) -> Result<()> {
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
     let first_response = match case {
         LateCall::ExtractionOnly => extraction_response(&subject, &turns[0]),
-        LateCall::ExtractionThenMerge | LateCall::Merge | LateCall::MergeFinalInvalidCorrection => {
+        LateCall::ExtractionThenMerge
+        | LateCall::ExtractionThenMergeNewBudget
+        | LateCall::Merge
+        | LateCall::MergeFinalInvalidCorrection => {
             two_candidate_extraction(&subject, &turns[0], &turns[1])
         }
         LateCall::InvalidJson | LateCall::NativeInvalidJson | LateCall::FinalInvalidCorrection => {
@@ -140,7 +144,10 @@ fn run_case(case: LateCall) -> Result<()> {
     assert!(store.parked_attempt(attempt_id)?.is_some());
     let first_spend = match case {
         LateCall::ExtractionOnly => 120,
-        LateCall::ExtractionThenMerge | LateCall::InvalidJson | LateCall::NativeInvalidJson => 50,
+        LateCall::ExtractionThenMerge
+        | LateCall::ExtractionThenMergeNewBudget
+        | LateCall::InvalidJson
+        | LateCall::NativeInvalidJson => 50,
         LateCall::Merge => 100,
         LateCall::FinalInvalidCorrection => 150,
         LateCall::MergeFinalInvalidCorrection => 200,
@@ -179,7 +186,12 @@ fn run_case(case: LateCall) -> Result<()> {
         180_000,
         std::sync::Arc::new(move || clock.load(Ordering::SeqCst)),
     );
-    let mut driver = DreamerWakeDriver::new(&vault, "wake", deadline);
+    let resume_budget = if matches!(case, LateCall::ExtractionThenMergeNewBudget) {
+        "wake-next"
+    } else {
+        "wake"
+    };
+    let mut driver = DreamerWakeDriver::new(&vault, resume_budget, deadline);
     let mut executor = ConsolidationExecutor {
         backend: &backend,
         guard: &guard,
@@ -202,7 +214,9 @@ fn run_case(case: LateCall) -> Result<()> {
     );
     let expected_total = match case {
         LateCall::ExtractionOnly => 120,
-        LateCall::ExtractionThenMerge | LateCall::Merge => 100,
+        LateCall::ExtractionThenMerge
+        | LateCall::ExtractionThenMergeNewBudget
+        | LateCall::Merge => 100,
         LateCall::InvalidJson
         | LateCall::NativeInvalidJson
         | LateCall::FinalInvalidCorrection
@@ -210,17 +224,34 @@ fn run_case(case: LateCall) -> Result<()> {
     };
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        if matches!(case, LateCall::ExtractionThenMerge) {
+        if matches!(
+            case,
+            LateCall::ExtractionThenMerge | LateCall::ExtractionThenMergeNewBudget
+        ) {
             2
         } else {
             expire_on_call
         }
     );
     assert_eq!(guard.read().used_units, expected_total);
+    let wake_debit = if resume_budget == "wake" {
+        expected_total
+    } else {
+        first_spend
+    };
     assert_eq!(
         store.budget("wake")?.expect("wake budget").remaining_units,
-        10_000 - expected_total
+        10_000 - wake_debit
     );
+    if resume_budget != "wake" {
+        assert_eq!(
+            store
+                .budget(resume_budget)?
+                .expect("new wake budget")
+                .remaining_units,
+            10_000 - (expected_total - first_spend)
+        );
+    }
     assert_eq!(sink.accepted.len(), 1);
     Ok(())
 }
@@ -230,6 +261,7 @@ fn late_terminal_checkpoint_resume_charges_only_unpaid_steps() -> Result<()> {
     for case in [
         LateCall::ExtractionOnly,
         LateCall::ExtractionThenMerge,
+        LateCall::ExtractionThenMergeNewBudget,
         LateCall::Merge,
     ] {
         run_case(case)?;

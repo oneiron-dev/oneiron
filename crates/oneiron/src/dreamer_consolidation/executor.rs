@@ -113,13 +113,7 @@ impl ConsolidationExecutor<'_> {
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
         let response = match outcome {
             Ok(StepOutcome::Finished { response, .. }) => {
-                charges.record_terminal(
-                    ctx.vault,
-                    ctx.budget_id,
-                    attempt_id,
-                    step_hash,
-                    &response.usage,
-                )?;
+                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
                 response
             }
             Ok(StepOutcome::Trapped(_)) => return Ok(PartitionRun::Trapped),
@@ -144,13 +138,23 @@ impl ConsolidationExecutor<'_> {
         )?;
         resources.validate_candidates(resources.scope(), &candidates)?;
         resources.require_output(resources.scope())?;
-        super::extracted_people::mint_extracted_people(
+        if ctx.deadline.expired() {
+            return Ok(PartitionRun::Checkpoint);
+        }
+        let mint = super::extracted_people::mint_extracted_people(
             ctx.vault,
             &response,
             &turn_ids,
             resources.scope(),
             ctx.now_ms,
-        )?;
+            Some(ctx.deadline),
+        );
+        if let Err(error) = mint {
+            if ctx.deadline.expired() {
+                return Ok(PartitionRun::Checkpoint);
+            }
+            return Err(error.into());
+        }
         self.resolve_conflicts(
             candidates,
             resources,
@@ -244,7 +248,6 @@ impl ConsolidationExecutor<'_> {
                 Ok(StepOutcome::Finished { response, .. }) => {
                     charges.record_terminal(
                         ctx.vault,
-                        ctx.budget_id,
                         step_identity.0,
                         step_hash,
                         &response.usage,

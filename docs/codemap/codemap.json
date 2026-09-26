@@ -13113,6 +13113,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_consolidation/tests/support.rs",
+     "purpose": "Shared backend fixture for deadline-driven consolidation tests",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/value_projection.rs",
@@ -13321,7 +13331,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -13378,7 +13388,7 @@
      "path": "src/dreamer_runner/codec.rs",
      "purpose": "MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "fn": 2
      }
     },
@@ -34071,7 +34081,7 @@
      "purpose": "—"
     },
     "dreamer_consolidation": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34907,7 +34917,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2062,
-   "test_files": 706
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [

@@ -29,6 +29,8 @@ mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
 mod scope_enforcement;
+mod support;
+use support::ExpiringBackend;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -1429,40 +1431,6 @@ impl LlmBackend for ScriptedBackend {
             .pop_front()
             .expect("scripted backend exhausted");
         Box::pin(async move { next })
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(crate::LlmError::Fatal(crate::FatalLlmError::InvalidRequest))
-    }
-}
-
-/// Advances the wake clock only when the selected provider response arrives.
-struct ExpiringBackend {
-    inner: ScriptedBackend,
-    clock: std::sync::Arc<AtomicU64>,
-    expire_on_call: usize,
-    calls: AtomicUsize,
-    native_json: bool,
-}
-
-impl LlmBackend for ExpiringBackend {
-    fn supports(&self, _: &crate::ModelId, capability: crate::LlmCapability) -> bool {
-        self.native_json && capability == crate::LlmCapability::JsonResponse
-    }
-
-    fn generate<'a>(
-        &'a self,
-        request: LlmRequest,
-        lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        Box::pin(async move {
-            let response = self.inner.generate(request, lease).await;
-            if call == self.expire_on_call {
-                self.clock.store(180_001, Ordering::SeqCst);
-            }
-            response
-        })
     }
 
     fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
