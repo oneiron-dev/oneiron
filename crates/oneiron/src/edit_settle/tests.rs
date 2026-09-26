@@ -104,6 +104,7 @@ fn proposal(run_ref: &str, new_bytes: &[u8], ops: Vec<EditOp>) -> EditProposal {
             checks: Vec::new(),
         },
         recalc: RecalcStatus::NotNeeded,
+        calc_engine: None,
         base_version: Some(1),
         base_content_hash: *blake3::hash(WORKBOOK_V1_BYTES).as_bytes(),
     }
@@ -140,6 +141,101 @@ fn unsettled_proposal_is_invisible_until_select() -> Result<()> {
         BlobVersionProvenance::AgentRun {
             run_ref: "run:invisible".to_owned(),
         }
+    );
+    Ok(())
+}
+
+#[test]
+fn selected_version_keeps_calculator_and_version_in_metadata_and_claim() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let mut prop = proposal("run:calc-stamp", b"calculated xlsx bytes", Vec::new());
+    prop.recalc = RecalcStatus::Performed;
+    prop.calc_engine = Some(Box::new(crate::blob_artifact::CalcEngineStamp::new(
+        "LibreOffice",
+        "24.8",
+    )?));
+    let out =
+        vault.settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(11), 11)?;
+    assert_eq!(
+        out.version.calc_engine.as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)?
+            .unwrap()
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_version_metadata(&artifact, 2)?
+            .unwrap()
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    assert_eq!(
+        vault.blob_artifact_versions(&artifact)?[1]
+            .calc_engine
+            .as_ref(),
+        prop.calc_engine.as_deref()
+    );
+    Ok(())
+}
+
+#[test]
+fn performed_recalc_without_stamp_refuses_before_any_settlement_effect() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let mut prop = proposal(
+        "run:unstamped-select",
+        b"calculated but unstamped",
+        Vec::new(),
+    );
+    prop.recalc = RecalcStatus::Performed;
+    let err = vault
+        .settle_select_edit_proposal(&artifact, &prop, &owner(), actor, test_time(11), 11)
+        .expect_err("performed recalc needs its engine stamp");
+    assert_eq!(err.kind(), crate::error::ErrorKind::EditRoundtripFailed);
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, &prop.run_ref)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn raw_no_recalc_proposal_inherits_stamped_head_inside_settlement() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let first_stamp = crate::blob_artifact::CalcEngineStamp::new("LibreOffice", "24.8")?;
+    let mut first = proposal("run:stamped", b"stamped bytes v2", Vec::new());
+    first.recalc = RecalcStatus::Performed;
+    first.calc_engine = Some(Box::new(first_stamp.clone()));
+    let v2 = vault
+        .settle_select_edit_proposal(&artifact, &first, &owner(), actor, test_time(11), 11)?
+        .version;
+    assert_eq!(v2.calc_engine, Some(first_stamp.clone()));
+    // The raw entry point has no head context. Its unchanged calculator must be
+    // resolved in the settle transaction, not trusted from the public proposal.
+    let mut raw = proposal("run:raw-no-recalc", b"raw no-recalc bytes v3", Vec::new());
+    raw.base_content_hash = v2.content_hash;
+    raw.base_version = None;
+    let v3 = vault
+        .settle_select_edit_proposal(&artifact, &raw, &owner(), actor, test_time(12), 12)?
+        .version;
+    assert_eq!(v3.calc_engine, Some(first_stamp));
+    assert_eq!(
+        vault.blob_artifact_version_metadata(&artifact, 3)?.unwrap(),
+        v3
     );
     Ok(())
 }
