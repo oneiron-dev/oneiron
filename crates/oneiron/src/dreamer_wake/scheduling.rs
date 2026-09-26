@@ -138,3 +138,53 @@ pub fn request_compaction_wake_with_packet(
         now,
     )
 }
+
+/// Schedule the projector's turn wake through the one engine enqueue door.
+///
+/// `projection_digest` is the SHA-256 of the projector's proposed image, not
+/// a hash of the turn or of the queue payload. The projector supplies it only
+/// after computing the candidate image. `None` is no new material. Equal images mean no change:
+/// no attempt, cursor, or receipt is written. The projection cursor and the
+/// queued attempt land in the same transaction; a failed enqueue cannot lose
+/// a changed image. Other triggers (consent, connector, session end) bypass
+/// the cadence gate and retain their existing event semantics.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the arguments mirror the existing enqueue door plus turn and projection"
+)]
+pub fn request_turn_wake(
+    store: &DreamerRunnerStore<'_>,
+    turn_ordinal: u64,
+    projection_digest: Option<[u8; 32]>,
+    payload: DreamerAttemptPayload,
+    dedupe_key: Option<String>,
+    run_id: Option<String>,
+    now: u64,
+) -> Result<Option<EnqueueDreamerAttemptOutcome>> {
+    let Some(projection_digest) = projection_digest else {
+        return Ok(None);
+    };
+    let vault = store.vault();
+    let mut txn = vault.store.env.write_txn()?;
+    if !vault.wake_grain_in_txn(&txn)?.due(turn_ordinal) {
+        return Ok(None);
+    }
+    if vault.queued_wake_projection_in_txn(&txn)? == Some(projection_digest) {
+        return Ok(None);
+    }
+    let outcome = store.enqueue_consolidation_in_txn(
+        &mut txn,
+        EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            input: payload.input,
+            parent_attempt: payload.parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        },
+    )?;
+    vault.set_queued_wake_projection_in_txn(&mut txn, &projection_digest)?;
+    txn.commit()?;
+    vault.store.notify_attempt_observers();
+    Ok(Some(outcome))
+}

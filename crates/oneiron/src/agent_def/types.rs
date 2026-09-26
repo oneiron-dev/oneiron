@@ -25,7 +25,7 @@ use rmpv::Value;
 /// `memory_profile` (RT-05, ONE-1687) and the dreaming mode/model fields
 /// append in that order and are elided when absent, so older bodies re-encode
 /// byte-for-byte. Absent dreaming means inherit, on by default.
-pub const AGENT_DEF_BODY_KEYS: [&str; 25] = [
+pub const AGENT_DEF_BODY_KEYS: [&str; 26] = [
     "agentId",
     "desc",
     "version",
@@ -51,6 +51,7 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 25] = [
     "memory_profile",
     "dreaming",
     "dreamingModel",
+    "wakeCadence",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -137,6 +138,7 @@ pub(super) const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
 pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
 
 pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
+pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
 
 pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
 
@@ -365,6 +367,48 @@ impl DreamingMode {
     }
 }
 
+/// Resident wake dial. A cadence interval of `None` inherits the vault grain.
+/// Surprise and agency are independent signals; a worker never wakes on time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWakeCadence {
+    Companion { every_turns: Option<u64> },
+    Leader { every_turns: Option<u64> },
+    Worker,
+}
+
+impl AgentWakeCadence {
+    /// The scheduler's one decision for an agent at a turn boundary.
+    #[must_use]
+    pub fn due(
+        self,
+        grain: crate::dreamer_wake::WakeGrain,
+        turn_ordinal: u64,
+        surprised: bool,
+        agency: bool,
+        event: bool,
+    ) -> bool {
+        if event {
+            return true;
+        }
+        match self {
+            Self::Worker => false,
+            Self::Companion { every_turns } => {
+                agency || surprised || cadence_due(every_turns, grain, turn_ordinal)
+            }
+            Self::Leader { every_turns } => agency || cadence_due(every_turns, grain, turn_ordinal),
+        }
+    }
+}
+
+fn cadence_due(
+    override_turns: Option<u64>,
+    grain: crate::dreamer_wake::WakeGrain,
+    ordinal: u64,
+) -> bool {
+    let turns = override_turns.unwrap_or(grain.turns_per_wake);
+    turns != 0 && ordinal != 0 && ordinal.is_multiple_of(turns)
+}
+
 /// Optional per-entity-class share of the window budget.
 ///
 /// Absent means the engine default split holds. Every fraction is validated
@@ -477,6 +521,8 @@ pub struct AgentDefinition {
     pub dreaming: Option<DreamingMode>,
     /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
     pub dreaming_model: Option<ModelTierRef>,
+    /// Absent is the safe event-only worker dial; set an explicit resident role.
+    pub wake_cadence: Option<AgentWakeCadence>,
 }
 
 impl AgentDefinition {
@@ -533,7 +579,37 @@ impl AgentDefinition {
             memory_profile: None,
             dreaming: None,
             dreaming_model: None,
+            wake_cadence: None,
         }
+    }
+
+    /// Effective cadence for a definition without a role row is events only.
+    #[must_use]
+    pub fn wake_cadence(&self) -> AgentWakeCadence {
+        self.wake_cadence.unwrap_or(AgentWakeCadence::Worker)
+    }
+
+    /// The resident dial cannot revive a disabled definition or `Off` dreaming.
+    #[must_use]
+    pub fn dream_wake_due(
+        &self,
+        grain: crate::dreamer_wake::WakeGrain,
+        turn_ordinal: u64,
+        surprised: bool,
+        agency: bool,
+        event: bool,
+    ) -> bool {
+        self.enabled
+            && self.dreaming_mode() != DreamingMode::Off
+            && self
+                .wake_cadence()
+                .due(grain, turn_ordinal, surprised, agency, event)
+    }
+
+    #[must_use]
+    pub fn with_wake_cadence(mut self, cadence: AgentWakeCadence) -> Self {
+        self.wake_cadence = Some(cadence);
+        self
     }
 
     /// Effective setting: an absent key is inherit, ON by default.

@@ -608,6 +608,7 @@ fn pinned_key_contract_is_stable() {
             "memory_profile",
             "dreaming",
             "dreamingModel",
+            "wakeCadence",
         ]
     );
     assert_eq!(MCP_REF_KEYS, ["key", "minVersion"]);
@@ -1810,5 +1811,65 @@ fn seeded_work_agents_inherit_dreaming() -> Result<()> {
         assert_eq!(def.dreaming_mode(), DreamingMode::Inherit);
         assert_eq!(def.dreaming_model, None);
     }
+    Ok(())
+}
+
+#[test]
+fn resident_cadence_dials_round_trip_and_choose_their_own_triggers() -> Result<()> {
+    let grain = crate::dreamer_wake::WakeGrain::new(3)?;
+    let companion = AgentWakeCadence::Companion { every_turns: None };
+    let leader = AgentWakeCadence::Leader {
+        every_turns: Some(2),
+    };
+    let worker = AgentWakeCadence::Worker;
+    for dial in [companion, leader, worker] {
+        let agent = minimal_agent("1").with_wake_cadence(dial);
+        assert_eq!(
+            decode_agent_definition(&encode_agent_definition(&agent)?)?.wake_cadence(),
+            dial
+        );
+    }
+    assert!(!companion.due(grain, 2, false, false, false));
+    assert!(companion.due(grain, 3, false, false, false));
+    assert!(companion.due(grain, 2, true, false, false));
+    assert!(companion.due(grain, 2, false, true, false));
+    assert!(leader.due(grain, 2, false, false, false));
+    assert!(!leader.due(grain, 1, true, false, false));
+    assert!(leader.due(grain, 1, false, true, false));
+    assert!(!worker.due(grain, 3, true, true, false));
+    assert!(worker.due(grain, 1, false, false, true));
+    assert_eq!(minimal_agent("1").wake_cadence(), worker);
+    let mut disabled = minimal_agent("1").with_wake_cadence(companion);
+    disabled.enabled = false;
+    assert!(!disabled.dream_wake_due(grain, 3, true, true, true));
+    disabled.enabled = true;
+    disabled.dreaming = Some(DreamingMode::Off);
+    assert!(!disabled.dream_wake_due(grain, 3, true, true, true));
+    Ok(())
+}
+
+#[test]
+fn invalid_resident_dial_is_refused_on_both_codec_doors() -> Result<()> {
+    let mut agent = minimal_agent("1").with_wake_cadence(AgentWakeCadence::Leader {
+        every_turns: Some(0),
+    });
+    assert!(encode_agent_definition(&agent).is_err());
+    agent.wake_cadence = Some(AgentWakeCadence::Worker);
+    let mut value =
+        rmpv::decode::read_value(&mut encode_agent_definition(&agent)?.as_slice()).unwrap();
+    let Value::Map(ref mut fields) = value else {
+        unreachable!()
+    };
+    let (_, dial) = fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("wakeCadence"))
+        .unwrap();
+    *dial = Value::Map(vec![
+        (Value::from("kind"), Value::from("worker")),
+        (Value::from("everyTurns"), Value::from(2)),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).unwrap();
+    assert!(decode_agent_definition(&bytes).is_err());
     Ok(())
 }

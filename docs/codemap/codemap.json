@@ -526,6 +526,7 @@
       "AgentCeiling",
       "AgentDefinition",
       "AgentScope",
+      "AgentWakeCadence",
       "CompactionOwnership",
       "ContextBudgetSplit",
       "DreamingMode",
@@ -536,9 +537,9 @@
      "purpose": "AgentDefinition domain types, key/limit consts, and constructors",
      "surface": {
       "const": 13,
-      "crate-vis": 46,
-      "enum": 4,
-      "fn": 17,
+      "crate-vis": 47,
+      "enum": 5,
+      "fn": 21,
       "struct": 4
      }
     },
@@ -13603,7 +13604,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "struct": 1
      }
@@ -13786,6 +13787,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WakeGrain"
+     ],
+     "path": "src/dreamer_wake/grain.rs",
+     "purpose": "Vault-local turn cadence and the last queued projector image",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/dreamer_wake/grain_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BudgetLegibilityEnvelope"
      ],
      "path": "src/dreamer_wake/legibility.rs",
@@ -13803,7 +13826,7 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -13814,7 +13837,7 @@
      "purpose": "The host-facing enqueue doors; the engine owns no timer",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -34127,8 +34150,8 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 9,
-     "impl_vault": false,
+     "files": 11,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)"
@@ -34920,8 +34943,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
-   "test_files": 706
+   "source_files": 2064,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [

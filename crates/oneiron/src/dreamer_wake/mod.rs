@@ -10,6 +10,7 @@
 //! RUN the pass — two separate host calls. Idle = nothing runs.
 mod deadline;
 mod driver;
+mod grain;
 mod legibility;
 mod scheduling;
 mod settlement;
@@ -17,6 +18,7 @@ mod types;
 
 pub use self::deadline::*;
 pub use self::driver::*;
+pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::scheduling::*;
 pub use self::types::*;
@@ -24,6 +26,8 @@ pub use self::types::*;
 // `settlement` is impl-only: it re-opens `impl DreamerWakeDriver` and owns no
 // name the rest of the crate reaches for, so it needs no re-export.
 
+#[cfg(test)]
+mod grain_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
