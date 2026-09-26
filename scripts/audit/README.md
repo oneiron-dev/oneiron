@@ -14,7 +14,8 @@ for a controlled proof on the approved Mac mini runner. The two jobs use
 its unique `mini` capability label so their artifact paths and compiler inputs
 match; the retired Arch runners are offline. This dispatch skips the
 normal full gate; the two dedicated jobs run serially. The first builds
-`oneiron-server` from a fresh run-owned target without sccache (host-target-only
+`oneiron-vault-contract` (small enough for busy runners) from a fresh run-owned
+target without sccache (host-target-only
 baseline), then deletes only that run-owned target and populates the shared
 GitHub cache from the same source and target path. The second job starts a new
 compiler daemon and another empty artifact target at the same path, then

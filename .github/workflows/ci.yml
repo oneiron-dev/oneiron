@@ -45,7 +45,8 @@ env:
 
 # One run per PR (a newer push cancels the older run); every main push keeps its own run.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  # A proof dispatch must not be cancelled when the PR's scoped run starts for the same SHA.
+  group: ${{ inputs.cache_proof && format('ci-proof-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

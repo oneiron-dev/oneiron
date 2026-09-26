@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import time
 
-COMMAND = ["cargo", "check", "--locked", "-p", "oneiron-server", "-j", "2"]
+COMMAND = ["cargo", "check", "--locked", "-p", "oneiron-vault-contract", "-j", "2"]
 
 
 def rust_count(stats, category):

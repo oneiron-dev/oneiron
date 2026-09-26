@@ -113,6 +113,7 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_cache_proof_dispatch_runs_two_separate_clean_artifact_jobs(self):
         self.assertIn("      cache_proof:", self.lines)
+        self.assertIn("  group: ${{ inputs.cache_proof && format('ci-proof-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}", self.lines)
         for job, phase in (("cache-proof-populate", "populate"), ("cache-proof-repeat", "repeat")):
             lines = self.job_lines(job)
             self.assertIn("    runs-on: [self-hosted, macos, arm64, mini]", lines)
