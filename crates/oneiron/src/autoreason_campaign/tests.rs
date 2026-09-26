@@ -372,6 +372,74 @@ fn of366_is_an_instance_of_the_general_campaign_config() {
 }
 
 #[test]
+fn of366_general_decision_replays_taste_penalty_and_smoke() {
+    let cases = [
+        (
+            SplitFixture::passed(0.20, 0.60),
+            SplitFixture::passed(0.90, 0.80),
+            0.05,
+        ),
+        (
+            SplitFixture::passed(0.20, 0.60),
+            SplitFixture::passed(0.90, 0.62),
+            0.0,
+        ),
+        (
+            SplitFixture::killed(0.20, 0.80, "baseline smoke"),
+            SplitFixture::passed(0.90, 0.70),
+            0.01,
+        ),
+    ];
+    for (baseline, contender, penalty) in cases {
+        let fixture = held_out_fixture(baseline, contender, penalty);
+        let report = compare(&fixture);
+        let mut general = fixture.config.as_general().expect("general OF-366 row");
+        general.knobs.merge_crossover.requested = true;
+        let decision = general
+            .decide_of366_held_out(&fixture.config, &report)
+            .expect("specialized verdict replays through general config");
+        let keep = report.verdict.verdict == ExperimentVerdict::Keep;
+        assert_eq!(decision.verdict() == general::Verdict::Promote, keep);
+        assert_eq!(decision.merge_crossover_enabled(), keep);
+        // The adapter cannot replace effective taste, penalty, or smoke with
+        // an OF-360-only dominance decision: both arms share its eval run.
+        assert_eq!(
+            report.single_pass.held_out.of360,
+            report.tournament.held_out.of360
+        );
+    }
+}
+
+#[test]
+fn of366_general_decision_refuses_changed_source_or_report() {
+    let fixture = held_out_fixture(
+        SplitFixture::passed(0.20, 0.60),
+        SplitFixture::passed(0.90, 0.80),
+        0.05,
+    );
+    let mut general = fixture.config.as_general().expect("general OF-366 row");
+    let report = compare(&fixture);
+    general.budget.max_units += 1;
+    assert!(matches!(
+        general.decide_of366_held_out(&fixture.config, &report),
+        Err(CampaignError::InvalidConfig {
+            field: "decide",
+            ..
+        })
+    ));
+    let general = fixture.config.as_general().expect("general OF-366 row");
+    let mut forged = report;
+    forged.verdict.verdict = ExperimentVerdict::Discard;
+    assert!(matches!(
+        general.decide_of366_held_out(&fixture.config, &forged),
+        Err(CampaignError::InvalidDecision {
+            field: "verdict",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn campaign_config_round_trips_and_validates() {
     let config = test_config();
     config.validate().expect("of366 config validates");

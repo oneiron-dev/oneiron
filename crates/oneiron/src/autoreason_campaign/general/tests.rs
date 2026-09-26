@@ -45,7 +45,7 @@ fn config() -> CampaignConfig {
             max_units: 100,
             exploration_units: 20,
         },
-        decide: DecideRules {
+        decide: DecideRules::Dominance {
             min_primary_gain: 0.05,
         },
         knobs: CampaignKnobs::default(),
@@ -99,7 +99,9 @@ fn rejects_bad_axes_metric_sets_splits_leases_and_rules() {
         ("budget", |c| c.budget.max_units = 0),
         ("budget", |c| c.budget.exploration_units = 101),
         ("decide.min_primary_gain", |c| {
-            c.decide.min_primary_gain = f64::NAN;
+            c.decide = DecideRules::Dominance {
+                min_primary_gain: f64::NAN,
+            };
         }),
         ("knobs.merge_crossover", |c| {
             c.knobs.merge_crossover.min_validation_overlap = 0.0;
@@ -130,12 +132,14 @@ fn crossover_needs_explicit_request_and_held_out_dominance() {
             .merge_crossover_enabled()
     );
     c.knobs.merge_crossover.requested = true;
-    // A lower cost with unchanged quality also dominates on held-out.
-    assert!(
-        c.decide_held_out(&baseline, &scores(&c, 0.5, 1.0, 9.0))
-            .unwrap()
-            .merge_crossover_enabled()
-    );
+    // Adding a small positive quality gain cannot revoke a cost-only win.
+    for quality in [0.5, 0.52] {
+        let decision = c
+            .decide_held_out(&baseline, &scores(&c, quality, 1.0, 9.0))
+            .unwrap();
+        assert_eq!(decision.verdict(), Verdict::Promote);
+        assert!(decision.merge_crossover_enabled());
+    }
     assert!(
         c.decide_held_out(&baseline, &winner)
             .unwrap()
@@ -145,7 +149,7 @@ fn crossover_needs_explicit_request_and_held_out_dominance() {
         scores(&c, 0.5, 1.0, 10.0),
         scores(&c, 0.8, 0.9, 8.0),
         scores(&c, 0.8, 1.0, 11.0),
-        scores(&c, 0.52, 1.0, 9.0),
+        scores(&c, 0.52, 1.0, 10.0),
     ] {
         assert!(
             !c.decide_held_out(&baseline, &contender)

@@ -346,8 +346,8 @@ impl CampaignConfig {
                 max_units: reserve,
                 exploration_units: 0,
             },
-            decide: DecideRules {
-                min_primary_gain: self.verdict_epsilon,
+            decide: DecideRules::Of366 {
+                verdict_epsilon: self.verdict_epsilon,
             },
             knobs: CampaignKnobs::default(),
         };

@@ -2413,7 +2413,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BudgetLease",
@@ -2433,9 +2433,9 @@
      "path": "src/autoreason_campaign/general.rs",
      "purpose": "Config-only contract for skill-driven campaigns",
      "surface": {
-      "enum": 3,
-      "fn": 4,
-      "struct": 10
+      "enum": 4,
+      "fn": 5,
+      "struct": 9
      }
     },
     {

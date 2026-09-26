@@ -59,11 +59,16 @@ pub struct BudgetLease {
     pub exploration_units: u64,
 }
 
-/// Minimum improvement required on at least one primary axis.
+/// How a held-out measurement is decided. OF-366 uses its own validated
+/// comparison report: its net taste gain, external cost penalty and smoke
+/// precedence cannot be reduced to OF-360 metric deltas.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
-pub struct DecideRules {
-    pub min_primary_gain: f64,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DecideRules {
+    /// Require a minimum primary gain unless an independent cost/floor axis wins.
+    Dominance { min_primary_gain: f64 },
+    /// Delegate the fixed claim-authoring verdict to its validated report.
+    Of366 { verdict_epsilon: f64 },
 }
 
 /// Requested merge crossover. It is never effective merely because this is true.
@@ -199,14 +204,59 @@ impl CampaignConfig {
         if self.budget.max_units == 0 || self.budget.exploration_units > self.budget.max_units {
             return invalid("budget", "invalid lease ceiling or exploration share");
         }
-        if !self.decide.min_primary_gain.is_finite() || self.decide.min_primary_gain < 0.0 {
-            return invalid("decide.min_primary_gain", "must be finite and non-negative");
+        let (field, threshold) = match self.decide {
+            DecideRules::Dominance { min_primary_gain } => {
+                ("decide.min_primary_gain", min_primary_gain)
+            }
+            DecideRules::Of366 { verdict_epsilon } => ("decide.verdict_epsilon", verdict_epsilon),
+        };
+        if !threshold.is_finite() || threshold < 0.0 {
+            return invalid(field, "must be finite and non-negative");
         }
         let overlap = self.knobs.merge_crossover.min_validation_overlap;
         if !overlap.is_finite() || !(0.0..=1.0).contains(&overlap) || overlap == 0.0 {
             return invalid("knobs.merge_crossover", "overlap floor must be in (0, 1]");
         }
         Ok(())
+    }
+
+    /// Replay OF-366's held-out verdict through its original report door.
+    /// Its effective taste, externally supplied cost penalty, and both smoke
+    /// outcomes live in the validated comparison report, not in OF-360 scores.
+    /// The specialized config must match this row except for the opt-in knobs.
+    pub fn decide_of366_held_out(
+        &self,
+        fixed: &super::CampaignConfig,
+        report: &super::CampaignComparisonReport,
+    ) -> CampaignResult<Decision> {
+        self.validate()?;
+        let mut expected = fixed.as_general()?;
+        expected.knobs = self.knobs;
+        if *self != expected {
+            return invalid("decide", "OF-366 row differs from its validated source");
+        }
+        report.validate()?;
+        let recomputed = super::compare_campaign(
+            report.campaign_ref,
+            fixed,
+            report.single_pass.clone(),
+            report.tournament.clone(),
+            report.decision.clone(),
+        )?;
+        if recomputed != *report {
+            return Err(CampaignError::ReportMismatch {
+                reason: "OF-366 report differs from the configured comparison",
+            });
+        }
+        let promoted = recomputed.verdict.verdict == super::ExperimentVerdict::Keep;
+        Ok(Decision {
+            verdict: if promoted {
+                Verdict::Promote
+            } else {
+                Verdict::Reject
+            },
+            merge_crossover_enabled: promoted && self.knobs.merge_crossover.requested,
+        })
     }
 
     /// Decide only from both arms' held-out values. This scores dominance:
@@ -218,6 +268,9 @@ impl CampaignConfig {
         candidate: &Measurement,
     ) -> CampaignResult<Decision> {
         self.validate()?;
+        let DecideRules::Dominance { min_primary_gain } = self.decide else {
+            return invalid("decide", "OF-366 requires a validated comparison report");
+        };
         for row in [incumbent, candidate] {
             if row.dataset != self.splits.held_out
                 || row.metric_set_id != self.metric_set.set_id
@@ -238,7 +291,7 @@ impl CampaignConfig {
         let mut better = false;
         let mut worse = false;
         let mut primary_win = false;
-        let mut primary_changed = false;
+        let mut independent_win = false;
         for axis in &self.metric_set.axes {
             // The exact-key and finite checks above ensure these lookups exist.
             let before = incumbent.scores[&axis.name];
@@ -252,9 +305,12 @@ impl CampaignConfig {
             }
             better |= delta > 0.0;
             worse |= delta < 0.0;
-            if axis.role == MetricRole::Primary && delta > 0.0 {
-                primary_changed = true;
-                primary_win |= delta >= self.decide.min_primary_gain;
+            if delta > 0.0 {
+                if axis.role == MetricRole::Primary {
+                    primary_win |= delta >= min_primary_gain;
+                } else {
+                    independent_win = true;
+                }
             }
             if axis.role == MetricRole::Floor && delta < 0.0 {
                 // A floor cannot be traded away even by escalation.
@@ -266,7 +322,7 @@ impl CampaignConfig {
         }
         let verdict = if better && worse {
             Verdict::EscalateTradeoff
-        } else if better && !worse && (!primary_changed || primary_win) {
+        } else if better && !worse && (independent_win || primary_win) {
             Verdict::Promote
         } else {
             Verdict::Reject
