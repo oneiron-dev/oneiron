@@ -175,9 +175,9 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SkillRecord> {
-        self.with_write_txn(|txn| {
+        self.with_write_txn(|wtxn| {
             self.fork_skill_record_bound_in_txn(
-                txn,
+                wtxn,
                 parent_id,
                 fork_id,
                 fork_skill_id,
@@ -188,11 +188,11 @@ impl Vault {
         })
     }
 
-    /// Fork under an existing write transaction, so a project and every
-    /// confirmed starting skill fork commit or roll back together.
+    /// Transaction-composable form for project birth: skill forks and the
+    /// project/receipt must either all commit or none may survive.
     pub(crate) fn fork_skill_record_in_txn(
         &self,
-        txn: &mut heed::RwTxn<'_>,
+        wtxn: &mut heed::RwTxn<'_>,
         parent_id: &EntityId,
         fork_id: &EntityId,
         fork_skill_id: &str,
@@ -200,7 +200,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SkillRecord> {
         self.fork_skill_record_bound_in_txn(
-            txn,
+            wtxn,
             parent_id,
             fork_id,
             fork_skill_id,
@@ -212,7 +212,7 @@ impl Vault {
 
     #[expect(
         clippy::too_many_arguments,
-        reason = "transactional fork also binds an optional resident"
+        reason = "one skill fork plus its optional resident binding"
     )]
     fn fork_skill_record_bound_in_txn(
         &self,

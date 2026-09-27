@@ -4,7 +4,9 @@ mod conversion;
 pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
+mod mint;
 mod origin;
+pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod projection;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
@@ -41,15 +43,6 @@ pub enum ProjectRole {
     Corpus,
 }
 
-/// Confirmed goal wording carried as project data, not a leader prompt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRecord {
-    pub goal: String,
-    pub why: String,
-    pub axes: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRecord {
@@ -67,15 +60,17 @@ pub struct ProjectRecord {
     pub branches: Vec<String>,
     pub skill_forks: Vec<String>,
     pub goal: Option<String>,
-    pub budget: Option<String>,
-    pub asks: Vec<String>,
-    pub home_room: String,
     #[serde(default)]
     pub goal_record: Option<ProjectGoalRecord>,
     #[serde(default)]
-    pub budget_share_bps: Option<u16>,
+    pub why: Option<String>,
     #[serde(default)]
     pub born_from: Option<String>,
+    pub budget: Option<String>,
+    #[serde(default)]
+    pub budget_share: Option<ProjectBudgetShare>,
+    pub asks: Vec<String>,
+    pub home_room: String,
     #[serde(default)]
     pub origin_room: Option<String>,
     #[serde(default)]
@@ -103,16 +98,28 @@ impl ProjectRecord {
             branches: vec![],
             skill_forks: vec![],
             goal: None,
+            goal_record: None,
+            why: None,
+            born_from: None,
             budget: None,
+            budget_share: None,
             asks: vec![],
             home_room: home_room_id(id).to_hex(),
-            goal_record: None,
-            budget_share_bps: None,
-            born_from: None,
             origin_room: None,
             origin_thread: None,
             origin_at: None,
         }
+    }
+
+    /// The thread this project was converted from. A card mint on a plain
+    /// message has `born_from` but no origin thread.
+    pub(crate) fn origin_card(&self) -> Option<RoomOriginCard> {
+        Some(RoomOriginCard {
+            room: self.origin_room.clone()?,
+            thread: self.origin_thread.clone()?,
+            message: self.born_from.clone()?,
+            at: self.origin_at?,
+        })
     }
 }
 

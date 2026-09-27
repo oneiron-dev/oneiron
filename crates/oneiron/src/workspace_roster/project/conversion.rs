@@ -310,12 +310,18 @@ impl Vault {
         if !project.roster.contains(&leader.to_hex()) {
             project.roster.push(leader.to_hex());
         }
+        project.why = Some(intent.goal.why.clone());
         project.goal_record = Some(ProjectGoalRecord {
+            project_id: project_id.to_hex(),
             goal: intent.goal.goal.clone(),
             why: intent.goal.why.clone(),
             axes: intent.goal.axes.clone(),
         });
-        project.budget_share_bps = Some(intent.budget_share_bps);
+        project.budget_share = Some(ProjectBudgetShare {
+            project_id: project_id.to_hex(),
+            parent_id: project.parents.first().cloned().ok_or_else(invalid)?,
+            share_bps: intent.budget_share_bps,
+        });
         for (n, source) in intent.starting_skill_refs.iter().enumerate() {
             let parent = EntityId::from_hex(source)?;
             if self.get_entity_type_in_txn(txn, &parent)? != Some(ENTITY_TYPE_SKILL) {

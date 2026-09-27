@@ -142,7 +142,15 @@ pub(crate) fn resolve_policy_manifest(
                 if let Some(policy) = decoded.project_conversion {
                     resolution.project_conversion = resolution.project_conversion.restrict(policy);
                 }
+                if let Some(policy) = decoded.pack_install_policy {
+                    if let Some(existing) = &mut resolution.pack_install_policy {
+                        existing.restrict(policy);
+                    } else {
+                        resolution.pack_install_policy = Some(policy);
+                    }
+                }
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -158,6 +166,12 @@ pub(crate) fn resolve_policy_manifest(
                             .proposal_check_threshold
                             .map_or(threshold, |old| old.min(threshold)),
                     );
+                }
+                if let Some(quota) = decoded.weave_correction_policy {
+                    match &mut resolution.weave_correction_policy {
+                        Some(existing) => existing.restrict(quota),
+                        slot @ None => *slot = Some(quota),
+                    }
                 }
                 resolution.packs.push(decoded.pack);
             }

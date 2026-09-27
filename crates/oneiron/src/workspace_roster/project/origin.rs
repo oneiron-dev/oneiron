@@ -159,15 +159,15 @@ pub(super) fn index_origin(
         .vault_meta
         .get(txn, &reverse)?
         .map(|bytes| bytes.to_vec());
-    let Some(message) = &body.born_from else {
+    let Some(origin) = body.origin_card() else {
         if prior.is_some() {
             return Err(reject());
         } // birth cannot be erased by a later update
         return Ok(());
     };
-    let room = EntityId::from_hex(body.origin_room.as_deref().ok_or_else(reject)?)?;
-    let thread = EntityId::from_hex(body.origin_thread.as_deref().ok_or_else(reject)?)?;
-    let message = EntityId::from_hex(message)?;
+    let room = EntityId::from_hex(&origin.room)?;
+    let thread = EntityId::from_hex(&origin.thread)?;
+    let message = EntityId::from_hex(&origin.message)?;
     let key = thread_key(room, thread);
     let expected = [
         room.as_bytes().as_slice(),

@@ -117,8 +117,8 @@ pub(crate) use project::{
     validate_room_body,
 };
 pub use project::{
-    MessageHangs, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
-    RoomOriginCard,
+    MessageHangs, PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt,
+    ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange, RoomOriginCard,
 };
 
 mod rooms;

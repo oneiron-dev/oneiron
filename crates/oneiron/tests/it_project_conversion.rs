@@ -335,7 +335,10 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         project.goal_record.as_ref().expect("confirmed goal").axes,
         vec!["coverage"]
     );
-    assert_eq!(project.budget_share_bps, Some(1250));
+    assert_eq!(
+        project.budget_share.as_ref().map(|share| share.share_bps),
+        Some(1250)
+    );
     assert_eq!(vault.message_hangs(message, room)?.projects, vec![id]);
     assert!(
         vault
