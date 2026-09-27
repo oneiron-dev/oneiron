@@ -169,6 +169,97 @@ fn config_artifact_version_and_backbone_change_emits_retune_proposal() -> Result
 }
 
 #[test]
+fn score_regression_flags_only_targets_past_their_v1_cutoffs() -> Result<()> {
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let owner = entity(0x63);
+    let artifact = entity(0x64);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    vault.put_blob_artifact(
+        &artifact,
+        &crate::blob_artifact::BlobArtifactBody::new("dreamer-config.json", "application/json"),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    let config = DreamerTuningConfig {
+        backbone: "backbone-a".into(),
+        prompts: vec!["prompt/version-1".into()],
+        weights: std::collections::BTreeMap::from([("type_prior".into(), 0.7)]),
+        manifest_thresholds: std::collections::BTreeMap::from([("auto".into(), 0.8)]),
+    };
+    let bytes = serde_json::to_vec(&config).unwrap();
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    // Each improvement resets the observed baseline. A config-version bump with
+    // the same backbone must not turn a small score drift into an all-target flag.
+    let mut expected_count = 0;
+    for (time, score, expected) in [
+        (10, 0.90, None),
+        (20, 0.86, None),
+        (30, 0.90, None),
+        (40, 0.84, Some(vec!["prompts"])),
+        (50, 0.90, None),
+        (60, 0.81, Some(vec!["prompts", "weights"])),
+        (70, 0.90, None),
+        (
+            80,
+            0.79,
+            Some(vec!["prompts", "weights", "manifest_thresholds"]),
+        ),
+    ] {
+        let version = vault.append_blob_artifact_version(
+            &artifact,
+            &bytes,
+            &crate::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            TimeRange {
+                start: time,
+                end: time,
+            },
+            time,
+        )?;
+        vault.schedule_harness_evaluation(
+            &HarnessEvaluation {
+                artifact,
+                version: version.version,
+                score,
+            },
+            time,
+        )?;
+        drive(&vault, time)?;
+        let proposals: Vec<_> = claims(&vault, &artifact)?
+            .into_iter()
+            .filter(|(_, body)| body.predicate == "dreamer.harness.retune_proposal")
+            .collect();
+        if let Some(expected) = expected {
+            expected_count += 1;
+            let (body, value) = proposals
+                .iter()
+                .find_map(|(_, body)| {
+                    let value: serde_json::Value =
+                        serde_json::from_str(body.value.as_str().unwrap()).unwrap();
+                    (value["version"] == version.version).then_some((body, value))
+                })
+                .expect("proposal for the evaluated artifact version");
+            assert_eq!(value["backbone_changed"], false);
+            assert_eq!(value["targets"], serde_json::json!(expected));
+            assert_eq!(body.approval, ClaimApprovalStatus::Proposed);
+        }
+        assert_eq!(
+            proposals.len(),
+            expected_count,
+            "at version {}",
+            version.version
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let (_other_dir, other) = open_test_vault_with(embedding_test_config());
@@ -194,7 +285,9 @@ fn maintenance_revalidates_owner_in_target_vault() -> Result<()> {
     let rubric: CuratorRubric =
         serde_json::from_str(include_str!("curator_defaults.json")).unwrap();
     let thresholds = RetuneThresholds {
-        score_regression: 0.1,
+        prompts_score_regression: 0.1,
+        weights_score_regression: 0.1,
+        manifest_thresholds_score_regression: 0.1,
     };
     let refuse = |target: &Vault| -> Result<()> {
         for result in [

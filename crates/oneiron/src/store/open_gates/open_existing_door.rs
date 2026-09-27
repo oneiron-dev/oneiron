@@ -87,7 +87,7 @@ impl Store {
             // environment instead of being dropped with the transaction.
             rtxn.commit()?;
             drop(db_open_guard);
-            Self::assemble(env, raw, registered_path, &config.store_clock)?
+            Self::assemble(env, raw, registered_path, config)?
         };
 
         verify_existing_hnsw_config(&store, config)?;
@@ -105,12 +105,12 @@ impl Store {
         env: OwnedEnv,
         raw: RawDatabases,
         registered_path: RegisteredPath,
-        clock: &crate::ports::StoreClock,
+        config: &VaultConfig,
     ) -> Result<Self> {
         let vault_meta_view = OverlayDb::canonical(raw.vault_meta);
         let kind_registry = RwLock::new(load_structural_kind_registry(&env, &vault_meta_view)?);
 
-        let clock = clock.for_store();
+        let clock = config.store_clock.for_store();
         {
             let txn = env.read_txn()?;
             if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::ID_FLOOR)? {
@@ -140,6 +140,7 @@ impl Store {
             off_record_sessions: OffRecordSessionRegistry::default(),
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
+            retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
