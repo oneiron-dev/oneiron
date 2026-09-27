@@ -1,16 +1,19 @@
 //! Owner-authenticated confirm reasons, bounded rule rows, and their derived grants.
 
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
 
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
 use crate::store::GateDecisionId;
 
-use super::bound::{BoundEnvelope, GrantBound};
+use super::bound::GrantBound;
 use super::doors::AuthenticatedOwner;
 use super::effect::{ComposedEffect, ConsentDecision};
 use super::grant::ConsentReceipt;
+
+mod selection;
+
+use self::selection::{ReasonCandidate, ReasonSelection, select_reason};
 
 const RULE_PREFIX: &[u8] = b"consent.owner_reason.v1:";
 const MAX_REASON_BYTES: usize = 1024;
@@ -96,68 +99,6 @@ fn decode(raw: &[u8], key_bytes: &[u8]) -> Result<RuleRow> {
         return Err(Error::CorruptedIndex("owner reason rule"));
     }
     Ok(row)
-}
-
-/// Relevance is advice, never authority. Compare *all* live same-class rows,
-/// including overlapping grants that each contain the request. Exact scope
-/// beats wider scope; matching targets and shared selectors break lesser ties.
-/// Only `GrantBound::contains` authorizes a confident automatic use.
-type ReasonRank = (bool, bool, bool, usize, Reverse<usize>, [u8; 16]);
-
-fn reason_rank(recorded: &GrantBound, required: &GrantBound, id: [u8; 16]) -> Option<ReasonRank> {
-    let covers = recorded.contains(required);
-    if !covers
-        && (recorded.domain() != required.domain()
-            || recorded.subject() != required.subject()
-            || recorded.class() != required.class())
-    {
-        return None;
-    }
-    let (selectors, candidate, same_target) = match (recorded.envelope(), required.envelope()) {
-        (BoundEnvelope::Action(a), BoundEnvelope::Action(b)) => (
-            a.selectors(),
-            b.selectors(),
-            a.target().is_some() && a.target() == b.target(),
-        ),
-        (BoundEnvelope::Disclosure(a), BoundEnvelope::Disclosure(b)) => {
-            (a.selectors(), b.selectors(), false)
-        }
-        _ => return None,
-    };
-    let shared = candidate
-        .iter()
-        .filter(|selector| selectors.binary_search(selector).is_ok())
-        .count();
-    Some((
-        covers,
-        recorded == required,
-        same_target,
-        shared,
-        Reverse(selectors.len()),
-        id,
-    ))
-}
-
-/// A strictly narrower covering grant is the nearer owner reason, including
-/// budget and typed disclosure-scope axes that selector counts cannot see.
-/// Incomparable bounds retain the deterministic relevance/ID ordering.
-fn prefer_reason(
-    candidate_rank: ReasonRank,
-    candidate_bound: &GrantBound,
-    current_rank: ReasonRank,
-    current_bound: &GrantBound,
-) -> bool {
-    if candidate_rank.0 && current_rank.0 {
-        match (
-            current_bound.contains(candidate_bound),
-            candidate_bound.contains(current_bound),
-        ) {
-            (true, false) => return true,
-            (false, true) => return false,
-            _ => {}
-        }
-    }
-    candidate_rank > current_rank
 }
 
 /// Any revocation of the derived grant retires its rule in the same transaction.
@@ -347,7 +288,8 @@ impl Vault {
         confidence: ReasonMatchConfidence,
     ) -> Result<OwnerReasonVerdict> {
         self.with_write_txn(|txn| {
-            let mut best: Option<(ReasonRank, GrantBound, RuleRow)> = None;
+            let mut rules = Vec::new();
+            let mut candidates = Vec::new();
             for entry in self.store.vault_meta.prefix_iter(&*txn, RULE_PREFIX)? {
                 let (key, raw) = entry?;
                 let rule = decode(&raw, &key)?;
@@ -361,38 +303,45 @@ impl Vault {
                 {
                     continue;
                 }
-                let rank = [effect.action_requirement(), effect.disclosure_requirement()]
+                let mut relevant = false;
+                for required in [effect.action_requirement(), effect.disclosure_requirement()]
                     .into_iter()
                     .flatten()
-                    .filter_map(|required| {
-                        reason_rank(grant.grant.bound(), required, rule.decision_id)
-                    })
-                    .max();
-                if let Some(rank) = rank
-                    && best.as_ref().is_none_or(|(old_rank, old_bound, _)| {
-                        prefer_reason(rank, grant.grant.bound(), *old_rank, old_bound)
-                    })
                 {
-                    best = Some((rank, grant.grant.bound().clone(), rule));
+                    if let Some(candidate) = ReasonCandidate::new(
+                        rules.len(),
+                        grant.grant.bound().clone(),
+                        required.clone(),
+                        rule.decision_id,
+                    ) {
+                        candidates.push(candidate);
+                        relevant = true;
+                    }
+                }
+                if relevant {
+                    rules.push(rule);
                 }
             }
-            let Some((rank, _, rule)) = best else {
-                return Ok(OwnerReasonVerdict::Ask { prefill: None });
+            let (rule_index, covering) = match select_reason(&candidates) {
+                ReasonSelection::Covering(index) => (index, true),
+                ReasonSelection::PrefillOnly(index) => (index, false),
+                ReasonSelection::None => return Ok(OwnerReasonVerdict::Ask { prefill: None }),
             };
-            if !rank.0 {
+            let rule = &rules[rule_index];
+            if !covering {
                 return Ok(OwnerReasonVerdict::Ask {
-                    prefill: Some(rule.reason),
+                    prefill: Some(rule.reason.clone()),
                 });
             }
             if confidence == ReasonMatchConfidence::Unsure || effect.catastrophe().is_some() {
                 return Ok(OwnerReasonVerdict::Ask {
-                    prefill: Some(rule.reason),
+                    prefill: Some(rule.reason.clone()),
                 });
             }
             let grants = self.active_standing_consent_grants_in_txn(&*txn)?;
             if super::effect::evaluate_consent(effect, None, &grants) != ConsentDecision::Auto {
                 return Ok(OwnerReasonVerdict::Ask {
-                    prefill: Some(rule.reason),
+                    prefill: Some(rule.reason.clone()),
                 });
             }
             let receipt = self.record_owner_reason_use_in_txn(
@@ -404,7 +353,7 @@ impl Vault {
             )?;
             Ok(OwnerReasonVerdict::Auto {
                 rung: crate::llm::decision::DecisionRung::Rule,
-                reason: rule.reason,
+                reason: rule.reason.clone(),
                 receipt,
             })
         })

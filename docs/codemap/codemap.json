@@ -10531,6 +10531,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection.rs",
+     "purpose": "Pure nearest-reason selection: remove dominated covering bounds first",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConsentRegistry",
       "ConsentRegistryQuery",
@@ -35021,7 +35039,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/owner_reason.rs",
@@ -35477,7 +35495,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 15,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36445,8 +36463,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2149,
-   "test_files": 736
+   "source_files": 2150,
+   "test_files": 737
   },
   "oneiron-android": {
    "files": [

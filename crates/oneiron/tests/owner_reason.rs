@@ -243,3 +243,97 @@ fn unsure_prefill_prefers_the_narrower_budget_in_both_mint_orders() {
         ));
     }
 }
+
+#[test]
+fn three_rule_cycle_never_prefills_or_receipts_the_dominated_reason() {
+    fn bounded(selectors: &[&str], budget: u64) -> GrantBound {
+        GrantBound::action(
+            ActorBound::new("agent-a").expect("actor"),
+            ActionClass::new("send").expect("class"),
+            ActionEnvelope::new(selectors.iter().map(|s| (*s).to_owned()))
+                .expect("selectors")
+                .with_budget(budget),
+        )
+        .expect("bound")
+    }
+    let a = bounded(&["channel:team", "channel:ops0"], 10);
+    let c = bounded(&["channel:team", "channel:other0"], 50);
+    let b = bounded(&["channel:team", "channel:ops0"], 100);
+    let ask = effect(bounded(&["channel:team"], 5));
+    assert!(b.contains(&a));
+    assert!(!a.contains(&b));
+    assert!(!a.contains(&c) && !c.contains(&a));
+    // Digest order, not issuance order, controls the on-disk scan. A/C/B
+    // used to cycle through the running winner and incorrectly select B.
+    assert!(a.digest().to_hex() < c.digest().to_hex());
+    assert!(c.digest().to_hex() < b.digest().to_hex());
+    let bounds = [a, c, b];
+    let reasons = ["narrow ops", "other channel", "broad ops"];
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let (_dir, vault, owner) = setup();
+        let mut rule_ids = [None; 3];
+        for index in order {
+            let bound = &bounds[index];
+            let reply = vault
+                .confirm_owner_reason(
+                    &owner,
+                    &effect(bound.clone()),
+                    bound,
+                    OwnerReasonConfirm {
+                        reason: Some(reasons[index]),
+                        notice_text: "Saved",
+                    },
+                )
+                .expect("confirm rule");
+            rule_ids[index] = Some(reply.undo.expect("undo action").rule_decision_id);
+        }
+        let selected = if order.iter().position(|index| *index == 1)
+            > order.iter().position(|index| *index == 0)
+        {
+            1
+        } else {
+            0
+        };
+        let expected = reasons[selected];
+        assert_eq!(
+            vault
+                .evaluate_owner_reason(&ask, ReasonMatchConfidence::Unsure)
+                .expect("unsure evaluation"),
+            OwnerReasonVerdict::Ask {
+                prefill: Some(expected.to_owned())
+            },
+            "order {order:?}",
+        );
+        let receipt = match vault
+            .evaluate_owner_reason(&ask, ReasonMatchConfidence::Confident)
+            .expect("confident evaluation")
+        {
+            OwnerReasonVerdict::Auto {
+                reason, receipt, ..
+            } => {
+                assert_eq!(reason, expected, "order {order:?}");
+                receipt
+            }
+            other => panic!("expected Auto for {order:?}, got {other:?}"),
+        };
+        let gate = vault
+            .gate_decisions(64)
+            .expect("read receipts")
+            .into_iter()
+            .find(|row| row.decision_id == receipt.decision_id())
+            .expect("reuse receipt");
+        assert_eq!(gate.system_notices[0].body, expected);
+        assert_eq!(
+            gate.system_notices[0].row_ref.as_deref(),
+            Some(rule_ids[selected].expect("rule id").to_hex().as_str()),
+        );
+        assert_ne!(gate.system_notices[0].body, reasons[2]);
+    }
+}
