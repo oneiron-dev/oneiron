@@ -159,13 +159,15 @@ pub struct DecisionDial {
 
 impl DecisionDial {
     pub fn narrow(self, resident: Self) -> Result<Self> {
-        if resident.ceiling > self.ceiling
+        self.band.validate()?;
+        if self.first > self.ceiling
+            || resident.first < self.first
+            || resident.ceiling > self.ceiling
             || resident.first > resident.ceiling
             || resident.band != self.band
         {
             return Err(invalid("resident decision dial widens owner authority"));
         }
-        resident.band.validate()?;
         Ok(resident)
     }
 }

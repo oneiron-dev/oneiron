@@ -1574,7 +1574,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/call.rs` | src | s | 6 struct · 6 enum · 11 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +4 | Per-call description: envelope, pin admission, role defaults, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 4 fn | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/decision/codec.rs` | src | s | 6 crate-vis | — | Canonical entity references for typed-decision wire records |
-| `src/llm/decision/mod.rs` | src | s | 1 mod · 1 re-export | — | Typed question records and shared outcome projection |
+| `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
+| `src/llm/decision/local/tests.rs` | test | s | — | — | — |
+| `src/llm/decision/mod.rs` | src | s | 1 mod · 2 re-export | — | Typed question records and shared outcome projection |
 | `src/llm/decision/questions/arrival.rs` | src | m | 7 crate-vis | — | Outcome arrival projection in the materializing transaction |
 | `src/llm/decision/questions/mod.rs` | src | s | 3 re-export · 2 crate-vis | — | Versioned questions, scoped answer receipts, and bound outcome labels |
 | `src/llm/decision/questions/outcomes.rs` | src | s | 2 fn | — | Idempotent outcome projection over durable facts and immutable question versions |
