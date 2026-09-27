@@ -50,18 +50,24 @@ impl ScopedRead<'_> {
             ENTITY_TYPE_CLAIM,
             body.rel,
             private_scope(body.scope.as_ref()),
+            &body.record_scope("read"),
         ))
     }
 
     pub(super) fn relationship_raw_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        kind: u8,
-        bytes: &[u8],
+        id: &EntityId,
+        raw: &[u8],
     ) -> Result<bool> {
         if !self.actor_key.enforce_access_grants {
             return Ok(true);
         }
+        let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
+            crate::error::Error::CorruptedIndex("relationship record header"),
+        )?;
+        let kind = header.entity_type;
+        let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         if kind == ENTITY_TYPE_CLAIM {
             if bytes.is_empty() {
                 return Ok(false);
@@ -129,7 +135,12 @@ impl ScopedRead<'_> {
                 private |= private_scope(Some(value));
             }
         }
+        let Some(record) =
+            crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, raw)?
+        else {
+            return Ok(false);
+        };
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows_at_snapshot(kind, space, private))
+        Ok(context.allows_at_snapshot(kind, space, private, &record))
     }
 }

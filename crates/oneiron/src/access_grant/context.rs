@@ -114,13 +114,19 @@ impl<'v> AccessContext<'v> {
     }
 
     /// Applies the C1-C3 matrix. Private rows cannot be shared by an AccessGrant.
-    pub fn allows(&self, entity_type: u8, space: Option<EntityId>, private: bool) -> bool {
+    pub fn allows(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &crate::federation::Scope,
+    ) -> bool {
         // A retained context must still check live expiry, and must not expose
         // an observation that failed to reach the durable floor.
         self.vault
             .store
             .authorization_now()
-            .is_ok_and(|now| self.allows_at(entity_type, space, private, now))
+            .is_ok_and(|now| self.allows_at(entity_type, space, private, record, now))
     }
 
     pub(crate) fn allows_at_snapshot(
@@ -128,11 +134,19 @@ impl<'v> AccessContext<'v> {
         entity_type: u8,
         space: Option<EntityId>,
         private: bool,
+        record: &crate::federation::Scope,
     ) -> bool {
-        self.allows_at(entity_type, space, private, self.observed_at)
+        self.allows_at(entity_type, space, private, record, self.observed_at)
     }
 
-    fn allows_at(&self, entity_type: u8, space: Option<EntityId>, private: bool, now: u64) -> bool {
+    fn allows_at(
+        &self,
+        entity_type: u8,
+        space: Option<EntityId>,
+        private: bool,
+        record: &crate::federation::Scope,
+        now: u64,
+    ) -> bool {
         if private {
             return false;
         }
@@ -154,6 +168,7 @@ impl<'v> AccessContext<'v> {
                     .expect("a grant is loaded only for a bound principal"),
                 space,
                 capability,
+                record,
                 now,
             )
         })
@@ -237,10 +252,29 @@ mod tests {
             expires_at: Some(u64::MAX),
             authority_scope: crate::federation::scope_codec::read_preset(),
         };
+        // The actual MESSAGE stamp is one kind at Sensitive, not All kinds
+        // at Restricted. Narrowing to it must still admit the read.
+        grant.authority_scope.bands =
+            crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+                ENTITY_TYPE_MESSAGE,
+            ]));
+        grant.authority_scope.sensitivity = crate::federation::SensitivityCeiling::AtMost(
+            crate::federation::Sensitivity::Sensitive,
+        );
         vault.create_access_grant(&grant_ref, &grant)?;
         let context = vault.access_context(principal)?;
-        assert!(!context.allows(ENTITY_TYPE_MESSAGE, None, false));
-        assert!(!context.allows(ENTITY_TYPE_SUMMARY, None, false));
+        assert!(!context.allows(
+            ENTITY_TYPE_MESSAGE,
+            None,
+            false,
+            &crate::federation::Scope::top()
+        ));
+        assert!(!context.allows(
+            ENTITY_TYPE_SUMMARY,
+            None,
+            false,
+            &crate::federation::Scope::top()
+        ));
         // A plain key reads nothing without a manifest grant; the relationship
         // grant under test only narrows what that base read admits.
         crate::test_util::authorize_readers(&vault, &["reader"]);
@@ -341,6 +375,96 @@ mod tests {
             receipt: _receipt,
         } = unbound.get_entity_parts_with_receipt(&message, None)?;
         assert!(value.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn relationship_claim_read_uses_claim_project_not_default_project() -> Result<()> {
+        use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+        use crate::federation::{ScopeAxis, ScopeId};
+        use rmpv::Value;
+        use std::collections::BTreeSet;
+
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let principal = EntityId::now();
+        let space = EntityId::now();
+        let other_project = EntityId::now();
+        let permitted = EntityId::now();
+        let outside = EntityId::now();
+        let when = crate::TimeRange { start: 1, end: 1 };
+        vault.put_entity(
+            &space,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            when,
+            1,
+            b"relationship",
+        )?;
+        for (id, project) in [
+            (permitted, crate::claim::default_project_id()),
+            (outside, other_project),
+        ] {
+            let mut body = ClaimBody::new(
+                "test.relationship_scope",
+                ClaimSubject::Entity(space),
+                Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            );
+            body.rel = Some(space);
+            body.scope_project = project;
+            vault.put_claim(&id, &body, when, 1)?;
+        }
+        let mut grant = AccessGrant {
+            authority_scope: crate::federation::scope_codec::read_preset(),
+            principal_ref: principal,
+            scope: AccessGrantScope::RelationshipClaims { space_ref: space },
+            capability: AccessGrantCapability::RelationshipClaimsRead,
+            status: AccessGrantStatus::Active,
+            created_at: 1,
+            revoked_at: None,
+            expires_at: None,
+        };
+        grant.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
+        grant.authority_scope.audience =
+            ScopeAxis::Some(BTreeSet::from([
+                ScopeId(crate::claim::default_project_id()),
+            ]));
+        vault.create_access_grant(&EntityId::now(), &grant)?;
+        // The actor's manifest admits both projects; only the relationship
+        // grant's stored Scope can refuse the out-of-project claim.
+        crate::test_util::authorize_readers(&vault, &["reader"]);
+        let broad = vault.scoped_read(ScopedReadActorKey::new("reader").unwrap());
+        assert!(
+            broad
+                .get_entity_parts_with_receipt(&permitted, None)?
+                .value
+                .is_some()
+        );
+        assert!(
+            broad
+                .get_entity_parts_with_receipt(&outside, None)?
+                .value
+                .is_some()
+        );
+        let reader = vault.scoped_read(
+            ScopedReadActorKey::new("reader")
+                .unwrap()
+                .require_access_grants(Some(principal)),
+        );
+        assert!(
+            reader
+                .get_entity_parts_with_receipt(&permitted, None)?
+                .value
+                .is_some()
+        );
+        assert!(
+            reader
+                .get_entity_parts_with_receipt(&outside, None)?
+                .value
+                .is_none()
+        );
         Ok(())
     }
 }

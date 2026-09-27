@@ -106,6 +106,9 @@ pub struct RawDatabases {
 /// owner's always-on drop assertion enforces this at runtime; the session
 /// lifecycle drains leases before releasing its owner-bound handle.
 pub struct StoreCore {
+    /// Exterior key custody binding. On restore this remains the source vault's
+    /// canonical path; it is never reset to the new LMDB image's location.
+    pub(in crate::store) gate_custody_root: std::path::PathBuf,
     /// Shared environment handle used to open transactions. The close-on-
     /// last-clone semantics live in the owner's [`OwnedEnv`] (ONE-1142).
     pub(crate) env: Env,
@@ -130,6 +133,8 @@ pub struct StoreCore {
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
+    /// Exact fold of one committed authority generation and observation context.
+    pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.
@@ -396,6 +401,7 @@ macro_rules! manifest_dbs {
             /// writing, and the write target is the only handle it holds.
             fn diagnostics(&self) -> &Diagnostics;
             fn clock(&self) -> &crate::ports::StoreClock;
+            fn gate_key_root(&self) -> &std::path::Path;
         }
 
         impl ManifestDbs for Store {
@@ -403,6 +409,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
         }
 
         impl ManifestDbs for SessionStoreView<'_> {
@@ -410,6 +417,7 @@ macro_rules! manifest_dbs {
 
             fn diagnostics(&self) -> &Diagnostics { &self.core.diagnostics }
             fn clock(&self) -> &crate::ports::StoreClock { &self.core.clock }
+            fn gate_key_root(&self) -> &std::path::Path { &self.core.gate_custody_root }
         }
     };
 }

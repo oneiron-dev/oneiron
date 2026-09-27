@@ -160,6 +160,8 @@ impl<'a> ContextPackBuilder<'a> {
             self.session.is_none(),
         )?;
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
+        let neighbor_pipeline =
+            (self.edge_hop > 0 && selected_edge_budget > 0).then(|| pipeline.clone());
         let pipeline_output = pipeline
             .context_pack_budget(retrieval_budget)
             .run_for_pack()?;
@@ -323,7 +325,9 @@ impl<'a> ContextPackBuilder<'a> {
             let stale_neighbor_exclusion = (!stale_worlds.is_empty()
                 && matches!(self.world_scope, WorldScope::All | WorldScope::Base))
             .then_some(&stale_worlds);
-            let edge_walk = if self.edge_hop > 0 && selected_edge_budget > 0 {
+            let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
+                let (neighbor_filter, named_types) =
+                    neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 walk_edges(
                     &self.vault.store,
                     &rtxn,
@@ -334,6 +338,8 @@ impl<'a> ContextPackBuilder<'a> {
                         exclude: &result_ids,
                         clamp,
                         stale_worlds: stale_neighbor_exclusion,
+                        type_filter: &neighbor_filter,
+                        named_types,
                     },
                 )?
             } else {

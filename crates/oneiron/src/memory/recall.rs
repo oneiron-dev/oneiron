@@ -619,6 +619,30 @@ impl Memory<'_> {
                 let mut pack = pack.value;
                 if let Some(reader) = scoped_read.as_ref() {
                     reader.filter_context_pack(&mut pack)?;
+                } else {
+                    // A context pack's auxiliary neighbors bypass the primary
+                    // candidate gate. Enforce the live owner type floor before
+                    // either rendering or constructing prompt-facing items.
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(crate::Error::from)?;
+                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
+                    let floor = policy.retrieval_floor_for_actor(None);
+                    let filter = crate::gate::narrow_retrieval_filter(&floor, None)?;
+                    drop(txn);
+                    let admits = |kind| {
+                        crate::pipeline::retrieval_type_allowed(
+                            &filter,
+                            None,
+                            &self.vault.store,
+                            kind,
+                        )
+                    };
+                    pack.results.retain(|entity| admits(entity.entity_type));
+                    pack.neighbors.retain(|entity| admits(entity.entity_type));
                 }
                 let total = pack.stats.candidates_considered as u64;
                 let rendered = pack_format.map(|fmt| {
