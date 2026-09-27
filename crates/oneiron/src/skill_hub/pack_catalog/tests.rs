@@ -18,11 +18,15 @@ fn files() -> Vec<HubFile> {
 fn source_survives_reopen_and_all_formats_roundtrip_without_installing() -> Result<()> {
     let source = PackSource::from_files(files())?;
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let mut expected_sources = vault.list_pack_sources()?;
     let id = vault.stage_pack_source(&source, at(1), 2)?;
     assert_eq!(vault.stage_pack_source(&source, at(3), 4)?, id);
-    assert!(vault.list_pack_sources()?.contains(&(id, source.clone())));
+    expected_sources.push((id, source.clone()));
+    expected_sources.sort_by_key(|(source_id, _)| *source_id.as_bytes());
+    assert_eq!(vault.list_pack_sources()?, expected_sources);
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(vault.list_pack_sources()?, expected_sources);
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     for format in [
         PackFormat::Json,
@@ -479,15 +483,26 @@ fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors()
     put_agent_knowledge(&mut files, &row);
     let source = PackSource::from_files(files.clone())?;
     let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let seeded_sources = vault.list_pack_sources()?.len();
     let id = vault.stage_pack_source(&source, at(1), 1)?;
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     let artifact = vault.export_whole_vault(PackFormat::Json)?;
-    assert!(
-        vault
-            .read_whole_vault_json(artifact.bytes())?
-            .packs
+    let document = vault.read_whole_vault_json(artifact.bytes())?;
+    let exported_sources: Vec<_> = document
+        .packs
+        .iter()
+        .filter_map(|pack| match pack {
+            ExportPack::Source(row) => Some(&row.entity_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(exported_sources.len(), seeded_sources + 1);
+    assert_eq!(
+        exported_sources
             .iter()
-            .any(|pack| matches!(pack, ExportPack::Source(row) if row.entity_id == id.to_hex()))
+            .filter(|row| row.as_str() == id.to_hex())
+            .count(),
+        1
     );
 
     let ExportBody::MessagePack(ExportValue::Map(entries)) = &mut row.body else {

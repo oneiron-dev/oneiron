@@ -24,6 +24,9 @@ fn fresh_vault_lists_four_engine_versioned_connector_packs() -> Result<()> {
         assert_eq!(receipt.hub_ref, format!("built-in:{name}"));
         assert!(!receipt.permissions.grants.is_empty());
         assert!(!receipt.permissions.wakes.is_empty());
+        // Embedded Rust adapters are not script-qualified and carry no runtime recipe.
+        assert_eq!(receipt.qualification_report_hash, None);
+        assert_eq!(receipt.runtime, None);
         let source = vault
             .get_pack_source(&EntityId::from_hex(&receipt.source_id)?)?
             .expect("exact source");

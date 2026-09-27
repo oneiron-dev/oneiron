@@ -102,6 +102,8 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             pin_value: env!("CARGO_PKG_VERSION").to_owned(),
             publisher: "oneiron-engine".to_owned(),
             permissions: admission::pack_permissions(&source, None)?,
+            qualification_report_hash: None,
+            runtime: None,
             sections: source.sections().to_vec(),
             predicates: source.manifest.predicates.iter().cloned().collect(),
             kinds: source.manifest.kinds.iter().cloned().collect(),
