@@ -20,12 +20,24 @@ impl ConversationKind {
     }
 }
 
+/// A room role is authority, not an actor class: agent PERSON records can hold it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomRole {
+    Owner,
+    Admin,
+    #[default]
+    Member,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConversationBody {
     pub v: Option<u8>,
     pub kind: ConversationKind,
     pub member_ids: Vec<EntityId>,
+    /// Explicit role overrides keyed by PERSON id (hex); vault owner is implicit.
+    pub roles: BTreeMap<String, RoomRole>,
     pub external_id: Option<String>,
     pub title: Option<String>,
     pub status: Option<String>,
@@ -74,6 +86,15 @@ impl ConversationBody {
     fn validate(&self) -> Result<()> {
         if self.member_ids.len() > 10_000 {
             return Err(invalid("too many conversation members"));
+        }
+        if self.roles.len() > 10_000 {
+            return Err(invalid("too many conversation roles"));
+        }
+        for person in self.roles.keys() {
+            let id = EntityId::from_hex(person).map_err(|_| invalid("invalid role PERSON id"))?;
+            if id.to_hex() != *person || !self.member_ids.contains(&id) {
+                return Err(invalid("roles require current members"));
+            }
         }
         if self.v.is_some_and(|v| v != 1) {
             return Err(invalid("unsupported version"));
@@ -126,6 +147,22 @@ pub(crate) fn validate_put_in_txn(
         if members != body.member_ids.iter().copied().collect() {
             return Err(state("membership changes require the membership door"));
         }
+        if let Some(old) = store.entities.get(txn, id.as_bytes())?
+            && old.first() == Some(&ENTITY_TYPE_CONVERSATION)
+            && !old[ENTITY_METADATA_HEADER_LEN..].is_empty()
+        {
+            let previous = ConversationBody::from_bytes(&old[ENTITY_METADATA_HEADER_LEN..])?;
+            let mut retained = previous.roles;
+            retained.retain(|person, _| body.member_ids.iter().any(|id| id.to_hex() == *person));
+            if retained != body.roles
+                && store
+                    .vault_meta
+                    .get(txn, &super::key(b"conversation:role_update:", id))?
+                    .is_none()
+            {
+                return Err(state("role changes require the room role door"));
+            }
+        }
     }
     Ok(())
 }
@@ -164,6 +201,20 @@ impl Vault {
         let at = occurred.start;
         self.with_write_txn(|txn| {
             authorize(self, txn, actor)?;
+            if !body.roles.is_empty() {
+                let fold = self.authority_fold_readonly_in_txn(txn)?;
+                if actor.actor_class() != crate::EdgeActorClass::Human
+                    || (fold.vault_id.is_some()
+                        && crate::memory::verify_owner_actor_binding_in_txn(
+                            self,
+                            txn,
+                            actor.entity_ref(),
+                        )
+                        .is_err())
+                {
+                    return Err(denied());
+                }
+            }
             if crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
                 != crate::vault::LiveEntityRow::Absent
             {
@@ -195,7 +246,19 @@ impl Vault {
             if !text.is_empty() {
                 batch = batch.text(&id, text);
             }
-            batch.apply(txn)
+            batch.apply(txn)?;
+            self.store.vault_meta.put(
+                txn,
+                &key(b"conversation:creator:v1:", id),
+                actor.entity_ref().as_bytes(),
+            )?;
+            for (person, role) in &body.roles {
+                let person = EntityId::from_hex(person)?;
+                self.store
+                    .vault_meta
+                    .put(txn, &roles::grant_key(id, person), &encode(role)?)?;
+            }
+            Ok(())
         })
     }
     /// Filter the type-index page. The cursor is the last *scanned* id, not a

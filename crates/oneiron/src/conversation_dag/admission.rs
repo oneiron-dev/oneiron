@@ -236,7 +236,7 @@ pub(crate) fn keep_membership_pin(
     Ok(())
 }
 
-pub(super) fn record_kind(body: &[u8]) -> Result<Option<&'static str>> {
+pub(crate) fn record_kind(body: &[u8]) -> Result<Option<&'static str>> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
         return Ok(None);

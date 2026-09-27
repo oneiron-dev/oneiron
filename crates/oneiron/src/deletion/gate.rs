@@ -18,6 +18,8 @@ pub(crate) struct DeletionGateContext {
     actor_class: EdgeActorClass,
     policy_manifest_version: String,
     read_frontier_hash: [u8; 32],
+    room_role: Option<crate::conversation::RoomRole>,
+    room: Option<EntityId>,
 }
 
 /// The facade's gated-deletion carrier: the evaluated decision record PLUS the
@@ -50,6 +52,10 @@ pub(crate) struct GatedDeletion<'a> {
 impl<'a> GatedDeletion<'a> {
     pub(super) fn actor_principal(&self) -> EntityId {
         self.context.actor
+    }
+
+    pub(super) fn room_authority(&self) -> Option<(EntityId, crate::conversation::RoomRole)> {
+        Some((self.context.room?, self.context.room_role?))
     }
 
     pub(crate) fn new(
@@ -132,6 +138,26 @@ impl DeletionGateContext {
             actor_class,
             policy_manifest_version,
             read_frontier_hash,
+            room_role: None,
+            room: None,
+        }
+    }
+
+    pub(crate) fn new_room(
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        policy_manifest_version: String,
+        read_frontier_hash: [u8; 32],
+        room: EntityId,
+        role: crate::conversation::RoomRole,
+    ) -> Self {
+        Self {
+            actor,
+            actor_class,
+            policy_manifest_version,
+            read_frontier_hash,
+            room_role: Some(role),
+            room: Some(room),
         }
     }
 
@@ -146,6 +172,9 @@ impl DeletionGateContext {
         diff.update(b"oneiron.gate.deletion.v0");
         diff.update(self.actor.as_bytes());
         diff.update(target.as_bytes());
+        if let Some(room) = self.room {
+            diff.update(room.as_bytes());
+        }
         diff.update([TombstoneReason::from(reason).wire_byte()]);
         GateDecisionRecord {
             version: 0,
@@ -154,7 +183,10 @@ impl DeletionGateContext {
             decision_id: GateDecisionId::from_bytes(request_id),
             created_at,
             outcome: "allow".to_owned(),
-            reason_codes: vec!["gate.allow.owner_delete".to_owned()],
+            reason_codes: self.room_role.map_or_else(
+                || vec!["gate.allow.owner_delete".to_owned()],
+                |role| vec![format!("gate.allow.room_{role:?}").to_lowercase()],
+            ),
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
             actor_class: self.actor_class.gate_actor_class().to_owned(),

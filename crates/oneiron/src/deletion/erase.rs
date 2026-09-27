@@ -717,6 +717,7 @@ impl Vault {
             &receipt_id,
             RedactionReceiptInput {
                 actor_principal: None,
+                room_authority: None,
                 request_id: decoded.receipt_request_id(),
                 scope,
                 reason: decoded.receipt_hard_reason(),

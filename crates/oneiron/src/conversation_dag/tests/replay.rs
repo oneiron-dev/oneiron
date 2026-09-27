@@ -336,10 +336,10 @@ fn gdpr_delete_after_user_delete_purges_a_dag_record() {
         .unwrap()
         .id;
     vault
-        .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
+        .delete_room_record_unchecked_for_replay_test(&id, crate::DeleteReason::UserDelete)
         .unwrap();
     vault
-        .delete_entity_with_reason(&id, crate::DeleteReason::GdprDelete)
+        .delete_room_record_unchecked_for_replay_test(&id, crate::DeleteReason::GdprDelete)
         .unwrap();
     assert!(vault.get(&id).unwrap().is_none());
 }

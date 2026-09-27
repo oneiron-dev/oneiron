@@ -37,7 +37,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
     }
@@ -54,9 +54,77 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate))?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, Some(gate), false)?;
         while self.collect_lfs_garbage(32)? != 0 {}
         Ok(outcome)
+    }
+
+    /// Mechanical replay fixture for testing ARCH-0038 reason transitions on
+    /// a DAG record without claiming to exercise the actor-bound room door.
+    #[cfg(test)]
+    pub(crate) fn delete_room_record_unchecked_for_replay_test(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<DeleteEntityOutcome> {
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        while self.collect_lfs_garbage(32)? != 0 {}
+        Ok(outcome)
+    }
+
+    fn require_room_delete_gate(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+        allow_replay_test: bool,
+    ) -> Result<()> {
+        if allow_replay_test {
+            return Ok(());
+        }
+        let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
+            return Ok(());
+        };
+        if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN) {
+            return Ok(());
+        }
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("room deletion header"))?;
+        let owners = crate::conversation_dag::edge_ids(
+            &self.store,
+            txn,
+            id,
+            crate::edge::EdgeKind::ChildOf,
+            false,
+            2,
+        )?;
+        let mut room = None;
+        for owner in owners {
+            if self
+                .store
+                .entities
+                .get(txn, owner.as_bytes())?
+                .is_some_and(|bytes| {
+                    bytes.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
+                })
+            {
+                room = Some(owner);
+                break;
+            }
+        }
+        if room.is_none() && crate::conversation_dag::record_kind(body)?.is_none() {
+            return Ok(());
+        }
+        if room.is_some()
+            && gate
+                .and_then(GatedDeletion::room_authority)
+                .map(|(id, _)| id)
+                == room
+        {
+            return Ok(());
+        }
+        Err(Error::Record(crate::error::RecordError::ConversationDenied))
     }
 
     fn delete_entity_with_reason_impl(
@@ -64,10 +132,12 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
+        allow_replay_test: bool,
     ) -> Result<DeleteEntityOutcome> {
         {
             let rtxn = self.store.env.read_txn()?;
             crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, &rtxn, id)?;
+            self.require_room_delete_gate(&rtxn, id, gate.as_ref(), allow_replay_test)?;
         }
         if reason == DeleteReason::ArchivedByCleanup {
             return Err(Error::InvariantViolation(
@@ -458,6 +528,9 @@ impl Vault {
                 actor_principal: gate
                     .as_ref()
                     .map(super::super::gate::GatedDeletion::actor_principal),
+                room_authority: gate
+                    .as_ref()
+                    .and_then(super::super::gate::GatedDeletion::room_authority),
                 request_id: request_uuid.to_string(),
                 scope,
                 reason,

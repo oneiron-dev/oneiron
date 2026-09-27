@@ -95,6 +95,17 @@ pub(crate) fn append_in_txn(
     thread: bool,
 ) -> Result<AppendedRecord> {
     actor_in_txn(&vault.store, txn, input.actor)?;
+    if vault
+        .store
+        .vault_meta
+        .get(
+            txn,
+            &crate::conversation::erasure_key(input.conversation, input.actor.entity_ref()),
+        )?
+        .is_some()
+    {
+        return Err(invalid("erased person cannot append to this room"));
+    }
     if thread && input.advance {
         return Err(invalid("HEAD never enters a thread"));
     }

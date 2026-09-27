@@ -11663,19 +11663,31 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConversationBody",
-      "ConversationKind"
+      "ConversationKind",
+      "RoomRole"
      ],
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
+      "enum": 2,
       "fn": 8,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/deletion.rs",
+     "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -11703,8 +11715,19 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/roles.rs",
+     "purpose": "Host-local room role grants",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -11735,6 +11758,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/conversation/tests/audience_boundaries.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/conversation/tests/deletion.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -12237,7 +12268,7 @@
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -12301,7 +12332,7 @@
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -34008,7 +34039,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 7,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34920,8 +34951,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
-   "test_files": 706
+   "source_files": 2065,
+   "test_files": 707
   },
   "oneiron-android": {
    "files": [

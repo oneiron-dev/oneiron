@@ -1,11 +1,14 @@
 //! Room bodies, membership windows, session presence and audience visibility.
 mod body;
+mod deletion;
 mod membership;
+mod roles;
 mod session;
 mod visibility;
 
 pub(crate) use body::validate_put_in_txn;
-pub use body::{ConversationBody, ConversationKind};
+pub use body::{ConversationBody, ConversationKind, RoomRole};
+pub(crate) use deletion::erasure_key;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
 pub(crate) use visibility::AudienceCache;
