@@ -213,6 +213,21 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     assert!(!report.frontier.is_empty());
     assert!(report.offline_total.input_tokens > 0);
     assert!(report.offline_total.elapsed_us > 0);
+    assert!(report.offline_stages.ingest.input_tokens > 0);
+    assert_eq!(
+        report.offline_total.token_source,
+        TokenAccountingSource::TokenizerCount
+    );
+    assert!(report.offline_stages.index_build.elapsed_us > 0);
+    assert_eq!(
+        report.offline_stages.extraction.token_source,
+        TokenAccountingSource::NotApplicable
+    );
+    assert_eq!(report.offline_amortized, report.offline_total);
+    assert_eq!(
+        report.total_cost_usd,
+        report.offline_total.cost_usd + report.query_cost_usd_total
+    );
     assert_eq!(report.amortized_question_count, 1);
     for row in &report.rows {
         assert!(row.query_cost.input_tokens > 0 && row.query_cost.cost_usd > 0.0);
@@ -536,4 +551,95 @@ fn measured_chroma_frontier_excludes_walled_and_dropped_cards() {
             regime == "full" && !withdrawn
         );
     }
+}
+
+#[test]
+fn offline_provider_receipt_prices_nonzero_usage() {
+    let plan = shipped_plan();
+    let session = fixture_session(&plan, FixtureBackend::default());
+    // An offline model call is disabled in this scaffold until a real extractor is wired.
+    // Exercise the receipt-to-price aggregation without pretending this run extracted.
+    let (_, charged) = session
+        .invoke(
+            &plan.answerers[0].model,
+            CallPurpose::AnswerGen,
+            "Fixture usage.",
+            r#"{"question":"What changed?","context":"A contract launch code was updated."}"#,
+        )
+        .unwrap();
+    let mut receipt = session.receipts().pop().unwrap();
+    receipt.purpose = CallPurpose::Extraction;
+    let extraction = offline_provider_cost(&[receipt], CallPurpose::Extraction, &session).unwrap();
+    assert_eq!(extraction.input_tokens, 100);
+    assert_eq!(extraction.output_tokens, 3);
+    assert_eq!(extraction.cost_usd, charged.cost_usd);
+    let stages = OfflineStages {
+        ingest: CostComponentReport {
+            token_source: TokenAccountingSource::TokenizerCount,
+            tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into()),
+            input_tokens: 20,
+            output_tokens: 0,
+            target_tokens: 0,
+            elapsed_us: 8,
+            cost_usd: 0.0,
+        },
+        extraction,
+        dreamer_consolidation: super::super::report::not_applicable_cost(),
+        index_build: elapsed_cost(6),
+    };
+    let (total, amortized) = offline_totals(&stages, 2).unwrap();
+    assert_eq!(total.input_tokens, 120);
+    assert_eq!(amortized.input_tokens, 60);
+    assert_eq!(amortized.cost_usd, charged.cost_usd / 2.0);
+    assert_eq!(amortized.elapsed_us, total.elapsed_us.div_ceil(2));
+    assert_eq!(total.token_source, TokenAccountingSource::Mixed);
+}
+
+#[test]
+fn measured_two_case_ingest_amortizes_measured_tokens_and_index_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut plan = shipped_plan();
+    let record: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.jsonl")).unwrap();
+    let mut other = record.clone();
+    other["question_id"] = serde_json::json!("second-question");
+    let corpus_path = dir.path().join("run.jsonl");
+    std::fs::write(&corpus_path, format!("{record}\n{other}\n")).unwrap();
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/beam_measure.run.json")).unwrap();
+    manifest["dataset"]["path"] = serde_json::json!("run.jsonl");
+    manifest["caseIds"] = serde_json::json!([record["question_id"], "second-question"]);
+    plan.retrieval_manifest = dir.path().join("run.json");
+    std::fs::write(&plan.retrieval_manifest, manifest.to_string()).unwrap();
+    plan.amortized_question_count = 2;
+    let session = fixture_session(&plan, FixtureBackend::default());
+    let report = run_with_session(&plan, &session).unwrap();
+    assert_eq!(
+        report.offline_total.input_tokens,
+        2 * record["corpus"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| oneiron::count_context_pack_tokens(item["text"].as_str().unwrap()) as u64)
+            .sum::<u64>()
+    );
+    assert!(report.offline_stages.ingest.elapsed_us > 0);
+    assert!(report.offline_stages.index_build.elapsed_us > 0);
+    assert_eq!(
+        report.offline_total.elapsed_us,
+        report.offline_stages.ingest.elapsed_us + report.offline_stages.index_build.elapsed_us
+    );
+    assert_eq!(
+        report.offline_amortized.input_tokens,
+        report.offline_total.input_tokens / 2
+    );
+    assert_eq!(
+        report.offline_amortized.elapsed_us,
+        report.offline_total.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(report.amortized_question_count, 2);
+    assert_eq!(
+        report.offline_cost_usd_per_question,
+        report.offline_amortized.cost_usd
+    );
 }

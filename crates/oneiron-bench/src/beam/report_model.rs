@@ -19,6 +19,7 @@ pub(super) struct ComparatorMetadata {
 pub(super) enum TokenAccountingSource {
     TokenizerCount,
     ProviderUsage,
+    Mixed,
     FixtureDeclaredZero,
     NotApplicable,
     CharCountEstimate,
@@ -107,6 +108,7 @@ pub(super) struct DatasetLoadReport {
 }
 pub(super) struct LoadedDataset {
     pub(super) offline: CostComponentReport,
+    pub(super) offline_index_build_us: u64,
     pub(super) ppr_vad_fixture: Option<BeamFixture>,
     pub(super) report: DatasetLoadReport,
     pub(super) fixture_id: String,

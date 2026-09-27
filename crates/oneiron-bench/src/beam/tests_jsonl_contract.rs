@@ -504,6 +504,7 @@ pub(crate) mod tests {
         };
         let loaded = LoadedDataset {
             offline: crate::beam::report::not_applicable_cost(),
+            offline_index_build_us: 0,
             ppr_vad_fixture: None,
             report: DatasetLoadReport {
                 dataset_id: "dataset".to_owned(),
