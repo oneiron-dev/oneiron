@@ -286,6 +286,19 @@ pub trait HeldOutReplayScorer {
     /// than guess: an invented scalar is a silent accept.
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32>;
 
+    /// Goal-axis scores on the same held-out basis. Required when a goal is configured.
+    fn goal_axes(&self, _case: &HeldOutReplayCase<'_>) -> Result<Option<BTreeMap<String, f32>>> {
+        Ok(None)
+    }
+
+    /// Jev answers only a rule-miss tradeoff, outside the write transaction.
+    fn jev_tradeoff(
+        &self,
+        _question: &super::SkillTradeoffQuestion,
+    ) -> Result<Option<super::JevTradeoffVerdict>> {
+        Ok(None)
+    }
+
     /// Score requirement coverage using only the task identity and rubric text.
     /// An unimplemented auditor fails closed rather than fabricating a result.
     fn structural_audit(&self, _task: &str, _instructions: &str) -> Result<f32> {

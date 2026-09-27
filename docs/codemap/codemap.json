@@ -29176,7 +29176,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -29246,6 +29246,28 @@
       "crate-vis": 4,
       "enum": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "JevTradeoffVerdict",
+      "SkillTradeoffAsk",
+      "SkillTradeoffBinding",
+      "SkillTradeoffGoal",
+      "SkillTradeoffQuestion",
+      "TradeoffAxis",
+      "TradeoffChoice",
+      "TradeoffRule"
+     ],
+     "path": "src/skill_optimize/gate/tradeoff.rs",
+     "purpose": "Goal-axis tradeoff policy for optimizer admissions",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 2,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -35617,7 +35639,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35815,7 +35837,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2113,
+   "source_files": 2114,
    "test_files": 721
   },
   "oneiron-android": {

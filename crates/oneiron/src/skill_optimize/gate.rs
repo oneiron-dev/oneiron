@@ -40,11 +40,11 @@
 //! because an unanswered proposal is a question already put to a human. So a
 //! ruling that ANSWERS a proposal — a rejection, a tie, any refusal — moves it
 //! to `approval: rejected` in the same transaction as the verdict row. Exactly
-//! ONE durable disposition leaves the record open, and it is the cap deferral
-//! ([`SkillEditDisposition::DeferredCycleCap`]): the budget was spent, which
-//! says nothing about the proposal, so a later cycle picks it up. A terminal
-//! answer that left the record open would wedge that skill out of the
-//! optimization loop permanently on one tie.
+//! two durable dispositions leave the record open: the cap deferral
+//! ([`SkillEditDisposition::DeferredCycleCap`]) waits for another cycle, and
+//! [`SkillEditDisposition::DeferredTradeoffAsk`] waits for a bound A/B pick.
+//! Neither has answered the proposal. A terminal answer left open would wedge
+//! the skill out of the optimization loop permanently on one tie.
 //!
 //! When the WORLD moves under an in-flight call instead — the reserved
 //! evidence changes while the scorer is thinking, or a terminal reason read
@@ -138,6 +138,7 @@ mod basis;
 mod decision;
 mod ledger;
 mod measurement;
+mod tradeoff;
 mod verdict;
 
 pub use admission::admit_optimized_skill_revision;
@@ -156,6 +157,11 @@ pub use ledger::{
 };
 pub use measurement::{
     AuditPair, BlindPreference, JudgeMeasurements, PreferredResponse, WorldAxisScore,
+};
+pub use tradeoff::{
+    JevTradeoffVerdict, SkillTradeoffAsk, SkillTradeoffBinding, SkillTradeoffGoal,
+    SkillTradeoffQuestion, TradeoffAxis, TradeoffChoice, TradeoffRule, set_skill_tradeoff_goal,
+    settle_skill_tradeoff_ask, skill_tradeoff_ask,
 };
 pub use verdict::{HeldOutVerdict, SkillEditDisposition};
 
@@ -224,7 +230,8 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped by OF-214 (v3 → v4: audited measurements and bound world labels).
+/// Bumped by ONE-2115 (v4 → v5: the goal and preference frontier bind admission).
+/// OF-214 bumped v3 → v4: audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
 /// nobody can check the body of) and again by the MATERIAL-6 repair (v2 → v3: a
@@ -233,9 +240,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3 row decodes as
+/// rather than to grow a second code path for it: every v1/v2/v3/v4 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 4;
+const VERDICT_SCHEMA_VERSION: u64 = 5;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -254,6 +261,8 @@ const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
+const KEY_GOAL_BINDING: &str = "goal_binding";
+const KEY_TRADEOFF_JEV: &str = "tradeoff_jev";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

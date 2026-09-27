@@ -244,6 +244,19 @@ fn rule_on_proposal(
     )?;
     let before = validate_score(scorer.score(&current_case)?)?;
     let after = validate_score(scorer.score(&proposed_case)?)?;
+    let tradeoff = if after > before {
+        tradeoff::plan(
+            vault,
+            &inputs.target,
+            proposal,
+            &inputs.basis,
+            scorer,
+            &current_case,
+            &proposed_case,
+        )?
+    } else {
+        tradeoff::TradeoffPlan::None
+    };
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -280,6 +293,8 @@ fn rule_on_proposal(
             proposal_digest: basis.proposal_digest.clone(),
             target_digest: basis.target_digest.clone(),
             proposal_tier: basis.proposal_tier,
+            goal_binding: None,
+            tradeoff_jev: tradeoff::jev_of(&tradeoff),
             accepted_verdict: None,
             missing_sources: Vec::new(),
             at,
@@ -294,8 +309,10 @@ fn rule_on_proposal(
             &basis,
             before,
             after,
+            &tradeoff,
         )?;
         verdict.accepted = verdict.disposition.admits();
+        verdict.goal_binding = tradeoff::binding_in_txn(vault, wtxn, &target)?;
         record_verdict_in_txn(vault, wtxn, &verdict)?;
         if verdict.disposition.closes_proposal() {
             close_answered_proposal_in_txn(vault, wtxn, proposal, at)?;
@@ -433,7 +450,7 @@ const fn race_hook() {}
 )]
 fn decide_in_txn(
     vault: &Vault,
-    wtxn: &heed::RwTxn<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
     proposal: &EntityId,
     staged: &SkillRecord,
     current: Option<&SkillRecord>,
@@ -441,6 +458,7 @@ fn decide_in_txn(
     basis: &ScoredBasis,
     before: f32,
     after: f32,
+    tradeoff: &tradeoff::TradeoffPlan,
 ) -> Result<SkillEditDisposition> {
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
@@ -534,6 +552,9 @@ fn decide_in_txn(
     if !bound {
         return Ok(SkillEditDisposition::RefusedProtectedTier);
     }
+    if let Some(decision) = tradeoff::apply(vault, wtxn, &target_of(staged)?, tradeoff)? {
+        return Ok(decision);
+    }
     let cap = cycle_cap_in_txn(vault, wtxn)?;
     if accepted_in_cycle_in_txn(vault, wtxn, cycle, proposal)? >= cap {
         return Ok(SkillEditDisposition::DeferredCycleCap);
@@ -598,14 +619,18 @@ fn standing_ruling_in_txn(
     basis: &ScoredBasis,
     cycle: &SkillEditCycle,
 ) -> Result<Option<HeldOutVerdict>> {
-    Ok(
-        standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
-            basis.matches(verdict)
-                && (verdict.disposition.admits()
-                    || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
-                        && verdict.cycle == cycle.as_str()))
-        }),
-    )
+    let standing = standing_verdict_in_txn(vault, rtxn, proposal)?;
+    if let Some(verdict) = &standing
+        && verdict.goal_binding != tradeoff::binding_in_txn(vault, rtxn, &verdict.skill)?
+    {
+        return Ok(None);
+    }
+    Ok(standing.filter(|verdict| {
+        basis.matches(verdict)
+            && (verdict.disposition.admits()
+                || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
+                    && verdict.cycle == cycle.as_str()))
+    }))
 }
 
 /// The most recent ruling on one proposal, whatever it said.
@@ -655,6 +680,8 @@ fn refusal(
         proposal_digest: String::new(),
         target_digest: String::new(),
         proposal_tier: None,
+        goal_binding: None,
+        tradeoff_jev: None,
         accepted_verdict: None,
         missing_sources: Vec::new(),
         at,

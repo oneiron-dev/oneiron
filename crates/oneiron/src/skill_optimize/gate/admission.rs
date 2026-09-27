@@ -183,6 +183,9 @@ fn admission_refusal_in_txn(
     // fact, which makes the strict gate a formality.
     let committed = held_out_receipts_in_txn(vault, wtxn, target)?;
     let outcomes = held_out_outcome_results_in_txn(vault, wtxn, target)?;
+    if tradeoff::binding_in_txn(vault, wtxn, target)? != accepted.goal_binding {
+        return Ok(refused(SkillEditDisposition::RefusedBindingMismatch));
+    }
     if !ScoredBasis::of(staged, current, &committed, &outcomes, proposal_tier)?.matches(accepted) {
         return Ok(refused(SkillEditDisposition::RefusedBindingMismatch));
     }

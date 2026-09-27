@@ -18,8 +18,10 @@ pub enum SkillEditDisposition {
     /// `after <= before`. Ties live here: there is no epsilon.
     Rejected,
     /// Improving, but this cycle already spent its accepts. The proposal stays
-    /// OPEN — a later cycle may admit it. The ONLY durable open disposition.
+    /// OPEN — a later cycle may admit it.
     DeferredCycleCap,
+    /// A bound A/B question awaits the responsible person.
+    DeferredTradeoffAsk,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
     /// taken. One arm carries every tier answer, and as a refusal it closes the
@@ -49,6 +51,7 @@ impl SkillEditDisposition {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
             Self::DeferredCycleCap => "deferred_cycle_cap",
+            Self::DeferredTradeoffAsk => "deferred_tradeoff_ask",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
             Self::RefusedSourceLoss => "refused_source_loss",
@@ -62,6 +65,7 @@ impl SkillEditDisposition {
             "accepted" => Some(Self::Accepted),
             "rejected" => Some(Self::Rejected),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
+            "deferred_tradeoff_ask" => Some(Self::DeferredTradeoffAsk),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
             // spelling it is a row from a build whose contract no longer
@@ -90,25 +94,21 @@ impl SkillEditDisposition {
 
     /// Whether the proposal remains an open question a later cycle may answer.
     ///
-    /// Exactly ONE ruling leaves it open, and it is the cap deferral: a ruling
-    /// that says nothing about the proposal except that this wake's budget was
-    /// already spent. A rejection and a refusal are both ANSWERS — the evidence
-    /// said no — and re-asking them next wake would be the nagging ONE-1448's
-    /// open-question rule already refuses.
+    /// A cap deferral awaits a later wake; a tradeoff ask awaits its responsible
+    /// person's A/B pick. Neither has answered the proposal. Rejections and
+    /// refusals are terminal answers and close it.
     ///
     /// A raced snapshot is NOT on this list, because it is not a ruling at all:
     /// it commits nothing and returns [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
-    /// the proposal in its pre-call state. A second durable open class would
-    /// have grown one more row on every raced retry and made "open" mean two
-    /// different things.
+    /// the proposal in its pre-call state. A race is not an A/B question.
     ///
     /// The complement is [`Self::closes_proposal`], and every answer that is
-    /// not this deferral closes: a terminal ruling that left the record
+    /// not one of these waits closes: a terminal ruling that left the record
     /// `candidate + proposed` would wedge the skill forever, because the
     /// drafting job skips a skill with an open proposed revision.
     #[must_use]
     pub const fn leaves_proposal_open(self) -> bool {
-        matches!(self, Self::DeferredCycleCap)
+        matches!(self, Self::DeferredCycleCap | Self::DeferredTradeoffAsk)
     }
 
     /// Whether this ruling ANSWERS the proposal, and so must close it.
@@ -214,6 +214,11 @@ pub struct HeldOutVerdict {
     /// owner's identity mark landed on the PROPOSAL after acceptance is the
     /// newer fact, and it must not ride the old acceptance into canon.
     pub proposal_tier: Option<SkillGovernanceTier>,
+    /// Goal version and learned-pick frontier at ruling time. Admission refuses
+    /// if a person's newer goal or pick has since changed the comparison.
+    pub goal_binding: Option<SkillTradeoffBinding>,
+    /// Bound Jev result (when the rule missed); retained even after an A/B pick.
+    pub tradeoff_jev: Option<JevTradeoffVerdict>,
     /// The accepted verdict this row answers, on a post-score refusal.
     ///
     /// `None` on every ruling the gate itself made. `Some` exactly when

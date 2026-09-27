@@ -81,6 +81,26 @@ pub(super) fn record_verdict_in_txn(
                 .map_or(Value::Nil, |tier| Value::from(tier.as_str())),
         ),
         (
+            Value::from(KEY_GOAL_BINDING),
+            verdict.goal_binding.map_or(Value::Nil, |binding| {
+                Value::Array(vec![
+                    Value::from(binding.goal_ref.to_hex()),
+                    Value::from(binding.version),
+                    Value::from(binding.learned_count),
+                ])
+            }),
+        ),
+        (
+            Value::from(KEY_TRADEOFF_JEV),
+            match &verdict.tradeoff_jev {
+                Some(jev) => Value::from(
+                    serde_json::to_string(jev)
+                        .map_err(|_| invalid("Jev tradeoff encoding failed"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+        (
             Value::from(KEY_ACCEPTED_VERDICT),
             verdict
                 .accepted_verdict
@@ -230,6 +250,52 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
                     .and_then(SkillGovernanceTier::parse)
                     .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
             ),
+        },
+        // Required even when Nil: a v4 acceptance had no binding to a goal
+        // that could have arrived after it was scored.
+        goal_binding: match field(KEY_GOAL_BINDING) {
+            Some(Value::Nil) => None,
+            Some(Value::Array(parts)) if parts.len() == 3 => Some(SkillTradeoffBinding {
+                goal_ref: parts[0]
+                    .as_str()
+                    .and_then(|id| EntityId::from_hex(id).ok())
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+                version: parts[1]
+                    .as_u64()
+                    .and_then(|version| u32::try_from(version).ok())
+                    .filter(|version| *version != 0)
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+                learned_count: parts[2]
+                    .as_u64()
+                    .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+            }),
+            _ => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
+        },
+        tradeoff_jev: match field(KEY_TRADEOFF_JEV) {
+            Some(Value::Nil) => None,
+            Some(value) => {
+                let jev: JevTradeoffVerdict = serde_json::from_str(
+                    value
+                        .as_str()
+                        .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+                )
+                .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+                if jev.question_digest.len() != 64
+                    || !jev
+                        .question_digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit())
+                    || jev.pin.rung != crate::llm::decision::DecisionRung::SystemOne
+                    || jev.pin.model.trim().is_empty()
+                    || jev.pin.version.trim().is_empty()
+                    || !jev.probability.is_finite()
+                    || !(0.0..=1.0).contains(&jev.probability)
+                {
+                    return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+                }
+                Some(jev)
+            }
+            None => return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL)),
         },
         // Nil is the ordinary shape: only a post-score refusal names the
         // acceptance it answers. A present-but-unreadable id is corruption,
@@ -442,6 +508,12 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if let Some(jev) = &verdict.tradeoff_jev {
+        fields.insert(
+            "skill_edit_tradeoff_jev".to_owned(),
+            serde_json::to_string(jev).expect("validated Jev result serializes"),
+        );
+    }
     if let Some(measurements) = &verdict.measurements {
         fields.insert(
             FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),

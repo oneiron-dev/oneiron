@@ -165,14 +165,16 @@ pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,
     HELD_OUT_RESERVE_DIVISOR, HeldOutReplayCase, HeldOutReplayScorer, HeldOutVerdict,
-    JudgeMeasurements, PreferredResponse, SKILL_EDIT_CYCLE_CAP_KEY, SKILL_EDIT_CYCLE_MAX_BYTES,
-    SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle, SkillEditDisposition, WorldAxisScore,
+    JevTradeoffVerdict, JudgeMeasurements, PreferredResponse, SKILL_EDIT_CYCLE_CAP_KEY,
+    SKILL_EDIT_CYCLE_MAX_BYTES, SKILL_EDIT_SCORE_CALL_PURPOSE_NAME, SkillEditCycle,
+    SkillEditDisposition, SkillTradeoffAsk, SkillTradeoffBinding, SkillTradeoffGoal,
+    SkillTradeoffQuestion, TradeoffAxis, TradeoffChoice, TradeoffRule, WorldAxisScore,
     admit_optimized_skill_revision, dev_receipts, held_out_receipt_set_digest, held_out_receipts,
     is_skill_edit_verdict_receipt, receipt_is_held_out, register_held_out_replay_scorer,
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
-    set_skill_edit_cycle_cap, skill_body_binding_digest, skill_edit_cycle_cap,
-    skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal,
+    set_skill_edit_cycle_cap, set_skill_tradeoff_goal, settle_skill_tradeoff_ask,
+    skill_body_binding_digest, skill_edit_cycle_cap, skill_edit_score_call_purpose,
+    skill_edit_verdict, skill_edit_verdicts, skill_edit_verdicts_for_proposal, skill_tradeoff_ask,
 };
 pub(crate) use gate::{
     check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
