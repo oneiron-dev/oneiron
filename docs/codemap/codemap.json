@@ -1176,18 +1176,18 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 12,
+      "fn": 13,
       "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/artifact_hosting/publish.rs",
      "purpose": "The OF-327 artifact-publish dispatch door and its share-style receipt projection",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -16494,7 +16494,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {

@@ -339,6 +339,15 @@ impl Vault {
     ) -> Result<ArtifactPublishVerbOutcome> {
         OutboundDispatchPipeline.dispatch_artifact_publish(self, request)
     }
+
+    /// Exact, engine-computed approval key for an owner to approve one publish.
+    /// This key is not authority until an authenticated `approve_once` records it.
+    pub fn artifact_publish_approval_digest(
+        &self,
+        request: &ArtifactPublishVerbRequest,
+    ) -> Result<crate::consent::EffectDigest> {
+        publish::artifact_publish_approval_digest(self, request)
+    }
 }
 
 pub fn parse_codebase_fork_hash_hex(value: &str) -> Result<CodebaseForkHash> {
