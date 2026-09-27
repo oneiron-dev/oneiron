@@ -146,6 +146,9 @@ pub(crate) fn resolve_policy_manifest(
                         resolution.pack_install_policy = Some(policy);
                     }
                 }
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
 
                 if let Some(bounds) = decoded.diagnostic_bounds {
@@ -204,7 +207,9 @@ pub(crate) fn resolve_policy_manifest(
     if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 
