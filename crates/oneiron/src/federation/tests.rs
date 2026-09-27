@@ -858,6 +858,20 @@ fn ask_guest_codec_is_strict_and_payload_is_bounded() -> Result<()> {
     let decoded = decode_federation_grant_body(&encoded)?;
     assert_eq!(decoded, grant);
     assert_eq!(encode_federation_grant_body(&decoded)?, encoded);
+    let mut prior = test_grant();
+    prior.role = FederationGrantRole::Member;
+    prior.preset = FederationGrantPreset::Member;
+    let bytes = encode_federation_grant_body(&prior)?;
+    let Value::Map(mut old) =
+        rmpv::decode::read_value(&mut Cursor::new(&bytes)).expect("grant map")
+    else {
+        panic!("grant map")
+    };
+    old.iter_mut()
+        .find(|(key, _)| key.as_str() == Some(KEY_SCHEMA_VERSION))
+        .expect("schema version")
+        .1 = Value::from(2_u64);
+    assert_grant_rejected("old unshipped schema 2 member", &grant_map(old));
 
     let mut cursor = Cursor::new(&encoded);
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).expect("grant map") else {

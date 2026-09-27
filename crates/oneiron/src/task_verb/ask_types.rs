@@ -249,6 +249,12 @@ pub struct TaskAskClass {
     pub decision: Option<TaskAskDecide>,
     pub disclosure: BTreeMap<EntityId, BTreeSet<ConsultPayloadRef>>,
     pub fallback: BTreeSet<TaskAskDefault>,
+    /// Owner-bound operational ceiling, strictly below the wire-safety maximum.
+    #[serde(default)]
+    pub guest_fact_limit: Option<u16>,
+    /// Policy-owned confirmation surface; absent reuses the ask's chosen surface.
+    #[serde(default)]
+    pub soft_confirm_surface: Option<TaskAskSurface>,
     pub remind: Vec<u64>,
 }
 
@@ -352,17 +358,6 @@ impl TaskAskSpec {
         {
             return Err(MemoryError::bad_request("invalid ask ladder prediction"));
         }
-        if self.what.commitment
-            && (!self
-                .what
-                .options
-                .contains_key(&TaskAskOptionId::new("yes")?)
-                || !self.what.options.contains_key(&TaskAskOptionId::new("no")?))
-        {
-            return Err(MemoryError::bad_request(
-                "commitment ask requires yes and no options",
-            ));
-        }
         if self
             .what
             .class_key
@@ -395,6 +390,11 @@ impl TaskAskSpec {
                 || usize::from(class.minimum_responses) > who.len()
             {
                 return Err(MemoryError::bad_request("impossible ask class obligations"));
+            }
+            if class.guest_fact_limit.is_some_and(|limit| {
+                limit == 0 || usize::from(limit) > crate::federation::MAX_GUEST_DISCLOSED_REFS
+            }) {
+                return Err(MemoryError::bad_request("invalid ask guest fact limit"));
             }
             if class.governance {
                 match effective.default {
@@ -743,6 +743,17 @@ pub struct TaskAskSoftConfirmNotice {
     pub option: Option<TaskAskOptionId>,
     pub task_ref: EntityId,
     pub deadline: u64,
+}
+
+/// Delivery is separate from approval; a pending state never authorizes an effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAskSoftConfirmDelivery {
+    PendingRoute,
+    PendingGate,
+    Failed,
+    Scheduled,
+    Closed,
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.

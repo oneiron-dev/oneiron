@@ -1,5 +1,5 @@
 //! Ask-scoped guest authority: reuse a person's owner-stamped bounds.
-use super::{TaskAskGuest, TaskAskQuestion, TaskAskTarget};
+use super::{TaskAskGuest, TaskAskTarget};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundSubject, DisclosureClass,
     DisclosureEnvelope, GrantBound, StandingConsentGrant,
@@ -20,17 +20,24 @@ pub(super) fn check_disclosure(
     person: EntityId,
     asker: EntityId,
     guest: &TaskAskGuest,
-    question: &TaskAskQuestion,
+    spec: &super::TaskAskSpec,
 ) -> Result<BTreeSet<EntityId>> {
+    let question = &spec.what;
     let class = question.class_key.as_deref().ok_or_else(invalid)?;
     let refs: BTreeSet<_> = std::iter::once(question.reference.entity_ref())
         .chain(question.context_refs.iter().map(|r| r.entity_ref()))
         .collect();
-    if refs.is_empty()
-        || refs.len() > 64
-        || guest.companion_ref == person
-        || guest.companion_ref == asker
+    // The bound class can narrow the operational maximum; the codec enforces
+    // its independent wire-safety ceiling at mint and decode.
+    if spec
+        .class
+        .as_ref()
+        .and_then(|class| class.guest_fact_limit)
+        .is_some_and(|limit| refs.len() > usize::from(limit))
     {
+        return Err(invalid());
+    }
+    if refs.is_empty() || guest.companion_ref == person || guest.companion_ref == asker {
         return Err(invalid());
     }
     let row = vault
@@ -144,7 +151,7 @@ pub(super) fn mint_guest_grants(
     let mut guest_grants = std::collections::BTreeMap::new();
     if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
         for (person, guest) in guests {
-            let refs = check_disclosure(vault, txn, *person, asker, guest, &effective.what)?;
+            let refs = check_disclosure(vault, txn, *person, asker, guest, effective)?;
             let grant = crate::federation::FederationGrant::ask_guest(
                 group_ref,
                 guest.companion_ref,
@@ -227,7 +234,7 @@ pub(super) fn check_companion_answer(
         person,
         super::ask_record::entity(&group.owner)?,
         guest,
-        &group.effective.what,
+        &group.effective,
     )?;
     Ok(())
 }

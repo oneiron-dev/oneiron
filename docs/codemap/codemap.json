@@ -32001,13 +32001,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
       "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/guard.rs",
+     "purpose": "Shared raw-put and replay validation for immutable ask facts",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -32039,6 +32049,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_soft_confirm_delivery.rs",
+     "purpose": "Durable soft-confirm outbox, retried independently of answer replay",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -32047,7 +32068,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
@@ -32080,6 +32101,7 @@
       "TaskAskResult",
       "TaskAskSettlement",
       "TaskAskSettlementReason",
+      "TaskAskSoftConfirmDelivery",
       "TaskAskSoftConfirmNotice",
       "TaskAskSource",
       "TaskAskSpec",
@@ -32093,7 +32115,7 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 16,
+      "enum": 17,
       "fn": 5,
       "struct": 22
      }
@@ -36157,7 +36179,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 62,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -36278,7 +36300,7 @@
    },
    "over_bar": 12,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
+   "source_files": 2143,
    "test_files": 731
   },
   "oneiron-android": {

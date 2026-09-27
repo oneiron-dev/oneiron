@@ -44,7 +44,7 @@ impl Memory<'_> {
                     *person,
                     self.actor(),
                     guest,
-                    &effective.what,
+                    &effective,
                 )?;
             }
         }

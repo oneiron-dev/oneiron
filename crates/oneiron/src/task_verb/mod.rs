@@ -10,6 +10,7 @@ mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_soft_confirm;
+mod ask_soft_confirm_delivery;
 mod ask_types;
 mod consts;
 mod consult_fanout_admission;
@@ -125,6 +126,6 @@ pub use ask_types::{
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
     TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight, TaskAskPreflightRecipient,
     TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
-    TaskAskSettlementReason, TaskAskSoftConfirmNotice, TaskAskSource, TaskAskSpec, TaskAskStatus,
-    TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskSettlementReason, TaskAskSoftConfirmDelivery, TaskAskSoftConfirmNotice, TaskAskSource,
+    TaskAskSpec, TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
 };

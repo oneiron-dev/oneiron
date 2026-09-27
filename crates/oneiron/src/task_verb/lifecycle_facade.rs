@@ -333,7 +333,11 @@ impl Memory<'_> {
             // Scheduling is outside the writer transaction. The durable typed
             // notice landed with the answer first; an unavailable route or a
             // gated send never rolls back or turns the answer into consent.
-            let _ = self.dispatch_ask_soft_confirm(*handle, person);
+            // Durable pending work was committed with the answer. Route/gate
+            // failures stay typed pending for the next wake or explicit retry.
+            let _ = self
+                .vault()
+                .retry_ask_soft_confirm_delivery(handle.group_ref, person);
         }
         send_peer_result_signal(
             self.vault(),
@@ -372,42 +376,5 @@ impl Memory<'_> {
             handle.group_ref,
             person,
         )?)
-    }
-
-    fn dispatch_ask_soft_confirm(
-        &self,
-        handle: super::TaskAskHandle,
-        person: EntityId,
-    ) -> MemoryResult<()> {
-        let Some(notice) = self.tasks_ask_soft_confirm_notice(handle, person)? else {
-            return Ok(());
-        };
-        let Ok(route) = crate::human_task::resolve_native_human_route(self.vault(), person) else {
-            return Ok(());
-        };
-        let key = format!(
-            "ask-soft-confirm/{}/{}",
-            handle.group_ref.to_hex(),
-            person.to_hex()
-        );
-        let content = super::ask_record::derived_id(
-            b"oneiron.tasks.ask.soft_confirm.v1",
-            handle.group_ref,
-            person.as_bytes(),
-        )?;
-        self.schedule_outbound(&crate::memory::OutboundDraftInput {
-            verb: "send".to_owned(),
-            channel: route.channel,
-            target: route.target,
-            on_behalf_of: None,
-            content_ref: Some(content.to_hex()),
-            idempotency_key: Some(key.clone()),
-            dedupe_key: Some(key),
-            trigger: "agent_immediate".to_owned(),
-            trigger_ref: notice.task_ref.to_hex(),
-            job_ref: None,
-            occurred_at: None,
-        })?;
-        Ok(())
     }
 }

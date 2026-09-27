@@ -808,6 +808,7 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
     for group in groups {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
+    vault.retry_pending_ask_soft_confirms(64)?;
     Ok(())
 }
 

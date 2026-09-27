@@ -185,6 +185,7 @@ pub(super) fn settle_in(
                 .iter()
                 .find(|entry| {
                     entry.reason == TaskAskEvidenceReason::Counted
+                        && entry.source == TaskAskSource::Human
                         && entry.word.option.as_ref() == Some(option)
                 })
                 .map(|entry| {
@@ -465,7 +466,26 @@ fn fallback(
     if stale {
         return Some(TaskAskFallback {
             branch: TaskAskDefault::Hold,
-            surface: TaskAskSurface::Card,
+            surface: spec.on_disagree.surface,
+        });
+    }
+    // A companion commitment without the person's word takes the AskSpec
+    // deadline branch even if delegated companions disagree.
+    if spec.what.commitment
+        && evidence.iter().any(|entry| {
+            entry.source == TaskAskSource::Companion
+                && !evidence.iter().any(|human| {
+                    human.source == TaskAskSource::Human && human.person_ref == entry.person_ref
+                })
+        })
+    {
+        return Some(TaskAskFallback {
+            branch: spec.default,
+            surface: spec
+                .class
+                .as_ref()
+                .and_then(|class| class.soft_confirm_surface)
+                .unwrap_or(spec.on_disagree.surface),
         });
     }
     let choices: BTreeSet<_> = evidence
@@ -484,17 +504,6 @@ fn fallback(
             surface: spec.on_disagree.surface,
         });
     }
-    // A commitment waits for the person's own word; at cutoff the default
-    // remains the agent's branch even for a class-delegated companion answer.
-    if evidence
-        .iter()
-        .any(|entry| entry.reason == TaskAskEvidenceReason::Counted && entry.soft_confirm)
-    {
-        return Some(TaskAskFallback {
-            branch: spec.default,
-            surface: TaskAskSurface::Card,
-        });
-    }
     if coverage.met
         && matches!(
             decision,
@@ -505,7 +514,7 @@ fn fallback(
     }
     Some(TaskAskFallback {
         branch: spec.default,
-        surface: TaskAskSurface::Card,
+        surface: spec.on_disagree.surface,
     })
 }
 

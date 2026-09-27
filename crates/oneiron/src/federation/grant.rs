@@ -15,12 +15,10 @@ use crate::error::{Error, RecordError, Result};
 
 /// Current FederationGrant body schema version.
 ///
-/// Version 3 adds a role-conditional guest payload. Readers continue to accept
-/// schema-1 membership bodies and schema-2 member/delegate bodies, but neither
-/// older schema can carry a guest payload.
+/// Version 3 adds a role-conditional guest payload. The existing schema-1
+/// decoder remains; no new pre-release schema-2 compatibility path is added.
 pub const FEDERATION_GRANT_SCHEMA_VERSION: u64 = 3;
 
-const FEDERATION_GRANT_PREVIOUS_SCHEMA_VERSION: u64 = 2;
 const FEDERATION_GRANT_LEGACY_SCHEMA_VERSION: u64 = 1;
 
 /// Maximum delegate time-to-live: 90 days.
@@ -84,7 +82,8 @@ pub(super) const SCOPE_KIND_VAULT: &str = "vault";
 
 const SCOPE_KIND_ASK: &str = "ask";
 
-/// Maximum number of explicitly disclosed facts on one ask-scoped guest grant.
+/// Wire/resource-safety maximum for one guest grant body, not a policy grant.
+/// Ask-class disclosure limits can narrow this bound but never widen it.
 pub const MAX_GUEST_DISCLOSED_REFS: usize = 64;
 
 const GUEST_SCOPE_KEYS: [&str; 3] = ["person_ref", "asker_ref", "disclosed_refs"];
@@ -570,9 +569,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         .ok_or_else(invalid_grant)?;
     if !matches!(
         schema_version,
-        FEDERATION_GRANT_LEGACY_SCHEMA_VERSION
-            | FEDERATION_GRANT_PREVIOUS_SCHEMA_VERSION
-            | FEDERATION_GRANT_SCHEMA_VERSION
+        FEDERATION_GRANT_LEGACY_SCHEMA_VERSION | FEDERATION_GRANT_SCHEMA_VERSION
     ) {
         return Err(invalid_grant());
     }
@@ -764,11 +761,9 @@ fn validate_body_keys(entries: &[(Value, Value)], schema_version: u64) -> Result
         if seen[index] {
             return Err(invalid_grant());
         }
-        // Schema 1 is the original five-key shape. Schema 2 added authority
-        // scope and delegate fields; only schema 3 can carry the guest payload.
-        if (schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION && index >= 7)
-            || (schema_version == FEDERATION_GRANT_PREVIOUS_SCHEMA_VERSION && index == 8)
-        {
+        // Schema 1 is the original five-key shape; only the current schema
+        // can carry the guest payload.
+        if schema_version == FEDERATION_GRANT_LEGACY_SCHEMA_VERSION && index >= 7 {
             return Err(invalid_grant());
         }
         seen[index] = true;

@@ -22,6 +22,15 @@ pub(super) fn notice(
     };
     let ask =
         super::ask_record::read_group(vault, txn, group)?.ok_or_else(super::ask_record::invalid)?;
+    // A person's authenticated reply or an already-settled revision closes
+    // confirmation; do not deliver a stale companion prompt afterwards.
+    if super::ask_settlement::read_result(vault, txn, group)?.is_some()
+        || super::ask_record::evidence_in(vault, txn, group, &ask)?
+            .iter()
+            .any(|entry| entry.source == super::TaskAskSource::Human && entry.person_ref == person)
+    {
+        return Ok(None);
+    }
     if !ask.effective.what.commitment
         || notice.group_ref != group
         || notice.person_ref != person
@@ -77,5 +86,6 @@ pub(super) fn put_notice(
             deadline: effective.until.ok_or_else(super::ask_record::invalid)?,
         },
         now,
-    )
+    )?;
+    super::ask_soft_confirm_delivery::register(vault, txn, group, person)
 }
