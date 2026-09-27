@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill::SkillRecord;
 
-use super::gate::{HeldOutReplayCase, held_out_receipts};
+use super::gate::{HeldOutReplayCase, held_out_receipts, skill_body_binding_digest};
 
 /// Offline axes are judged on the reserved set; online axes sample live arms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -236,12 +236,24 @@ pub fn measure_goal_axes(
             ));
         }
     }
+    // The partition is keyed by ENTITY, not by skill_id. Bind the supplied
+    // incumbent to that entity before showing any evidence to the scorer or
+    // spending a live pull. The existing body digest excludes state axes and
+    // the projector-updated confidence cache, but binds the measured content.
+    let stored = vault
+        .get_skill_record(&skill)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    if skill_body_binding_digest(&stored)? != skill_body_binding_digest(incumbent)? {
+        return Err(invalid(
+            "goal-axis incumbent does not match the stored skill",
+        ));
+    }
+    if candidate.skill_id != stored.skill_id {
+        return Err(invalid("goal-axis candidate must name the measured skill"));
+    }
     let held_out = held_out_receipts(vault, &skill)?;
     if held_out.is_empty() {
         return Err(invalid("goal-axis measurement requires held-out evidence"));
-    }
-    if incumbent.skill_id != candidate.skill_id {
-        return Err(invalid("goal-axis pair must name the same skill"));
     }
     let before_case = replay_case(skill, incumbent, &held_out);
     let after_case = replay_case(skill, candidate, &held_out);

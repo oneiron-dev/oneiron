@@ -4241,3 +4241,46 @@ fn goal_axes_empty_reserve_or_invalid_plan_never_reaches_scorer_or_bandit() {
     assert!(judge.events.borrow().is_empty());
     assert!(bandit.events.borrow().is_empty());
 }
+
+#[test]
+fn goal_axes_refuse_another_skills_evidence_before_any_measurement() {
+    let (_tmp, vault) = temp_vault();
+    let (skill_a, _) = put_standard_active(&vault, "goal-axis-a");
+    attribute_defects_across_split(&vault, &skill_a, "goal-axis-a");
+    let (_, incumbent_b) = put_standard_active(&vault, "goal-axis-b");
+    let judge = AxisJudge::new();
+    let bandit = AxisBanditStub::new(true);
+
+    // A has a reserve, but neither of these B records belongs to A.
+    let mut candidate_b = incumbent_b.clone();
+    candidate_b.version = "2.0.0".to_owned();
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &incumbent_b,
+        &candidate_b,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("B's record cannot be scored against A's evidence");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+
+    // Matching skill_id alone is not enough: a fabricated incumbent body
+    // cannot masquerade as the version currently stored at A.
+    let mut invented_a = stored(&vault, &skill_a);
+    invented_a.desc.push_str(" Incorrectly revised.");
+    let error = measure_goal_axes(
+        &vault,
+        skill_a,
+        &invented_a,
+        &invented_a,
+        &goal_axis_plan(4),
+        &judge,
+        &bandit,
+    )
+    .expect_err("an invented incumbent cannot use A's reserve");
+    assert_eq!(error.kind(), ErrorKind::InvalidConfig);
+    assert!(judge.events.borrow().is_empty());
+    assert!(bandit.events.borrow().is_empty());
+}
