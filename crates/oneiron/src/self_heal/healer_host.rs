@@ -74,6 +74,57 @@ pub struct PatchPullRequest {
     #[serde(with = "super::receipt_serde::id")]
     pub approved_by: EntityId,
 }
+/// Trusted host binding, rechecked alongside proposal persistence.
+pub(crate) struct CaseBinding {
+    pub(crate) healer_attempt_id: crate::attempt_queue::AttemptId,
+    pub(crate) lease_owner: String,
+    pub(crate) attempt_count: u32,
+    pub(crate) healer_ref: EntityId,
+    pub(crate) case: crate::failure_ladder::HealerCase,
+}
+
+impl CaseBinding {
+    fn require_in_txn(&self, vault: &Vault, txn: &heed::RwTxn<'_>) -> Result<()> {
+        use crate::attempt_queue::{AttemptQueue, AttemptState};
+        let invalid =
+            || Error::InvalidConfig("healer repair requires a live case-bound lease".into());
+        let record = AttemptQueue::new(vault)
+            .get_in_write_txn(txn, self.healer_attempt_id)?
+            .ok_or_else(invalid)?;
+        if record.state != AttemptState::Leased
+            || record.lease_owner.as_deref() != Some(&self.lease_owner)
+            || record.attempt_count != self.attempt_count
+        {
+            return Err(invalid());
+        }
+        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
+            .map_err(|_| invalid())?;
+        if payload.attempt_type != crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+            || payload.parent_attempt != Some(self.case.failing_attempt_id)
+        {
+            return Err(invalid());
+        }
+        let dispatch = crate::agent_dispatch::decode_agent_dispatch_input(&payload.input)
+            .map_err(|_| invalid())?;
+        if dispatch.healer_case.as_ref() != Some(&self.case)
+            || dispatch.target.agent_definition_ref().ok() != Some(self.healer_ref)
+        {
+            return Err(invalid());
+        }
+        crate::failure_ladder::require_healer_case_in_txn(
+            vault,
+            txn,
+            &self.case,
+            record.run_id.as_deref(),
+        )?;
+        let definition = crate::agent_dispatch::AgentDispatcher::new(vault)
+            .dispatchable_definition_in_txn(txn, &dispatch.target)?;
+        if definition.ceiling != crate::agent_def::AgentCeiling::Proposed {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+}
 struct Drafts(RepairProposal);
 impl Healer for Drafts {
     fn propose(&self, _: &DiagnosticWorkingSet<'_>, _: &[DiagnosticEvent]) -> Vec<RepairProposal> {
@@ -323,47 +374,104 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
     ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, None, || Ok(()))
+    }
+
+    pub(crate) fn submit_case_bound(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        binding: CaseBinding,
+    ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, Some(binding), || Ok(()))
+    }
+
+    /// Test seam for a policy change after admission preflight and before the
+    /// single transaction that evaluates consent and persists the proposal.
+    #[cfg(test)]
+    pub(super) fn submit_with_pre_write(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        before_write: impl FnOnce() -> Result<()>,
+    ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, None, before_write)
+    }
+
+    fn submit_checked(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        binding: Option<CaseBinding>,
+        before_write: impl FnOnce() -> Result<()>,
+    ) -> Result<RepairBundle> {
         super::validate_ref(run)?;
-        if self.band == HealerBand::Production && !production_intent_allowed(self.vault, &proposal)?
+        if binding
+            .as_ref()
+            .is_some_and(|b| b.case.case_ref != run || b.healer_ref != self.actor.entity_ref())
+        {
+            return Err(Error::InvalidConfig(
+                "healer repair binding mismatch".into(),
+            ));
+        }
+        let case_bound = binding.as_ref().is_some_and(|b| {
+            matches!(
+                &proposal.operation,
+                RepairOperation::FixAgent { case_ref, .. } if *case_ref == b.case.case_ref
+            )
+        });
+        if matches!(proposal.operation, RepairOperation::FixAgent { .. }) && !case_bound {
+            return Err(Error::InvalidConfig(
+                "fix-agent repair requires a case-bound healer".into(),
+            ));
+        }
+        if self.band == HealerBand::Production
+            && !production_intent_allowed(self.vault, &proposal, case_bound)?
         {
             return Err(Error::InvalidConfig(
                 "production healer operation is outside its capability".into(),
             ));
         }
-        let txn = self.vault.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
-        let drafts = Drafts(proposal);
-        let registration = RegisteredHealer {
-            healer_id: "external_healer",
-            actor: self.actor,
-            agent_definition_ceiling: Some(crate::gate::PolicyApprovalCeiling::Proposed),
-            healer: &drafts,
-        };
-        let bundle = run_healer_proposals(
-            &policy,
-            &registration,
-            run,
-            session,
-            &DiagnosticWorkingSet {
-                scope_ref: run,
-                observations: &[],
-            },
-            &[],
-        )?;
-        drop(txn);
-        let reviewed = &bundle.proposals()[0];
-        if reviewed.route() == RepairConsentRoute::Denied {
-            return Err(Error::InvalidConfig("repair admission denied".into()));
-        }
-        let mut proposal = reviewed.proposal().clone();
-        // Persist authority attribution, not the runner's claimed actor/source.
-        proposal.actor = reviewed.invocation().actor().clone();
-        proposal.source = reviewed.invocation().source();
+        before_write()?;
+        // The policy and the healer binding are read under the SAME write
+        // transaction that records the proposal. A revocation between preflight
+        // and this snapshot therefore denies admission, not just future runs.
         self.vault.with_write_txn(|txn| {
-            // The observation bound belongs to the same committed manifest
-            // snapshot as its counter and proposal receipt.
-            let threshold = crate::gate::resolve_policy_manifest(&self.vault.store, &*txn)?
-                .proposal_check_threshold();
+            if let Some(binding) = &binding {
+                binding.require_in_txn(self.vault, txn)?;
+            }
+            let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
+            let drafts = Drafts(proposal);
+            let registration = RegisteredHealer {
+                healer_id: "external_healer",
+                actor: self.actor,
+                agent_definition_ceiling: Some(crate::gate::PolicyApprovalCeiling::Proposed),
+                healer: &drafts,
+            };
+            let bundle = run_healer_proposals(
+                &policy,
+                &registration,
+                run,
+                session,
+                &DiagnosticWorkingSet {
+                    scope_ref: run,
+                    observations: &[],
+                },
+                &[],
+            )?;
+            let reviewed = &bundle.proposals()[0];
+            if reviewed.route() == RepairConsentRoute::Denied {
+                return Err(Error::InvalidConfig("repair admission denied".into()));
+            }
+            let mut proposal = reviewed.proposal().clone();
+            // Persist authority attribution, not the runner's claimed actor/source.
+            proposal.actor = reviewed.invocation().actor().clone();
+            proposal.source = reviewed.invocation().source();
+            let threshold = policy.proposal_check_threshold();
+
             let pk = key(b"healer:proposal:", proposal.proposal_id.as_bytes());
             if self.vault.store.vault_meta.get(txn, &pk)?.is_some() {
                 return Err(Error::InvalidConfig("proposal id already exists".into()));
@@ -430,9 +538,8 @@ impl HealerRegistration<'_> {
                 threshold,
                 true,
             )?;
-            Ok(())
-        })?;
-        Ok(bundle)
+            Ok(bundle)
+        })
     }
 }
 
@@ -452,7 +559,11 @@ fn protected_target(target: &str) -> bool {
                 .any(|reserved| component.eq_ignore_ascii_case(reserved))
         })
 }
-fn production_intent_allowed(vault: &Vault, proposal: &RepairProposal) -> Result<bool> {
+fn production_intent_allowed(
+    vault: &Vault,
+    proposal: &RepairProposal,
+    case_bound: bool,
+) -> Result<bool> {
     if protected_target(&proposal.target_predicate) {
         return Ok(false);
     }
@@ -460,6 +571,7 @@ fn production_intent_allowed(vault: &Vault, proposal: &RepairProposal) -> Result
         RepairOperation::DevPatch { .. }
         | RepairOperation::SchemaPatch { .. }
         | RepairOperation::SkillEdit { .. } => Ok(false),
+        RepairOperation::FixAgent { .. } => Ok(case_bound),
         RepairOperation::Reindex { scope_ref } => Ok(!protected_target(scope_ref)),
         RepairOperation::Rescore { target_ref } => {
             let Some(raw) = vault.get_raw(target_ref)? else {
