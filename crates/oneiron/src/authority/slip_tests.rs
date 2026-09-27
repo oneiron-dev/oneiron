@@ -1746,3 +1746,61 @@ fn same_agent_logged_attenuation_verifies_but_actor_redelegation_is_rejected() {
     );
     assert!(verify(&vault, &issuer, &direct).is_ok());
 }
+
+#[test]
+fn paired_connection_verifies_publicly_and_spends_nonce_without_a_host_secret() {
+    let (_dir, vault, issuer, _root) = fixture();
+    let holder = SigningKey::from_bytes(&[92; 32]);
+    let link = vault
+        .issue_pairing_link(&issuer, Scope::top(), 300)
+        .unwrap();
+    let binding_key = holder.verifying_key().to_bytes();
+    let receipt = holder
+        .sign(&pairing_binding_transcript(&link.code, &binding_key, "external-holder").unwrap())
+        .to_bytes();
+    let slip = vault
+        .redeem_pairing_link(
+            &issuer,
+            &link.code,
+            "external-holder",
+            binding_key,
+            &receipt,
+        )
+        .unwrap();
+    let timestamp = slip.claims.issued_at;
+    let nonce = b"abcdef0123456789abcdef0123456789";
+    let challenge =
+        super::super::slip_replay::request_challenge(timestamp, nonce, timestamp).unwrap();
+    let signature = holder
+        .sign(&slip.binding_transcript(&challenge).unwrap())
+        .to_bytes();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_ok()
+    );
+    assert!(
+        vault
+            .admit_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_ok()
+    );
+    assert!(
+        vault
+            .admit_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_err()
+    );
+    let wrong_holder = issuer.binding_proof(&slip, &challenge).unwrap();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &wrong_holder, nonce)
+            .is_err()
+    );
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    assert!(
+        vault
+            .verify_logged_capability_slip_request(&slip, timestamp, &signature, nonce)
+            .is_err()
+    );
+}

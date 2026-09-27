@@ -38,6 +38,12 @@ fn key(id: EntityId) -> Vec<u8> {
     key.extend_from_slice(id.as_bytes());
     key
 }
+/// Retire an id's scope sidecar in the same transaction that erases its body.
+/// A later same-id, same-bytes write must not inherit the old scope.
+pub(crate) fn retire_stamp(store: &Store, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<()> {
+    store.vault_meta.delete(txn, &key(id))?;
+    Ok(())
+}
 fn digest(kind: u8, data: &[u8]) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key("oneiron/record-scope/v1");
     h.update(&[kind]);
@@ -360,7 +366,7 @@ impl Vault {
             }
             batch.apply(txn)?;
             for id in &ids {
-                self.store.vault_meta.delete(txn, &key(*id))?;
+                retire_stamp(&self.store, txn, *id)?;
             }
             Ok(ids)
         })

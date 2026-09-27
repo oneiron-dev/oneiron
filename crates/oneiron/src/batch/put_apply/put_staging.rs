@@ -162,6 +162,8 @@ pub(in crate::batch) fn stage_edge_rows(
     tgt: &EntityId,
     value: &[u8],
 ) -> Result<()> {
+    let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
     let key_out = Store::encode_edge_key(src, kind, tgt);
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
