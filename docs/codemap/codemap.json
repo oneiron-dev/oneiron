@@ -1083,7 +1083,7 @@
       "AnnotationConversationNode"
      ],
      "path": "src/anchored_annotation/conversation.rs",
-     "purpose": "Composition with existing conversation MESSAGE nodes",
+     "purpose": "Composition with existing conversation DAG TURN nodes",
      "surface": {
       "enum": 1,
       "fn": 3,
@@ -20315,7 +20315,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/m8_forward_oracle/r1689_threads.rs",
-     "purpose": "ONE-1689 RT-08: annotation-thread/DAG-wiring and per-thread state-machine oracles plus arming seams",
+     "purpose": "ONE-1689 RT-08: admitted per-thread replies and anchored room-DAG wiring",
      "surface": {}
     },
     {
