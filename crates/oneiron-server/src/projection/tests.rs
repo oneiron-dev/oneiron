@@ -2,10 +2,6 @@ use std::collections::BTreeSet;
 
 use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::registry::ENTITY_TYPE_REGISTRY;
-use oneiron::{
-    ClaimApprovalStatus, ClaimSource, CompanionProvenance, CompanionRecord, CompanionScope,
-    EdgeActorClass, companion::encode_companion_record_body, companion_value_from_json,
-};
 
 use super::*;
 
@@ -175,57 +171,26 @@ fn skill_full_projection_elides_an_absent_governance_tier() {
 }
 
 #[test]
-fn companion_register_api_projection_redacts_private_values() {
-    let id = EntityId::from_bytes([0x51; 16]).unwrap();
-    let actor = EntityId::from_bytes([0x52; 16]).unwrap();
-    let record = CompanionRecord::persona(
-        CompanionScope::neutral(),
-        id,
-        companion_value_from_json(&json!({
-            "note": "private companion projection note",
-        }))
-        .unwrap(),
-        CompanionProvenance::new(
-            actor,
-            EdgeActorClass::Agent,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            companion_value_from_json(&json!({
-                "note": "private companion provenance note",
-            }))
-            .unwrap(),
-        ),
-        oneiron::federation::Sensitivity::Public,
-    );
-    let body = encode_companion_record_body(&record.created_at(1_777_000_000).unwrap()).unwrap();
-
+fn retired_companion_facet_projection_never_exposes_private_body() {
+    let id = EntityId::from_bytes([0x51; 16]).expect("fixture id");
+    let body = rmp_serde::to_vec_named(&json!({
+        "kind": "persona",
+        "value": {"private_note": "never reveal this identity note"},
+        "provenance": {"value": "never reveal this source"}
+    }))
+    .expect("legacy-shaped FACET");
     for view in [View::Standard, View::Full] {
-        let value = project_entity_parts(&id, ENTITY_TYPE_FACET, 1_777_000_000, &body, view);
-        let rendered = serde_json::to_string(&value).unwrap();
-        assert!(!rendered.contains("private companion projection note"));
-        assert!(!rendered.contains("private companion provenance note"));
-        assert!(
-            value
-                .as_object()
-                .unwrap()
-                .get("provenance")
-                .and_then(Value::as_object)
-                .is_some_and(|provenance| !provenance.contains_key("value")),
-            "projection provenance must omit opaque provenance.value"
-        );
-        let events = value
-            .get("lifecycle_events")
-            .and_then(Value::as_array)
-            .unwrap();
-        assert!(events.iter().any(|event| {
-            event.get("kind") == Some(&json!("created"))
-                && event.get("at") == Some(&json!(1_777_000_000_u64))
-        }));
+        let value = project_entity_parts(&id, ENTITY_TYPE_FACET, 5, &body, view);
+        let rendered = serde_json::to_string(&value).expect("projection");
+        assert!(!rendered.contains("never reveal"));
+        if view == View::Full {
+            assert_eq!(value["redacted"], "retired_companion_facet_body");
+        }
     }
 }
 
 #[test]
-fn companion_register_api_projection_redacts_malformed_body_bytes() {
+fn malformed_facet_projection_redacts_body_bytes() {
     let id = EntityId::from_bytes([0x53; 16]).unwrap();
     let value = project_entity_parts(
         &id,
@@ -236,7 +201,7 @@ fn companion_register_api_projection_redacts_malformed_body_bytes() {
     );
 
     let rendered = serde_json::to_string(&value).unwrap();
-    assert_eq!(value["redacted"], "invalid_companion_register_body");
+    assert_eq!(value["redacted"], "invalid_facet_body");
     assert!(!rendered.contains("private malformed companion bytes"));
     assert!(!value.as_object().unwrap().contains_key("bodyBytes"));
 }

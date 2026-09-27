@@ -12,12 +12,15 @@ pub enum AgentVerb {
     Witness,
     ClaimUpsert,
     Recall,
+    Export,
     Receipts,
     KeyValueGet,
     KeyValuePut,
     KeyValueDelete,
     KeyValueSearch,
     KeyValueNamespaces,
+    Can,
+    Peek,
     TasksAsk,
     TasksWait,
     TasksAnswer,
@@ -40,12 +43,15 @@ impl AgentVerb {
         Self::Witness,
         Self::ClaimUpsert,
         Self::Recall,
+        Self::Export,
         Self::Receipts,
         Self::KeyValueGet,
         Self::KeyValuePut,
         Self::KeyValueDelete,
         Self::KeyValueSearch,
         Self::KeyValueNamespaces,
+        Self::Can,
+        Self::Peek,
         Self::TasksAsk,
         Self::TasksWait,
         Self::TasksAnswer,
@@ -71,12 +77,15 @@ impl AgentVerb {
             Self::Witness => "witness",
             Self::ClaimUpsert => "claim_upsert",
             Self::Recall => "recall",
+            Self::Export => "export",
             Self::Receipts => "receipts",
             Self::KeyValueGet => "key_value_get",
             Self::KeyValuePut => "key_value_put",
             Self::KeyValueDelete => "key_value_delete",
             Self::KeyValueSearch => "key_value_search",
             Self::KeyValueNamespaces => "key_value_namespaces",
+            Self::Can => "can",
+            Self::Peek => "peek",
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksAnswer => "tasks.answer",
@@ -97,12 +106,15 @@ impl AgentVerb {
                 | Self::Witness
                 | Self::ClaimUpsert
                 | Self::Recall
+                | Self::Export
                 | Self::Receipts
                 | Self::KeyValueGet
                 | Self::KeyValuePut
                 | Self::KeyValueDelete
                 | Self::KeyValueSearch
                 | Self::KeyValueNamespaces
+                | Self::Can
+                | Self::Peek
                 | Self::TasksAsk
                 | Self::TasksWait
                 | Self::TasksAnswer

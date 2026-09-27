@@ -27,12 +27,14 @@
 //!
 //! # Scope
 //!
-//! Detection remains T1-only: its sole write is a DIAGNOSTIC entity through
+//! The deterministic runner remains T1-only: its sole write is a DIAGNOSTIC entity through
 //! [`DiagnosticEvent`]'s maintenance-band door. ONE-1395 adds a separate,
 //! propose-only [`Healer`] contract and per-member [`RepairBundle`] review.
 //! Healers receive no vault or executor; the engine stamps invocation authority
 //! before their output exists and recomputes consent from current repair policy.
-//! T2 classifiers, T3 judges and automatic repair remain absent. The narrow BM25
+//! T2 classifiers and T3 judges live in `tiered`; owner-reviewed distillation
+//! lives in `distillation`. Neither can sign a T1 run or apply a repair.
+//! Automatic repair remains absent. The narrow BM25
 //! deindex self-heal is untouched. Receipts and retrieval telemetry remain
 //! READ-ONLY detector inputs; no parallel log stack is introduced.
 
@@ -40,18 +42,23 @@ pub use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
 
 mod admission;
 pub(crate) use admission::validate_diagnostic_event_admission;
+mod centroid_evidence;
 mod consent_detector;
 pub mod tripwires;
+pub use centroid_evidence::CentroidReplay;
 pub use consent_detector::ConsentDeniedDetector;
 
 mod detector_runner;
 mod diagnostic_codec;
+pub mod distillation;
 mod event;
 mod invariant_canonical;
 pub mod scheduled;
+pub mod tiered;
 pub(crate) mod untrusted_text;
 
 pub mod healer_host;
+pub use crate::gate::proposal_observation::{ProposalSubmissionCheck, ProposalSubmissionReceipt};
 mod receipt_serde;
 mod repair;
 
@@ -87,6 +94,8 @@ mod production_tests;
 mod tests;
 #[cfg(test)]
 mod text_tests;
+#[cfg(test)]
+mod tiered_tests;
 #[cfg(test)]
 mod tripwire_tests;
 

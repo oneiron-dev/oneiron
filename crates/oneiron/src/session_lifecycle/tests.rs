@@ -322,6 +322,28 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
     // executor path (attempt payload → partition payload), not a bespoke string.
     let partitions = meso_partition_payloads(&vault);
     assert_eq!(partitions.len(), 1, "exactly one SessionEnd meso round");
+    let mine = AttemptQueue::new(&vault)
+        .list()
+        .expect("attempt list")
+        .into_iter()
+        .find(|record| {
+            decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
+                payload.attempt_type
+                    == crate::dreamer_consolidation::DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE
+            })
+        })
+        .expect("close registered substitution miner");
+    let stamp = vault
+        .dreamer_attempt_authority(mine.id)
+        .expect("authority lookup")
+        .expect("miner shares Dreamer authority");
+    assert_eq!(stamp.facet, "dreamer.consolidation");
+    assert_eq!(
+        vault
+            .dreamer_actor_for_attempt(mine.id)
+            .expect("executor authority"),
+        vault.dreamer_authority().expect("principal")
+    );
     let (partition, turn_ids, watermark) =
         decode_partition_payload(&partitions[0].input).expect("production partition decode");
     assert_eq!(partition.conversation_ref, conversation);
@@ -420,7 +442,10 @@ fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
 
     assert!(
         vault
-            .delete_entity(&deleted)
+            .delete_entity_with_options(
+                &deleted,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )
             .expect("hard-delete planned turn")
     );
     let inserted = seed_dirty_turn(&vault, &conversation, 900);
@@ -908,7 +933,7 @@ fn a_vanished_dirty_snapshot_enqueues_none_of_the_stale_round() {
     // The whole planned snapshot vanishes before the close runs.
     assert!(
         vault
-            .delete_entity(&turn)
+            .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
             .expect("hard-delete planned turn")
     );
 

@@ -6,6 +6,28 @@ use crate::{EntityId, Error, Result};
 type EntityParts = (u8, u64, Vec<u8>);
 
 impl ScopedRead<'_> {
+    /// Recheck a graph-ask source against the current write transaction's
+    /// authority, deletion, NOTE privacy and live-body projection. It cannot
+    /// turn an earlier scoped read into a permission after grants change.
+    pub(crate) fn graph_ask_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityParts>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let Some(raw) = self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+        else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
+        Ok(Some((
+            header.entity_type,
+            header.learned_at,
+            raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        )))
+    }
+
     pub fn get(&self, id: &EntityId) -> Result<ScopedReadResult<Option<Vec<u8>>>> {
         let result = self.get_entity_parts_with_receipt(id, None)?;
         Ok(ScopedReadResult {
@@ -50,7 +72,7 @@ impl ScopedRead<'_> {
         reads: &[(EntityId, ReadMode)],
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
@@ -113,7 +135,7 @@ impl ScopedRead<'_> {
         &self,
         refs: &[(&str, u8, ReadMode)],
     ) -> Result<ScopedReadResult<Vec<Option<crate::HydratedShortId>>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::with_capacity(refs.len());
         let mut suppressed = 0;
