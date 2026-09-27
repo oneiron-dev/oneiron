@@ -2250,3 +2250,56 @@ fn credential_widen_refuses_logged_and_offline_one_shots_even_for_distinct_propo
         );
     }
 }
+
+#[test]
+fn revoked_holder_credential_cannot_land_a_pending_widen() {
+    use crate::authority::HostSlipIssuer;
+    let (_dir, vault, owner) = owner_vault();
+    let agent = entity(0x79);
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent")
+        .unwrap();
+    let proposer = widen_agent_credential(&vault, agent);
+    let bound = action_bound(&agent.to_hex(), "claim.put", &["world:home"]);
+    let proposal = vault
+        .propose_action_widen(
+            &proposer,
+            bound.clone(),
+            owner.principal_ref(),
+            vault.now_recorded_at() + 300,
+        )
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"consent widen agent credential").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = [0x79; 32];
+    claims.parent_id = None;
+    claims.holder_ref = owner.actor().to_hex();
+    claims.actor_class = Some("human".into());
+    claims.expires_at = claims.issued_at + 600;
+    claims.ttl_secs = 600;
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer.binding_proof(&slip, b"accept").unwrap();
+    let verified = vault
+        .verify_capability_slip(&issuer.public_key(), &slip, b"accept", &proof)
+        .unwrap();
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    assert!(
+        vault
+            .accept_credential_widen(
+                &owner,
+                &verified,
+                &proposal.proposal_ref,
+                &proposal.canonical_delta
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .consent_grant(&bound.digest().to_hex())
+            .unwrap()
+            .is_none()
+    );
+}

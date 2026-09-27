@@ -328,8 +328,47 @@ impl Vault {
         reference: &str,
         expected_delta: &[u8],
     ) -> Result<ConsentReceipt> {
+        self.accept_widen_checked(owner, None, reference, expected_delta)
+    }
+
+    /// The HTTP holder route passes its logged capability, rechecked in the
+    /// SAME transaction as grant minting. A revoked slip cannot win a race
+    /// between transport authentication and the actual approval.
+    pub fn accept_credential_widen(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: &VerifiedSlip,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
+        let claims = credential.claims();
+        if claims.holder_ref != owner.actor().to_hex()
+            || claims.actor_class.as_deref() != Some("human")
+            || !credential.allows_verb("core:auth")
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "holder credential does not authorize a widen",
+            )));
+        }
+        self.accept_widen_checked(owner, Some(credential), reference, expected_delta)
+    }
+
+    fn accept_widen_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        credential: Option<&VerifiedSlip>,
+        reference: &str,
+        expected_delta: &[u8],
+    ) -> Result<ConsentReceipt> {
         let key = key(reference)?;
         self.with_write_txn(|txn| {
+            if let Some(credential) = credential
+                && !self.capability_slip_is_live_in_txn(&*txn, credential)?
+            {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "holder credential is no longer live",
+                )));
+            }
             let raw = self
                 .store
                 .vault_meta

@@ -63,10 +63,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/conversations.rs` | src | m | 10 crate-vis | — | — |
 | `src/api/core/batch.rs` | src | s | 11 crate-vis | — | Batch-write DTOs, route handler, and entity-put staging |
 | `src/api/core/hydrate.rs` | src | m | 21 crate-vis | — | Hydrate and short-id hydrate DTOs, routes, and mappers |
-| `src/api/core/mod.rs` | src | s | 6 crate-vis | — | — |
+| `src/api/core/mod.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/core/propose.rs` | src | s | 3 crate-vis | — | Proposal-only cloud leg |
 | `src/api/core/query.rs` | src | m | 17 crate-vis | — | Query/list/capability routes and their paging helpers |
 | `src/api/core/read_receipt.rs` | src | s | 4 crate-vis | — | OpenAPI shape for the engine-owned mandatory read receipt |
+| `src/api/core/widen.rs` | src | s | 3 crate-vis | — | Host-only landing of a frozen widen proposal |
 | `src/api/core/write_shape.rs` | src | s | 19 crate-vis | — | Create-entity DTOs, announcement normalization, and body field helpers |
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | m | 3 crate-vis | — | — |
@@ -161,6 +162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mod.rs` | test | L | 64 crate-vis | — | — |
 | `src/api/tests/org_admin.rs` | test | s | — | — | Organization credentials expose only their fixed administrative action list |
 | `src/api/tests/reactive.rs` | test | m | — | — | Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path |
+| `src/api/tests/relay_widen.rs` | test | s | — | — | Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it |
 | `src/api/tests/retrieval_depth_quality.rs` | test | m | — | — | Memory-reason route depths/spend/validation, raw-search depth tiers, retrieval-quality markers + snapshots |
 | `src/api/tests/retrieval_shaping.rs` | test | m | — | — | Search count-modes, context-pack budgets/response controls, text-search shape, snapshot/sort unit tests |
 | `src/api/tests/run_tree.rs` | test | m | — | — | Run-tree attempt-queue reads, agent_id projection, intervene effects, unbounded-read rejection |

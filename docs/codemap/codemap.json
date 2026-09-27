@@ -10675,7 +10675,7 @@
      "purpose": "Propose-only authority widening",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -41078,7 +41078,7 @@
      "path": "src/api/core/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -41109,6 +41109,16 @@
      "purpose": "OpenAPI shape for the engine-owned mandatory read receipt",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/core/widen.rs",
+     "purpose": "Host-only landing of a frozen widen proposal",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -41983,6 +41993,14 @@
      "notable": [],
      "path": "src/api/tests/reactive.rs",
      "purpose": "Local-first reactive read sync/refresh/ignore/lag/origins plus engine-observer vault write path",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/relay_widen.rs",
+     "purpose": "Route-level separation: proposal is inert, and only the human holder's host-bound slip lands it",
      "surface": {}
     },
     {
@@ -44058,7 +44076,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 160,
+     "files": 162,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44235,8 +44253,8 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 235,
-   "test_files": 98
+   "source_files": 236,
+   "test_files": 99
   },
   "oneiron-uniffi": {
    "files": [
