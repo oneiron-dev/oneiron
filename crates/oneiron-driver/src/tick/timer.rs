@@ -99,7 +99,8 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         }
         .next_deadline()?;
         let queue = AttemptQueue::new(self.vault);
-        let macro_admissible = self.macro_locally_admissible()?;
+        let mut macro_admissible = None;
+        let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
         for attempt in queue.list()? {
             if attempt.state != AttemptState::Queued {
@@ -108,14 +109,39 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
             let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
                 continue;
             };
-            if scope == DreamerConsolidationScope::Macro && !macro_admissible {
-                continue;
+            if scope == DreamerConsolidationScope::Macro {
+                let eligible = match macro_admissible {
+                    Some(value) => value,
+                    None => match self.macro_locally_admissible() {
+                        Ok(value) => {
+                            macro_admissible = Some(value);
+                            value
+                        }
+                        Err(error) => {
+                            macro_error = Some(error);
+                            macro_admissible = Some(false);
+                            continue;
+                        }
+                    },
+                };
+                if !eligible {
+                    continue;
+                }
             }
             let due_secs = attempt.backoff_until.unwrap_or(attempt.created_at);
             let due_at_ms = due_secs.saturating_mul(1_000);
             if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
+        }
+        // An unreadable home designation refuses Macro, but an independent
+        // queued Micro/Meso/maintenance or commitment still makes progress.
+        // With no other work, propagate the error rather than call it quiet.
+        if next.is_none()
+            && commitment.is_none()
+            && let Some(error) = macro_error
+        {
+            return Err(error);
         }
         // The two lanes are independent durable sources; the earlier one arms
         // the timer. A TIE keeps the attempt deadline, so wiring the commitment
@@ -245,7 +271,10 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
 }
 
 fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
-    if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND {
+    if kind == DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND
+    {
+        // Maintenance is vault-local and does not need Macro home election.
         Some(DreamerConsolidationScope::Micro)
     } else if kind == DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND {
         Some(DreamerConsolidationScope::Meso)

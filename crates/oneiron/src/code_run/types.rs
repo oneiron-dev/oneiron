@@ -54,6 +54,8 @@ pub enum SelfCall {
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
+    /// Host-authorized action; a guest request alone carries no owner proof.
+    WakePolicyWrite(SelfWakePolicyWriteCall),
 }
 
 impl SelfCall {
@@ -77,6 +79,7 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
+            Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
         }
     }
 
@@ -133,6 +136,7 @@ pub enum SelfEffect {
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
+    WakePolicyWrite,
 }
 
 impl SelfEffect {
@@ -157,6 +161,7 @@ impl SelfEffect {
             Self::Think => "self.think",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
+            Self::WakePolicyWrite => "dreamer.wake_policy.set",
         }
     }
 
@@ -185,7 +190,8 @@ impl SelfEffect {
             | Self::OutboundFixture
             | Self::TaskDelegate
             | Self::Context
-            | Self::ReportBlocked => None,
+            | Self::ReportBlocked
+            | Self::WakePolicyWrite => None,
         }
     }
 
@@ -193,6 +199,20 @@ impl SelfEffect {
     #[must_use]
     pub const fn is_speech(self) -> bool {
         self.speech_utterance().is_some()
+    }
+}
+
+/// An owner-authorized row update requested by an agent action. The owner
+/// proof is HOST-BOUND on the dispatcher, never supplied in this guest call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelfWakePolicyWriteCall {
+    pub policy: crate::dreamer_wake::DreamerWakePolicy,
+}
+
+impl SelfWakePolicyWriteCall {
+    #[must_use]
+    pub const fn new(policy: crate::dreamer_wake::DreamerWakePolicy) -> Self {
+        Self { policy }
     }
 }
 
@@ -406,6 +426,8 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
+    /// The authorized v1 policy row that was persisted in the vault.
+    WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

@@ -215,7 +215,7 @@ pub(crate) fn validate_predicate(predicate: &str, allow_reserved: bool) -> Resul
 /// reserved `edge`, `skill` or `actor` namespaces (D17, ARCH-0053 §9). Their
 /// writes and lifecycle transitions are owned by dedicated crate-private doors,
 /// so the generic Claim API rejects them.
-pub(super) fn is_reserved_predicate(predicate: &str) -> bool {
+pub(crate) fn is_reserved_predicate(predicate: &str) -> bool {
     is_edge_reserved_predicate(predicate) || is_engine_owned_reserved_predicate(predicate)
 }
 

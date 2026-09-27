@@ -35,7 +35,8 @@ impl DependencyIndex for Vault {
         super::integrity::list_by_source(&self.store, txn, source)
     }
 }
-const CHANGE: &[u8] = b"ports:change:v1:";
+pub(crate) const CHANGE_LOG_KEY_PREFIX: &[u8] = b"ports:change:v1:";
+const CHANGE: &[u8] = CHANGE_LOG_KEY_PREFIX;
 const BY_ENTITY: &[u8] = b"ports:change_entity:v1:";
 const BY_ACTOR: &[u8] = b"ports:change_actor:v1:";
 impl ChangeLogStore for Vault {

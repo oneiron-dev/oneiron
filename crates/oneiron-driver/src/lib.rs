@@ -43,6 +43,6 @@ pub use supervisor::{
 };
 pub use tick::{
     AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,
-    HintSignal, HybridTick, NowMillis, PushTick, Tick, TickPushError, TickSource, TimerTick,
-    WakePusher, WakeSignal,
+    HintSignal, HybridTick, IdleSample, NowMillis, PushTick, Tick, TickPushError, TickSource,
+    TimerTick, WakePolicyTicks, WakePusher, WakeSignal,
 };

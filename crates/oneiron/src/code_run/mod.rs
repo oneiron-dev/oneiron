@@ -54,7 +54,8 @@ pub use self::types::{
     SelfDurableWaitReason, SelfEffect, SelfFailedResult, SelfFixtureEffectCall,
     SelfMemoryEdgeWriteResult, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
     SelfMemorySearchResult, SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall,
-    SelfMemoryWriteResult, SelfSpeechCall, SelfSpeechResult, peer_result_wait,
+    SelfMemoryWriteResult, SelfSpeechCall, SelfSpeechResult, SelfWakePolicyWriteCall,
+    peer_result_wait,
 };
 
 // The flat code_run.rs module used to provide these names to the test module
