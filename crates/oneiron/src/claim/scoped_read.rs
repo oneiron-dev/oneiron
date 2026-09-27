@@ -19,7 +19,8 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 
 mod admission;
 mod edge_admission;
-pub(crate) use admission::ScopedDiaryCandidates;
+pub(crate) use admission::{ReadAdmission, ScopedDiaryCandidates};
+pub(crate) use edge_admission::admit_stored_edge_in;
 mod graph_reads;
 mod note_visibility;
 mod pinned_reads;

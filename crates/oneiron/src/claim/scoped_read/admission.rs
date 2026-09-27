@@ -18,22 +18,22 @@ impl ScopedDiaryCandidates {
 
 /// A private denial and a missing row share the same observable outcome.
 /// Only ordinary policy-denied rows may contribute a receipt count/hint.
-pub(super) enum ReadAdmission<T> {
+pub(crate) enum ReadAdmission<T> {
     Visible(T),
     Suppressed,
     OpaqueAbsent,
 }
 impl<T> ReadAdmission<T> {
-    pub(super) fn into_option(self) -> Option<T> {
+    pub(crate) fn into_option(self) -> Option<T> {
         match self {
             Self::Visible(value) => Some(value),
             Self::Suppressed | Self::OpaqueAbsent => None,
         }
     }
-    pub(super) fn suppression(&self) -> usize {
+    pub(crate) fn suppression(&self) -> usize {
         usize::from(matches!(self, Self::Suppressed))
     }
-    pub(super) fn visible(&self) -> bool {
+    pub(crate) fn visible(&self) -> bool {
         matches!(self, Self::Visible(_))
     }
 }

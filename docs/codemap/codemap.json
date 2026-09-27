@@ -7406,7 +7406,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 9
      }
     },
@@ -7527,7 +7527,7 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 12,
       "re-export": 3,
       "struct": 1
@@ -7574,7 +7574,7 @@
      "path": "src/claim/scoped_read/edge_admission.rs",
      "purpose": "The one scoped graph projection: exact relation + both endpoints, then limits",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -21685,6 +21685,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/diary_admission_matrix.rs",
+     "purpose": "One fixture, multiple phases and caller-observable diary admission doors",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -35590,7 +35598,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -36125,7 +36133,7 @@
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2135,
-   "test_files": 725
+   "test_files": 726
   },
   "oneiron-android": {
    "files": [

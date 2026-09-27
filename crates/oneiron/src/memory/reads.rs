@@ -368,17 +368,29 @@ impl Memory<'_> {
                 if opts.min_weight.is_some_and(|min| edge.weight < min) {
                     continue;
                 }
-                // Endpoint admission is not consent to a DIFFERENT link.
-                if !crate::note::diary_edge_access_in(self.vault, &txn, id, edge.kind, edge.target)?
-                {
+                // The same typed edge door used by scoped graph projections
+                // binds the exact relation and this facade's endpoint reads.
+                let peer = edge.target;
+                let (src, tgt) = if outbound { (id, peer) } else { (peer, id) };
+                let admitted = crate::claim::admit_stored_edge_in(
+                    self.vault,
+                    &txn,
+                    src,
+                    tgt,
+                    edge,
+                    || Ok::<_, MemoryError>(crate::claim::ReadAdmission::Visible(())),
+                    || {
+                        self.entity_view_with_mode_in_txn(&txn, &peer, crate::vault::ReadMode::Live)
+                            .map(|row| match row {
+                                Some(_) => crate::claim::ReadAdmission::Visible(()),
+                                None => crate::claim::ReadAdmission::OpaqueAbsent,
+                            })
+                    },
+                )?;
+                let Some(row) = admitted.into_option() else {
                     continue;
-                }
-                if self
-                    .entity_view_with_mode_in_txn(&txn, &edge.target, crate::vault::ReadMode::Live)?
-                    .is_none()
-                {
-                    continue;
-                }
+                };
+                let edge = row.info();
                 let kind = self
                     .vault
                     .get_entity_type_in_txn(&txn, &edge.target)?

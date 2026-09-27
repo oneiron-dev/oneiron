@@ -7,18 +7,72 @@ use crate::{EntityId, Error, Result};
 use std::collections::HashSet;
 
 /// An edge cannot be constructed from raw adjacency outside this projection.
-pub(super) struct AdmittedEdge(EdgeInfo);
+pub(crate) struct AdmittedEdge(EdgeInfo);
 impl AdmittedEdge {
-    pub(super) fn info(self) -> EdgeInfo {
+    pub(crate) fn info(self) -> EdgeInfo {
         self.0
     }
 }
+/// One authority snapshot supplies source, relation and target admission.
+/// Callers may provide different row-policy doors but cannot yield an edge
+/// without the exact diary-pair check. `relation_target` is the stored
+/// endpoint; inbound views carry the SOURCE in `edge.target` instead.
+/// `OpaqueAbsent` never spends a slot.
+pub(crate) fn admit_stored_edge_in<E: From<Error>>(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    relation_target: EntityId,
+    edge: EdgeInfo,
+    admit_source: impl FnOnce() -> std::result::Result<ReadAdmission<()>, E>,
+    admit_target: impl FnOnce() -> std::result::Result<ReadAdmission<()>, E>,
+) -> std::result::Result<ReadAdmission<AdmittedEdge>, E> {
+    if !crate::note::diary_edge_access_in(vault, txn, source, edge.kind, relation_target)
+        .map_err(E::from)?
+    {
+        return Ok(ReadAdmission::OpaqueAbsent);
+    }
+    match admit_source()? {
+        ReadAdmission::Visible(()) => {}
+        ReadAdmission::Suppressed => return Ok(ReadAdmission::Suppressed),
+        ReadAdmission::OpaqueAbsent => return Ok(ReadAdmission::OpaqueAbsent),
+    }
+    match admit_target()? {
+        ReadAdmission::Visible(()) => Ok(ReadAdmission::Visible(AdmittedEdge(edge))),
+        ReadAdmission::Suppressed => Ok(ReadAdmission::Suppressed),
+        ReadAdmission::OpaqueAbsent => Ok(ReadAdmission::OpaqueAbsent),
+    }
+}
+
 pub(super) struct AdmittedEdgeScan {
     pub(super) source: ReadAdmission<()>,
     pub(super) edges: Vec<AdmittedEdge>,
     pub(super) suppressed: usize,
 }
 impl ScopedRead<'_> {
+    /// Project a known stored edge with both endpoints under this reader's
+    /// policy. Weave and other scoped projections cannot assemble an edge
+    /// from separate endpoint and relation checks.
+    pub(super) fn admit_stored_edge_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        source: EntityId,
+        edge: EdgeInfo,
+    ) -> Result<ReadAdmission<AdmittedEdge>> {
+        let target = edge.target;
+        admit_stored_edge_in(
+            self.vault,
+            txn,
+            source,
+            target,
+            edge,
+            || self.admit_entity_in(txn, policy, filter, &source),
+            || self.admit_entity_in(txn, policy, filter, &target),
+        )
+    }
+
     /// In one read txn, admit source, exact SameAs pair, then target. A
     /// withheld pair never spends a result/scan/dedup slot. In a session the
     /// edge iterator composes its overlay, while consent is base-only and an
@@ -70,21 +124,24 @@ impl ScopedRead<'_> {
             } else {
                 (peer, *center)
             };
-            if !crate::note::diary_edge_access_in(self.vault, txn, src, edge.kind, tgt)? {
-                continue;
-            }
-            match self.admit_entity_in(txn, policy, filter, &peer)? {
-                ReadAdmission::Visible(()) => {
-                    if unique_targets && !seen.insert(peer) {
-                        continue;
-                    }
-                    result.edges.push(AdmittedEdge(edge));
-                    if result.edges.len() >= limit || result.edges.len() >= scan_limit {
-                        break;
-                    }
+            let admitted = admit_stored_edge_in(
+                self.vault,
+                txn,
+                src,
+                tgt,
+                edge,
+                || Ok(ReadAdmission::Visible(())),
+                || self.admit_entity_in(txn, policy, filter, &peer),
+            )?;
+            result.suppressed += admitted.suppression();
+            if let Some(edge) = admitted.into_option() {
+                if unique_targets && !seen.insert(peer) {
+                    continue;
                 }
-                ReadAdmission::Suppressed => result.suppressed += 1,
-                ReadAdmission::OpaqueAbsent => {}
+                result.edges.push(edge);
+                if result.edges.len() >= limit || result.edges.len() >= scan_limit {
+                    break;
+                }
             }
         }
         Ok(result)

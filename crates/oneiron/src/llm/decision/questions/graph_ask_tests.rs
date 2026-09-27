@@ -871,3 +871,70 @@ fn diary_pair_revoked_during_answerer_cannot_be_used_as_graph_evidence() -> crat
     assert!(scoped.get(&b_note)?.value.is_some());
     Ok(())
 }
+
+#[test]
+fn independent_edge_keeps_graph_ask_target_when_same_as_pair_is_empty() -> crate::Result<()> {
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_temp, vault) = open_vault();
+    let (a, actor) = identities(&vault)?;
+    let b = EntityId::now();
+    put_entity(&vault, b, ENTITY_TYPE_PERSON, b"other resident")?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> crate::Result<EntityId> {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "independent edge diary".into(),
+                source_revision_ref: [9; 16],
+                mask: None,
+            })
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        EntityId::from_hex(&receipt.id_hex)
+    };
+    let a1 = diary(&am, a)?;
+    let a2 = diary(&am, a)?;
+    let b_note = diary(&bm, b)?;
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap(); // remains Empty
+    vault
+        .batch()
+        .edge(&a2, EdgeKind::BlockedBy, &b_note, 1.0)
+        .commit()?;
+    let raw = vault.edges_out(&a2)?;
+    let hidden_at = raw
+        .iter()
+        .position(|edge| edge.kind == EdgeKind::SameAs && edge.target == b_note)
+        .unwrap();
+    let independent_at = raw
+        .iter()
+        .position(|edge| edge.kind == EdgeKind::BlockedBy && edge.target == b_note)
+        .unwrap();
+    assert!(
+        hidden_at < independent_at,
+        "Empty edge precedes admitted edge"
+    );
+    let read = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap(),
+    );
+    let direct = read.graph_ask_neighbors(&a2, 4, 4, 16_384)?.unwrap();
+    assert_eq!(direct.iter().filter(|row| row.0 == b_note).count(), 1);
+    let mut answerer = FixedAnswerer::returning(Some(prediction()));
+    let result = run_graph_ask(&vault, a, actor, question(), &[a2], &mut answerer, 29)
+        .map_err(|failure| *failure.error)?;
+    assert_eq!(result.answers.len(), 1);
+    assert_eq!(answerer.contexts.len(), 1);
+    assert_eq!(
+        answerer.contexts[0]
+            .sources
+            .iter()
+            .filter(|source| source.id == b_note)
+            .count(),
+        1
+    );
+    assert!(result.answers[0].decision.evidence.contains(&b_note));
+    Ok(())
+}
