@@ -8,6 +8,7 @@ mod source;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
+pub use screening::PackInstallRules;
 pub use source::PackSource;
 
 pub(crate) fn export_source_body(
@@ -30,9 +31,10 @@ mod admission;
 mod admission_types;
 mod bundled_skills;
 mod schema;
+mod screening;
 pub use admission_types::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
-    PackRuntimeRecipe,
+    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackObservedTool,
+    PackQualification, PackQualifier, PackRuntimeRecipe,
 };
 #[cfg(test)]
 mod admission_tests;

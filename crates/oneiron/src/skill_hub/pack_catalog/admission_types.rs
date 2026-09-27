@@ -18,7 +18,17 @@ pub struct PackQualification {
     pub advisory: String,
     /// Required for connector/code packs; fingerprints a provisioned runtime.
     pub runtime: Option<PackRuntimeRecipe>,
+    /// Host-observed tools from the qualification run, not copied from PACK.md.
+    pub observed_tools: Vec<PackObservedTool>,
 }
+/// Host-observed MCP tool surface; compared with resolved source declarations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackObservedTool {
+    pub name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackRuntimeRecipe {
@@ -36,6 +46,8 @@ pub struct PackInstallAsk {
     pub(super) qualification: PackQualification,
     pub(super) manifest: PackManifest,
     pub(super) surface: HubAskSurface,
+    pub(super) blocked_reason: Option<String>,
+    pub(super) scan_risk: Option<crate::skill_hub::ScanRiskLevel>,
 }
 impl PackInstallAsk {
     pub fn source_id(&self) -> EntityId {
@@ -49,6 +61,13 @@ impl PackInstallAsk {
     }
     pub fn surface(&self) -> HubAskSurface {
         self.surface
+    }
+    pub fn blocked_reason(&self) -> Option<&str> {
+        self.blocked_reason.as_deref()
+    }
+    /// Highest existing hash-bound scanner risk, if any. A signal, not a block.
+    pub fn scan_risk(&self) -> Option<crate::skill_hub::ScanRiskLevel> {
+        self.scan_risk
     }
     pub fn effect_digest(&self) -> EffectDigest {
         self.effect
@@ -79,5 +98,6 @@ pub struct PackInstallReceipt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {
     PendingConsent,
+    Blocked { reason: String },
     Installed(Box<PackInstallReceipt>),
 }

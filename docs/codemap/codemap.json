@@ -28473,7 +28473,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission.rs",
@@ -28484,7 +28484,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -28498,6 +28498,7 @@
       "PackInstallAsk",
       "PackInstallDisposition",
       "PackInstallReceipt",
+      "PackObservedTool",
       "PackQualification",
       "PackQualifier",
       "PackRuntimeRecipe"
@@ -28506,8 +28507,8 @@
      "purpose": "Source-bound qualification, owner asks, and inert installation receipts",
      "surface": {
       "enum": 1,
-      "fn": 5,
-      "struct": 4,
+      "fn": 7,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -28579,7 +28580,7 @@
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -28590,6 +28591,20 @@
      "purpose": "Runtime kind descriptors are exact source files, never caller-supplied hashes",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackInstallRules"
+     ],
+     "path": "src/skill_hub/pack_catalog/screening.rs",
+     "purpose": "Bounded, source-bound install rules for connector tool manifests",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -35267,7 +35282,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35472,7 +35487,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
+   "source_files": 2095,
    "test_files": 718
   },
   "oneiron-android": {

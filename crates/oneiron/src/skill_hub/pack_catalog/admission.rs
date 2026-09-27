@@ -36,6 +36,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let (binding, surface) =
             self.pack_install_binding(&txn, source_id, hub, publisher, &qualification)?;
+        let blocked_reason = self.screen_pack_in_txn(&txn, &source, &qualification)?;
+        let scan_risk = self.pack_scan_risk_in_txn(&txn, source.content_hash())?;
         let effect = ComposedEffect::new(
             EffectFacts::new(format!("pack.install:{binding}"))?
                 .with_undo_fidelity(UndoFidelity::None),
@@ -50,6 +52,8 @@ impl Vault {
             qualification,
             manifest: source.manifest().clone(),
             surface,
+            blocked_reason,
+            scan_risk,
         })
     }
     pub fn approve_pack_install(
@@ -58,13 +62,22 @@ impl Vault {
         owner: &AuthenticatedOwner,
     ) -> Result<ConsentReceipt> {
         self.with_write_txn(|txn| {
-            self.check_pack_install_ask(txn, ask)?;
+            let source = self.check_pack_install_ask(txn, ask)?;
+            if self
+                .screen_pack_in_txn(txn, &source, &ask.qualification)?
+                .is_some()
+            {
+                return Err(invalid("install rule blocks owner approval"));
+            }
             self.approve_once_in_txn(txn, owner, ask.effect)
         })
     }
     pub fn install_pack(&self, ask: &PackInstallAsk) -> Result<PackInstallDisposition> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
+            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &ask.qualification)? {
+                return Ok(PackInstallDisposition::Blocked { reason });
+            }
             let Some(authorization) =
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &ask.effect)?
             else {
@@ -267,6 +280,18 @@ fn validate_qualification(source: &PackSource, result: &PackQualification) -> Re
         return Err(invalid("pack qualification or advisory refused"));
     }
     crate::skill::SkillContentHash::parse_hex(&result.report_hash)?;
+    if result.observed_tools.len() > 256
+        || result.observed_tools.iter().any(|tool| {
+            tool.name.is_empty()
+                || tool.name.len() > 128
+                || tool.description.len() > 16384
+                || serde_json::to_vec(&tool.input_schema).map_or(true, |bytes| {
+                    bytes.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
+                })
+        })
+    {
+        return Err(invalid("observed tool manifest exceeds bounds"));
+    }
     for text in [&result.suite, &result.advisory] {
         crate::batch::secret_scan::scan_metadata_field(text)?;
     }
