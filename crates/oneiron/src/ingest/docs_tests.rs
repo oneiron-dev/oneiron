@@ -262,6 +262,158 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
     Ok(())
 }
 
+fn searchable_docs(
+    docs: &DocsExport,
+) -> Result<(tempfile::TempDir, crate::Vault, DocsImportReceipt, EntityId)> {
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        person,
+        &person.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let request = EntityId::now();
+    let ceiling = DocsImportCeiling {
+        max_pages: 8,
+        max_bytes: 10_000,
+        allow_derivations: true,
+    };
+    vault.approve_once(
+        &owner,
+        vault
+            .docs_import_effect(&owner, request, docs, ceiling)?
+            .digest(),
+    )?;
+    let receipt =
+        vault.ingest_docs_export(&owner, request, docs, ceiling, Some(&Summary), None, 2)?;
+    grant_core_read(&vault, "owner")?;
+    Ok((dir, vault, receipt, person))
+}
+
+#[test]
+fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> {
+    let (_dir, vault, docs, actor_id) = searchable_docs(&document())?;
+    let actor = crate::WriteActor::new(actor_id, crate::EdgeActorClass::Human);
+    let conv = EntityId::now();
+    vault.put_entity(
+        &conv,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("conversation"),
+    )?;
+    crate::conversation_dag::test_support::put_dag_test_policy(&vault, actor, true)?;
+    let turn = vault
+        .append_dag_record(&crate::conversation_dag::fixtures::input(
+            conv, None, true, actor,
+        ))?
+        .id;
+    let dag = vault.mint_dag_scope_summary(
+        &crate::conversation_dag::fixtures::scope(
+            conv,
+            crate::conversation_dag::ScopePath::Canonical,
+            false,
+        ),
+        "Gravity in the DAG",
+        actor,
+    )?;
+    // Promotion keeps the witness's MessagePack `content` body and matching
+    // text index entry; neither belongs to the document-summary schema.
+    let session = EntityId::now();
+    vault
+        .batch()
+        .put(
+            &session,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({"content": "Gravity in the session"})).unwrap(),
+        )
+        .text(&session, &[("content", "Gravity in the session")])
+        .commit()?;
+    assert!(vault.get(&turn)?.is_some());
+    assert!(vault.get(&dag)?.is_some());
+    assert!(vault.get(&session)?.is_some());
+    vault.put_vector(&session, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&dag, &[1.0, 0.0, 0.0, 0.0])?;
+    grant_core_read(&vault, "owner")?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    // Both alien summaries outrank a lexical-only doc hit with this vector.
+    // Filtering after `limit` would leave no document result.
+    let hits =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 1)?;
+    assert_eq!(hits.value.len(), 1);
+    assert!(docs.summary_refs.contains(&hits.value[0].reference));
+    for hit in reader.search_docs_summaries("Gravity", 16)?.value {
+        if hit.entity_type == crate::registry::ENTITY_TYPE_SUMMARY {
+            assert!(docs.summary_refs.contains(&hit.reference));
+            assert_eq!(
+                reader
+                    .expand_doc_ladder_ref(&hit.reference)?
+                    .value
+                    .unwrap()
+                    .level,
+                DocsExpansionLevel::Summary
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn fused_receipt_adds_disjoint_lexical_and_vector_exclusions() -> Result<()> {
+    let mut pages = document();
+    pages.pages.push(DocsPage {
+        page_id: "other-page".into(),
+        path: "other.md".into(),
+        text: "# Orbit\n\nOrbit describes motion.".into(),
+    });
+    let (_dir, vault, docs, _) = searchable_docs(&pages)?;
+    let orbit = EntityId::from_hex(&docs.summary_refs[2])?;
+    vault.put_vector(&orbit, &[1.0, 0.0, 0.0, 0.0])?;
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    let only = |kind| crate::gate::RetrievalFilter {
+        entity_types: Some(std::collections::BTreeSet::from([kind])),
+        ..Default::default()
+    };
+    let summary = only(crate::registry::ENTITY_TYPE_SUMMARY);
+    let chunk = only(crate::registry::ENTITY_TYPE_ASSET_TEXT);
+    let lexical_summary = reader
+        .search_text("Gravity", 16, Some(&summary))?
+        .receipt
+        .suppressed_count;
+    let lexical_chunk = reader
+        .search_text("Gravity", 16, Some(&chunk))?
+        .receipt
+        .suppressed_count;
+    let vector_summary = reader
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 16, Some(&summary))?
+        .receipt
+        .suppressed_count;
+    let vector_chunk = reader
+        .search_vector(&[1.0, 0.0, 0.0, 0.0], 16, Some(&chunk))?
+        .receipt
+        .suppressed_count;
+    assert!(lexical_chunk > 0 && vector_chunk > 0);
+    assert!(lexical_chunk + vector_chunk > lexical_chunk.max(vector_chunk));
+    let fused =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 16)?;
+    assert_eq!(
+        fused.receipt.suppressed_count,
+        lexical_summary + lexical_chunk + vector_summary + vector_chunk
+    );
+    Ok(())
+}
+
 #[test]
 fn blob_birth_tree_reuses_unchanged_blocks_but_never_hides_case_edits() -> Result<()> {
     let (_dir, vault) =

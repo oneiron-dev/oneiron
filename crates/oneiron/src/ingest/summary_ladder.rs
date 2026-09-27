@@ -72,7 +72,13 @@ impl ScopedRead<'_> {
     ) -> Result<ScopedReadResult<Vec<DocsSummaryHit>>> {
         let requested = docs_filter([ENTITY_TYPE_SUMMARY, ENTITY_TYPE_ASSET_TEXT]);
         let mut ranks = BTreeMap::<EntityId, (u8, f32)>::new();
-        let mut lane_suppressed = [0usize; 2];
+        let mut suppressed = 0usize;
+        // The SUMMARY kind is shared with session and DAG producers. Fetch the
+        // complete bounded index candidate set so those rows cannot fill the
+        // page before document membership is checked below.
+        let candidates_limit =
+            self.vault()
+                .scoped_read_search_candidate_limit(limit, true, vector.is_some())?;
         // Separate kind lanes avoid a dominant index hiding candidates from the
         // other level before fusion. Distinct lexical/vector ranks can accumulate
         // on the *same* entity, unlike two disjoint kind-only lists.
@@ -81,12 +87,11 @@ impl ScopedRead<'_> {
             for semantic in [false, true] {
                 let results = if semantic {
                     let Some(vector) = vector else { continue };
-                    self.search_vector(vector, limit, Some(&kind_filter))?
+                    self.search_vector(vector, candidates_limit, Some(&kind_filter))?
                 } else {
-                    self.search_text(query, limit, Some(&kind_filter))?
+                    self.search_text(query, candidates_limit, Some(&kind_filter))?
                 };
-                let lane = usize::from(kind == ENTITY_TYPE_ASSET_TEXT);
-                lane_suppressed[lane] = lane_suppressed[lane].max(results.receipt.suppressed_count);
+                suppressed = suppressed.saturating_add(results.receipt.suppressed_count);
                 let weight = match (kind, semantic) {
                     (ENTITY_TYPE_SUMMARY, true) => 1.4,
                     (ENTITY_TYPE_SUMMARY, false) => 1.1,
@@ -107,7 +112,7 @@ impl ScopedRead<'_> {
             .collect();
         let filtered = self.filter_scored_entities_requested(candidates, Some(&requested))?;
         let mut receipt = filtered.receipt;
-        receipt.add_suppressed(lane_suppressed.into_iter().sum());
+        receipt.add_suppressed(suppressed);
         let mut rows = filtered.value;
         rows.sort_by(|a, b| {
             b.score
@@ -118,7 +123,6 @@ impl ScopedRead<'_> {
                 })
                 .then_with(|| a.id.cmp(&b.id))
         });
-        rows.truncate(limit);
         // The projection reads only summary bodies. A fresh scoped point read
         // rechecks authority, and a withdrawn hit is removed rather than leaked.
         let summary_ids = rows
@@ -144,10 +148,24 @@ impl ScopedRead<'_> {
                     continue;
                 }
                 let decoded = crate::batch::export::redacted_memory_body(&body);
-                Some(text(&decoded)?.to_owned())
+                // Type 5 is shared: neither a session summary's `content` nor
+                // a DAG scope summary's `text` belongs to a docs ladder.
+                if decoded["derivation"]["derived_kind"] != "summary"
+                    || decoded["derivation"]["source"] != "imported"
+                    || decoded["derivation"]["source_ref"].as_str().is_none()
+                {
+                    continue;
+                }
+                let Some(text) = decoded["text"].as_str() else {
+                    continue;
+                };
+                Some(text.to_owned())
             } else {
                 None
             };
+            if value.len() == limit {
+                break;
+            }
             value.push(DocsSummaryHit {
                 reference: row.id.to_hex(),
                 entity_type: kind,
