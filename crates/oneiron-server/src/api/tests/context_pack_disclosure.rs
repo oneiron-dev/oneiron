@@ -5,18 +5,7 @@ use oneiron::federation::{ScopeAxis, ScopeId};
 
 #[tokio::test]
 async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
-    // Persisted retrieval evidence is opt-in after the retrieval audit (#997).
-    let (_dir, server) = test_server_with_vault_config(
-        SyncServerConfig {
-            auth_secret: Some("secret".to_owned()),
-            ..Default::default()
-        },
-        {
-            let mut config = oneiron::VaultConfig::device();
-            config.retrieval_telemetry_capture = true;
-            config
-        },
-    );
+    let (_dir, server) = auth_test_server();
     let (batch_status, batch_body) = route_json_auth(
         server.clone(),
         json_request(

@@ -219,14 +219,9 @@ pub(super) fn test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
 pub(super) fn test_server_with_config(
     config: SyncServerConfig,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
-    test_server_with_vault_config(config, oneiron::VaultConfig::device())
-}
-
-pub(super) fn test_server_with_vault_config(
-    config: SyncServerConfig,
-    vault_config: oneiron::VaultConfig,
-) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
