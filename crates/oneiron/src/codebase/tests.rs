@@ -1243,6 +1243,471 @@ fn local_repo_ingest_does_not_persist_blobs_for_declared_secret_paths() -> Resul
 }
 
 #[test]
+fn local_repo_ingest_rechecks_custody_after_first_pass_before_any_write() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let late_bytes = b"pub fn late_declared_symbol() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/late.rs",
+        late_bytes,
+        "add late secret source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let provider = NoopHostedMediaHashMatchProvider;
+    let result = vault.ingest_local_repo_with_after_first_pass(
+        "project.alpha",
+        &config,
+        "HEAD",
+        (TimeRange { start: 10, end: 10 }, 11),
+        &provider,
+        || {
+            vault.register_secret(SecretCustodyRecord {
+                schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+                name: "late-declaration".to_owned(),
+                class: CustodyClass::CustodyPortable,
+                device_only: false,
+                value_bytes: b"late registered fixture".to_vec(),
+                status: SecretCustodyStatus::Active,
+                registered_at: 1,
+                rotated_at: None,
+                rotation_generation: 0,
+                bindings: vec![],
+                manifest_ref: "secrets.toml".to_owned(),
+                declared_paths: vec!["src/late.rs".to_owned()],
+                policy_floor_snapshot: SecretCustodyFloor::default(),
+            })?;
+            Ok(())
+        },
+    )?;
+    let stored = vault
+        .get_codebase_snapshot(&result.code_artifact_id)?
+        .expect("atomic filtered manifest");
+    assert_eq!(stored, result.snapshot);
+    assert!(stored.files.iter().all(|entry| entry.path != "src/late.rs"));
+    let report = vault
+        .get_codebase_snapshot_custody_report(&stored.fork_hash)?
+        .expect("final writer report");
+    assert_eq!(report.excluded_secret_paths, ["src/late.rs"]);
+    let late_asset = codebase_asset_entity_id(blake3::hash(late_bytes).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&late_asset)?, None);
+    assert!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "late_declared_symbol")?
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .code_symbol_definitions(&result.code_artifact_id, "answer")?
+            .len(),
+        1
+    );
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_ASSET)?, 6);
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_reclaims_an_old_unfiltered_excluded_asset() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let residue = b"pub fn legacy_excluded_symbol() -> u8 { 9 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/legacy.rs",
+        residue,
+        "add old unfiltered source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let asset_id = codebase_asset_entity_id(blake3::hash(residue).as_bytes())?;
+    vault
+        .batch()
+        .put(
+            &asset_id,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            2,
+            residue,
+        )
+        .commit()?;
+    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "old-unfiltered-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"legacy declared fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/legacy.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    assert_eq!(vault.get_entity_type(&asset_id)?, None);
+    assert_eq!(
+        vault.get_codebase_snapshot(&result.code_artifact_id)?,
+        Some(result.snapshot)
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_reclaims_excluded_asset_from_older_commit() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let residue = b"pub fn legacy_excluded_symbol() -> u8 { 9 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/legacy.rs",
+        residue,
+        "add legacy source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let asset_id = codebase_asset_entity_id(blake3::hash(residue).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")?,
+        Some(residue.to_vec()),
+    );
+
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "legacy-commit-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"legacy declared fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/legacy.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    commit_test_file(
+        repo_dir.path(),
+        "Cargo.toml",
+        b"[package]\nname = \"updated\"\n",
+        "change other file",
+    )?;
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    assert_ne!(first.snapshot.repo_ref, second.snapshot.repo_ref);
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|file| file.path != "src/legacy.rs")
+    );
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("filtered report");
+    assert_eq!(report.excluded_secret_paths, ["src/legacy.rs"]);
+    assert_eq!(vault.get_entity_type(&asset_id)?, None);
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")
+            .expect_err("excluded old body cannot be read")
+            .kind(),
+        ErrorKind::EntityNotFound,
+    );
+    Ok(())
+}
+
+fn assert_historical_declared_asset_reclaimed(replacement: Option<&[u8]>) -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let old_body = b"pub fn old_declared_symbol() -> u8 { 9 }\n";
+    commit_test_file(repo_dir.path(), "src/legacy.rs", old_body, "add old source")?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let old_asset = codebase_asset_entity_id(blake3::hash(old_body).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&old_asset)?, Some(ENTITY_TYPE_ASSET));
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "historical-declaration".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/legacy.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    if let Some(bytes) = replacement {
+        commit_test_file(
+            repo_dir.path(),
+            "src/legacy.rs",
+            bytes,
+            "replace old source",
+        )?;
+    } else {
+        run_git(repo_dir.path(), &["rm", "src/legacy.rs"])?;
+        run_git(repo_dir.path(), &["commit", "-m", "remove old source"])?;
+    }
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("filtered report");
+    assert_eq!(
+        report.excluded_secret_paths,
+        if replacement.is_some() {
+            vec!["src/legacy.rs"]
+        } else {
+            vec![]
+        }
+    );
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|file| file.path != "src/legacy.rs")
+    );
+    assert_eq!(vault.get_entity_type(&old_asset)?, None);
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")
+            .expect_err("historical asset must be reclaimed")
+            .kind(),
+        ErrorKind::EntityNotFound,
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_reclaims_changed_historical_declared_asset() -> Result<()> {
+    assert_historical_declared_asset_reclaimed(Some(
+        b"pub fn changed_declared_symbol() -> u8 { 8 }\n",
+    ))
+}
+
+#[test]
+fn local_repo_ingest_reclaims_removed_historical_declared_asset() -> Result<()> {
+    assert_historical_declared_asset_reclaimed(None)
+}
+
+#[test]
+fn local_repo_ingest_keeps_excluded_hash_used_by_another_snapshot() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let shared = b"pub fn shared_safe_source() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/declared.rs",
+        shared,
+        "add shared source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let asset_id = codebase_asset_entity_id(blake3::hash(shared).as_bytes())?;
+    vault
+        .batch()
+        .put(
+            &asset_id,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            2,
+            shared,
+        )
+        .commit()?;
+    let other_id = entity_id(179);
+    let other_repo = repo_ref_b();
+    vault.put_code_artifact(
+        &other_id,
+        &code_body(&other_repo),
+        TimeRange { start: 1, end: 1 },
+        2,
+    )?;
+    vault.put_codebase_snapshot(
+        &other_id,
+        &CodebaseSnapshot::new(
+            "project.other",
+            other_repo,
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
+            vec![CodebaseFileEntry::new(
+                "src/safe.rs",
+                *blake3::hash(shared).as_bytes(),
+                shared.len() as u64,
+            )],
+        )?,
+        &|_| Some(shared.to_vec()),
+    )?;
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "shared-source-declaration".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/declared.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let result = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    assert!(
+        result
+            .snapshot
+            .files
+            .iter()
+            .all(|file| file.path != "src/declared.rs")
+    );
+    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&other_id)?
+            .expect("other snapshot")
+            .read_file("src/safe.rs")?,
+        Some(shared.to_vec()),
+    );
+    Ok(())
+}
+
+#[test]
+fn local_repo_ingest_preserves_clean_historical_body_at_newly_quarantined_path() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let clean = b"pub fn safe_historical_source() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/declared.rs",
+        clean,
+        "add declared source",
+    )?;
+    commit_test_file(
+        repo_dir.path(),
+        "src/safe.rs",
+        clean,
+        "add shared safe source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let clean_asset = codebase_asset_entity_id(blake3::hash(clean).as_bytes())?;
+    assert_eq!(
+        vault.get_entity_type(&clean_asset)?,
+        Some(ENTITY_TYPE_ASSET)
+    );
+
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "historical-shared-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/declared.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    run_git(repo_dir.path(), &["rm", "src/declared.rs"])?;
+    run_git(repo_dir.path(), &["commit", "-m", "remove declared source"])?;
+    let detected = format!("pub const TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");
+    commit_test_file(
+        repo_dir.path(),
+        "src/safe.rs",
+        detected.as_bytes(),
+        "replace safe source",
+    )?;
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("quarantine report");
+    assert_eq!(report.quarantined_paths, ["src/safe.rs"]);
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|entry| entry.path != "src/safe.rs")
+    );
+    assert_eq!(
+        vault.get_entity_type(&clean_asset)?,
+        Some(ENTITY_TYPE_ASSET)
+    );
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/safe.rs")?,
+        Some(clean.to_vec()),
+    );
+    let detected_asset = codebase_asset_entity_id(blake3::hash(detected.as_bytes()).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&detected_asset)?, None);
+    Ok(())
+}
+
+#[test]
 fn local_repo_ingest_sees_custody_registered_before_writer_and_keeps_blob_out() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let newly_declared = b"pub fn newly_declared_symbol() -> u8 { 7 }\n";
