@@ -80,7 +80,7 @@ impl Memory<'_> {
                 Some(route) => self
                     .vault()
                     .get_channel_identity_in_txn(&txn, &route.channel_identity_ref)?
-                    .map(|identity| identity.address_or_handle),
+                    .map(|identity| identity.address_or_handle().to_owned()),
                 None => None,
             };
             recipients.push(TaskAskPreflightRecipient {
