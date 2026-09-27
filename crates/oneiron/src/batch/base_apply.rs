@@ -595,11 +595,11 @@ pub(super) fn apply_ops_with_origin(
                 learned_at,
             } => {
                 // Hand each id its own preflight receipt identity, in the
-                // order the preflight recorded them, so the unconsumed-identity
-                // invariant below stays exact.
+                // order the preflight recorded them. The nested ClaimCandidate
+                // apply consumes each marker; consuming it again here would
+                // abort a successful lapse with a missing-marker error.
                 let lapse_decision_ids =
                     take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
-                let consumed_ids = preflight_decisions(&lapse_decision_ids);
                 crate::commitment::lapse_commitments_in_txn(
                     store,
                     config,
@@ -612,7 +612,6 @@ pub(super) fn apply_ops_with_origin(
                     write_policy.as_ref(),
                     lapse_decision_ids,
                 )?;
-                consume_preflight_decisions(store, wtxn, consumed_ids.into_iter().map(Some))?;
             }
         }
     }
