@@ -2051,7 +2051,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_tests.rs",
@@ -10392,7 +10392,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WidenKind",
@@ -10402,7 +10402,7 @@
      "purpose": "Propose-only authority widening",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
