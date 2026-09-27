@@ -23,7 +23,27 @@ pub(crate) fn resolve_policy_manifest(
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
+    // The shipped manifest supplies bootstrap policy even when a replacement
+    // omits optional count rows; a peer cannot replace these trusted defaults.
+    let shipped = decode_policy_manifest(&crate::gate::default_manifest::default_policy_manifest())
+        .ok_or(Error::InvariantViolation(
+            "shipped sheet-answer policy manifest invalid",
+        ))?;
+    resolution.sheet_answer_default_max_count = shipped
+        .sheet_answer_limits
+        .iter()
+        .find(|row| row.artifact_ref.is_none() && row.sheet.is_none())
+        .map(|row| row.max_count);
+    resolution.sheet_answer_precedence = shipped.sheet_answer_precedence;
+    if resolution.sheet_answer_default_max_count.is_none()
+        || resolution.sheet_answer_precedence.is_none()
+    {
+        return Err(Error::InvariantViolation(
+            "shipped sheet-answer policy rows missing",
+        ));
+    }
     let mut untrusted_source_rows = Vec::new();
+    let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
     let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
     let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
@@ -62,6 +82,7 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
+                    untrusted_sheet_limits.extend(decoded.sheet_answer_limits);
                     continue;
                 }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
@@ -170,6 +191,9 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
+                resolution
+                    .sheet_answer_limits
+                    .extend(decoded.sheet_answer_limits);
                 if let Some(threshold) = decoded.proposal_check_threshold {
                     resolution.proposal_check_threshold = Some(
                         resolution
@@ -210,6 +234,7 @@ pub(crate) fn resolve_policy_manifest(
 
     resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
 
+    resolution.untrusted_sheet_answer_limits = untrusted_sheet_limits;
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
     }
