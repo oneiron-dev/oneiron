@@ -79,6 +79,7 @@ impl SessionReadSet {
         ChangedLine {
             overflow: changed.len().saturating_sub(cap),
             rows: changed.into_iter().take(cap).collect(),
+            ..ChangedLine::default()
         }
     }
 

@@ -49,7 +49,14 @@ impl Vault {
                 TimeRange { start: at, end: at },
                 at,
             )?;
-            self.write_hub_import_receipt_in_txn(txn, &id, hash, &skill_ref, Some(publisher), at)?;
+            self.write_hub_import_receipt_in_txn(
+                txn,
+                &id,
+                hash,
+                &skill_ref,
+                Some((publisher, "pack_bundled_candidate", "")),
+                at,
+            )?;
             self.store.vault_meta.put(
                 txn,
                 &pack_skill_alias_key(&id, &skill_ref)?,
