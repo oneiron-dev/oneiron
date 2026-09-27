@@ -491,6 +491,102 @@ fn unsupported_connector_verb_is_typed_and_actionable() {
 }
 
 #[test]
+fn provider_reaction_manifests_declare_only_real_tapback_rails_and_vocabularies() {
+    // LINE's Messaging API has stickers (messages), not a reaction-to-message call.
+    // Official Messages for Business likewise has no tapback API. Neither may
+    // advertise a react verb just because a human client can show reactions.
+    for channel in ["line", "imessage_mfb", "email"] {
+        let manifest = outbound_capability_manifest(channel).expect("registered connector");
+        assert!(!manifest.verbs.iter().any(|verb| verb.kind == "react"));
+        let error = outbound_verb_contract(channel, "react").expect_err("no tapback API");
+        assert_eq!(error.connector(), channel);
+        assert_eq!(error.verb(), Some("react"));
+        assert!(error.connector_known());
+        assert!(!error.supported_verbs().contains(&"react".to_owned()));
+    }
+
+    let bridge = outbound_verb_contract("imessage_bridge", "react").expect("bridge tapback");
+    assert_eq!(bridge.channel_call, "local_messages_tapback");
+    assert_eq!(
+        bridge.delivery_semantics.kind,
+        OutboundDeliverySemanticsKind::ReactionTarget
+    );
+    assert_eq!(
+        bridge.interruption_class,
+        OutboundInterruptionClass::Ambient
+    );
+    assert_eq!(
+        bridge.capability_vs_permission.permission,
+        OutboundPermissionState::Conditional
+    );
+    assert_eq!(
+        bridge.params["emoji_vocabulary"],
+        serde_json::json!(["👍", "👎", "❤️", "😂", "‼️", "❓"])
+    );
+
+    let app = outbound_verb_contract("in_app", "react").expect("first-party reaction");
+    assert_eq!(app.channel_call, "reaction.put");
+    assert_eq!(
+        app.delivery_semantics.kind,
+        OutboundDeliverySemanticsKind::ReactionTarget
+    );
+    assert_eq!(app.interruption_class, OutboundInterruptionClass::Ambient);
+    assert_eq!(app.params["emoji_vocabulary"], "unicode_emoji");
+
+    for (channel, vocabulary) in [
+        ("telegram", "chat_available_reactions"),
+        ("slack", "workspace_unicode_and_custom_names"),
+        ("discord", "unicode_and_permitted_custom"),
+    ] {
+        let contract = outbound_verb_contract(channel, "react").expect("existing react verb");
+        assert_eq!(contract.params["emoji_vocabulary"], vocabulary);
+    }
+}
+
+#[test]
+fn dispatch_rejects_unsupported_tapback_before_transport() {
+    let (_tmp, vault) = temp_vault();
+    let agent = entity(0x53);
+    vault
+        .put_entity(
+            &agent,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            b"dispatch actor",
+        )
+        .expect("seed dispatch actor");
+    let mut executor = RecordingExecutor::default();
+    for channel in ["line", "imessage_mfb", "email"] {
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("agent-alpha", "react", channel, "message:target"),
+            OutboundIntentTrigger::agent_immediate("session:tapback"),
+        );
+        let request = OutboundDispatchRequest::new(
+            format!("outbound:intent:{channel}-tapback"),
+            format!("intent:{channel}-tapback"),
+            intent,
+            OutboundDispatchActor::agent(entity(0x53)),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            1_020,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        let error = vault
+            .dispatch_outbound_intent(request, &mut executor)
+            .expect_err("unsupported tapback must fail before transport");
+        match error {
+            OutboundDispatchError::UnsupportedCapability(error) => {
+                assert_eq!(error.connector(), channel);
+                assert_eq!(error.verb(), Some("react"));
+                assert!(error.connector_known());
+            }
+            other => panic!("expected typed unsupported capability, got {other}"),
+        }
+    }
+    assert!(executor.calls.is_empty());
+}
+
+#[test]
 fn connector_only_discovery_errors_do_not_fabricate_a_verb() {
     let error = unsupported_outbound_connector("unknown-connector");
 
