@@ -8,6 +8,7 @@
     ("memory-put-claim", "self.memory.put_claim"),
     ("memory-supersede-claim", "self.memory.supersede_claim"),
     ("memory-put-edge", "self.memory.put_edge"),
+    ("report-blocked", "self.report_blocked"),
     ("ask", "ask"),
     ("speak", "self.speak"),
     ("think", "self.think"),

@@ -175,6 +175,13 @@ fn link<H: bindings::GuestImports + 'static>(
                 unary!(root, wit, memory_supersede_claim, SupersedeInput);
             }
             "self.memory.put_edge" => unary!(root, wit, memory_put_edge, EdgeInput),
+            "self.report_blocked" => root.func_wrap(
+                wit,
+                |mut cx: StoreContextMut<'_, RequestState<H>>,
+                 (category, detail): (String, String)| {
+                    Ok((cx.data_mut().host.report_blocked(category, detail),))
+                },
+            )?,
             "ask" => unary!(root, wit, ask, PromptInput),
             "self.speak" => unary!(root, wit, speak, TextInput),
             "self.think" => unary!(root, wit, think, TextInput),

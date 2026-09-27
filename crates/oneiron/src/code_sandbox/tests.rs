@@ -173,6 +173,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
+            "self.report_blocked",
             "ask",
             "self.speak",
             "self.think",
@@ -191,6 +192,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             "self.memory.put_claim",
             "self.memory.supersede_claim",
             "self.memory.put_edge",
+            "self.report_blocked",
         ]
     );
     let write_effects = first_party
@@ -204,6 +206,7 @@ fn code_sandbox_foreign_and_untrusted_link_zero_write_imports() {
             SelfEffect::MemoryPutClaim,
             SelfEffect::MemorySupersedeClaim,
             SelfEffect::MemoryPutEdge,
+            SelfEffect::ReportBlocked,
         ]
     );
     assert_eq!(
@@ -281,6 +284,7 @@ fn code_sandbox_plain_js_prompt_surface_is_docs_only_and_host_bound() {
     assert!(dts.contains("function put_claim"));
     assert!(dts.contains("function supersede_claim"));
     assert!(dts.contains("function put_edge"));
+    assert!(dts.contains("function report_blocked"));
     assert!(dts.contains("declare function ask"));
     assert!(
         contract

@@ -12,7 +12,7 @@
   },
   "patched_quickjs_sha256": "81d6e4a91d3167b307b7feca196da09bfecde996ebe360499d0f40d3c9c5640c",
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
-  "wit_sha256": "d89a2c4a8e8db57b74a2ca196b64146688886bec42cfe156d0c2cce0a5a33d61",
+  "wit_sha256": "cc56830ebe7fa7ed4271620387a00f1eda8c96d801c516a2324a70bf02691296",
   "sources": {
     "guest.c": "aef63e7b6e6f5cf3946db2cc6dcef69de2c943d54e2ee48ce137e9309772f1c0",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
@@ -23,13 +23,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "86f3613c0ed10bc80e3070af063907d22907c3725849c626862f5b6d569008fc",
-      "bytes": 1039693
+      "sha256": "97005420f5d9731c823b63d52acbf36cb2448d11bb85bffc05ca3bdc985bdf35",
+      "bytes": 1040889
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "991698cf86e48940d565f89ebf467ebf6b7b0dc7cce73d5742115c4d50835997",
-      "bytes": 1030751
+      "sha256": "face2d82aca73880707841f5f8035060019645a2fd4d10abba58daef0aec888d",
+      "bytes": 1031027
     }
   }
 }
