@@ -94,9 +94,9 @@ impl L2BaseCache {
     }
 }
 
-/// Select vault-owned user and configured persona identities. A generic PERSON
-/// row is not proof that it is this context's user. Evidence from these
-/// identities still passes every retrieval, disclosure, and scoped-read gate.
+/// Select the vault-owned user identity. A generic PERSON row is not proof
+/// that it is this context's user. Its evidence still passes every retrieval,
+/// disclosure, and scoped-read gate.
 pub(super) fn default_l2_subjects(
     vault: &Vault,
     reader: Option<&ScopedRead<'_>>,
@@ -127,22 +127,6 @@ pub(super) fn default_l2_subjects(
         subjects.insert(person);
     }
     drop(txn);
-    // Personal persona records belong only to the caller's person; neutral
-    // personas are vault-wide. Shared-vault personas require explicit routing.
-    for (key, _) in vault.companion_register()?.iter() {
-        let in_scope = match &key.scope {
-            crate::companion::CompanionScope::Neutral => true,
-            crate::companion::CompanionScope::Personal { person_ref } => {
-                principal == Some(*person_ref)
-            }
-            crate::companion::CompanionScope::SharedVault { .. } => false,
-        };
-        if in_scope
-            && let crate::companion::CompanionSubject::Persona { persona_ref } = &key.subject
-        {
-            subjects.insert(*persona_ref);
-        }
-    }
     if subjects.len() > 8 {
         // An automatically discovered optional prefix must not turn an
         // otherwise valid context pack into a failed read. Explicit selections
