@@ -31,6 +31,7 @@ pub mod manifest;
 mod model_id;
 mod protocol;
 pub mod registry;
+pub mod routing;
 mod safeguard;
 pub mod score_scraper;
 mod step;

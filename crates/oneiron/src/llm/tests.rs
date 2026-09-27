@@ -106,10 +106,10 @@ fn tier_precedence_resolves_in_contract_order() {
     let global = ModelTierRef("global".to_owned());
     let purpose = ModelTierRef("purpose".to_owned());
     let vault = ModelTierRef("vault".to_owned());
-    let per_call = ModelTierRef("per-call".to_owned());
+    let per_seat = ModelTierRef("seat".to_owned());
 
     let mut precedence = TierPrecedence {
-        per_call: None,
+        per_seat: None,
         vault_policy: None,
         purpose_default: None,
         global_default: global.clone(),
@@ -122,8 +122,8 @@ fn tier_precedence_resolves_in_contract_order() {
     precedence.vault_policy = Some(vault.clone());
     assert_eq!(precedence.resolved(), &vault);
 
-    precedence.per_call = Some(per_call.clone());
-    assert_eq!(precedence.resolved(), &per_call);
+    precedence.per_seat = Some(per_seat.clone());
+    assert_eq!(precedence.resolved(), &per_seat);
 }
 
 #[test]
@@ -402,9 +402,9 @@ fn semantic_mutations(request: &LlmRequest) -> Vec<(&'static str, LlmRequest)> {
     }
     mutations.push(("fallback_config", fallback_config));
 
-    let mut tier_per_call = request.clone();
-    tier_per_call.envelope.tier.per_call = Some(ModelTierRef("large".to_owned()));
-    mutations.push(("tier_per_call", tier_per_call));
+    let mut tier_per_seat = request.clone();
+    tier_per_seat.envelope.tier.per_seat = Some(ModelTierRef("large".to_owned()));
+    mutations.push(("tier_per_seat", tier_per_seat));
 
     let mut tier_vault = request.clone();
     tier_vault.envelope.tier.vault_policy = Some(ModelTierRef("vault-large".to_owned()));
@@ -493,7 +493,7 @@ fn sample_envelope() -> CallEnvelope {
             },
         },
         tier: TierPrecedence {
-            per_call: None,
+            per_seat: None,
             vault_policy: Some(ModelTierRef("cheap".to_owned())),
             purpose_default: Some(ModelTierRef("tiny".to_owned())),
             global_default: ModelTierRef("standard".to_owned()),
@@ -714,9 +714,9 @@ fn besteffort_rejected_stale_canon() {
         ResponseFormat::Json { .. }
     ));
 
-    // The cheap tier arrives as the PURPOSE default, so a per-call pin or a
+    // The cheap tier arrives as the PURPOSE default, so a seat pin or a
     // vault policy still wins through `TierPrecedence::resolved`.
-    assert!(request.envelope.tier.per_call.is_none());
+    assert!(request.envelope.tier.per_seat.is_none());
     assert!(request.envelope.tier.vault_policy.is_none());
     assert_eq!(
         request

@@ -93,7 +93,7 @@ impl PolicyClassifyPrompt {
                     },
                 },
                 tier: crate::llm::TierPrecedence {
-                    per_call: None,
+                    per_seat: None,
                     vault_policy: Some(config.safeguard_binding.tier_ref()),
                     ..crate::llm::TierPrecedence::for_purpose(
                         &CallPurpose::Other {

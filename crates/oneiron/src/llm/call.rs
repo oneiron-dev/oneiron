@@ -210,11 +210,11 @@ impl ModelTierRef {
 }
 
 /// Resolution inputs in precedence order:
-/// per-call override -> vault policy manifest -> purpose default -> global.
+/// seat override -> vault policy manifest -> purpose default -> global.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TierPrecedence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub per_call: Option<ModelTierRef>,
+    pub per_seat: Option<ModelTierRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_policy: Option<ModelTierRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,7 +225,7 @@ pub struct TierPrecedence {
 impl TierPrecedence {
     #[must_use]
     pub fn resolved(&self) -> &ModelTierRef {
-        self.per_call
+        self.per_seat
             .as_ref()
             .or(self.vault_policy.as_ref())
             .or(self.purpose_default.as_ref())

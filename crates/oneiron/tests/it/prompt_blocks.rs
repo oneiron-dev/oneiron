@@ -306,7 +306,7 @@ fn sample_request() -> LlmRequest {
                 },
             },
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("default".to_owned()),
