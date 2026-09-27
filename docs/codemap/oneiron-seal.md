@@ -46,8 +46,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_chain_gates.rs` | src | m | 10 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
 | `src/native/verify/verify_dss_core.rs` | src | m | 8 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
-| `src/native/verify/verify_modifications.rs` | src | m | 2 crate-vis | — | Conservative, shared pre-sign and post-sign incremental-revision analysis |
-| `src/native/verify/verify_report.rs` | src | s | 1 crate-vis | — | Per-envelope report facts, separate from PDF trust and modification policy |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
 | `src/native/verify/verify_revocation.rs` | src | m | 7 crate-vis | — | CRL/OCSP evidence validators: issuer key-binding, freshness windows and clock-skew bounds |
@@ -60,7 +58,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10): offline fetcher posture, policy defaults, and — with `network-fetch` — the… |
-| `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the native vector suites |
+| `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
 | `tests/it/seal_vectors.rs` | test | m | — | — | Seal-path vectors: B-B/B-T/B-LT/B-LTA assembly, degradation warnings, evidence digests, and backend seam… |
 | `tests/it/verify_vectors.rs` | test | m | — | — | Verify-path vectors: mutation matrix, prepared-input rejection codes, and structural failure classification… |
 | `tests/oracle.rs` | test | m | — | — | CI differential oracle (§9, amendment A6) |
