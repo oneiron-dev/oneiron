@@ -156,7 +156,18 @@ pub(crate) fn resolve_policy_manifest(
                     );
                 }
                 if let Some(limits) = decoded.voice_ref_limits {
-                    resolution.voice_ref_limits.narrow(limits);
+                    if id == crate::gate::default_policy_manifest_id()? {
+                        resolution.voice_ref_defaults = Some(limits);
+                    } else {
+                        if let Some(precedence) = limits.precedence {
+                            match resolution.voice_ref_limits.precedence {
+                                None => resolution.voice_ref_limits.precedence = Some(precedence),
+                                Some(existing) if existing == precedence => {}
+                                Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
+                            }
+                        }
+                        resolution.voice_ref_limits.narrow(limits);
+                    }
                 }
                 resolution.packs.push(decoded.pack);
             }

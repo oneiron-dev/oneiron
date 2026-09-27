@@ -18,14 +18,8 @@ pub(crate) struct VoiceRefLimits {
 }
 
 impl VoiceRefLimits {
-    pub(crate) const SHIPPED: Self = Self {
-        max_clips_per_pack: 32,
-        max_audio_bytes_per_pack: 16 * 1024 * 1024,
-        max_register_bytes: 128,
-        max_transcript_bytes: 16_384,
-        max_design_vendor_bytes: 4_096,
-        max_vendor_voice_id_bytes: 4_096,
-    };
+    // Absence of a row is represented by a sentinel, not a shipped ceiling.
+    // The actual defaults are rows in gate::default_policy_manifest().
     const UNBOUNDED: Self = Self {
         max_clips_per_pack: u64::MAX,
         max_audio_bytes_per_pack: u64::MAX,
@@ -48,6 +42,29 @@ impl VoiceRefLimits {
         self.max_vendor_voice_id_bytes = self
             .max_vendor_voice_id_bytes
             .min(other.max_vendor_voice_id_bytes);
+    }
+
+    /// Owner-authored fields replace the shipped row; fields not named by
+    /// the owner retain their values from that row.
+    fn replace_defined(&mut self, other: Self) {
+        if other.max_clips_per_pack != u64::MAX {
+            self.max_clips_per_pack = other.max_clips_per_pack;
+        }
+        if other.max_audio_bytes_per_pack != u64::MAX {
+            self.max_audio_bytes_per_pack = other.max_audio_bytes_per_pack;
+        }
+        if other.max_register_bytes != u64::MAX {
+            self.max_register_bytes = other.max_register_bytes;
+        }
+        if other.max_transcript_bytes != u64::MAX {
+            self.max_transcript_bytes = other.max_transcript_bytes;
+        }
+        if other.max_design_vendor_bytes != u64::MAX {
+            self.max_design_vendor_bytes = other.max_design_vendor_bytes;
+        }
+        if other.max_vendor_voice_id_bytes != u64::MAX {
+            self.max_vendor_voice_id_bytes = other.max_vendor_voice_id_bytes;
+        }
     }
 
     fn decode(value: &Value) -> Option<Self> {
@@ -87,10 +104,39 @@ impl VoiceRefLimits {
     }
 }
 
+/// Precedence is a policy row, not a branch selected by an engine constant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VoiceRefPrecedence {
+    /// Trusted owner vault rows replace shipped defaults, then trusted owner
+    /// contributions narrow each other. Holder rows narrow the vault result.
+    NestedNarrowing,
+    /// Explicitly ignore holder-specific rows. The resolved vault row alone
+    /// controls admission; the owner can select this mode in policy data.
+    VaultOnly,
+}
+
+impl VoiceRefPrecedence {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "nested_narrowing" => Some(Self::NestedNarrowing),
+            "vault_only" => Some(Self::VaultOnly),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NestedNarrowing => "nested_narrowing",
+            Self::VaultOnly => "vault_only",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VoiceRefLimitPolicy {
     pub(crate) vault: VoiceRefLimits,
     pub(crate) holders: BTreeMap<EntityId, VoiceRefLimits>,
+    pub(crate) precedence: Option<VoiceRefPrecedence>,
 }
 
 impl Default for VoiceRefLimitPolicy {
@@ -98,13 +144,16 @@ impl Default for VoiceRefLimitPolicy {
         Self {
             vault: VoiceRefLimits::UNBOUNDED,
             holders: BTreeMap::new(),
+            precedence: None,
         }
     }
 }
 
 impl VoiceRefLimitPolicy {
-    /// `voice_ref_limits`: `{ vault: { limit: n }, holders: [{ holder_ref, limits }] }`.
-    /// Each trusted pack can narrow, never widen, the shipped ceiling.
+    /// `voice_ref_limits`: `{ vault: { limit: n }, holders: [{ holder_ref, limits }],
+    /// precedence: "nested_narrowing" | "vault_only" }`.
+    /// Trusted owner packs replace named shipped defaults; among owner packs,
+    /// contributions narrow one another unless their precedence rows conflict.
     pub(crate) fn decode(value: &Value) -> Option<Self> {
         let Value::Map(entries) = value else {
             return None;
@@ -118,6 +167,9 @@ impl VoiceRefLimitPolicy {
             }
             match key {
                 "vault" => policy.vault = VoiceRefLimits::decode(value)?,
+                "precedence" => {
+                    policy.precedence = Some(VoiceRefPrecedence::parse(value.as_str()?)?);
+                }
                 "holders" => {
                     let Value::Array(rows) = value else {
                         return None;
@@ -161,12 +213,19 @@ impl VoiceRefLimitPolicy {
         }
     }
 
-    pub(crate) fn effective(&self, owner: &EntityId) -> VoiceRefLimits {
-        let mut limits = VoiceRefLimits::SHIPPED;
-        limits.narrow(self.vault);
-        if let Some(holder) = self.holders.get(owner) {
-            limits.narrow(*holder);
+    /// Returns None when the shipped manifest has no precedence row.
+    pub(crate) fn effective(&self, defaults: &Self, owner: &EntityId) -> Option<VoiceRefLimits> {
+        let precedence = self.precedence.or(defaults.precedence)?;
+        let mut limits = defaults.vault;
+        limits.replace_defined(self.vault);
+        if precedence == VoiceRefPrecedence::NestedNarrowing {
+            if let Some(holder) = defaults.holders.get(owner) {
+                limits.narrow(*holder);
+            }
+            if let Some(holder) = self.holders.get(owner) {
+                limits.narrow(*holder);
+            }
         }
-        limits
+        Some(limits)
     }
 }

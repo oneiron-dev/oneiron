@@ -2807,7 +2807,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_identity/math_keys.rs` | src | s | 15 crate-vis | — | Vector-math door (normalize/cosine/same-space check) and vault_meta key builders with the pointer==prefix… |
 | `src/voice_identity/mod.rs` | src | s | 1 mod · 1 re-export · 2 crate-vis | — | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `src/voice_identity/ref_bank.rs` | src | m | 5 struct · 1 enum · 7 fn · 1 crate-vis | VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip, VoiceTargetClone, VoiceTargetRecord | Private per-vault voice reference bank |
-| `src/voice_identity/ref_limits.rs` | src | s | 8 crate-vis | — | Resolved policy-manifest limits for the private render-reference bank |
+| `src/voice_identity/ref_limits.rs` | src | s | 9 crate-vis | — | Resolved policy-manifest limits for the private render-reference bank |
 | `src/voice_identity/storage_admission.rs` | src | m | 22 crate-vis | — | Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination… |
 | `src/voice_identity/tests.rs` | test | XL | — | — | — |
 | `src/voice_identity/types.rs` | src | m | 12 struct · 7 enum · 17 fn · 3 const · 7 crate-vis | VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest +11 | Public domain types, request/receipt structs, thresholds, key prefixes, and validators |

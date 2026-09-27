@@ -451,7 +451,8 @@ mod tests {
 
     #[test]
     fn target_reader_and_writer_reject_the_same_corrupt_rows() -> Result<()> {
-        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let dir = tempfile::tempdir().expect("ref vault directory");
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
         let owner = EntityId::now();
         vault.store_voice_ref_pack(&VoiceRefPack {
             version: 1,

@@ -34290,7 +34290,7 @@
      "path": "src/voice_identity/ref_limits.rs",
      "purpose": "Resolved policy-manifest limits for the private render-reference bank",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {

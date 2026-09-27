@@ -9,6 +9,13 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
 }
 
+fn temp_ref_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("ref vault directory");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
+        .expect("open seeded ref vault");
+    (dir, vault)
+}
+
 const DIMENSION: usize = 4;
 
 fn space() -> VoiceEmbeddingSpaceV1 {
@@ -841,7 +848,7 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
 fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Result<()> {
     use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
 
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = temp_ref_vault();
     let subject = test_id(0xA9);
     let relationship = test_id(0xAA);
     seed_relationship(&vault, relationship)?;
@@ -945,26 +952,35 @@ fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Resul
     Ok(())
 }
 
-#[test]
-fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Result<()> {
-    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
-
-    let (_tmp, vault) = temp_vault();
-    let holder = test_id(0xB9);
-    let other = test_id(0xBA);
+fn install_voice_ref_policy(vault: &Vault, id: EntityId, row: Value) -> Result<()> {
     let raw = crate::gate::default_policy_manifest();
     let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw))
         .expect("shipped manifest decodes")
     else {
         unreachable!("manifest map")
     };
+    entries.retain(|(key, _)| key.as_str() != Some("voice_ref_limits"));
     for (key, value) in &mut entries {
         if key.as_str() == Some("pack_id") {
-            *value = "voice-limits-test".into();
+            *value = format!("voice-limits-{}", id.to_hex()).into();
         }
     }
-    entries.push((
-        "voice_ref_limits".into(),
+    entries.push(("voice_ref_limits".into(), row));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
+#[test]
+fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xB9);
+    let other = test_id(0xBA);
+    install_voice_ref_policy(
+        &vault,
+        test_id(0xBB),
         Value::Map(vec![
             (
                 "vault".into(),
@@ -994,11 +1010,7 @@ fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Resul
                 ]),
             ),
         ]),
-    ));
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
-    crate::test_util::put_policy_manifest_bytes(&vault, test_id(0xBB), &encoded)?;
-
+    )?;
     let clip = VoiceRegisterClip {
         register: "neutral".into(),
         media_type: "audio/wav".into(),
@@ -1050,6 +1062,86 @@ fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Resul
             .is_err()
     );
     vault.record_voice_target_clone(&other_request, &"v".repeat(250), 2)?;
+    Ok(())
+}
+
+#[test]
+fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xBC);
+    let manifest_id = test_id(0xBD);
+    let limits_row = |precedence: &str| {
+        Value::Map(vec![
+            ("precedence".into(), precedence.into()),
+            (
+                "vault".into(),
+                Value::Map(vec![("max_vendor_voice_id_bytes".into(), 8_192u64.into())]),
+            ),
+            (
+                "holders".into(),
+                Value::Array(vec![Value::Map(vec![
+                    ("holder_ref".into(), holder.to_hex().into()),
+                    (
+                        "limits".into(),
+                        Value::Map(vec![("max_vendor_voice_id_bytes".into(), 5_000u64.into())]),
+                    ),
+                ])]),
+            ),
+        ])
+    };
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "source".into(),
+        voice_id: "voice".into(),
+        owner: holder,
+        origin: VoiceRefOrigin::Captured,
+        clips: vec![VoiceRegisterClip {
+            register: "neutral".into(),
+            media_type: "audio/wav".into(),
+            audio: vec![1],
+            transcript: String::new(),
+        }],
+    })?;
+    let request = vault.prepare_voice_clone("voice", "first-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(4_097), 1)
+            .is_err()
+    );
+
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(5_001), 1)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(4_097), 1)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "first-target", false)?,
+        Some(saved)
+    );
+
+    // This authored row changes the precedence decision at the production
+    // manifest door. Vault-only ignores a holder's narrower row, but still
+    // observes the author-selected 8192-byte vault cap.
+    install_voice_ref_policy(&vault, manifest_id, limits_row("vault_only"))?;
+    let second = vault.prepare_voice_clone("voice", "second-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&second, &"v".repeat(8_193), 2)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&second, &"v".repeat(7_000), 2)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "second-target", false)?,
+        Some(saved)
+    );
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(matches!(
+        vault.voice_target_clone("voice", "second-target", false),
+        Err(Error::InvalidConfig(_))
+    ));
     Ok(())
 }
 

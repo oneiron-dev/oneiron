@@ -52,7 +52,9 @@ impl PolicyManifestResolution {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             None
         } else {
-            Some(self.voice_ref_limits.effective(owner))
+            self.voice_ref_defaults
+                .as_ref()
+                .and_then(|defaults| self.voice_ref_limits.effective(defaults, owner))
         }
     }
 
