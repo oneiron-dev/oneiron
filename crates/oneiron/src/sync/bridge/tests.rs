@@ -4012,3 +4012,103 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+#[test]
+fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
+    use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+    use crate::workspace_roster::ProjectRecord;
+
+    let vault = test_vault();
+    let root = vault.root_project().unwrap();
+    let leader = EntityId::from_hex(&vault.project(root).unwrap().unwrap().leader).unwrap();
+    let child = EntityId::now();
+    vault
+        .put_project(
+            child,
+            &ProjectRecord::new(child, Some(root), root, leader),
+            1,
+        )
+        .unwrap();
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let claim = EntityId::now();
+    vault
+        .put_claim(
+            &claim,
+            &ClaimBody::new(
+                "test.project_membership",
+                ClaimSubject::Entity(subject),
+                Value::from("fixture"),
+                0.9,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            ),
+            TimeRange { start: 2, end: 2 },
+            2,
+        )
+        .unwrap();
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let valid_key = format_edge_key(&child, EdgeKind::BelongsTo, &root);
+    let value = encode_edge_value_for_crdt(EdgeKind::BelongsTo, 0.05, 2, None, None).unwrap();
+    let legitimate = forged_update_against(&doc, |fork| {
+        map_insert_bytes(&fork.get_map("edges"), &valid_key, &value).unwrap();
+    });
+    import_doc(&doc, &legitimate).unwrap();
+    assert!(
+        vault
+            .edge_exists(&child, EdgeKind::BelongsTo, &root)
+            .unwrap()
+    );
+
+    let cycle_key = format_edge_key(&root, EdgeKind::BelongsTo, &child);
+    let forged = forged_update_against(&doc, |fork| {
+        map_insert_bytes(&fork.get_map("edges"), &cycle_key, &value).unwrap();
+    });
+    import_doc(&doc, &forged).unwrap();
+    assert!(
+        !vault
+            .edge_exists(&root, EdgeKind::BelongsTo, &child)
+            .unwrap()
+    );
+
+    let removal = forged_update_against(&doc, |fork| {
+        fork.get_map("edges").delete(&valid_key).unwrap();
+    });
+    import_doc(&doc, &removal).unwrap();
+    assert!(
+        vault
+            .edge_exists(&child, EdgeKind::BelongsTo, &root)
+            .unwrap()
+    );
+
+    let claim_key = format_edge_key(&claim, EdgeKind::BelongsTo, &root);
+    let forged_claim = forged_update_against(&doc, |fork| {
+        map_insert_bytes(&fork.get_map("edges"), &claim_key, &value).unwrap();
+    });
+    import_doc(&doc, &forged_claim).unwrap();
+    assert!(
+        !vault
+            .edge_exists(&claim, EdgeKind::BelongsTo, &root)
+            .unwrap()
+    );
+    let records = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    for key in [&cycle_key, &valid_key, &claim_key] {
+        assert!(
+            records.iter().any(|(_, record)| {
+                record.crdt_key_hash == xxhash_rust::xxh3::xxh3_64(key.as_bytes())
+                    && record.reason_code == "InvalidProjectBody"
+            }),
+            "missing project edge quarantine for {key}"
+        );
+    }
+}

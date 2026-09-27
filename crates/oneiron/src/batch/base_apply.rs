@@ -100,6 +100,7 @@ pub(super) fn apply_ops_with_origin(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    let mut project_edge_endpoints = BTreeSet::new();
     // ONE-1604-D1: shell-edge sources orphaned by a dominance eviction. Their
     // inducing type-76 rows are gone, so the full reconciler's
     // surviving-events derivation can no longer reach them. Non-empty here
@@ -467,6 +468,17 @@ pub(super) fn apply_ops_with_origin(
             | BatchOp::SetEdgeWeight { .. }
             | BatchOp::SetEdgeVad { .. }
             | BatchOp::DeleteEdge { .. }) => {
+                match &op {
+                    BatchOp::Edge { src, tgt, .. }
+                    | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
+                    | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
+                    | BatchOp::SetEdgeWeight { src, tgt, .. }
+                    | BatchOp::SetEdgeVad { src, tgt, .. }
+                    | BatchOp::DeleteEdge { src, tgt, .. } => {
+                        project_edge_endpoints.extend([*src, *tgt]);
+                    }
+                    _ => unreachable!("edge arm contains only edge operations"),
+                }
                 had_graph_mutation |= apply_edge_op(store, wtxn, op)?;
             }
             BatchOp::Text { id, fields } => {
@@ -552,6 +564,8 @@ pub(super) fn apply_ops_with_origin(
         wtxn,
         &materialized_entity_ids,
     )?;
+    project_edge_endpoints.extend(&materialized_entity_ids);
+    crate::workspace_roster::validate_project_graph(store, wtxn, &project_edge_endpoints)?;
 
     // STO-03: derived Habit counters, recomputed from the FINAL child state of
     // this transaction — after every op, so an add and a delete of the same

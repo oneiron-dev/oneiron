@@ -1,8 +1,12 @@
 //! Project responsibility records and their derived home-room membership.
 //! PROJECT uses the compiled-pack registration door, not a new core kind.
 mod deletion;
+mod edges;
 mod projection;
 pub(crate) use deletion::deindex_project_room;
+pub(crate) use edges::{
+    validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
+};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
