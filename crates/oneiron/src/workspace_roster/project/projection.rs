@@ -118,6 +118,29 @@ pub(crate) fn reconcile_project_rooms(
         }
         let body: ProjectRecord = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
             .map_err(|_| Error::CorruptedIndex("project projection body"))?;
+        // The card's provenance is a MESSAGE, not just a parseable entity ID.
+        // Missing replicated dependencies are retryable by the sync entity pass;
+        // a wrong kind or erased source is terminal at every write door.
+        if let Some(source) = &body.born_from {
+            let source = EntityId::from_hex(source).map_err(|_| invalid())?;
+            let Some(message) = store.entities.get(txn, source.as_bytes())? else {
+                if store
+                    .sync_state
+                    .get(txn, &crate::deletion::local_hard_delete_key(&source))?
+                    .is_some()
+                {
+                    return Err(invalid());
+                }
+                return Err(RecordError::ProjectDependencyPending.into());
+            };
+            let message_header = EntityMetadataHeader::parse(&message)
+                .ok_or(Error::CorruptedIndex("project born-from header"))?;
+            if message_header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE
+                || message.len() == ENTITY_METADATA_HEADER_LEN
+            {
+                return Err(invalid());
+            }
+        }
         // Fail closed on cycles, dangling parents, and non-project parents.
         let mut visited = BTreeSet::from([id.to_hex()]);
         let mut parent = body.parent.clone();

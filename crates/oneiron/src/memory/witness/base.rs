@@ -85,7 +85,14 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()))
+        self.witness_authorized(
+            turn,
+            session_route,
+            false,
+            before_txn,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
     }
 
     pub(crate) fn witness_host_executor(
@@ -93,7 +100,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()))
+        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()), |_| Ok(()))
     }
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
@@ -105,7 +112,18 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, effect)
+        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()), effect)
+    }
+
+    /// Assemble a room before the witness gate inside its own transaction.
+    /// This is used by project birth so the first witnessed trunk message,
+    /// room, project, skill forks and owner Grant all commit together.
+    pub(crate) fn witness_with_room_birth(
+        &self,
+        turn: &WitnessTurn,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, None, false, || {}, prepare, |_| Ok(()))
     }
 
     fn witness_authorized(
@@ -114,6 +132,7 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         host_executor: bool,
         before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         super::validate_witness_origin(turn, host_executor)?;
@@ -203,6 +222,7 @@ impl Memory<'_> {
                     return Ok(Some(*id));
                 }
             }
+            prepare(wtxn)?;
             crate::workspace_roster::admit_room_witness(
                 self.vault,
                 wtxn,
@@ -214,7 +234,14 @@ impl Memory<'_> {
                 &message_ids,
             )?;
             let mut batch = self.vault.batch_in();
-            if conversation_is_new {
+            if conversation_is_new
+                && self
+                    .vault
+                    .store
+                    .entities
+                    .get(wtxn, conversation_id.as_bytes())?
+                    .is_none()
+            {
                 batch = batch.put(
                     &conversation_id,
                     ENTITY_TYPE_CONVERSATION,

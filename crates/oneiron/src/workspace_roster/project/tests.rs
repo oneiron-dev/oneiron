@@ -377,9 +377,78 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
         vault.get_skill_record(&fork)?.unwrap().forked_from,
         Some(source_skill)
     );
-    let gate = vault.store.gate_decisions_for_grant_ref(&id.to_hex())?;
+    let gate = vault
+        .store
+        .gate_decisions_for_grant_ref(&receipt.grant_ref)?;
     assert_eq!(gate.len(), 1);
     assert_eq!(gate[0].decision_id, receipt.grant_decision_id);
+    let grant = vault
+        .consent_grant(&receipt.grant_ref)?
+        .expect("stored Grant");
+    assert!(grant.is_active());
+    assert_eq!(grant.owner_stamp.actor, owner.actor());
+    let bound = grant.grant.bound();
+    let crate::consent::BoundSubject::Actor(actor) = bound.subject() else {
+        panic!("action Grant");
+    };
+    assert_eq!(actor.actor_ref(), project.leader);
+    assert_eq!(actor.actor_class(), Some("agent"));
+    let crate::consent::BoundClass::Action(class) = bound.class() else {
+        panic!("action class");
+    };
+    assert_eq!(class.as_str(), "project.run");
+    let crate::consent::BoundEnvelope::Action(envelope) = bound.envelope() else {
+        panic!("action envelope");
+    };
+    assert_eq!(envelope.target(), Some(receipt.project_id.as_str()));
+    assert_eq!(envelope.budget(), Some(1200));
+    assert!(envelope.receipt_required());
+    assert_eq!(envelope.selectors(), &[format!("project:{}", id.to_hex())]);
+    let room = EntityId::from_hex(&project.home_room)?;
+    let history = vault
+        .memory(owner.actor(), crate::edge::EdgeActorClass::Human)
+        .rooms_messages(room)
+        .map_err(|err| Error::InvalidConfig(err.to_string()))?;
+    assert_eq!(history.len(), 1, "one opening trunk header");
+    assert!(history[0].thread_of.is_none());
+    assert_eq!(history[0].message_ids.len(), 1);
+    let source = EntityId::from_hex(&card.source_message_ref)?;
+    let source_turn = vault
+        .edges_out(&source)?
+        .into_iter()
+        .find(|edge| edge.kind == crate::edge::EdgeKind::PartOf)
+        .expect("source turn")
+        .target;
+    let message_id = EntityId::from_hex(&history[0].message_ids[0])?;
+    let txn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .entities
+        .get(&txn, message_id.as_bytes())?
+        .expect("header message");
+    let body: rmpv::Value =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| invalid())?;
+    let fields = body.as_map().expect("witness body");
+    let metadata = fields
+        .iter()
+        .find(|(k, _)| k.as_str() == Some("metadata"))
+        .and_then(|(_, v)| v.as_map())
+        .expect("source pointer metadata");
+    assert_eq!(
+        metadata
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("project_source_message"))
+            .and_then(|(_, v)| v.as_str()),
+        Some(card.source_message_ref.as_str())
+    );
+    assert_eq!(
+        metadata
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("project_source_thread"))
+            .and_then(|(_, v)| v.as_str()),
+        Some(source_turn.to_hex().as_str())
+    );
+    drop(txn);
     assert_eq!(
         gate[0].actor_ref.as_deref(),
         Some(owner.actor().to_hex().as_str())
@@ -388,8 +457,16 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     assert_eq!(vault.project_room_changes(id)?.len(), 1);
     assert_eq!(
         vault
+            .memory(owner.actor(), crate::edge::EdgeActorClass::Human)
+            .rooms_messages(room)
+            .map_err(|err| Error::InvalidConfig(err.to_string()))?
+            .len(),
+        1
+    );
+    assert_eq!(
+        vault
             .store
-            .gate_decisions_for_grant_ref(&id.to_hex())?
+            .gate_decisions_for_grant_ref(&receipt.grant_ref)?
             .len(),
         1
     );
@@ -400,6 +477,23 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
         receipt
     );
     assert_eq!(reopened.project(id)?, Some(project));
+    reopened.revoke_consent_grant(&owner, &receipt.grant_ref)?;
+    assert!(
+        !reopened
+            .consent_grant(&receipt.grant_ref)?
+            .unwrap()
+            .is_active()
+    );
+    assert_eq!(
+        reopened.mint_project_from_card(&card, &tap, &owner)?,
+        receipt
+    );
+    assert!(
+        !reopened
+            .consent_grant(&receipt.grant_ref)?
+            .unwrap()
+            .is_active()
+    );
     Ok(())
 }
 
@@ -434,7 +528,6 @@ fn project_mint_rejects_unapproved_or_changed_cards_without_writes() -> Result<(
     );
     assert!(vault.get_skill_record(&skill)?.is_some());
     let receipt = vault.mint_project_from_card(&card, &tap, &owner)?;
-    let id = EntityId::from_hex(&receipt.project_id)?;
     let mut changed = card;
     changed.goal.why = "Different card".into();
     assert!(
@@ -445,9 +538,67 @@ fn project_mint_rejects_unapproved_or_changed_cards_without_writes() -> Result<(
     assert_eq!(
         vault
             .store
-            .gate_decisions_for_grant_ref(&id.to_hex())?
+            .gate_decisions_for_grant_ref(&receipt.grant_ref)?
             .len(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    let mut project = ProjectRecord::new(id, Some(root), root, leader);
+    let at = TimeRange { start: 21, end: 21 };
+    for source in [root, crate::test_util::entity(0x79)] {
+        project.born_from = Some(source.to_hex());
+        let expected = if source == root {
+            crate::error::ErrorKind::InvalidProjectBody
+        } else {
+            crate::error::ErrorKind::ProjectDependencyPending
+        };
+        assert_eq!(
+            vault.put_project(id, &project, 21).unwrap_err().kind(),
+            expected
+        );
+        let bytes = encode(&project)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put(&id, vault.project_type_byte()?, at, 21, &bytes)
+                .commit()
+                .unwrap_err()
+                .kind(),
+            expected
+        );
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&id, vault.project_type_byte()?, at, 21, &bytes)
+                .commit()
+                .unwrap_err()
+                .kind(),
+            expected
+        );
+        assert!(vault.project(id)?.is_none());
+    }
+    // The same absent source arrives through the witnessed message door.
+    // Retrying the replicated PROJECT then admits it instead of permanently
+    // quarantining a valid out-of-order reference.
+    let (card, _, _, _) = mint_fixture(&vault)?;
+    assert_eq!(
+        project.born_from.as_deref(),
+        Some(card.source_message_ref.as_str())
+    );
+    let bytes = encode(&project)?;
+    vault
+        .batch()
+        .put_replicated(&id, vault.project_type_byte()?, at, 21, &bytes)
+        .commit()?;
+    assert_eq!(vault.project(id)?.unwrap().born_from, project.born_from);
     Ok(())
 }
