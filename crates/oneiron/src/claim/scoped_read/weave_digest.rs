@@ -431,45 +431,130 @@ impl Vault {
             })
             .transpose()
     }
-
-    /// Owner-only saved projection. A scheduled reader gets the fresh render result
-    /// through the scoped door, not an unscoped historical-content lookup.
-    pub fn read_weave_digest(
-        &self,
-        owner: &AuthenticatedOwner,
-        reader: WeaveDigestReader,
-        scheduled_for: u64,
-    ) -> Result<Option<StoredWeaveDigest>> {
-        let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        let key = [
-            reader.key(DIGEST_PREFIX),
-            scheduled_for.to_be_bytes().to_vec(),
-        ]
-        .concat();
-        self.store
-            .vault_meta
-            .get(&txn, &key)?
-            .map(|bytes| {
-                let wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-                let rendered_at = wire.rendered_at;
-                let report = wire.into_report()?;
-                if !sources_live_in_txn(&self.store, &txn, &report.value)? {
-                    return Ok(None);
-                }
-                Ok(Some(StoredWeaveDigest {
-                    reader,
-                    scheduled_for,
-                    rendered_at,
-                    report,
-                }))
-            })
-            .transpose()
-            .map(Option::flatten)
-    }
 }
 
 impl ScopedRead<'_> {
+    /// Load historical digest content only for its bound reader, applying the
+    /// CURRENT read policy to the SAVED bodies and each referenced endpoint.
+    /// No owner inspection shortcut is a data-read grant.
+    pub fn read_weave_digest(
+        &self,
+        reader: WeaveReader<'_>,
+        scheduled_for: u64,
+    ) -> Result<Option<StoredWeaveDigest>> {
+        if self.session_view.is_some() {
+            return Err(invalid());
+        }
+        let txn = self.vault.store.env.read_txn()?;
+        let id = match reader {
+            WeaveReader::Person(id) | WeaveReader::Agent(id) => {
+                if self.actor_key.actor_ref() != id.to_hex() {
+                    return Err(invalid());
+                }
+                id
+            }
+            WeaveReader::Owner(owner) => {
+                owner.revalidate_in_txn(self.vault, &txn)?;
+                if self.actor_key.actor_ref() != owner.actor().to_hex()
+                    && self.actor_key.actor_ref() != owner.principal_ref()
+                {
+                    return Err(invalid());
+                }
+                owner.actor()
+            }
+        };
+        let reader_key = match reader {
+            WeaveReader::Person(_) => WeaveDigestReader::Person(id),
+            WeaveReader::Owner(_) => WeaveDigestReader::Owner(id),
+            WeaveReader::Agent(_) => WeaveDigestReader::Agent(id),
+        };
+        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        // Even an empty saved report must not reveal historical section names
+        // or an old narrowing receipt to a caller with no current read door.
+        if filter.deny_all {
+            return Ok(None);
+        }
+        let Some(allowed) =
+            crate::gate::weave_policy::effective_resolved(&policy, reader.role(), id)
+        else {
+            return Ok(None);
+        };
+        let key = [
+            reader_key.key(DIGEST_PREFIX),
+            scheduled_for.to_be_bytes().to_vec(),
+        ]
+        .concat();
+        let Some(bytes) = self.vault.store.vault_meta.get(&txn, &key)? else {
+            return Ok(None);
+        };
+        let wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let rendered_at = wire.rendered_at;
+        let report = wire.into_report()?;
+        if report.value.sections.len() > allowed.max_sections
+            || report.value.sections.iter().any(|section| {
+                !allowed.sections.contains(section.kind.policy_name())
+                    || section.items.len() > allowed.max_rows
+            })
+            || !sources_live_in_txn(&self.vault.store, &txn, &report.value)?
+        {
+            return Ok(None);
+        }
+        for source in report_sources(&report.value)? {
+            if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &source)? {
+                return Ok(None);
+            }
+        }
+        for section in &report.value.sections {
+            for item in &section.items {
+                match item {
+                    WeaveItem::Claim { id, body } => {
+                        let Some(current) = self.vault.store.entities.get(&txn, id.as_bytes())?
+                        else {
+                            return Ok(None);
+                        };
+                        if current.len() < crate::batch::ENTITY_METADATA_HEADER_LEN
+                            || current[0] != crate::registry::ENTITY_TYPE_CLAIM
+                        {
+                            return Ok(None);
+                        }
+                        let saved_body = encode_claim_body(body)?;
+                        // A current public replacement cannot authorize a
+                        // different old body or changed claim-facet graph.
+                        if current[crate::batch::ENTITY_METADATA_HEADER_LEN..] != saved_body {
+                            return Ok(None);
+                        }
+                        let mut historical =
+                            current[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
+                        historical.extend_from_slice(&saved_body);
+                        if !self.is_entity_raw_readable_with_filter_in(
+                            &txn,
+                            &policy,
+                            id,
+                            &historical,
+                            &filter,
+                        )? {
+                            return Ok(None);
+                        }
+                    }
+                    WeaveItem::Link {
+                        source,
+                        kind,
+                        target,
+                    } if !self.live_weave_edge_in(&txn, *source, *kind, *target)? => {
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(Some(StoredWeaveDigest {
+            reader: reader_key,
+            scheduled_for,
+            rendered_at,
+            report,
+        }))
+    }
+
     /// Project a due row through exactly the live lens. A non-due row changes
     /// nothing. The schedule advance and saved report commit in one transaction.
     pub fn render_due_weave_digest(

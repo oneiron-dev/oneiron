@@ -24,6 +24,26 @@ fn recipe(kind: WeaveSectionKind) -> Vec<WeaveSectionSpec> {
     }]
 }
 
+fn read_saved(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    reader: WeaveDigestReader,
+    due: u64,
+) -> Result<Option<StoredWeaveDigest>> {
+    let id = match reader {
+        WeaveDigestReader::Person(id)
+        | WeaveDigestReader::Owner(id)
+        | WeaveDigestReader::Agent(id) => id,
+    };
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(id.to_hex()).unwrap());
+    let role = match reader {
+        WeaveDigestReader::Person(id) => WeaveReader::Person(id),
+        WeaveDigestReader::Owner(_) => WeaveReader::Owner(owner),
+        WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+    };
+    scoped.read_weave_digest(role, due)
+}
+
 #[test]
 fn due_rows_store_exact_live_lens_and_advance_each_reader_independently() -> Result<()> {
     let (_tmp, vault) = open_test_vault_with(embedding_test_config());
@@ -79,11 +99,7 @@ fn due_rows_store_exact_live_lens_and_advance_each_reader_independently() -> Res
             .render_due_weave_digest(WeaveReader::Person(person_id), 99)?
             .is_none()
     );
-    assert!(
-        vault
-            .read_weave_digest(&owner, person_row.reader, 100)?
-            .is_none()
-    );
+    assert!(read_saved(&vault, &owner, person_row.reader, 100)?.is_none());
     assert_eq!(
         vault
             .weave_digest_schedule(&owner, person_row.reader)?
@@ -98,9 +114,7 @@ fn due_rows_store_exact_live_lens_and_advance_each_reader_independently() -> Res
     assert_eq!(rendered.report, live);
     assert_eq!(
         rendered,
-        vault
-            .read_weave_digest(&owner, person_row.reader, 100)?
-            .unwrap()
+        read_saved(&vault, &owner, person_row.reader, 100)?.unwrap()
     );
     assert_eq!(
         vault
@@ -126,9 +140,7 @@ fn due_rows_store_exact_live_lens_and_advance_each_reader_independently() -> Res
     assert_eq!(agent_render.report, agent_live);
     assert_eq!(
         agent_render,
-        vault
-            .read_weave_digest(&owner, agent_row.reader, 200)?
-            .unwrap()
+        read_saved(&vault, &owner, agent_row.reader, 200)?.unwrap()
     );
     assert_eq!(
         vault
@@ -191,7 +203,7 @@ fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
             .render_due_weave_digest(WeaveReader::Agent(agent), 1)
             .is_err()
     );
-    assert!(vault.read_weave_digest(&owner, good.reader, 1)?.is_none());
+    assert!(read_saved(&vault, &owner, good.reader, 1)?.is_none());
     assert_eq!(
         vault
             .weave_digest_schedule(&owner, good.reader)?
@@ -214,6 +226,7 @@ fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
         reader: WeaveDigestReader::Owner(owner_id),
         ..wrong_owner
     };
+    crate::test_util::authorize_readers(&vault, &[&owner_id.to_hex()]);
     vault.set_weave_digest_schedule(&owner, &owner_row)?;
     assert!(
         impostor
@@ -227,9 +240,7 @@ fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
     assert_eq!(stored.report, live);
     assert_eq!(
         stored,
-        vault
-            .read_weave_digest(&owner, owner_row.reader, 2)?
-            .unwrap()
+        read_saved(&vault, &owner, owner_row.reader, 2)?.unwrap()
     );
     Ok(())
 }
@@ -296,11 +307,7 @@ fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source()
             .is_some()
     );
     assert!(vault.delete_entity(&erased)?);
-    assert!(
-        vault
-            .read_weave_digest(&owner, WeaveDigestReader::Person(person_id), 1)?
-            .is_none()
-    );
+    assert!(read_saved(&vault, &owner, WeaveDigestReader::Person(person_id), 1)?.is_none());
     assert!(
         vault
             .store
@@ -308,11 +315,7 @@ fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source()
             .get(&vault.store.env.read_txn()?, &digest_key)?
             .is_none()
     );
-    assert!(
-        vault
-            .read_weave_digest(&owner, WeaveDigestReader::Person(other_id), 1)?
-            .is_some()
-    );
+    assert!(read_saved(&vault, &owner, WeaveDigestReader::Person(other_id), 1)?.is_some());
     Ok(())
 }
 
@@ -360,7 +363,7 @@ fn deletion_between_projection_and_commit_cannot_republish_erased_body() -> Resu
         Ok(())
     })?;
     assert!(result.is_none());
-    assert!(vault.read_weave_digest(&owner, reader, 2)?.is_none());
+    assert!(read_saved(&vault, &owner, reader, 2)?.is_none());
     assert_eq!(
         vault
             .weave_digest_schedule(&owner, reader)?
@@ -496,9 +499,9 @@ fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() 
         .render_due_weave_digest(WeaveReader::Person(reader_id), 1)?
         .unwrap();
     let digest_key = [reader.key(DIGEST_PREFIX), 1u64.to_be_bytes().to_vec()].concat();
-    assert!(vault.read_weave_digest(&owner, reader, 1)?.is_some());
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_some());
     assert!(vault.delete_entity(&document)?);
-    assert!(vault.read_weave_digest(&owner, reader, 1)?.is_none());
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
     assert!(
         vault
             .store
@@ -532,7 +535,7 @@ fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() 
         )?);
         Ok(())
     })?;
-    assert!(vault.read_weave_digest(&owner, reader, 1)?.is_none());
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
     assert!(
         vault
             .store
@@ -759,7 +762,7 @@ fn policy_narrowing_between_projection_and_commit_leaves_schedule_due() -> Resul
             .next_due_at,
         1
     );
-    assert!(vault.read_weave_digest(&owner, reader, 1)?.is_none());
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
     Ok(())
 }
 
@@ -863,7 +866,338 @@ fn non_claim_rows_and_edge_endpoints_are_rechecked_at_publication() -> Result<()
                 .next_due_at,
             1
         );
-        assert!(vault.read_weave_digest(&owner, reader, 1)?.is_none());
+        assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
     }
+    Ok(())
+}
+
+#[test]
+fn saved_digest_is_reader_bound_and_revocation_hides_every_saved_byte() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0xD4);
+    let person_id = entity(0xD5);
+    for id in [owner_id, person_id] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let claim_id = entity(0xD6);
+    vault.put_claim(
+        &claim_id,
+        &ClaimBody::new(
+            "report.digest",
+            ClaimSubject::Entity(person_id),
+            Value::from("private digest"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    // Deliberately grant the subject only; active-owner authentication is not a read grant.
+    crate::test_util::authorize_readers(&vault, &[&person_id.to_hex()]);
+    let reader = WeaveDigestReader::Person(person_id);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader,
+            cadence: WeaveDigestCadence::Daily,
+            next_due_at: 1,
+            recipe: recipe(WeaveSectionKind::Changes),
+        },
+    )?;
+    let person_read = vault.scoped_read(ScopedReadActorKey::new(person_id.to_hex()).unwrap());
+    person_read
+        .render_due_weave_digest(WeaveReader::Person(person_id), 1)?
+        .unwrap();
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_some());
+    let owner_read = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+    assert!(
+        owner_read
+            .read_weave_digest(WeaveReader::Person(person_id), 1)
+            .is_err()
+    );
+    crate::test_util::authorize_readers(&vault, &[]);
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
+    // The row still exists, but the public door reveals no body or item count.
+    let key = [reader.key(DIGEST_PREFIX), 1u64.to_be_bytes().to_vec()].concat();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &key)?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result<()> {
+    use crate::ports::EntityRecord;
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0xD8);
+    let person_id = entity(0xD9);
+    let world = entity(0xDA);
+    for id in [owner_id, person_id] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let claim_id = entity(0xDB);
+    let mut old = ClaimBody::new(
+        "report.digest",
+        ClaimSubject::Entity(person_id),
+        Value::from("old private"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    old.world = Some(world);
+    vault.put_claim(&claim_id, &old, TimeRange { start: 1, end: 1 }, 1)?;
+    crate::test_util::authorize_readers(&vault, &[&person_id.to_hex()]);
+    let reader = WeaveDigestReader::Person(person_id);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader,
+            cadence: WeaveDigestCadence::Weekly,
+            next_due_at: 1,
+            recipe: recipe(WeaveSectionKind::Changes),
+        },
+    )?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person_id.to_hex()).unwrap());
+    read.render_due_weave_digest(WeaveReader::Person(person_id), 1)?
+        .unwrap();
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_some());
+    let public = ClaimBody::new(
+        "report.digest",
+        ClaimSubject::Entity(person_id),
+        Value::from("new public"),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    );
+    vault.with_write_txn(|txn| {
+        let record = EntityRecord {
+            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+            occurred: TimeRange { start: 2, end: 2 },
+            learned_at: 2,
+            body: encode_claim_body(&public)?,
+        };
+        // Controlled revision change in the fixture: scope checks must not
+        // substitute its public bytes for the saved private body.
+        vault
+            .store
+            .entities
+            .put(txn, claim_id.as_bytes(), &record.encode())?;
+        Ok(())
+    })?;
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn explicit_empty_policy_denies_schedule_live_and_saved_report() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0xDC);
+    let person_id = entity(0xDD);
+    for id in [owner_id, person_id] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&person_id.to_hex()]);
+    let reader = WeaveDigestReader::Person(person_id);
+    let row = WeaveDigestSchedule {
+        reader,
+        cadence: WeaveDigestCadence::Daily,
+        next_due_at: 1,
+        recipe: recipe(WeaveSectionKind::Changes),
+    };
+    vault.set_weave_digest_schedule(&owner, &row)?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(person_id.to_hex()).unwrap());
+    read.render_due_weave_digest(WeaveReader::Person(person_id), 1)?
+        .unwrap();
+    vault.set_weave_digest_schedule(&owner, &row)?; // same period becomes due again
+    configure_weave_policy(&vault, |entries| {
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+            .unwrap()
+            .1 = Value::Array(vec![]);
+    })?;
+    assert!(vault.set_weave_digest_schedule(&owner, &row).is_err());
+    assert!(
+        read.weave_report(WeaveReader::Person(person_id), &row.recipe)
+            .is_err()
+    );
+    assert!(
+        read.render_due_weave_digest(WeaveReader::Person(person_id), 1)
+            .is_err()
+    );
+    assert!(read_saved(&vault, &owner, reader, 1)?.is_none());
+    assert_eq!(
+        vault
+            .weave_digest_schedule(&owner, reader)?
+            .unwrap()
+            .next_due_at,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn authored_policy_can_exceed_old_compiled_scan_and_section_limits() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0xDE);
+    let agent = entity(0xDF);
+    for id in [owner_id, agent] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
+    configure_weave_policy(&vault, |entries| {
+        let Value::Array(rows) = &mut entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+            .unwrap()
+            .1
+        else {
+            panic!("policy rows")
+        };
+        let Value::Map(fields) = rows
+            .iter_mut()
+            .find_map(|row| match row {
+                Value::Map(fields)
+                    if fields.iter().any(|(k, v)| {
+                        k.as_str() == Some("role") && v.as_str() == Some("agent")
+                    }) =>
+                {
+                    Some(row)
+                }
+                _ => None,
+            })
+            .unwrap()
+        else {
+            panic!("role")
+        };
+        fields
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("max_sections"))
+            .unwrap()
+            .1 = Value::from(65);
+        fields
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("max_rows"))
+            .unwrap()
+            .1 = Value::from(10_001);
+    })?;
+    let recipe = vec![recipe(WeaveSectionKind::Digest)[0].clone(); 65];
+    let row = WeaveDigestSchedule {
+        reader: WeaveDigestReader::Agent(agent),
+        cadence: WeaveDigestCadence::Daily,
+        next_due_at: 1,
+        recipe: recipe.clone(),
+    };
+    vault.set_weave_digest_schedule(&owner, &row)?;
+    assert_eq!(
+        vault
+            .scoped_read(ScopedReadActorKey::new(agent.to_hex()).unwrap())
+            .weave_report(WeaveReader::Agent(agent), &recipe)?
+            .value
+            .sections
+            .len(),
+        65
+    );
+    Ok(())
+}
+
+#[test]
+fn authored_holder_required_precedence_is_enforced_without_widening_vault_role() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0xE3);
+    let agent = entity(0xE4);
+    for id in [owner_id, agent] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&agent.to_hex()]);
+    let row = WeaveDigestSchedule {
+        reader: WeaveDigestReader::Agent(agent),
+        cadence: WeaveDigestCadence::Daily,
+        next_due_at: 1,
+        recipe: recipe(WeaveSectionKind::Digest),
+    };
+    vault.set_weave_digest_schedule(&owner, &row)?;
+    configure_weave_policy(&vault, |entries| {
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::PRECEDENCE_KEY))
+            .unwrap()
+            .1 = Value::from("holder_required");
+    })?;
+    let read = vault.scoped_read(ScopedReadActorKey::new(agent.to_hex()).unwrap());
+    assert!(vault.set_weave_digest_schedule(&owner, &row).is_err());
+    assert!(
+        read.weave_report(WeaveReader::Agent(agent), &row.recipe)
+            .is_err()
+    );
+    configure_weave_policy(&vault, |entries| {
+        let Value::Array(rows) = &mut entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(crate::gate::weave_policy::KEY))
+            .unwrap()
+            .1
+        else {
+            panic!("rows")
+        };
+        rows.push(Value::Map(vec![
+            (Value::from("role"), Value::from("agent")),
+            (Value::from("holder_ref"), Value::from(agent.to_hex())),
+            (
+                Value::from("sections"),
+                Value::Array(vec![Value::from("digest"), Value::from("projects")]),
+            ),
+            (Value::from("max_sections"), Value::from(20)),
+            (Value::from("max_predicates"), Value::from(40)),
+            (Value::from("max_edge_kinds"), Value::from(40)),
+            (Value::from("max_rows"), Value::from(10_001)),
+        ]));
+    })?;
+    vault.set_weave_digest_schedule(&owner, &row)?;
+    assert!(
+        read.weave_report(WeaveReader::Agent(agent), &row.recipe)
+            .is_ok()
+    );
+    assert!(
+        read.weave_report(
+            WeaveReader::Agent(agent),
+            &recipe(WeaveSectionKind::Projects)
+        )
+        .is_err()
+    );
     Ok(())
 }

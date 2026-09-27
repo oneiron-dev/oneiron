@@ -4,14 +4,33 @@ use rmpv::Value;
 use std::collections::BTreeSet;
 
 pub(crate) const KEY: &str = "weave_report_policy";
-/// The precedence order is itself a manifest row; v1 admits one fail-closed law.
+/// The precedence order is itself a manifest row.
 pub(crate) const PRECEDENCE_KEY: &str = "weave_report_precedence";
 pub(crate) const NESTED_NARROWING: &str = "nested_narrowing";
 
-/// Hard allocation/scan safety bounds, distinct from the authorable defaults.
-pub(crate) const HARD_SECTIONS: usize = 64;
-pub(crate) const HARD_PREDICATES: usize = 64;
-pub(crate) const HARD_ROWS: usize = 10_000;
+/// Both orders intersect holder ceilings with the vault. `holder_required`
+/// additionally refuses readers without a matching holder row.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Precedence {
+    #[default]
+    NestedNarrowing,
+    HolderRequired,
+}
+impl Precedence {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            NESTED_NARROWING => Some(Self::NestedNarrowing),
+            "holder_required" => Some(Self::HolderRequired),
+            _ => None,
+        }
+    }
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NestedNarrowing => NESTED_NARROWING,
+            Self::HolderRequired => "holder_required",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Row {
@@ -36,7 +55,12 @@ impl Row {
 
 /// Each trusted vault row constrains the role. Holder rows further narrow its
 /// vault row, never replace it. A missing role has no allowed sections.
-pub(crate) fn effective(rows: &[Row], role: &str, holder: EntityId) -> Option<Row> {
+pub(crate) fn effective(
+    rows: &[Row],
+    role: &str,
+    holder: EntityId,
+    precedence: Precedence,
+) -> Option<Row> {
     let mut combined: Option<Row> = None;
     for row in rows.iter().filter(|r| r.role == role && r.holder.is_none()) {
         if let Some(current) = &mut combined {
@@ -46,11 +70,16 @@ pub(crate) fn effective(rows: &[Row], role: &str, holder: EntityId) -> Option<Ro
         }
     }
     let mut combined = combined?;
+    let mut holder_found = false;
     for row in rows
         .iter()
         .filter(|r| r.role == role && r.holder == Some(holder))
     {
+        holder_found = true;
         combined.restrict(row);
+    }
+    if precedence == Precedence::HolderRequired && !holder_found {
+        return None;
     }
     Some(combined)
 }
@@ -66,10 +95,23 @@ pub(crate) fn effective_resolved(
     if policy.diagnostics.loaded_manifest_forces_fail_closed() {
         return None;
     }
-    if policy.weave_report_policy.is_empty() {
-        return effective(&parse(&default_value())?, role, holder);
+    if policy.weave_report_policy_empty {
+        return None;
     }
-    effective(&policy.weave_report_policy, role, holder)
+    if policy.weave_report_policy.is_empty() {
+        return effective(
+            &parse(&default_value())?,
+            role,
+            holder,
+            policy.weave_report_precedence,
+        );
+    }
+    effective(
+        &policy.weave_report_policy,
+        role,
+        holder,
+        policy.weave_report_precedence,
+    )
 }
 
 pub(crate) fn default_value() -> Value {
@@ -131,9 +173,6 @@ pub(crate) fn parse(value: &Value) -> Option<Vec<Row>> {
     let Value::Array(values) = value else {
         return None;
     };
-    if values.len() > 256 {
-        return None;
-    }
     let mut rows = Vec::with_capacity(values.len());
     for value in values {
         let Value::Map(entries) = value else {
@@ -185,18 +224,18 @@ pub(crate) fn parse(value: &Value) -> Option<Vec<Row>> {
                 return None;
             }
         }
-        let ceiling = |name, hard: usize| -> Option<usize> {
+        let ceiling = |name| -> Option<usize> {
             let n = usize::try_from(field(entries, name)?.as_u64()?).ok()?;
-            (n > 0 && n <= hard).then_some(n)
+            (n > 0).then_some(n)
         };
         let row = Row {
             role: role.into(),
             holder,
             sections: allowed,
-            max_sections: ceiling("max_sections", HARD_SECTIONS)?,
-            max_predicates: ceiling("max_predicates", HARD_PREDICATES)?,
-            max_edge_kinds: ceiling("max_edge_kinds", HARD_PREDICATES)?,
-            max_rows: ceiling("max_rows", HARD_ROWS)?,
+            max_sections: ceiling("max_sections")?,
+            max_predicates: ceiling("max_predicates")?,
+            max_edge_kinds: ceiling("max_edge_kinds")?,
+            max_rows: ceiling("max_rows")?,
         };
         if rows
             .iter()

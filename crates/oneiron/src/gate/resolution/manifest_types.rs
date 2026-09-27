@@ -84,6 +84,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
     pub(crate) weave_report_policy: Vec<crate::gate::weave_policy::Row>,
+    pub(crate) weave_report_policy_empty: bool,
+    pub(crate) weave_report_precedence: crate::gate::weave_policy::Precedence,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,

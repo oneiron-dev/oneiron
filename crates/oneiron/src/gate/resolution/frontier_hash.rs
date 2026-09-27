@@ -102,6 +102,8 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_str(hasher, "weave_report_policy");
+    hash_bool(hasher, resolution.weave_report_policy_empty);
+    hash_str(hasher, resolution.weave_report_precedence.as_str());
     hash_len(hasher, resolution.weave_report_policy.len());
     for row in &resolution.weave_report_policy {
         hash_str(hasher, &row.role);
