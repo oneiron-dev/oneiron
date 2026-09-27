@@ -68,7 +68,12 @@ impl Vault {
             return Ok(true);
         }
 
-        if crate::note::erase::scope_exists(self, txn, id)? {
+        if crate::note::erase::scope_exists(self, txn, id)?
+            || !self
+                .store
+                .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
+                .is_empty()
+        {
             return Ok(true);
         }
         vad_annotation_delete_scope_exists_in_txn(&self.store, txn, id)

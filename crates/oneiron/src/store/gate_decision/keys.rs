@@ -47,6 +47,34 @@ pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY: &[u8
 /// Only accepted value byte for the backfill-complete flag row.
 pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u8; 1] = [1];
 
+/// Per-decision constituent ids for a multi-claim inbox bundle. Its indexed
+/// counterpart is an acceleration only; the complete sidecar is the source
+/// for independent scan verification. Both are shredded with the bundle row.
+// Uncommitted-only batch preflight protection. A batch records every future
+// write decision before applying its first op; deletion may scrub only the
+// decisions already consumed. Markers are removed as each op applies, and
+// never survive a successful batch commit.
+const GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX: &[u8] = b"gate_decision_unapplied_preflight:v0:";
+
+pub(super) fn gate_decision_unapplied_preflight_key(id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX, &id.as_bytes())
+}
+
+pub(super) const GATE_DECISION_CLAIM_REFS_PREFIX: &[u8] = b"gate_decision_claim_refs:v0:";
+pub(super) const GATE_DECISION_CLAIM_REF_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim_ref:v0:";
+
+pub(super) fn gate_decision_claim_refs_key(id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(GATE_DECISION_CLAIM_REFS_PREFIX, &id.as_bytes())
+}
+
+pub(super) fn gate_decision_claim_ref_prefix(claim_id: &[u8; 16]) -> Vec<u8> {
+    index_key_with_id(GATE_DECISION_CLAIM_REF_INDEX_PREFIX, claim_id)
+}
+
+pub(super) fn gate_decision_claim_ref_key(claim_id: &[u8; 16], id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(&gate_decision_claim_ref_prefix(claim_id), &id.as_bytes())
+}
+
 pub(in crate::store) const ATTEMPT_RUN_INDEX_PREFIX: &[u8] = b"job:run_index:v1:";
 
 pub(in crate::store) fn gate_decision_key(decision_id: GateDecisionId) -> Vec<u8> {

@@ -40,7 +40,8 @@ impl Vault {
             // EdgeRef is only readable while the body is.
             let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
             crate::note::erase_citations_in_txn(self, wtxn, shell)?;
-            let (existed, shell_had_vector) = self.soft_erase_active_store_in_txn(wtxn, shell)?;
+            let (existed, shell_had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(wtxn, shell)?;
             had_vector |= shell_had_vector;
             // D16 in the SAME transaction as the scrub, exactly as the local
             // and replayed SoftErase arms do it.

@@ -664,7 +664,21 @@ fn append_bundle_decision_in_txn(
             .map_or([0; 32], |record| record.read_frontier_hash),
         redacted_at: None,
     };
-    vault.store.append_gate_decision_in_txn(wtxn, &record)?;
+    let claim_refs = basis
+        .iter()
+        .map(|member| {
+            member
+                .claim_id
+                .ok_or(Error::CorruptedIndex("inbox bundle member claim"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if claim_refs.is_empty() {
+        vault.store.append_gate_decision_in_txn(wtxn, &record)?;
+    } else {
+        vault
+            .store
+            .append_gate_decision_with_claim_refs_in_txn(wtxn, &record, &claim_refs)?;
+    }
     Ok(record)
 }
 

@@ -2064,3 +2064,203 @@ fn duplicate_hash_ignores_writer_substrate_but_keeps_explicit_scopes() -> Result
     assert_ne!(hash, inbox_claim_hash(&world)?);
     Ok(())
 }
+
+#[test]
+fn erasing_one_inbox_bundle_member_shreds_all_constituent_refs() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let first = entity(0x91);
+    let second = entity(0x92);
+    let independent = entity(0x93);
+    for (id, run, predicate, actor, subject) in [
+        (first, "erase-bundle", "profile.diet", 0xB1, 0xC1),
+        (second, "erase-bundle", "profile.hobby", 0xB1, 0xC1),
+        (independent, "keep-bundle", "profile.diet", 0xB2, 0xC2),
+    ] {
+        write_dreamer_proposal(
+            &vault,
+            id,
+            entity(actor),
+            entity(subject),
+            predicate,
+            "value",
+            run,
+            10,
+            &[REASON_CEILING],
+        )?;
+    }
+    let target =
+        vault.resolve_inbox_group_at("erase-bundle", InboxBulkVerb::AcceptAll, None, 50)?;
+    let survivor =
+        vault.resolve_inbox_group_at("keep-bundle", InboxBulkVerb::AcceptAll, None, 51)?;
+    let target_id = crate::store::GateDecisionId::from_bytes(
+        *uuid::Uuid::parse_str(target.bundle_receipt.receipt_id.trim_start_matches("gate:"))
+            .expect("bundle receipt id")
+            .as_bytes(),
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    for id in [first, second] {
+        assert!(
+            vault
+                .store
+                .bundle_gate_decisions_for_claim_in_txn(&rtxn, id.as_bytes())?
+                .iter()
+                .any(|row| row.decision_id == target_id)
+        );
+        assert!(
+            vault
+                .store
+                .gate_decisions_for_claim_in_txn(&rtxn, id.as_bytes())?
+                .iter()
+                .all(|row| row.claim_id == Some(*id.as_bytes())),
+            "ordinary claim verdict reads exclude multi-claim bundle rows"
+        );
+    }
+    drop(rtxn);
+
+    assert!(vault.delete_entity(&first)?);
+    let rtxn = vault.store.env.read_txn()?;
+    let redacted = vault
+        .store
+        .gate_decision_in_txn(&rtxn, target_id)?
+        .expect("bundle accountability skeleton");
+    assert!(redacted.redacted_at.is_some());
+    assert!(redacted.diff_handle.is_empty());
+    assert!(redacted.grant_ref.is_none());
+    for id in [first, second] {
+        assert!(
+            !vault
+                .store
+                .bundle_gate_decisions_for_claim_in_txn(&rtxn, id.as_bytes())?
+                .iter()
+                .any(|row| row.decision_id == target_id)
+        );
+    }
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, first.as_bytes())?
+            .is_empty()
+    );
+    drop(rtxn);
+    assert!(
+        vault
+            .store
+            .gate_decisions_for_grant_ref(&survivor.bundle_ref)?
+            .iter()
+            .any(|row| row.redacted_at.is_none())
+    );
+    Ok(())
+}
+
+#[test]
+fn deleting_unresolved_proposal_shreds_tray_and_prevents_let_go_resurrection() -> Result<()> {
+    for batch_delete in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let claim_id = entity(0x71);
+        let run_id = "erase-unresolved";
+        write_dreamer_proposal(
+            &vault,
+            claim_id,
+            entity(0xB1),
+            entity(0xC1),
+            "profile.diet",
+            "sensitive",
+            run_id,
+            10,
+            &[REASON_CEILING],
+        )?;
+        assert_eq!(vault.pending_gate_consents(10)?.len(), 1);
+        if batch_delete {
+            vault.batch().delete(&claim_id).commit()?;
+        } else {
+            vault
+                .delete_entity_with_reason(&claim_id, crate::deletion::DeleteReason::UserDelete)?;
+        }
+        assert!(vault.pending_gate_consents(10)?.is_empty());
+        assert!(
+            vault
+                .store
+                .pending_gate_consents_for_run(run_id)?
+                .is_empty()
+        );
+        assert!(vault.let_go_pending_ask_at(&claim_id, 99)?.is_none());
+        let rtxn = vault.store.env.read_txn()?;
+        let rows = vault
+            .store
+            .gate_decisions_for_claim_in_txn(&rtxn, claim_id.as_bytes())?;
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter()
+                .all(|row| row.redacted_at.is_some() && row.diff_handle.is_empty())
+        );
+        assert!(
+            vault
+                .store
+                .verify_claim_erasure_by_scan_in_txn(&rtxn, claim_id.as_bytes())?
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn batch_delete_of_approved_member_redacts_singular_and_bundle_decisions() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let first = entity(0x72);
+    let second = entity(0x73);
+    for (id, predicate) in [(first, "profile.diet"), (second, "profile.hobby")] {
+        write_dreamer_proposal(
+            &vault,
+            id,
+            entity(0xB1),
+            entity(0xC1),
+            predicate,
+            "sensitive",
+            "erase-batch-bundle",
+            10,
+            &[REASON_CEILING],
+        )?;
+    }
+    let receipt =
+        vault.resolve_inbox_group_at("erase-batch-bundle", InboxBulkVerb::AcceptAll, None, 50)?;
+    let bundle_id = GateDecisionId::from_bytes(
+        *uuid::Uuid::parse_str(
+            receipt
+                .bundle_receipt
+                .receipt_id
+                .trim_start_matches("gate:"),
+        )
+        .expect("bundle id")
+        .as_bytes(),
+    );
+    vault.batch().delete(&first).commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    let singular = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&rtxn, first.as_bytes())?;
+    assert!(!singular.is_empty());
+    assert!(
+        singular
+            .iter()
+            .all(|row| row.redacted_at.is_some() && row.diff_handle.is_empty())
+    );
+    let bundle = vault
+        .store
+        .gate_decision_in_txn(&rtxn, bundle_id)?
+        .expect("bundle skeleton remains");
+    assert!(bundle.redacted_at.is_some());
+    assert!(bundle.diff_handle.is_empty());
+    assert!(
+        vault
+            .store
+            .bundle_gate_decisions_for_claim_in_txn(&rtxn, second.as_bytes())?
+            .is_empty()
+    );
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, first.as_bytes())?
+            .is_empty()
+    );
+    Ok(())
+}
