@@ -10,7 +10,7 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
-use super::retry_audit::persist_failed_send_receipt_and_retry;
+use super::retry_audit::{persist_failed_send_receipt_and_retry, settle_suppressed_send};
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -171,6 +171,9 @@ impl Vault {
             if task.human_explicit_instant {
                 request = request.delivery_window_human_explicit_instant();
             }
+            if let Some(party) = task.counterparty_ref.as_deref() {
+                request = request.counterparty_ref(party);
+            }
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
@@ -223,6 +226,17 @@ impl Vault {
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
                     append_connector_task_window_receipt(&mut result.receipt, &task);
+                    // Provider receipt fields cannot claim a PERSON binding the
+                    // scheduler did not freeze on the TASK. Only that binding
+                    // may feed the comm projector after durable delivery.
+                    if let Some(party) = task.counterparty_ref.as_ref() {
+                        result
+                            .receipt
+                            .fields
+                            .insert("counterparty_ref".to_owned(), party.clone());
+                    } else {
+                        result.receipt.fields.remove("counterparty_ref");
+                    }
                     let delivered_idempotency =
                         idempotency_key.as_deref().map(|key| (task.actor_ref, key));
                     if persist_send_receipt(
@@ -283,6 +297,15 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                    if result.receipt.fields.get("suppression").map(String::as_str)
+                        == Some("dedupe")
+                    {
+                        // The common door already committed the single durable,
+                        // replicated receipt. Settle only this TASK and queue,
+                        // atomically honoring any delivered winner.
+                        settle_suppressed_send(self, &attempt, task_ref, now)?;
+                        continue;
+                    }
                     fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
                     project_connector_send_task_outcome(
                         self,
