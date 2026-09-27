@@ -151,9 +151,9 @@ impl ConsentAskCard {
                     }),
                 )
             }
-            ConsentActionKind::BundleApprove(_) => {
+            ConsentActionKind::BundleApprove(_) | ConsentActionKind::ProjectMint => {
                 return Err(Error::InvalidConfig(
-                    "bundle approval action cannot target consent ask card".to_string(),
+                    "unrelated action cannot target consent ask card".to_string(),
                 ));
             }
         };
@@ -365,7 +365,9 @@ impl BundleApproveCard {
                     }),
                 )
             }
-            ConsentActionKind::Approve | ConsentActionKind::Escalate(_) => {
+            ConsentActionKind::Approve
+            | ConsentActionKind::Escalate(_)
+            | ConsentActionKind::ProjectMint => {
                 return Err(Error::InvalidConfig(
                     "ask-card action cannot target bundle approve card".to_string(),
                 ));

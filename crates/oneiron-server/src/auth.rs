@@ -129,11 +129,15 @@ pub(crate) fn revoke_token_jti(vault: &oneiron::Vault, jti: &str) -> anyhow::Res
         anyhow::bail!("token id must be exactly {CORE_TOKEN_JTI_LEN} lowercase hex characters");
     }
     let key = revoked_token_jti_key(jti);
-    if vault.sync_state_get(&key)?.is_some() {
-        return Ok(false);
-    }
-    vault.sync_state_put(&key, &[])?;
-    Ok(true)
+    // LMDB serializes writers. Read the marker under the SAME write transaction
+    // that creates it, so only the first concurrent caller can report `true`.
+    Ok(vault.with_write_txn(|txn| {
+        if vault.sync_state_get_in_write_txn(txn, &key)?.is_some() {
+            return Ok(false);
+        }
+        vault.sync_state_put_in_write_txn(txn, &key, &[])?;
+        Ok(true)
+    })?)
 }
 
 /// Mints a fresh token identifier.
