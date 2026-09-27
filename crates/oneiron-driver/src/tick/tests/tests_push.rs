@@ -485,6 +485,46 @@ fn seed_digest_proposal(vault: &Vault, seed: u8) {
         .unwrap();
 }
 
+fn seed_digest_proposal_in_txn(vault: &Vault, seed: u8, rollback: bool) {
+    use oneiron::ClaimCandidate;
+    use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
+    let actor = vault.dreamer_authority().expect("Dreamer actor");
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(rmpv::Value::Map(vec![(
+            rmpv::Value::from("surface"),
+            rmpv::Value::from("dreamer"),
+        )]))
+        .unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let id = EntityId::from_bytes([seed; 16]).unwrap();
+    let result = vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    "dreamer.proactivity.follow_up",
+                    ClaimSubject::Entity(actor.entity_ref()),
+                    rmpv::Value::from("pending"),
+                    0.7,
+                ),
+                &envelope,
+                TimeRange { start: 1, end: 1 },
+                1,
+            )
+            .apply(txn)?;
+        if rollback {
+            return Err(oneiron::Error::InvalidConfig("test rollback".into()));
+        }
+        Ok(())
+    });
+    assert_eq!(result.is_err(), rollback);
+}
+
 fn digest_owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
     let id = EntityId::from_bytes([0x71; 16]).unwrap();
     vault
@@ -592,6 +632,44 @@ async fn cadence_edit_rearms_already_sleeping_timer_without_push() {
         next,
         Some(Tick::Deadline(CommitmentDeadline {
             due_at_ms: 120_000,
+            scope: DreamerConsolidationScope::Micro,
+        }))
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn transaction_owned_proposal_rearms_only_after_outer_commit() {
+    let (_dir, vault) = open_vault();
+    let node = vault_client_node_id(&vault);
+    elect_home(&vault, node, 1);
+    let clock = frozen_clock(100_000);
+    let timer = TimerTick::with_clock(
+        AttemptQueueDeadlines::with_commitment_clock(&vault, node, Arc::clone(&clock)),
+        Arc::clone(&clock),
+    );
+    let (push, _wake, _hint) = PushTick::channel_with_clock(clock, COALESCE_FLOOR_MS);
+    let mut hybrid = HybridTick::new(timer, push);
+    let mut waiting = std::pin::pin!(hybrid.next_tick());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1), &mut waiting)
+            .await
+            .is_err()
+    );
+    seed_digest_proposal_in_txn(&vault, 0x79, true);
+    assert_eq!(vault.next_proactivity_digest_at().unwrap(), None);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1), &mut waiting)
+            .await
+            .is_err()
+    );
+    seed_digest_proposal_in_txn(&vault, 0x79, false);
+    let tick = tokio::time::timeout(Duration::from_secs(1), &mut waiting)
+        .await
+        .unwrap();
+    assert_eq!(
+        tick,
+        Some(Tick::Deadline(CommitmentDeadline {
+            due_at_ms: 0,
             scope: DreamerConsolidationScope::Micro,
         }))
     );

@@ -4012,3 +4012,53 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+#[test]
+fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
+    use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+    let origin = test_vault();
+    let receiver = test_vault();
+    let actor = origin.dreamer_authority()?;
+    assert_eq!(
+        receiver.dreamer_authority()?.entity_ref(),
+        actor.entity_ref()
+    );
+    let claim_id = EntityId::now();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    origin
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            crate::ClaimCandidate::new(
+                "dreamer.proactivity.follow_up",
+                crate::ClaimSubject::Entity(actor.entity_ref()),
+                Value::from("pending"),
+                0.7,
+            ),
+            &envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .commit()?;
+    let blob = origin.get_raw(&claim_id)?.expect("source claim");
+    let mut changes = receiver.subscribe_proactivity_changes();
+    assert_eq!(receiver.next_proactivity_digest_at()?, None);
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &receiver, &materializer, "2026-03");
+    map_insert_bytes(&doc.get_map("entities"), &claim_id.to_hex(), &blob).unwrap();
+    doc.commit();
+    assert_eq!(receiver.next_proactivity_digest_at()?, Some(0));
+    assert!(changes.has_changed().expect("vault still open"));
+    changes.borrow_and_update();
+    assert!(!changes.has_changed().expect("vault still open"));
+    Ok(())
+}

@@ -607,3 +607,61 @@ async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn failed_digest_projection_does_not_block_due_attempt() {
+    use crate::tick::{AttemptQueueDeadlines, DeadlineSource};
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let local = store
+        .local_home_node_candidate(false, false, false)
+        .unwrap()
+        .node_id;
+    store
+        .elect_home_node(
+            &[oneiron::DreamerHomeNodeCandidate {
+                node_id: local,
+                cloud: true,
+                attached: true,
+                always_on_local: false,
+                primary_device: false,
+            }],
+            1,
+        )
+        .unwrap();
+    let attempt_id = enqueue_micro(&vault, "independent-after-digest-error", 105);
+    vault.corrupt_proactivity_state_for_test().unwrap();
+    let mut deadlines = AttemptQueueDeadlines::with_commitment_clock(&vault, local, Arc::new(|| 0));
+    let due = deadlines.next_deadline().unwrap().unwrap();
+    assert_eq!(due.scope, DreamerConsolidationScope::Micro);
+    let due_secs = due.due_at_ms / 1_000;
+    let factory = TestExecFactory {
+        panics_left: 0,
+        factory_panics_left: 0,
+        factory_errors_left: 0,
+        completed_units: 40,
+    };
+    let mut config = test_config();
+    config.local_node_id = local;
+    let report = WakeSupervisor::new(
+        &vault,
+        ScriptedTicks {
+            ticks: vec![Tick::Deadline(due)],
+        },
+        factory,
+        config,
+    )
+    .with_clock(Arc::new(move || due_secs))
+    .run()
+    .await;
+    assert_eq!(report.passes_completed, 1);
+    assert_eq!(report.attempts_completed, 1);
+    assert_eq!(report.passes_failed, 0);
+    assert_eq!(
+        store.status(attempt_id).unwrap().unwrap().attempt.state,
+        AttemptState::Completed
+    );
+    // The digest fault remains discoverable; the pass did not falsely
+    // consume or repair its data while servicing the independent lane.
+    assert!(vault.next_proactivity_digest_at().is_err());
+}

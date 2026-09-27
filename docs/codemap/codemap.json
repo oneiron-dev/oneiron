@@ -3077,7 +3077,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 2
      }
@@ -3377,9 +3377,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/vad_postcommit.rs",
-     "purpose": "Transaction-owner handoff for explicit Dreamer consent approvals",
+     "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -13534,7 +13534,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 7
      }
     },

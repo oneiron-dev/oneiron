@@ -365,6 +365,18 @@ impl Vault {
             Ok(Some(digest))
         })
     }
+    /// Test-only fault seam: a corrupt digest row must not block independent
+    /// due attempts in the host supervisor.
+    #[cfg(feature = "test-support")]
+    pub fn corrupt_proactivity_state_for_test(&self) -> Result<()> {
+        self.with_write_txn(|txn| {
+            self.store
+                .vault_meta
+                .put(txn, STATE_KEY, b"invalid digest state")?;
+            Ok(())
+        })
+    }
+
     /// The latest scheduled or urgent output for the host's inbox/board read
     /// plane. The ID still verifies the persisted digest on every read.
     pub fn latest_proactivity_digest(&self) -> Result<Option<ProactivityDigest>> {

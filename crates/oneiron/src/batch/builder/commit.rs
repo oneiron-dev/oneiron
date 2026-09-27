@@ -102,17 +102,7 @@ impl BatchBuilder<'_> {
         // relocation. The content-hash index row is maintained by
         // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
         // content bytes rather than to any departing holder.
-        let changes_claims = self.ops.iter().any(|op| {
-            matches!(
-                op,
-                BatchOp::ClaimCandidate { .. }
-                    | BatchOp::Put {
-                        entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-                        ..
-                    }
-                    | BatchOp::Delete { .. }
-            )
-        });
+        let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&self.ops);
         apply_ops_with_gate_mode(
             &self.vault.store,
             &self.vault.config,
