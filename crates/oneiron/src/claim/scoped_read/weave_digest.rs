@@ -540,8 +540,17 @@ impl ScopedRead<'_> {
                         source,
                         kind,
                         target,
-                    } if !self.live_weave_edge_in(&txn, *source, *kind, *target)? => {
-                        return Ok(None);
+                    } => {
+                        let Some(edge) = self.live_weave_edge_in(&txn, *source, *kind, *target)?
+                        else {
+                            return Ok(None);
+                        };
+                        if !self
+                            .admit_stored_edge_in(&txn, &policy, &filter, *source, edge)?
+                            .visible()
+                        {
+                            return Ok(None);
+                        }
                     }
                     _ => {}
                 }
