@@ -68,13 +68,14 @@ pub(crate) struct DagAppendRequest {
 pub(crate) enum DagScopePath {
     Canonical,
     Branch(String),
+    BranchSpan { after: String, through: String },
     SubSession(String),
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagScopeRequest {
-    /// "canonical", {"branch": "id"}, or {"sub_session": "id"}.
+    /// "canonical", {"branch": "id"}, {"branch_span": {"after": "id", "through": "id"}}, or {"sub_session": "id"}.
     pub path: DagScopePath,
     #[serde(default)]
     pub include_forks: bool,
@@ -89,6 +90,10 @@ impl DagScopeRequest {
             path: match &self.path {
                 DagScopePath::Canonical => ScopePath::Canonical,
                 DagScopePath::Branch(id) => ScopePath::Branch(parse_entity_id_param(id, "branch")?),
+                DagScopePath::BranchSpan { after, through } => ScopePath::BranchSpan {
+                    after: parse_entity_id_param(after, "after")?,
+                    through: parse_entity_id_param(through, "through")?,
+                },
                 DagScopePath::SubSession(id) => {
                     ScopePath::SubSession(parse_entity_id_param(id, "sub_session")?)
                 }

@@ -107,23 +107,26 @@ pub(crate) fn resolve_in_txn(
     let mut records = match scope.path {
         ScopePath::Canonical => graph::canonical_chain(&vault.store, txn, &scope.conversation)?,
         ScopePath::Branch(id) => chain(&vault.store, txn, &scope.conversation, id)?,
+        ScopePath::BranchSpan { after, through } => {
+            return Ok(ResolvedScope {
+                scope: scope.clone(),
+                records: super::branch_scope::prove_branch_span(
+                    &vault.store,
+                    txn,
+                    scope,
+                    after,
+                    through,
+                )?,
+            });
+        }
         ScopePath::SubSession(_) => unreachable!("handled above"),
     };
-    // A branch explicitly anchored in a worker session can project that
-    // session's chain. The parent walk still validates the full ancestry;
-    // enclosing worker sessions are not covered by this inner projection.
-    let worker_branch = match (scope.path, scope.session) {
-        (ScopePath::Branch(anchor), Some(session))
-            if graph::is_sub_session_record(&vault.store, txn, &anchor)? =>
-        {
-            if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &anchor)?
-                != Some(session)
-            {
-                return Err(invalid("branch anchor belongs to another session"));
-            }
-            Some(session)
-        }
-        _ => None,
+    // A generic Branch keeps its historic ancestry semantics. Its worker
+    // anchor is proven by the same helper used at stored-summary reads.
+    let worker_branch = if let ScopePath::Branch(anchor) = scope.path {
+        super::branch_scope::prove_branch_anchor(&vault.store, txn, scope, anchor)?
+    } else {
+        None
     };
     if let Some(session) = worker_branch {
         let mut selected = Vec::new();

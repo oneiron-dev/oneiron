@@ -946,12 +946,9 @@ fn thread_roots_metadata_rebuild_and_summary_cover_the_exact_branch() {
         .unwrap();
     assert_eq!(
         vault.scope_summary_covers(&summary).unwrap(),
-        [root, first, second, third]
+        [first, second, third]
     );
-    assert_eq!(
-        vault.drill(&header.claim).unwrap(),
-        [root, first, second, third]
-    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second, third]);
     assert_eq!(
         vault.get_claim(&header.claim).unwrap().unwrap().subject,
         crate::claim::ClaimSubject::Entity(root)
@@ -1008,9 +1005,9 @@ fn thread_depth_two_and_another_root_are_not_refused() {
         .unwrap();
     assert_eq!(
         vault.scope_summary_covers(&summary).unwrap(),
-        [trunk, first, nested]
+        [first, nested]
     );
-    assert_eq!(vault.drill(&header.claim).unwrap(), [trunk, first, nested]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, nested]);
     assert_eq!(vault.head(&conversation).unwrap(), Some(trunk));
 }
 
@@ -1138,5 +1135,125 @@ fn inner_worker_thread_summary_excludes_outer_session_ancestry() {
         vault.get_claim(&header.claim).unwrap().unwrap().subject,
         crate::claim::ClaimSubject::Entity(worker)
     );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn bounded_thread_summary_excludes_room_prefix_and_pins_historic_replies() {
+    let (_dir, vault, conv, actor) = fixture();
+    let root = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let before = vault
+        .append_dag_record(&input(conv, Some(root), true, actor))
+        .unwrap()
+        .id;
+    let trunk = vault
+        .append_dag_record(&input(conv, Some(before), true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let second = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let span = scope(
+        conv,
+        ScopePath::BranchSpan {
+            after: trunk,
+            through: second,
+        },
+        false,
+    );
+    assert_eq!(
+        vault.resolve_dag_scope(&span).unwrap().records,
+        [first, second]
+    );
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "pinned replies", actor)
+        .unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, second]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(trunk)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+    let third = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let worker_session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut sibling_input = input(conv, None, false, actor);
+    sibling_input.session = Some(worker_session);
+    let sibling = vault.reply_in_thread(trunk, &sibling_input).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first, second, third]);
+    assert!(vault.thread_roots(trunk).unwrap().contains(&sibling));
+    vault.move_head(&conv, &root).unwrap();
+    assert_eq!(
+        vault.scope_summary_covers(&summary).unwrap(),
+        [first, second]
+    );
+    assert_eq!(vault.drill(&header.claim).unwrap(), [first, second]);
+}
+
+#[test]
+fn same_worker_session_thread_summary_excludes_earlier_session_turns() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut input = input(conv, Some(trunk), false, actor);
+    input.session = Some(session);
+    let worker = vault.append_dag_record(&input).unwrap().id;
+    let root = vault.reply_in_thread(worker, &input).unwrap().id;
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(worker, "same session", actor)
+        .unwrap();
+    assert_eq!(vault.thread(worker).unwrap().replies, [root]);
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(worker)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn bounded_thread_allows_ordinary_sitting_transition() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session = EntityId::now();
+    vault
+        .put_entity(
+            &session,
+            ENTITY_TYPE_SESSION,
+            time(1),
+            1,
+            &body("ordinary sitting"),
+        )
+        .unwrap();
+    let mut reply = input(conv, None, false, actor);
+    reply.session = Some(session);
+    let record = vault.reply_in_thread(trunk, &reply).unwrap().id;
+    assert_eq!(vault.thread(trunk).unwrap().replies, [record]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(trunk, "new sitting", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [record]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [record]);
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }

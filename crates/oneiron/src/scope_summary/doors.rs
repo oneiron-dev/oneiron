@@ -8,7 +8,8 @@ use crate::batch::EdgeValueFields;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation_dag::{
     AppendRecord, ScopePath, ScopeSelector, actor_in_txn, append_in_txn, conversation_of, edge_ids,
-    is_sub_session_record, require_type, resolve_in_txn, thread_tip_in_txn,
+    is_sub_session_record, prove_branch_anchor, prove_branch_span, require_type, resolve_in_txn,
+    selected_thread_in_txn,
 };
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
@@ -48,6 +49,13 @@ fn summary_in_txn(vault: &Vault, txn: &RoTxn<'_>, summary: &EntityId) -> Result<
 
 fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
     let scope = &body.scope;
+    if let ScopePath::BranchSpan { after, through } = scope.path {
+        let exact = prove_branch_span(&vault.store, txn, scope, after, through)?;
+        if body.covers != exact {
+            return Err(invalid("summary covers differ from bounded reply span"));
+        }
+        return Ok(());
+    }
     require_type(
         &vault.store,
         txn,
@@ -67,14 +75,11 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             Some(session)
         }
         ScopePath::Branch(anchor) => {
-            if conversation_of(&vault.store, txn, &anchor)? != scope.conversation
-                || is_sub_session_record(&vault.store, txn, &anchor)? && scope.session.is_none()
-            {
-                return Err(invalid("summary branch belongs to another scope"));
-            }
+            prove_branch_anchor(&vault.store, txn, scope, anchor)?;
             scope.session
         }
         ScopePath::Canonical => scope.session,
+        ScopePath::BranchSpan { .. } => unreachable!("validated above"),
     };
     if let Some(session) = session {
         require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
@@ -107,6 +112,11 @@ fn validate_landing_in_txn(
 ) -> Result<()> {
     if conversation_of(&vault.store, txn, turn)? != scope.conversation {
         return Err(invalid("landing turn is in another conversation"));
+    }
+    if let ScopePath::BranchSpan { after, .. } = scope.path
+        && after != *turn
+    {
+        return Err(invalid("bounded thread summary must land on its trunk"));
     }
     if let ScopePath::SubSession(session) = scope.path
         && edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)? != [*turn]
@@ -430,18 +440,22 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<(EntityId, LandedHeader)> {
         self.with_write_txn(|txn| {
-            let tip = thread_tip_in_txn(self, txn, trunk)?;
-            let session = if is_sub_session_record(&self.store, txn, &tip)? {
-                crate::compaction::turn_session_membership_in_txn(&self.store, txn, &tip)?
-            } else {
-                None
-            };
+            let selected = selected_thread_in_txn(self, txn, trunk)?
+                .ok_or_else(|| invalid("trunk has no thread"))?;
             let scope = ScopeSelector {
-                conversation: conversation_of(&self.store, txn, &trunk)?,
-                session,
-                path: ScopePath::Branch(tip),
+                conversation: selected.conversation,
+                session: None,
+                path: ScopePath::BranchSpan {
+                    after: selected.trunk,
+                    through: selected.tip,
+                },
                 include_forks: false,
             };
+            if prove_branch_span(&self.store, txn, &scope, selected.trunk, selected.tip)?
+                != selected.replies
+            {
+                return Err(invalid("selected thread differs from bounded span"));
+            }
             let now = self.store.clock.now_recorded_at();
             let summary = mint_in_txn(self, txn, &scope, text, actor, now)?;
             let landed = land_in_txn(self, txn, &summary, &trunk, actor, false, now)?;

@@ -395,3 +395,92 @@ fn stored_summary_covers_prove_ownership_without_recomputing_history() {
         crate::ErrorKind::InvalidScopeSummary
     );
 }
+
+#[test]
+fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let session_a = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let session_b = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut input_a = input(conv, None, false, actor);
+    input_a.session = Some(session_a);
+    let a = vault.reply_in_thread(trunk, &input_a).unwrap().id;
+    let mut input_b = input(conv, None, false, actor);
+    input_b.session = Some(session_b);
+    let b = vault.reply_in_thread(trunk, &input_b).unwrap().id;
+    let matching = scope(conv, ScopePath::Branch(a), false);
+    let matching = ScopeSelector {
+        session: Some(session_a),
+        ..matching
+    };
+    let good = vault
+        .mint_dag_scope_summary(&matching, "valid anchor", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&good).unwrap(), [a]);
+    let mut forged = decode_scope_summary_body(&vault.get(&good).unwrap().unwrap()).unwrap();
+    forged.scope.session = Some(session_b);
+    forged.covers = vec![b];
+    for replicated in [false, true] {
+        let id = EntityId::now();
+        let bytes = encode_scope_summary_body(&forged).unwrap();
+        if replicated {
+            vault
+                .batch()
+                .put_replicated(
+                    &id,
+                    crate::registry::ENTITY_TYPE_SUMMARY,
+                    time(1),
+                    1,
+                    &bytes,
+                )
+                .commit()
+                .unwrap();
+        } else {
+            vault
+                .put_entity(
+                    &id,
+                    crate::registry::ENTITY_TYPE_SUMMARY,
+                    time(1),
+                    1,
+                    &bytes,
+                )
+                .unwrap();
+        }
+        assert!(vault.scope_summary_covers(&id).is_err());
+        assert!(vault.land_header(&id, &trunk, actor, false).is_err());
+        let txn = vault.store.env.read_txn().unwrap();
+        assert!(
+            body_covers_in_txn(
+                &vault,
+                &txn,
+                &id,
+                crate::registry::ENTITY_TYPE_SUMMARY,
+                &bytes
+            )
+            .is_err()
+        );
+    }
+    let (bounded, header) = vault
+        .mint_and_land_thread_summary(trunk, "selected root", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&bounded).unwrap(), [a]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [a]);
+    let mut forged_span =
+        decode_scope_summary_body(&vault.get(&bounded).unwrap().unwrap()).unwrap();
+    forged_span.covers = vec![b];
+    let id = EntityId::now();
+    vault
+        .put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_SUMMARY,
+            time(1),
+            1,
+            &encode_scope_summary_body(&forged_span).unwrap(),
+        )
+        .unwrap();
+    assert!(vault.scope_summary_covers(&id).is_err());
+    assert!(vault.land_header(&id, &trunk, actor, false).is_err());
+}

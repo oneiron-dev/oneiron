@@ -11855,6 +11855,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/branch_scope.rs",
+     "purpose": "Shared branch ownership and bounded reply-span proof for mint and stored reads",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/fixtures.rs",
      "purpose": "—",
      "surface": {
@@ -11899,7 +11909,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "mod": 1,
       "re-export": 2
      }
@@ -11925,7 +11935,7 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "fn": 6,
       "struct": 3
      }
@@ -11966,6 +11976,16 @@
      "path": "src/conversation_dag/tests/replay.rs",
      "purpose": "Observable session-carrier replay without exporting local membership indexes",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/thread_projection.rs",
+     "purpose": "Deterministic root-first, no-forks thread selection over a single read snapshot",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -34679,7 +34699,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 14,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35591,7 +35611,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
+   "source_files": 2102,
    "test_files": 719
   },
   "oneiron-android": {

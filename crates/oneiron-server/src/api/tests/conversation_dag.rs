@@ -441,6 +441,13 @@ async fn thread_meta_and_summary_routes_roundtrip() {
         json!({"advance": false, "body": {"txt": "reply"}, "occurred_start": 42, "actor": actor}),
     )
     .await;
+    let bounded = post(
+        &server,
+        &format!("{path}/scope"),
+        json!({"path": {"branch_span": {"after": root["id"], "through": reply["id"]}}}),
+    )
+    .await;
+    assert_eq!(bounded["records"], json!([reply["id"]]));
     let page = get(&server, &format!("{path}/records?with=thread_meta")).await;
     let id = root["id"].as_str().unwrap();
     assert_eq!(page["thread_meta"][id]["root"], reply["id"]);
@@ -465,7 +472,7 @@ async fn thread_meta_and_summary_routes_roundtrip() {
         ),
     )
     .await;
-    assert_eq!(covers["covers"], json!([root["id"], reply["id"]]));
+    assert_eq!(covers["covers"], json!([reply["id"]]));
     let drill = get(
         &server,
         &format!(
