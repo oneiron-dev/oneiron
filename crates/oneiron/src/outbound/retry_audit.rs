@@ -1,8 +1,9 @@
-//! Atomic persistence of a failed send receipt and its retry.
+//! Atomic send-receipt retry and terminal settlement.
 
+use super::connector_task::{ConnectorSendTaskOutcome, project_connector_send_task_outcome_in_txn};
 use super::executor::CONNECTOR_TASK_EXECUTOR_LEASE_OWNER;
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, CompleteAttempt, RetryAttempt};
+use crate::attempt_queue::{AttemptQueue, CompleteAttempt, FailAttempt, RetryAttempt};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::receipt::{SendReceiptOutcome, persist_send_receipt_in_txn};
@@ -84,4 +85,84 @@ pub(super) fn persist_send_receipt_and_retry(
         )?;
         Ok(true)
     })
+}
+
+/// Terminal send facts are one commit: an execution-node receipt alone is not
+/// the synced user's audit view. This also keeps the queue claim live on abort.
+pub(super) struct TerminalSendSettlement<'a> {
+    pub(super) attempt: &'a crate::attempt_queue::AttemptRecord,
+    pub(super) task_ref: EntityId,
+    pub(super) receipt: crate::receipt::ReceiptRecord,
+    pub(super) receipt_outcome: SendReceiptOutcome,
+    pub(super) transport_dispatched: bool,
+    pub(super) task_outcome: ConnectorSendTaskOutcome,
+    pub(super) reason: &'a str,
+    pub(super) now: u64,
+}
+
+pub(super) fn persist_terminal_send_receipt_and_fail(
+    vault: &Vault,
+    settlement: TerminalSendSettlement<'_>,
+) -> Result<bool, Error> {
+    vault.with_write_txn(|wtxn| {
+        persist_terminal_send_receipt_and_fail_in_txn(vault, wtxn, settlement)
+    })
+}
+
+pub(super) fn persist_terminal_send_receipt_and_fail_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    settlement: TerminalSendSettlement<'_>,
+) -> Result<bool, Error> {
+    let TerminalSendSettlement {
+        attempt,
+        task_ref,
+        receipt,
+        receipt_outcome,
+        transport_dispatched,
+        task_outcome,
+        reason,
+        now,
+    } = settlement;
+    let queue = AttemptQueue::new(vault);
+    if !persist_send_receipt_in_txn(
+        &vault.store,
+        wtxn,
+        task_ref,
+        receipt,
+        receipt_outcome,
+        transport_dispatched,
+        None,
+    )? {
+        // A delivered receipt won the race. Do not replace it with failure.
+        project_connector_send_task_outcome_in_txn(
+            vault,
+            wtxn,
+            task_ref,
+            ConnectorSendTaskOutcome::Delivered,
+            now,
+        )?;
+        queue.complete_in_txn(
+            wtxn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )?;
+        return Ok(false);
+    }
+    project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, task_outcome, now)?;
+    queue.fail_in_txn(
+        wtxn,
+        FailAttempt {
+            id: attempt.id,
+            lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+            attempt_count: attempt.attempt_count,
+            reason: reason.to_owned(),
+            now,
+        },
+    )?;
+    Ok(true)
 }

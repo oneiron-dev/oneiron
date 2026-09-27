@@ -422,7 +422,7 @@ fn stable_sender_retry_cannot_borrow_authority_for_a_different_request()
         assert_eq!(
             retried.outcome,
             if state == IntentState::Abandoned {
-                OutboundDispatchOutcome::Failed
+                OutboundDispatchOutcome::Ambiguous
             } else {
                 OutboundDispatchOutcome::DeliveredToChannel
             }
@@ -573,14 +573,7 @@ fn sender_replay_keeps_non_idempotent_and_revoked_connector_stops()
             assert_eq!(before[0].state, IntentState::Abandoned);
         }
         let stopped = vault.dispatch_outbound_intent(request, &mut sink)?;
-        assert_eq!(
-            stopped.outcome,
-            if verb == "send" {
-                OutboundDispatchOutcome::Ambiguous
-            } else {
-                OutboundDispatchOutcome::Failed
-            }
-        );
+        assert_eq!(stopped.outcome, OutboundDispatchOutcome::Ambiguous);
         assert_eq!(sink.senders, vec![Some(entity(0x93))]);
         assert_eq!(sink.effects.len(), 1);
         let after = intent_ledger_records(&vault)?;

@@ -2,7 +2,7 @@ use super::OutboundDeliveryWindowDecision;
 use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
-    send_receipt_exists_for_task,
+    project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
 };
 use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
 use super::dispatch_types::{
@@ -10,7 +10,10 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
-use super::retry_audit::{persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry};
+use super::retry_audit::{
+    TerminalSendSettlement, persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
+    persist_terminal_send_receipt_and_fail,
+};
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -128,8 +131,18 @@ impl Vault {
                 complete_connector_task_attempt(&queue, &attempt, now)?;
                 continue;
             }
+            #[cfg(test)]
+            run_before_attempt_start_hook(self);
             let attempt_started_node_id = crate::identity::load_or_mint_client_id(self)?;
-            mark_connector_send_task_attempt_started(self, task_ref, attempt_started_node_id, now)?;
+            if !mark_connector_send_task_attempt_started(
+                self,
+                task_ref,
+                attempt_started_node_id,
+                now,
+            )? {
+                complete_connector_task_attempt(&queue, &attempt, now)?;
+                continue;
+            }
             let actor = OutboundDispatchActor {
                 actor_class: task.actor_class.gate_actor_class().to_owned(),
                 actor_ref: Some(task.actor_ref.to_hex()),
@@ -198,12 +211,14 @@ impl Vault {
                     // Bound-actor validation fails before the chokepoint admits,
                     // charges, or sends the effect, so this is a definite
                     // non-delivery: fail the attempt terminally and project it.
-                    fail_connector_task_attempt(&queue, &attempt, now, "dispatch_rejected")?;
-                    project_connector_send_task_outcome(
+                    fail_connector_task_attempt_and_project(
                         self,
+                        &queue,
+                        &attempt,
                         task_ref,
-                        ConnectorSendTaskOutcome::Failed,
                         now,
+                        "dispatch_rejected",
+                        ConnectorSendTaskOutcome::Failed,
                     )?;
                     continue;
                 }
@@ -289,12 +304,14 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
-                    fail_connector_task_attempt(&queue, &attempt, now, result.outcome.as_str())?;
-                    project_connector_send_task_outcome(
+                    fail_connector_task_attempt_and_project(
                         self,
+                        &queue,
+                        &attempt,
                         task_ref,
-                        ConnectorSendTaskOutcome::Failed,
                         now,
+                        result.outcome.as_str(),
+                        ConnectorSendTaskOutcome::Failed,
                     )?;
                 }
                 OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => {
@@ -362,37 +379,30 @@ impl Vault {
                             transport_dispatched,
                         )?;
                     } else {
-                        persist_send_receipt(
+                        persist_terminal_send_receipt_and_fail(
                             self,
-                            task_ref,
-                            result.receipt,
-                            if ambiguous {
-                                SendReceiptOutcome::Ambiguous
-                            } else {
-                                SendReceiptOutcome::Failed
+                            TerminalSendSettlement {
+                                attempt: &attempt,
+                                task_ref,
+                                receipt: result.receipt,
+                                receipt_outcome: if ambiguous {
+                                    SendReceiptOutcome::Ambiguous
+                                } else {
+                                    SendReceiptOutcome::Failed
+                                },
+                                transport_dispatched,
+                                task_outcome: if ambiguous {
+                                    ConnectorSendTaskOutcome::Ambiguous
+                                } else {
+                                    ConnectorSendTaskOutcome::Failed
+                                },
+                                reason: if ambiguous {
+                                    "transport_ambiguous"
+                                } else {
+                                    "transport_failed"
+                                },
+                                now,
                             },
-                            transport_dispatched,
-                            None,
-                        )?;
-                        fail_connector_task_attempt(
-                            &queue,
-                            &attempt,
-                            now,
-                            if ambiguous {
-                                "transport_ambiguous"
-                            } else {
-                                "transport_failed"
-                            },
-                        )?;
-                        project_connector_send_task_outcome(
-                            self,
-                            task_ref,
-                            if ambiguous {
-                                ConnectorSendTaskOutcome::Ambiguous
-                            } else {
-                                ConnectorSendTaskOutcome::Failed
-                            },
-                            now,
                         )?;
                     }
                 }
@@ -449,6 +459,33 @@ fn fail_connector_task_attempt(
         now,
     })?;
     Ok(())
+}
+
+/// No transport receipt exists for a pre-send refusal. Still settle the
+/// synced TASK and the queue in one commit so a crash cannot strand it.
+fn fail_connector_task_attempt_and_project(
+    vault: &Vault,
+    queue: &AttemptQueue<'_>,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    now: u64,
+    reason: &str,
+    outcome: ConnectorSendTaskOutcome,
+) -> Result<(), Error> {
+    vault.with_write_txn(|wtxn| {
+        project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, outcome, now)?;
+        queue.fail_in_txn(
+            wtxn,
+            FailAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                reason: reason.to_owned(),
+                now,
+            },
+        )?;
+        Ok(())
+    })
 }
 
 /// Which curve authors the next re-arm instant for a parked send.
@@ -567,4 +604,27 @@ fn retry_connector_task_attempt_at(
         now,
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+type BeforeAttemptStartHook = Box<dyn FnOnce(&Vault)>;
+
+#[cfg(test)]
+std::thread_local! {
+    static BEFORE_ATTEMPT_START: std::cell::RefCell<Option<BeforeAttemptStartHook>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(super) fn set_before_attempt_start_hook(hook: impl FnOnce(&Vault) + 'static) {
+    BEFORE_ATTEMPT_START.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+}
+
+#[cfg(test)]
+fn run_before_attempt_start_hook(vault: &Vault) {
+    BEFORE_ATTEMPT_START.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(vault);
+        }
+    });
 }

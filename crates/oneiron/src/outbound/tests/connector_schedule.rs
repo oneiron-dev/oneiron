@@ -1415,6 +1415,8 @@ fn maybe_delivered_non_idempotent_send_is_ambiguously_terminal() -> crate::Resul
         crate::outbound_intent_ledger::IntentState::Abandoned
     );
 
+    assert_ambiguous_on_task_board(&vault, actor, task_ref);
+
     // A duplicate queue row cannot turn the uncertain outcome into a send permit.
     AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
         kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -1497,5 +1499,260 @@ fn maybe_delivered_idempotent_send_audits_ambiguity_until_reconciled() -> crate:
     assert_eq!(receipts[1].outcome, "ambiguous");
     assert_eq!(receipts[0].outcome, "delivered_to_channel");
     assert_eq!(executor.idempotency_keys[0], executor.idempotency_keys[1]);
+    Ok(())
+}
+
+#[test]
+fn synced_ambiguous_arrival_between_read_and_attempt_start_cannot_send() -> crate::Result<()> {
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::outbound::connector_task::project_connector_send_task_outcome;
+    use crate::outbound::executor::set_before_attempt_start_hook;
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xAC);
+    put_connector_task_actor(&vault, actor, 240)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xAD),
+        &policy_manifest(&actor.to_hex(), "telegram", &["send"]),
+    )?;
+    let mut draft = connector_task_draft("remote-ambiguous:test", "session:remote", 240);
+    draft.channel = "telegram".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    // A synced terminal TASK arrives after the executor hydrates its stale
+    // snapshot, before the attempt-start transaction. This node has no local
+    // receipt or intent that could independently prevent a duplicate send.
+    set_before_attempt_start_hook(move |vault| {
+        project_connector_send_task_outcome(
+            vault,
+            task_ref,
+            ConnectorSendTaskOutcome::Ambiguous,
+            241,
+        )
+        .expect("import terminal TASK");
+    });
+    let mut sink = RecordingExecutor::default();
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 242).unwrap(),
+        0
+    );
+    assert!(sink.calls.is_empty());
+    assert!(!send_receipt_exists_for_task(&vault, task_ref)?);
+    assert!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault)
+            .expect("local intent listing")
+            .records
+            .is_empty()
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert_eq!(
+        AttemptQueue::new(&vault).list()?[0].state,
+        AttemptState::Completed
+    );
+    Ok(())
+}
+
+#[test]
+fn revoked_uncertain_replace_remains_ambiguous_on_synced_task() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xB0);
+    let key_ref = entity(0xB1);
+    put_connector_task_actor(&vault, actor, 1_280)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xB2),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+    let mut draft = connector_task_draft("revoke-uncertain:test", "session:revoke", 1_280);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 1_281).unwrap(),
+        0
+    );
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    vault.revoke_connector_key(&key_ref, 1_282)?;
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 1_341).unwrap(),
+        0
+    );
+    assert_eq!(
+        sink.calls.len(),
+        1,
+        "revocation forbids a second transport call"
+    );
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 2);
+    assert!(
+        receipts
+            .iter()
+            .all(|receipt| receipt.outcome == "ambiguous")
+    );
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger")[0].state,
+        crate::outbound_intent_ledger::IntentState::Abandoned
+    );
+    Ok(())
+}
+
+fn assert_ambiguous_on_task_board(vault: &Vault, actor: EntityId, task_ref: EntityId) {
+    use crate::task_verb::TaskDescription;
+
+    let memory = vault.memory(actor, EdgeActorClass::Agent);
+    let TaskDescription::Section(section) = memory.describe(None).expect("ordinary task board")
+    else {
+        panic!("expected section");
+    };
+    let row = section
+        .rows
+        .iter()
+        .find(|row| row.id == task_ref.to_hex())
+        .expect("TASK row");
+    assert_eq!(row.status, crate::context_board::TaskBoardStatus::Failed);
+    assert_eq!(
+        row.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert!(row.line.contains("failed ambiguous"));
+    let TaskDescription::Card { lines } = memory.describe(Some(task_ref)).expect("task detail")
+    else {
+        panic!("expected card");
+    };
+    assert_eq!(lines.first(), Some(&row.line));
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn peer_task_only_projection_shows_ambiguous_without_local_receipt() -> crate::Result<()> {
+    use crate::attempt_queue::AttemptQueue;
+    use crate::sync::{
+        bridge::Materializer,
+        schema::create_window_doc,
+        types::WindowKey,
+        window::{forward_rematerialize, reverse_rematerialize},
+    };
+    use loro::ExportMode;
+
+    let (_source_tmp, source) = temp_vault();
+    let (_peer_tmp, peer) = temp_vault();
+    let actor = entity(0xBD);
+    put_connector_task_actor(&source, actor, 400)?;
+    put_policy_manifest_bytes(
+        &source,
+        entity(0xBE),
+        &policy_manifest(&actor.to_hex(), "telegram", &["send"]),
+    )?;
+    let mut draft = connector_task_draft("peer-uncertain:test", "session:peer", 400);
+    draft.channel = "telegram".to_owned();
+    source
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = source.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
+        ..Default::default()
+    };
+    source.run_connector_task_executor(&mut sink, 401).unwrap();
+    assert_eq!(
+        source.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+
+    let window = WindowKey::from_timestamp(400);
+    let source_doc = create_window_doc("source", &window);
+    reverse_rematerialize(&source, &source_doc, &window)?;
+    let update = source_doc
+        .export(ExportMode::all_updates())
+        .expect("export");
+    let peer_doc = create_window_doc("peer", &window);
+    peer_doc.import(&update).expect("import");
+    forward_rematerialize(&peer, &peer_doc, &Materializer::new(), &window)?;
+    assert!(peer.get_raw(&task_ref)?.is_some(), "TASK traveled to peer");
+    assert!(AttemptQueue::new(&peer).list()?.is_empty());
+    assert!(peer.store.get_send_receipt_by_task(&task_ref)?.is_none());
+    assert!(
+        crate::outbound_intent_ledger::intent_ledger_records(&peer)
+            .expect("peer intent listing")
+            .records
+            .is_empty()
+    );
+    let task = peer
+        .connector_send_task(&task_ref)?
+        .expect("peer connector TASK");
+    assert_eq!(task.outcome, Some(ConnectorSendTaskOutcome::Ambiguous));
+    assert_ambiguous_on_task_board(&peer, actor, task_ref);
+    Ok(())
+}
+
+#[test]
+fn revocation_after_definite_non_delivery_remains_failed() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0xBF);
+    let key_ref = entity(0xC0);
+    put_connector_task_actor(&vault, actor, 1_300)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xC1),
+        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+    )?;
+    vault.register_connector_key(&key_ref, sends_per_day_key(5))?;
+    let mut draft = connector_task_draft("revoke-definite:test", "session:definite", 1_300);
+    draft.verb = "replace".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task_ref = vault.connector_send_tasks()?[0].task_ref;
+    let mut sink = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::failed("transport_not_started"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 1_301).unwrap(),
+        0
+    );
+    assert_eq!(
+        crate::outbound_intent_ledger::intent_ledger_records(&vault).expect("ledger")[0]
+            .recorded_outcome,
+        Some(crate::outbound_intent_ledger::RecordedOutboundOutcome::DefiniteNonDelivery)
+    );
+    vault.revoke_connector_key(&key_ref, 1_302)?;
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 1_361).unwrap(),
+        0
+    );
+    assert_eq!(sink.calls.len(), 1);
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Failed)
+    );
+    let receipts = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(receipts.len(), 2);
+    assert!(receipts.iter().all(|receipt| receipt.outcome == "failed"));
     Ok(())
 }

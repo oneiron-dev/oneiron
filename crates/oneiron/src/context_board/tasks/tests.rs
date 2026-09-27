@@ -761,3 +761,38 @@ fn board_status_serializes_as_its_token() {
         );
     }
 }
+
+#[test]
+fn task_only_connector_ambiguity_survives_board_and_expansion() {
+    use crate::outbound::ConnectorSendTaskOutcome;
+
+    // A peer has only the synced TASK; no node-local attempt or send receipt.
+    let mut task = connector_send_task();
+    task.outcome = Some(ConnectorSendTaskOutcome::Ambiguous);
+    let intent =
+        TaskIntentPresence::from_connector_send_task(&task, TaskBoardStatus::Scheduled, Vec::new());
+    assert_eq!(intent.status, TaskBoardStatus::Failed);
+    assert_eq!(
+        intent.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    let section = render_tasks_section(std::slice::from_ref(&intent), &[]);
+    assert_eq!(section.rows.len(), 1);
+    let row = &section.rows[0];
+    assert_eq!(row.status, TaskBoardStatus::Failed);
+    assert_eq!(
+        row.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert!(row.line.contains("failed ambiguous"));
+    assert_eq!(expand_task(&intent).first(), Some(&row.line));
+
+    task.outcome = Some(ConnectorSendTaskOutcome::Delivered);
+    let delivered =
+        TaskIntentPresence::from_connector_send_task(&task, TaskBoardStatus::Scheduled, Vec::new());
+    assert_eq!(delivered.status, TaskBoardStatus::Done);
+    assert_eq!(
+        delivered.connector_outcome,
+        Some(ConnectorSendTaskOutcome::Delivered)
+    );
+}

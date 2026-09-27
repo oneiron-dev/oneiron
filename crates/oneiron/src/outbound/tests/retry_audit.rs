@@ -715,3 +715,167 @@ fn send_receipt_identity_cannot_replace_audit_evidence() -> crate::Result<()> {
     assert_eq!(retry_storage_snapshot(&vault)?, before);
     Ok(())
 }
+
+#[test]
+fn terminal_ambiguity_is_one_commit_and_survives_reopen() -> crate::Result<()> {
+    use crate::outbound::retry_audit::{
+        TerminalSendSettlement, persist_terminal_send_receipt_and_fail,
+        persist_terminal_send_receipt_and_fail_in_txn,
+    };
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+
+    let (tmp, vault) = temp_vault();
+    let actor = entity(0xB4);
+    put_connector_task_actor(&vault, actor, 300)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0xB5),
+        &policy_manifest(&actor.to_hex(), "telegram", &["send"]),
+    )?;
+    let mut draft = connector_task_draft("atomic-ambiguous:test", "session:atomic-ambiguous", 300);
+    draft.channel = "telegram".to_owned();
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("schedule");
+    let task = vault.connector_send_tasks()?.remove(0);
+    let task_ref = task.task_ref;
+    let queue = AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+        crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+        ClaimAttempt {
+            lease_owner: "connector-task-executor".to_owned(),
+            now: 301,
+        },
+    )?
+    else {
+        panic!("scheduled TASK claim");
+    };
+    let make_receipt = || {
+        outbound_intent_receipt(
+            "outbound:terminal-ambiguous",
+            "intent:terminal-ambiguous",
+            &task.intent,
+            301,
+            "ambiguous",
+        )
+    };
+    let settlement = |receipt| TerminalSendSettlement {
+        attempt: &attempt,
+        task_ref,
+        receipt,
+        receipt_outcome: SendReceiptOutcome::Ambiguous,
+        transport_dispatched: true,
+        task_outcome: ConnectorSendTaskOutcome::Ambiguous,
+        reason: "transport_ambiguous",
+        now: 301,
+    };
+    // Cut 1: a receipt writer ran, but the transaction never committed.
+    let cut: crate::Result<()> = vault.with_write_txn(|wtxn| {
+        persist_send_receipt_in_txn(
+            &vault.store,
+            wtxn,
+            task_ref,
+            make_receipt(),
+            SendReceiptOutcome::Ambiguous,
+            true,
+            None,
+        )?;
+        Err(Error::InvariantViolation("cut after receipt"))
+    });
+    assert!(matches!(
+        cut,
+        Err(Error::InvariantViolation("cut after receipt"))
+    ));
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .is_empty()
+    );
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    assert_eq!(
+        queue
+            .list()?
+            .into_iter()
+            .find(|row| row.id == attempt.id)
+            .unwrap()
+            .state,
+        AttemptState::Leased
+    );
+
+    // Cut 2: the production terminal settlement reached the queue write,
+    // but the caller aborts before commit. No part of the tuple can leak.
+    let cut: crate::Result<()> = vault.with_write_txn(|wtxn| {
+        persist_terminal_send_receipt_and_fail_in_txn(&vault, wtxn, settlement(make_receipt()))?;
+        Err(Error::InvariantViolation("cut after queue settlement"))
+    });
+    assert!(matches!(
+        cut,
+        Err(Error::InvariantViolation("cut after queue settlement"))
+    ));
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .is_empty()
+    );
+    assert!(vault.store.get_send_receipt_by_task(&task_ref)?.is_none());
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+    assert_eq!(
+        queue
+            .list()?
+            .into_iter()
+            .find(|row| row.id == attempt.id)
+            .unwrap()
+            .state,
+        AttemptState::Leased
+    );
+
+    let mut stale = attempt.clone();
+    stale.attempt_count += 1;
+    let stale_settlement = TerminalSendSettlement {
+        attempt: &stale,
+        ..settlement(make_receipt())
+    };
+    assert!(matches!(
+        persist_terminal_send_receipt_and_fail(&vault, stale_settlement),
+        Err(Error::Artifact(
+            ArtifactError::InvalidAttemptQueueTransition {
+                action: "fail",
+                state: "stale_attempt"
+            }
+        ))
+    ));
+    assert!(vault.store.get_send_receipt_by_task(&task_ref)?.is_none());
+    assert_eq!(vault.connector_send_task(&task_ref)?.unwrap().outcome, None);
+
+    assert!(persist_terminal_send_receipt_and_fail(
+        &vault,
+        settlement(make_receipt())
+    )?);
+    drop(vault);
+    let vault = Vault::open(tmp.path(), crate::config::VaultConfig::default())?;
+    assert_eq!(
+        vault.connector_send_task(&task_ref)?.unwrap().outcome,
+        Some(ConnectorSendTaskOutcome::Ambiguous)
+    );
+    assert_eq!(
+        vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?[0].outcome,
+        "ambiguous"
+    );
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .into_iter()
+            .find(|row| row.id == attempt.id)
+            .unwrap()
+            .state,
+        AttemptState::Failed
+    );
+    let mut sink = RecordingExecutor::default();
+    assert_eq!(
+        vault.run_connector_task_executor(&mut sink, 302).unwrap(),
+        0
+    );
+    assert!(sink.calls.is_empty());
+    Ok(())
+}

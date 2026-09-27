@@ -22475,7 +22475,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -22612,7 +22612,7 @@
      "path": "src/outbound/executor.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2
      }
@@ -22671,9 +22671,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound/retry_audit.rs",
-     "purpose": "Atomic persistence of a failed send receipt and its retry",
+     "purpose": "Atomic send-receipt retry and terminal settlement",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -22735,7 +22735,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/outbound/tests/retry_audit.rs",

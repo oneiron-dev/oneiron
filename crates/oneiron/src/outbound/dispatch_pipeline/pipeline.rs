@@ -624,6 +624,8 @@ fn outbound_effect_outcome(
                 Some(
                     IntentEscalationReason::NonIdempotentAmbiguous
                         | IntentEscalationReason::NonIdempotentPending
+                        | IntentEscalationReason::ConnectorRevokedAfterUncertainty
+                        | IntentEscalationReason::BindingInvalidAfterUncertainty
                 )
             ) {
                 OutboundDispatchOutcome::Ambiguous

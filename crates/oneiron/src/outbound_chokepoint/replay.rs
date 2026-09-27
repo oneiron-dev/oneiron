@@ -90,18 +90,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
     if record.resolved_endpoint.is_some() && record.capability_provenance().is_none() {
         // Endpoint-bound rows are scoped rows. Never downgrade a reconstructed
         // one to ordinary governance when its typed discriminator is missing.
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
     // Scoped capability rows must always pass the frozen grant/binding/server/
     // tool/endpoint check. Ordinary rows retain their existing endpoint-bound
@@ -114,18 +105,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
 
     match recovery_governance(vault, &record)? {
@@ -136,18 +118,10 @@ fn send_pending_with_gate<T: OutboundTransport>(
             return Ok(result);
         }
         RecoveryGovernance::Revoke => {
-            let abandoned = abandon_record(
-                vault,
-                record.id,
-                IntentEscalationReason::ConnectorRevoked,
-                now_ms,
-            )?;
-            return Ok(effect_result(
-                &abandoned,
-                None,
-                replayed,
-                Some(IntentEscalationReason::ConnectorRevoked),
-            ));
+            let reason =
+                uncertainty_aware_stop_reason(&record, IntentEscalationReason::ConnectorRevoked);
+            let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+            return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
         }
     }
 
@@ -192,18 +166,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
             FrozenCallValidation::Valid
         )
     {
-        let abandoned = abandon_record(
-            vault,
-            record.id,
-            IntentEscalationReason::BindingInvalid,
-            now_ms,
-        )?;
-        return Ok(effect_result(
-            &abandoned,
-            None,
-            replayed,
-            Some(IntentEscalationReason::BindingInvalid),
-        ));
+        let reason = uncertainty_aware_stop_reason(&record, IntentEscalationReason::BindingInvalid);
+        let abandoned = abandon_record(vault, record.id, reason, now_ms)?;
+        return Ok(effect_result(&abandoned, None, replayed, Some(reason)));
     }
 
     {
@@ -259,6 +224,27 @@ fn send_pending_with_gate<T: OutboundTransport>(
             let retryable = record_definite_non_delivery(vault, record.id, now_ms)?;
             Ok(effect_result(&retryable, Some(outcome), replayed, None))
         }
+    }
+}
+
+/// A stop forbids a future attempt, but it cannot undo a possibly completed
+/// earlier one. Pending without a definite-non-delivery record may have sent.
+fn uncertainty_aware_stop_reason(
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    reason: IntentEscalationReason,
+) -> IntentEscalationReason {
+    if record.state == IntentState::Pending && record.recorded_outcome.is_none() {
+        match reason {
+            IntentEscalationReason::ConnectorRevoked => {
+                IntentEscalationReason::ConnectorRevokedAfterUncertainty
+            }
+            IntentEscalationReason::BindingInvalid => {
+                IntentEscalationReason::BindingInvalidAfterUncertainty
+            }
+            _ => reason,
+        }
+    } else {
+        reason
     }
 }
 
