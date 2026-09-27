@@ -122,8 +122,20 @@ impl BoundServeListener {
     /// Serves until the process ends — the unmanaged shape.
     pub async fn serve(self, app: Router) -> std::io::Result<()> {
         match self {
-            Self::Tcp(listener) => axum::serve(listener, app).await,
-            Self::Unix { listener, .. } => axum::serve(listener, app).await,
+            Self::Tcp(listener) => {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .await
+            }
+            Self::Unix { listener, .. } => {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<super::UnixPeer>(),
+                )
+                .await
+            }
         }
     }
 
@@ -136,14 +148,20 @@ impl BoundServeListener {
     ) -> std::io::Result<()> {
         match self {
             Self::Tcp(listener) => {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown)
-                    .await
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<SocketAddr>(),
+                )
+                .with_graceful_shutdown(shutdown)
+                .await
             }
             Self::Unix { listener, .. } => {
-                axum::serve(listener, app)
-                    .with_graceful_shutdown(shutdown)
-                    .await
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<super::UnixPeer>(),
+                )
+                .with_graceful_shutdown(shutdown)
+                .await
             }
         }
     }
