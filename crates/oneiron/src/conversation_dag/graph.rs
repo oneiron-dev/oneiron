@@ -194,8 +194,12 @@ pub(super) fn preview_canonical_chain(
                 let shell = store
                     .port_entity_record(txn, &id)?
                     .ok_or(Error::CorruptedIndex("conversation DAG shell"))?;
-                if shell.entity_type != ENTITY_TYPE_TURN
-                    || crate::compaction::turn_session_membership_in_txn(store, txn, &id)?.is_some()
+                if shell.entity_type != ENTITY_TYPE_TURN {
+                    return Err(invalid("non-trunk shell on canonical line"));
+                }
+                if let Some(session) =
+                    crate::compaction::turn_session_membership_in_txn(store, txn, &id)?
+                    && session_spawning_anchor(store, txn, &session)?.is_some()
                 {
                     return Err(invalid("non-trunk shell on canonical line"));
                 }
@@ -228,10 +232,30 @@ pub(crate) fn is_sub_session_record(
     else {
         return Ok(false);
     };
-    let body = require_type(store, txn, &session, crate::registry::ENTITY_TYPE_SESSION)?;
-    let spawned = edge_ids(store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
-    // A synchronized session's source anchor prevents a missing/late SpawnedBy
-    // edge from temporarily reclassifying its worker records as trunk records.
+    let spawned = session_spawning_anchor(store, txn, &session)?;
+    if spawned.is_some() {
+        super::membership::validate_topology(
+            store,
+            txn,
+            conversation_of(store, txn, record)?,
+            *record,
+        )?;
+    }
+    Ok(spawned.is_some())
+}
+
+/// Ordinary SESSION membership is not a spawned sub-session. Validate the
+/// durable session anchor before classifying even a deleted TURN shell.
+fn session_spawning_anchor(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    session: &EntityId,
+) -> Result<Option<EntityId>> {
+    let body = require_type(store, txn, session, crate::registry::ENTITY_TYPE_SESSION)?;
+    let spawned = edge_ids(store, txn, session, EdgeKind::SpawnedBy, false, 2)?;
+    if spawned.len() > 1 {
+        return Err(invalid("session has multiple SpawnedBy edges"));
+    }
     if let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut body.as_slice()) {
         let anchors: Vec<_> = fields
             .iter()
@@ -247,18 +271,7 @@ pub(crate) fn is_sub_session_record(
             }
         }
     }
-    if spawned.len() > 1 {
-        return Err(invalid("session has multiple SpawnedBy edges"));
-    }
-    if !spawned.is_empty() {
-        super::membership::validate_topology(
-            store,
-            txn,
-            conversation_of(store, txn, record)?,
-            *record,
-        )?;
-    }
-    Ok(!spawned.is_empty())
+    Ok(spawned.first().copied())
 }
 
 pub(super) fn is_thread_record(store: &Store, txn: &RoTxn<'_>, record: &EntityId) -> Result<bool> {

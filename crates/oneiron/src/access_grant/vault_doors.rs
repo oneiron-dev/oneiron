@@ -7,7 +7,6 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::temporal::TimeRange;
-use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 use super::codec::{decode_access_grant_body, encode_access_grant_body, invalid_grant};
 use super::record::{AccessGrant, AccessGrantScope, CalendarAccessGrantRow};
@@ -122,20 +121,6 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..]).map(Some)
-    }
-
-    /// List-safe read: a deleted/archived grant is absent, while malformed live
-    /// grant bytes still fail closed. Lifecycle and decoding share one snapshot.
-    pub fn get_live_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
-        let txn = self.store.env.read_txn()?;
-        match live_entity_row_in_txn(&self.store, &txn, id)? {
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_ACCESS_GRANT,
-                body,
-            } => decode_access_grant_body(&body).map(Some),
-            LiveEntityRow::Live { entity_type, .. } => Err(Error::InvalidEntityType(entity_type)),
-            LiveEntityRow::Absent | LiveEntityRow::DeletedShell => Ok(None),
-        }
     }
 
     /// Lists every access grant whose scope names `calendar_ref`, revoked rows

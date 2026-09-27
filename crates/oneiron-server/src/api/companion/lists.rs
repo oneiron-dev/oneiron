@@ -2,7 +2,7 @@
 
 use super::auth::{companion_profile_principal_ref, require_companion_profile_read};
 use super::errors::companion_engine_error;
-use crate::api::{parse_entity_id_param, query_params, unix_seconds_now};
+use crate::api::{parse_entity_id_param, query_params};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
@@ -10,9 +10,8 @@ use axum::extract::{Query, State, rejection::QueryRejection};
 use axum::response::Json;
 use oneiron::ErrorKind;
 use oneiron::access_grant::AccessGrantScope;
-use oneiron::registry::ENTITY_TYPE_ACCESS_GRANT;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Arc};
+use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
 #[derive(Debug, Deserialize, IntoParams, ToSchema)]
@@ -58,56 +57,22 @@ pub(crate) async fn list_personas(
             .transpose()?,
     )?;
     let person = parse_entity_id_param(&req.person_ref, "person_ref")?;
-    let mut cursor = None;
-    let mut seen = BTreeSet::new();
-    let mut items = Vec::new();
-    loop {
-        let ids = server
-            .vault
-            .entities_by_type_page(ENTITY_TYPE_ACCESS_GRANT, cursor.as_ref(), 256)
-            .map_err(|e| companion_engine_error("persona grant list failed", e))?;
-        if ids.is_empty() {
-            break;
-        }
-        for id in &ids {
-            let Some(grant) = server
-                .vault
-                .get_live_access_grant(id)
-                .map_err(|e| companion_engine_error("persona grant read failed", e))?
-            else {
-                continue;
-            };
-            let Some((grant_person, persona)) = grant.scope.companion_profile_refs() else {
-                continue;
-            };
-            if grant_person != person
-                || !grant.allows_companion_profile_read(
-                    &principal,
-                    &person,
-                    &persona,
-                    unix_seconds_now(),
-                )
-                || !seen.insert(persona)
-            {
-                continue;
-            }
-            let profile = match server.vault.get_live_psych_profile(&persona) {
-                Ok(profile) => profile,
-                Err(error) if error.kind() == ErrorKind::InvalidEntityType => None,
-                Err(error) => {
-                    return Err(companion_engine_error("persona profile read failed", error));
-                }
-            };
-            items.push(PersonaListRow {
-                persona_ref: persona.to_hex(),
-                person_ref: person.to_hex(),
-                personality_compact: profile.map(|p| p.compact),
-            });
-        }
-        cursor = ids.last().copied();
-        if ids.len() < 256 {
-            break;
-        }
+    let personas = server
+        .vault
+        .authorized_companion_profile_personas(&principal, &person)
+        .map_err(|e| companion_engine_error("persona grant list failed", e))?;
+    let mut items = Vec::with_capacity(personas.len());
+    for persona in personas {
+        let profile = match server.vault.get_live_psych_profile(&persona) {
+            Ok(profile) => profile,
+            Err(error) if error.kind() == ErrorKind::InvalidEntityType => None,
+            Err(error) => return Err(companion_engine_error("persona profile read failed", error)),
+        };
+        items.push(PersonaListRow {
+            persona_ref: persona.to_hex(),
+            person_ref: person.to_hex(),
+            personality_compact: profile.map(|p| p.compact),
+        });
     }
     Ok(Json(PersonasListResponse { items }))
 }

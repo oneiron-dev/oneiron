@@ -130,7 +130,7 @@
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
       "crate-vis": 1,
-      "fn": 7
+      "fn": 6
      }
     },
     {
@@ -9937,7 +9937,7 @@
      "purpose": "Vault record APIs for companion profiles, relationships, and register snapshots",
      "surface": {
       "crate-vis": 3,
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -11893,7 +11893,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/graph.rs",

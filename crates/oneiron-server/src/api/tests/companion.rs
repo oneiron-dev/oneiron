@@ -1659,3 +1659,97 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     assert_eq!(rows[0]["persona_ref"], second.to_hex());
     assert_eq!(rows[0]["personalityCompact"], "second compact");
 }
+
+#[tokio::test]
+async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_rollback() {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let clock = oneiron::store::ports::ManualClock::new(1_000);
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.store_clock = clock.bundle();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("vault"));
+    assert_default_policy_manifest_fixture(vault.as_ref());
+    let server = Arc::new(
+        SyncServer::new(
+            vault,
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .expect("server"),
+    );
+    let principal = seeded_test_entity_id(0x0002_6001);
+    let person = seeded_test_entity_id(0x0002_6002);
+    let persona = seeded_test_entity_id(0x0002_6003);
+    let mut grant = oneiron::AccessGrant::companion_profile_read(principal, person, persona, 1_000);
+    grant.expires_at = Some(2_000);
+    server
+        .vault
+        .create_access_grant(&seeded_test_entity_id(0x0002_6004), &grant)
+        .unwrap();
+    server
+        .vault
+        .put_psych_profile(
+            &persona,
+            &oneiron::PsychProfile::new(
+                persona,
+                "stored compact before expiry",
+                "text",
+                "narrative",
+                vec![seeded_test_entity_id(0x0002_6005)],
+                oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let list_uri = format!(
+        "/v1/companion/personas?person_ref={}&principal_ref={}",
+        person.to_hex(),
+        principal.to_hex()
+    );
+    let get_uri = format!(
+        "/v1/companion/profiles/{}?person_ref={}&principal_ref={}",
+        persona.to_hex(),
+        person.to_hex(),
+        principal.to_hex()
+    );
+    let read = |server: Arc<SyncServer>, uri: &str| {
+        let uri = uri.to_owned();
+        async move {
+            route_json(
+                server,
+                core_request_with_authz("GET", &uri, owner_bearer(), None),
+            )
+            .await
+        }
+    };
+    let (status, listed) = read(server.clone(), &list_uri).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(
+        listed["items"][0]["personalityCompact"],
+        "stored compact before expiry"
+    );
+    let (status, profile) = read(server.clone(), &get_uri).await;
+    assert_eq!(status, StatusCode::OK, "{profile}");
+    assert_eq!(
+        profile["profile"]["compact"],
+        "stored compact before expiry"
+    );
+
+    for at in [2_100, 1_900] {
+        clock.set(at);
+        let (status, listed) = read(server.clone(), &list_uri).await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        assert_eq!(
+            listed["items"],
+            json!([]),
+            "grant must not resurrect at {at}"
+        );
+        let (status, _) = read(server.clone(), &get_uri).await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "GET and list must agree at {at}"
+        );
+    }
+}
