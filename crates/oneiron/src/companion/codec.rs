@@ -164,10 +164,9 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
                 );
             }
             KEY_KIND => {
-                let parsed = value
-                    .as_str()
-                    .and_then(CompanionRecordKind::parse)
-                    .ok_or(invalid_companion("kind must be persona|relationship"))?;
+                let parsed = value.as_str().and_then(CompanionRecordKind::parse).ok_or(
+                    invalid_companion("companion record kind must be relationship"),
+                )?;
                 kind = Some(parsed);
             }
             KEY_SCOPE => scope = Some(decode_scope(value)?),

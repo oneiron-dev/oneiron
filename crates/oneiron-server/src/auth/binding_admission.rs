@@ -33,12 +33,7 @@ pub(crate) async fn admit_http_binding(
             .is_some_and(|secret| constant_time_eq(token, secret));
         if !retained_secret && token.starts_with("v2.slip.") {
             let accepted = BindingProof::from_headers(request.headers()).and_then(|proof| {
-                CoreAuth::bind_transport_once(
-                    token,
-                    &proof,
-                    &server.config,
-                    server.vault().as_ref(),
-                )
+                CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
             });
             if let Err(error) = accepted {
                 // Preserve the route's error contract: `/v1` callers receive
