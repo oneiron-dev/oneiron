@@ -310,3 +310,66 @@ fn skill_discovery_blends_relevance_with_posterior_and_explores() -> Result<()> 
     );
     Ok(())
 }
+
+/// Equal reliability cannot discard the strongest text match just because its
+/// entity ID sorts after the other five skills in the semantic shortlist.
+#[test]
+fn skill_discovery_preserves_semantic_relevance_before_ucb() -> Result<()> {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    let mut skills = Vec::new();
+    for index in 1..=6 {
+        let id = crate::test_util::entity(index);
+        let mut skill = SkillRecord::new(
+            format!("skill.semantic.{index}"),
+            "semantic retrieval probe",
+            "v1",
+            ClaimApprovalStatus::Approved,
+            SkillLifecycle::Candidate,
+            ClaimSource::UserStated,
+            0.01,
+            false,
+            true,
+            vec![],
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("source"),
+                rmpv::Value::from("semantic-ranking-fixture"),
+            )]),
+        );
+        let text = if index == 6 {
+            "channel bonusword"
+        } else {
+            "channel"
+        };
+        vault
+            .batch()
+            .put(
+                &id,
+                ENTITY_TYPE_SKILL,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &encode_skill_record(&skill)?,
+            )
+            .text(&id, &[("body", text)])
+            .commit()?;
+        skill.lifecycle_status = SkillLifecycle::Active;
+        vault.update_skill_record(&id, &skill, TimeRange { start: 2, end: 2 }, 2)?;
+        vault.batch().text(&id, &[("body", text)]).commit()?;
+        skills.push(id);
+    }
+
+    // All six have the same human-authored Beta(2,1) prior and timestamps.
+    // Five match only "channel"; the highest-ID skill matches both tokens.
+    let pack = vault
+        .context_pack()
+        .search_text("channel bonusword", 20)
+        .run()?;
+    let selected: Vec<_> = pack.capabilities.iter().map(|hit| hit.id).collect();
+    assert_eq!(selected.len(), 5);
+    assert_eq!(selected[0], skills[5], "the strongest match ranks first");
+    assert!(
+        !selected.contains(&skills[4]),
+        "only the weakest tie loses a slot"
+    );
+    Ok(())
+}

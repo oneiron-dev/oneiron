@@ -6,9 +6,9 @@ use crate::context_board::CapabilityHit;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
-use crate::store::Store;
+use crate::store::{RetrievalScoreComponent, RetrievalSignal, Store};
 use heed::RoTxn;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::types::ScoredEntity;
 
@@ -67,6 +67,7 @@ pub(super) fn partition_capabilities(
     scores: &mut Vec<ScoredEntity>,
     vault: &Vault,
     txn: &RoTxn<'_>,
+    signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
 ) -> Result<Vec<ScoredEntity>> {
     let store = &vault.store;
     let mut memory = Vec::with_capacity(scores.len());
@@ -95,6 +96,7 @@ pub(super) fn partition_capabilities(
     // Sum pulls over every eligible skill BEFORE the turn's top-k. Ranking only
     // the old semantic top-k would keep under-tried skills permanently hidden.
     let mut total_pulls = 0_u32;
+    let mut posteriors = HashMap::with_capacity(skill_ids.len());
     for id in &skill_ids {
         let posterior = crate::skill_reliability::selection_posterior_in_txn(vault, txn, id)?;
         // Observations are positive integer-valued Beta weights. Saturation
@@ -106,17 +108,23 @@ pub(super) fn partition_capabilities(
         )]
         let pulls = posterior.observations() as u32;
         total_pulls = total_pulls.saturating_add(pulls);
+        posteriors.insert(*id, posterior);
     }
+    // The four-signal blend is neutral for default skill queries: it does not
+    // preserve BM25/cosine scores. Read the already-admitted channel scores,
+    // normalizing per channel so BM25 and cosine can both contribute without
+    // either unit dominating. A non-semantic-only query keeps its old factor.
+    let semantic = skill_semantic_relevance(&skill_ids, signal_components);
     for scored in &mut eligible {
-        if skill_ids.contains(&scored.id) {
-            // Multiply, rather than replace, semantic relevance with the
-            // posterior mean + UCB bonus. The cache is not reliability truth.
-            scored.score *= crate::skill_reliability::skill_selection_score_in_txn(
-                vault,
-                txn,
-                &scored.id,
-                total_pulls,
-            )?;
+        if let Some(posterior) = posteriors.get(&scored.id) {
+            let relevance = semantic.as_ref().map_or(1.0, |factors| {
+                factors.get(&scored.id).copied().unwrap_or(0.0)
+            });
+            scored.score *= relevance
+                * crate::skill_reliability::skill_selection_score_from_posterior(
+                    *posterior,
+                    total_pulls,
+                );
         }
     }
     crate::fusion::sort_scored_entities_desc(&mut eligible);
@@ -135,6 +143,59 @@ pub(super) fn partition_capabilities(
         }
     }
     Ok(capabilities)
+}
+
+/// Per-skill semantic factor from the admitted text/vector channels. Only
+/// candidates that survived scope/authority filtering participate in the
+/// denominator. Multiple hits take their strongest normalized channel match;
+/// no semantic signal at all leaves temporal/phonetic-only discovery neutral.
+fn skill_semantic_relevance(
+    skill_ids: &HashSet<EntityId>,
+    components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+) -> Option<HashMap<EntityId, f32>> {
+    let mut maxima = HashMap::<RetrievalSignal, f32>::new();
+    for id in skill_ids {
+        if let Some(rows) = components.get(id) {
+            for row in rows {
+                if semantic_signal(row.signal) && row.score.is_finite() && row.score > 0.0 {
+                    maxima
+                        .entry(row.signal)
+                        .and_modify(|max| *max = max.max(row.score))
+                        .or_insert(row.score);
+                }
+            }
+        }
+    }
+    if maxima.is_empty() {
+        return None;
+    }
+    let mut relevance = HashMap::<EntityId, f32>::new();
+    for id in skill_ids {
+        if let Some(rows) = components.get(id) {
+            for row in rows {
+                if row.score.is_finite()
+                    && let Some(max) = maxima.get(&row.signal)
+                {
+                    let normalized = (row.score.max(0.0) / max).min(1.0);
+                    relevance
+                        .entry(*id)
+                        .and_modify(|held| *held = held.max(normalized))
+                        .or_insert(normalized);
+                }
+            }
+        }
+    }
+    Some(relevance)
+}
+
+fn semantic_signal(signal: RetrievalSignal) -> bool {
+    matches!(
+        signal,
+        RetrievalSignal::Text
+            | RetrievalSignal::Vector
+            | RetrievalSignal::Hyde
+            | RetrievalSignal::HydeRetry
+    )
 }
 
 pub(super) fn memory_candidate_count(

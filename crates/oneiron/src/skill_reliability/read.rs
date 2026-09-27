@@ -140,13 +140,25 @@ pub fn skill_selection_score(vault: &Vault, skill: &EntityId, total_pulls: u32) 
 }
 
 /// Same score as the public door, on the retrieval candidate's read snapshot.
-pub(crate) fn skill_selection_score_in_txn(
+fn skill_selection_score_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     total_pulls: u32,
 ) -> Result<f32> {
-    Ok(selection_posterior_in_txn(vault, rtxn, skill)?.ucb(total_pulls))
+    Ok(skill_selection_score_from_posterior(
+        selection_posterior_in_txn(vault, rtxn, skill)?,
+        total_pulls,
+    ))
+}
+
+/// The shared score computation after a candidate set has fixed its pull horizon.
+/// Lets retrieval reuse the posterior it already resolved for that horizon.
+pub(crate) fn skill_selection_score_from_posterior(
+    posterior: SkillReliabilityPosterior,
+    total_pulls: u32,
+) -> f32 {
+    posterior.ucb(total_pulls)
 }
 
 pub(crate) fn selection_posterior_in_txn(

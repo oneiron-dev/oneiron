@@ -144,7 +144,7 @@ pub fn skill_reliability_prior(
     skill_reliability_prior_in_txn(vault, &rtxn, skill)
 }
 
-pub(crate) fn skill_reliability_prior_in_txn(
+pub(super) fn skill_reliability_prior_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
