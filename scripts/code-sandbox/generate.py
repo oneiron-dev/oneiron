@@ -61,8 +61,10 @@ def schema(source):
     for js, name, args, result in re.findall(r"// @js ([\w.]+)\s+import ([\w-]+): func\(([^)]*)\) -> ([^;]+);", source):
         params = []
         for arg in split_types(args):
+            mode = "json" if "// @json" in arg else None
+            arg = re.sub(r"//[^\n]*", "", arg).strip()
             key, typ = arg.split(":", 1)
-            params.append({"name": camel(key.strip()), "type": typ.strip()})
+            params.append({"name": camel(key.strip()), "type": typ.strip(), "json": mode})
         if result.startswith("result<"):
             ok, error = split_types(result[7:-1])
             if error != "string":
@@ -123,11 +125,11 @@ def generate(source):
                 emit(value, indent + 1)
                 dts.append(prefix + "}")
             else:
-                args = ", ".join(f"{arg['name']}: {ts(arg['type'])}" for arg in value['params'])
+                args = ", ".join(f"{arg['name']}: {'unknown' if arg['json'] else ts(arg['type'])}" for arg in value['params'])
                 result = ts(value['result'])
                 if value['async']:
                     result = f"Promise<{result}>"
-                dts.append(prefix + f"function {name}({args}): {result};")
+                dts.append(prefix + ("declare " if indent == 0 else "") + f"function {name}({args}): {result};")
     emit(tree)
     metadata = json.dumps({"records": records, "imports": imports}, separators=(',', ':'))
     js = '// Generated from code-run.wit; do not edit.\nconst schema = ' + metadata + ';\n' + SDK_RUNTIME
@@ -136,7 +138,7 @@ def generate(source):
     return {"code-run.d.ts": '\n'.join(dts) + '\n', "code-run.mjs": js, "imports.rs": rust}
 
 
-SDK_RUNTIME = '\nfunction convert(type, value, encode) {\n  if (type.startsWith("option<")) return value == null ? undefined : convert(type.slice(7, -1), value, encode);\n  if (type === "list<u8>") return value instanceof Uint8Array ? value : new Uint8Array(value);\n  if (type.startsWith("list<")) return value.map(item => convert(type.slice(5, -1), item, encode));\n  if (["u64", "u32", "u8"].includes(type)) {\n    const n = Number(value);\n    const max = type === "u8" ? 255 : type === "u32" ? 4294967295 : Number.MAX_SAFE_INTEGER;\n    if (!Number.isSafeInteger(n) || n < 0 || n > max) throw new RangeError("invalid guest integer");\n    return n;\n  }\n  if (schema.records[type]) {\n    const result = {};\n    for (const field of schema.records[type]) {\n      const v = value[field.name];\n      if (field.json) {\n        const transform = encode ? JSON.stringify : JSON.parse;\n        result[field.name] = field.json === "json-list" ? v.map(item => transform(item)) : transform(v);\n        if (result[field.name] === undefined) throw new TypeError("missing guest JSON field");\n      } else result[field.name] = convert(field.type, v, encode);\n    }\n    return result;\n  }\n  return value;\n}\n\n// The guest bootstrap injects the ABI. Missing imports stay absent: foreign\n// SDK instances cannot grow write methods that their component did not import.\nexport function createHostSdk(abi) {\n  const sdk = Object.create(null);\n  for (const row of schema.imports) {\n    if (!Object.hasOwn(abi, row.wit)) continue;\n    let target = sdk;\n    const parts = row.js.split(".");\n    for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);\n    target[parts.at(-1)] = (...args) => {\n      const values = row.params.map((param, i) => convert(param.type, args[i], true));\n      const result = abi[row.wit](...values);\n      return row.async ? Promise.resolve(result).then(v => convert(row.result, v, false)) : convert(row.result, result, false);\n    };\n  }\n  return sdk;\n}\n'
+SDK_RUNTIME = '\nfunction convert(type, value, encode) {\n  if (type.startsWith("option<")) return value == null ? undefined : convert(type.slice(7, -1), value, encode);\n  if (type === "list<u8>") return value instanceof Uint8Array ? value : new Uint8Array(value);\n  if (type.startsWith("list<")) return value.map(item => convert(type.slice(5, -1), item, encode));\n  if (["u64", "u32", "u8"].includes(type)) {\n    const n = Number(value);\n    const max = type === "u8" ? 255 : type === "u32" ? 4294967295 : Number.MAX_SAFE_INTEGER;\n    if (!Number.isSafeInteger(n) || n < 0 || n > max) throw new RangeError("invalid guest integer");\n    return n;\n  }\n  if (schema.records[type]) {\n    const result = {};\n    for (const field of schema.records[type]) {\n      const v = value[field.name];\n      if (field.json) {\n        const transform = encode ? JSON.stringify : JSON.parse;\n        result[field.name] = field.json === "json-list" ? v.map(item => transform(item)) : transform(v);\n        if (result[field.name] === undefined) throw new TypeError("missing guest JSON field");\n      } else result[field.name] = convert(field.type, v, encode);\n    }\n    return result;\n  }\n  return value;\n}\n\n// The guest bootstrap injects the ABI. Missing imports stay absent: foreign\n// SDK instances cannot grow write methods that their component did not import.\nexport function createHostSdk(abi) {\n  const sdk = Object.create(null);\n  for (const row of schema.imports) {\n    if (!Object.hasOwn(abi, row.wit)) continue;\n    let target = sdk;\n    const parts = row.js.split(".");\n    for (const part of parts.slice(0, -1)) target = target[part] ??= Object.create(null);\n    target[parts.at(-1)] = (...args) => {\n      const values = row.params.map((param, i) => {\n        const value = param.json ? JSON.stringify(args[i]) : convert(param.type, args[i], true);\n        if (value === undefined) throw new TypeError("missing guest JSON argument");\n        return value;\n      });\n      const result = abi[row.wit](...values);\n      return row.async ? Promise.resolve(result).then(v => convert(row.result, v, false)) : convert(row.result, result, false);\n    };\n  }\n  return sdk;\n}\n'
 
 
 def main():

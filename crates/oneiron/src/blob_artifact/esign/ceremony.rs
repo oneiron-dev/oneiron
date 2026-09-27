@@ -81,11 +81,12 @@ impl Vault {
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
         let now = self.now_recorded_at();
-        // Commit accounting independently, including refused mutation attempts.
-        self.with_write_txn(|txn| {
+        // Observe independently, including refused mutation attempts. A failed
+        // observation transaction cannot turn a valid ceremony into a refusal.
+        let _ = self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
-            super::rate::admit(self, txn, &cap.document, &cap.recipient, now)
-        })?;
+            super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
+        });
         self.with_write_txn(|txn| {
             let cap = binding(self, txn, token)?;
             let document = EntityId::from_hex(&cap.document)?;
