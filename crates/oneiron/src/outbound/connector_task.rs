@@ -44,6 +44,8 @@ pub(super) struct ConnectorSendTaskBody {
     pub(super) verb: String,
     pub(super) channel: String,
     pub(super) target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) counterparty_ref: Option<String>,
     pub(super) on_behalf_of: Option<String>,
     pub(super) content_ref: Option<String>,
     pub(super) idempotency_key: Option<String>,
@@ -117,6 +119,8 @@ pub struct ConnectorSendTask {
     pub actor_ref: EntityId,
     pub actor_class: EdgeActorClass,
     pub intent: OutboundIntent,
+    /// Explicit comm party key, distinct from the transport destination.
+    pub counterparty_ref: Option<String>,
     pub originating_session_ref: Option<String>,
     pub attempt_started_node_id: Option<u64>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
@@ -173,8 +177,17 @@ pub(crate) fn put_connector_send_task_in_txn(
     originating_session_ref: Option<&str>,
     schedule_context: &crate::memory::OutboundScheduleContext,
     calendar_invite: Option<&CalendarInvitePayload>,
+    counterparty_ref: Option<&str>,
     occurred_at: u64,
 ) -> Result<(), Error> {
+    if let Some(party) = counterparty_ref {
+        crate::comm::validate_comm_party_key(party)?;
+        if !super::capability::is_canonical_outbound_verb(&intent.channel, &intent.verb) {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
+            )));
+        }
+    }
     let connector_class = normalize_key(&intent.channel);
     let assignee_ref = connector_actor_id(&connector_class)?;
     let task_body = ConnectorSendTaskBody {
@@ -186,6 +199,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         verb: intent.verb.clone(),
         channel: intent.channel.clone(),
         target: intent.target.clone(),
+        counterparty_ref: counterparty_ref.map(str::to_owned),
         on_behalf_of: intent.on_behalf_of.clone(),
         content_ref: intent.content_ref.clone(),
         idempotency_key: intent.idempotency_key.clone(),
@@ -310,6 +324,22 @@ impl Vault {
                 )));
             }
         };
+        if body
+            .counterparty_ref
+            .as_deref()
+            .is_some_and(|party| crate::comm::validate_comm_party_key(party).is_err())
+        {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "invalid connector send counterparty",
+            )));
+        }
+        if body.counterparty_ref.is_some()
+            && !super::capability::is_canonical_outbound_verb(&body.channel, &body.verb)
+        {
+            return Err(Error::Record(RecordError::InvalidTaskBody(
+                "noncanonical counterparty-bound connector verb",
+            )));
+        }
         let assignee_ref = connector_actor_id(&body.channel)?;
         let assigned = self
             .edges_out(task_ref)?
@@ -336,6 +366,7 @@ impl Vault {
                 trigger_ref: body.trigger_ref,
                 job_ref: body.job_ref,
             },
+            counterparty_ref: body.counterparty_ref,
             originating_session_ref: body.originating_session_ref,
             attempt_started_node_id: body.attempt_started_node_id,
             outcome: body.outcome,

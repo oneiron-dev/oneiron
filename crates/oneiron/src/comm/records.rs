@@ -419,7 +419,7 @@ pub(super) fn validate_keys_with_optional(
     Ok(())
 }
 
-pub(super) fn validate_key_string(value: &str) -> Result<()> {
+pub(crate) fn validate_key_string(value: &str) -> Result<()> {
     if value.trim() != value || value.is_empty() || value.len() > MAX_KEY_BYTES {
         return Err(invalid_claim("comm key string invalid"));
     }

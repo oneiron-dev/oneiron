@@ -23,6 +23,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::EntityStoreRead;
+use crate::receipt::FIELD_TASK_REF;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +76,7 @@ const PROJECTOR_RULES: [ProjectorRule; 5] = [
 /// RECORDED after this pass's snapshot are not observed at all; they are the
 /// next pass's business.
 pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
+    import_delivered_send_receipts(vault)?;
     let records = {
         let rtxn = vault.store.env.read_txn()?;
         comm_records_in_txn(vault, &rtxn)?
@@ -97,6 +99,119 @@ pub fn run_comm_projector(vault: &Vault) -> CommResult<()> {
     }
     reconcile_comm_party_twins(vault, vault.store.clock.now_recorded_at())?;
     Ok(())
+}
+
+/// Folds durable connector receipts into this projector. TASK identity fixes the
+/// source event; its original PERSON subject is never changed by later party
+/// merges or deletion. A new delivery without an explicit counterparty is not
+/// a communication fact: transport destinations can be group channels.
+fn import_delivered_send_receipts(vault: &Vault) -> CommResult<()> {
+    for receipt in crate::receipt::durable_send_receipts(vault)? {
+        if receipt.outcome != "delivered_to_channel" {
+            continue;
+        }
+        let channel = receipt
+            .fields
+            .get("channel")
+            .ok_or(CommError::InvalidRecord)?;
+        let verb = receipt.fields.get("verb").ok_or(CommError::InvalidRecord)?;
+        if !is_delivered_message(channel, verb) {
+            continue;
+        }
+        let Some(party) = receipt.fields.get("counterparty_ref") else {
+            continue;
+        };
+        validate_channel_class(channel).map_err(|_| CommError::InvalidRecord)?;
+        validate_key_string(party).map_err(|_| CommError::InvalidRecord)?;
+        let task_ref = EntityId::from_hex(
+            receipt
+                .fields
+                .get(FIELD_TASK_REF)
+                .ok_or(CommError::InvalidRecord)?,
+        )
+        .map_err(|_| CommError::InvalidRecord)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron.comm.connector_send_event.v1\0");
+        hash.update(task_ref.as_bytes());
+        let mut bytes = [0_u8; 16];
+        bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
+        bytes[6] = (bytes[6] & 0x0f) | 0x70;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let event_id = EntityId::from_bytes(bytes).map_err(|_| CommError::InvalidRecord)?;
+        vault.try_with_write_txn(|txn| {
+            // Check the immutable source event BEFORE resolving today's party.
+            // A merged shell keeps its original body, and a deleted subject has
+            // no body at all. Neither should remint a PERSON or block STOPs.
+            if let Some(raw) = vault.store.port_entity_record(&*txn, &event_id)? {
+                if raw.entity_type != ENTITY_TYPE_COMM_RECORD {
+                    return Err(CommError::InvalidRecord);
+                }
+                match decode_comm_record(&raw.body)? {
+                    CommRecord::Event {
+                        kind: CommEventKind::SendSucceeded,
+                        party_ref: original_party,
+                        channel_class: Some(resident_channel),
+                        thread_ref: None,
+                        occurred_at,
+                        ..
+                    } if resident_channel == *channel && occurred_at == receipt.occurred_at => {
+                        if let Some(original) =
+                            vault.store.port_entity_record(&*txn, &original_party)?
+                        {
+                            if original.entity_type != crate::registry::ENTITY_TYPE_PERSON {
+                                return Err(CommError::InvalidRecord);
+                            }
+                            let value = rmpv::decode::read_value(&mut original.body.as_slice())
+                                .map_err(|_| CommError::InvalidRecord)?;
+                            let key = super::records::required_string(
+                                super::records::value_map(&value)
+                                    .map_err(|_| CommError::InvalidRecord)?,
+                                super::claims::KEY_PARTY_KEY,
+                            )
+                            .map_err(|_| CommError::InvalidRecord)?;
+                            if key != party {
+                                return Err(CommError::InvalidRecord);
+                            }
+                        }
+                        return Ok(());
+                    }
+                    _ => return Err(CommError::InvalidRecord),
+                }
+            }
+            let party_ref = resolve_or_create_party_in_txn(vault, txn, party)?;
+            let sequence = next_event_sequence_in_txn(vault, txn)?;
+            put_comm_record_in_txn(
+                vault,
+                txn,
+                event_id,
+                &CommRecord::Event {
+                    sequence,
+                    kind: CommEventKind::SendSucceeded,
+                    party_ref,
+                    channel_class: Some(channel.clone()),
+                    thread_ref: None,
+                    occurred_at: receipt.occurred_at,
+                    projected: false,
+                },
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Exact existing outbound message operations. Edits, reactions, calendar
+/// actions, and presence are not new contact touches merely because delivered.
+fn is_delivered_message(channel: &str, verb: &str) -> bool {
+    verb == "send"
+        || matches!(
+            (channel, verb),
+            ("line", "reply" | "push" | "send_media")
+                | ("telegram" | "imessage_bridge", "send_media")
+                | ("linkedin", "send_dm")
+                // Email replace delivers a new correction message, unlike an
+                // in-place edit on a chat transport.
+                | ("email", "replace")
+        )
 }
 
 /// Records a successful send receipt without directly writing standing-state claims.
