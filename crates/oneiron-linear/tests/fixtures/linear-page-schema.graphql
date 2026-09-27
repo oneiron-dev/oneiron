@@ -1,0 +1,20 @@
+# Narrow SDL excerpt from Linear SDK schema at
+# https://github.com/linear/linear/blob/689ccc1e905d97df14272621b96a8614c5d3c2cb/packages/sdk/src/schema.graphql
+# Query.issues, IssueFilter.team, TeamFilter.id, IDComparator.eq.
+# The fixture is intentionally not the entire 1.3 MB provider schema.
+type Query {
+  issues(filter: IssueFilter, before: String, last: Int, orderBy: PaginationOrderBy): IssueConnection!
+  issue(id: String!): Issue!
+}
+input IssueFilter {
+  team: TeamFilter
+}
+input TeamFilter {
+  id: IDComparator
+}
+input IDComparator {
+  eq: ID
+}
+enum PaginationOrderBy {
+  updatedAt
+}

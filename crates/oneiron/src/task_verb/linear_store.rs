@@ -259,7 +259,9 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Scheduled host entry: drain TASK writes then consume one source page.
+    /// Scheduled host entry: reconcile EACH linked dirty issue against its
+    /// current tracker snapshot before pushing, then consume one source page.
+    /// A single cursor page cannot preflight an issue on a later page.
     /// Errors retain dirty revisions/cursor for retry. The injected egress is
     /// still the authenticated OF-327 rail, never a credential in core.
     pub fn synchronize(
@@ -268,6 +270,10 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
         let mut pushed = Vec::new();
         for (task, revision) in self.tasks().dirty_tasks()? {
+            if let Some(link) = self.tasks().link(task)? {
+                let current = self.inbound_mut().current_issue(&link.issue)?;
+                self.apply_issue_change(current, now)?;
+            }
             let receipt = self.push_task(task, now)?;
             if receipt.status != LinearMirrorStatus::Conflict {
                 self.tasks().acknowledge_push(task, revision)?;

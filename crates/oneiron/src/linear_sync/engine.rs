@@ -42,6 +42,11 @@ impl<T, I, O> LinearSyncAdapter<T, I, O> {
         &mut self.tasks
     }
 
+    /// Mutably borrows the inbound change source.
+    pub fn inbound_mut(&mut self) -> &mut I {
+        &mut self.inbound
+    }
+
     /// Unwraps the three ports.
     pub fn into_parts(self) -> (T, I, O) {
         (self.tasks, self.inbound, self.outbound)
