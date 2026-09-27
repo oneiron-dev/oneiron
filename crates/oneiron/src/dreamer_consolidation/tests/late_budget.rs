@@ -360,6 +360,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
@@ -388,6 +389,7 @@ fn wake_pins_retry_expansion_before_admission() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
@@ -507,6 +509,7 @@ fn broken_retry_parks_without_poisoning_healthy_wake_work() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));

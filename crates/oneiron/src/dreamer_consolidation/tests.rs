@@ -1599,6 +1599,8 @@ fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Re
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&admitted, &mut ctx)),

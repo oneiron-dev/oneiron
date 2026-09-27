@@ -409,6 +409,7 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     vault.set_consolidation_selection(&selection::SelectionConfig {
@@ -733,6 +734,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -816,6 +818,7 @@ fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut wrapper = crate::commitment_wake::CommitmentWakeExecutor::new(
