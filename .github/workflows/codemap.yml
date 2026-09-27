@@ -1,0 +1,72 @@
+name: Codemap
+
+# MAIN ONLY, and the map's only writer (owner ruling 2026-09-27). The code map
+# (docs/CODEMAP.md, docs/codemap/) stays committed, but only this job writes it:
+# after every push to main it regenerates the map and commits the result
+# straight to main. PRs never touch the map and PR CI never checks it, so
+# parallel PRs stop conflicting on generated files.
+#
+# Not gated on CI_PAUSED: this job is a writer, not a check. It runs on a
+# GitHub-hosted runner (free for this public repo) because actions/setup-python
+# cannot install on our self-hosted runners (see wire-quickstart.yml), and a
+# one-minute job should not queue behind the self-hosted test lanes.
+#
+# The push uses GITHUB_TOKEN, and a GITHUB_TOKEN push starts no other workflow,
+# so the regenerate commit never re-triggers CI, the ratchet or this job.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'scripts/codemap/**'
+      - 'docs/CODEMAP.md'
+      - 'docs/codemap/**'
+      - '.github/workflows/codemap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One writer at a time. A queued run regenerates from the newest main, not from
+# the sha that queued it, so a skipped intermediate push loses nothing.
+concurrency:
+  group: codemap
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate code map
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Regenerate and push to main
+        run: |
+          git config user.name oneiron-codemap
+          git config user.email codemap@oneiron.dev
+          for attempt in 1 2 3; do
+            # Start from the newest main every time. A rejected push means main
+            # moved, so the map is rebuilt for the new tip instead of rebasing
+            # generated files onto it.
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            python3 scripts/codemap/codemap.py
+            if [ -z "$(git status --porcelain docs/CODEMAP.md docs/codemap)" ]; then
+              echo "Code map already current at $(git rev-parse --short HEAD)"
+              exit 0
+            fi
+            git add -A docs/CODEMAP.md docs/codemap
+            git commit -q -m "codemap: regenerate"
+            if git push origin HEAD:main; then
+              echo "Pushed $(git rev-parse --short HEAD) on attempt ${attempt}"
+              exit 0
+            fi
+            echo "Push rejected on attempt ${attempt}; regenerating on the new main"
+          done
+          echo "CODEMAP-PUSH-FAILED: main refused the push 3 times; a GH013 rule violation means the main ruleset needs a GitHub Actions bypass"
+          exit 1
