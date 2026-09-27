@@ -3,8 +3,8 @@
 use super::{
     records::*,
     store::{
-        LabelKey, QUESTION_ANSWER, QUESTION_LABEL, QUESTION_VERSION, VersionKey, encode,
-        family_prefix,
+        LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
+        encode, family_prefix,
     },
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -45,12 +45,33 @@ impl SideKey for WatchKey {
 
 const QUESTION_WATCH: SideTable<WatchKey, EntityId, Raw> =
     SideTable::new(&side_table::TYPED_QUESTION_WATCH);
+const UNIT_WATCH: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_UNIT_WATCH);
+pub(super) const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
+    SideTable::new(&side_table::TYPED_QUESTION_PENDING);
+pub(super) fn unwatch_units(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &QuestionRecord,
+) -> Result<()> {
+    for unit in &record.definition.units {
+        UNIT_WATCH.delete(store, txn, &(*unit, record.definition.question.id))?;
+        // A queued arrival for a still-covered unit survives the edit; all
+        // others are retired by the caller once the new definition is known.
+    }
+    Ok(())
+}
 
 pub(super) fn watch(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     record: &QuestionRecord,
 ) -> Result<()> {
+    if record.definition.refresh.on_arrival {
+        for unit in &record.definition.units {
+            UNIT_WATCH.put(store, txn, &(*unit, record.definition.question.id), &())?;
+        }
+    }
     let Some(binding) = &record.definition.binding else {
         return Ok(());
     };
@@ -83,7 +104,46 @@ pub(crate) fn project_arrivals_in_txn(
     txn: &mut heed::RwTxn<'_>,
     ids: &std::collections::BTreeSet<EntityId>,
 ) -> Result<usize> {
+    enqueue_arrivals(store, txn, ids)?;
     project(store, txn, ids, None)
+}
+
+fn enqueue_arrivals(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    ids: &std::collections::BTreeSet<EntityId>,
+) -> Result<()> {
+    for unit in ids {
+        let questions: Vec<EntityId> = UNIT_WATCH
+            .scan_from(store, txn, unit.as_bytes())?
+            .into_iter()
+            .map(|((_, question), _)| question)
+            .collect();
+        for question in questions {
+            let Some(head) = QUESTION_HEAD.get(store, txn, &super::store::HeadKey(question))?
+            else {
+                continue;
+            };
+            let Some(record) = QUESTION_VERSION.get(
+                store,
+                txn,
+                &VersionKey {
+                    id: question,
+                    version: head.version,
+                },
+            )?
+            else {
+                continue;
+            };
+            if !head.paused
+                && record.definition.refresh.on_arrival
+                && record.definition.units.contains(unit)
+            {
+                PENDING.put(store, txn, &(question, *unit), &EntityId::now())?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn project_question_in_txn(

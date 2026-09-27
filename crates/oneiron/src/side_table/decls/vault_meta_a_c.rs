@@ -183,6 +183,8 @@ side_tables! {
     /// A destructive claim action (supersede/decay/weaken/stale) parked behind unresolved gate
     /// consent. Key: id16.
     CLAIM_DEFERRED: VaultMeta b"claim.deferred.v1:" Named;
+    /// Immutable before/after revision binding for an accepted supersession. Key: old id16 + new id16.
+    CLAIM_SUPERSESSION_DIFF: VaultMeta b"claim.supersession_diff.v1:" Raw;
     /// Private local binding digest (row_digest, 32 bytes) proving which writer authored/finalized a
     /// CLAIM row. Key: id16.
     CLAIM_MATERIALIZATION_AUTHORED: VaultMeta b"claim:materialization:authored:v1:" Raw;

@@ -301,6 +301,8 @@ side_tables! {
     /// Durable journal record of one prepared/applied/failed git ref, stage, or worktree effect. Key:
     /// hex64(repo identity) ":" hex64(record key).
     GIT_WIRE_RECORD: VaultMeta b"git_wire:record:v2:" Named;
+    /// Node-local Gmail page cursor keyed by lower-case hex identity id. Key: hex32.
+    GMAIL_MAILBOX_CURSOR: VaultMeta b"gmail:mailbox_cursor:v1:" LegacyJson;
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw;
@@ -361,6 +363,12 @@ side_tables! {
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v3:" LegacyJson;
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
+    /// Measured description scores keyed inside one singleton map. Key: ().
+    LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson;
+    /// Vault-owned description policy. Key: ().
+    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson;
+    /// Durable re-ask keyed by 64-character hex identity.
+    LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson;
     LLM_MANIFEST: VaultMeta b"llm:manifest:v2" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
@@ -368,6 +376,8 @@ side_tables! {
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
+    /// One routed seat selected and pinned by caller-chosen bounded seat id.
+    LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson;
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
     LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson;

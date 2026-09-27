@@ -16,6 +16,8 @@ side_tables! {
     AUTH_REVOKED_TOKEN_JTI: SyncState b"auth:revoked-token-jti:" Raw;
     /// First-seen sidecars per authority entry hash, plus the 'backfill:v1' and 'clock_floor' rows.
     /// Key: string.
+    /// Snapshot-local generation of the authority fold cache. Key: ().
+    AUTHORITY_CACHE_GENERATION: SyncState b"authlog:cache_generation:v1" Raw;
     AUTHLOG_FIRST_SEEN_SIDECAR: SyncState b"authlog:first_seen:" Raw;
     /// One recorded OF-520 ingest-burst check (24 bytes), raised once per peer per observation
     /// window. Key: hex64 ":" u64hex16.

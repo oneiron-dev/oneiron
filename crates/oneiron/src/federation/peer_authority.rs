@@ -104,6 +104,8 @@ pub fn admit_peer_authority_log_entry(
             )));
         }
         PEER_AUTHORITY.put(&vault.store, wtxn, &key, &bytes.to_vec())?;
+        crate::authority::advance_authority_cache_generation(&vault.store, wtxn)?;
+
         Ok(())
     })
 }

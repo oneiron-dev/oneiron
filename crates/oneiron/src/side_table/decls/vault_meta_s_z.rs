@@ -238,6 +238,10 @@ side_tables! {
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
+    /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
+    TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
+    /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
+    TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
     /// Reverse watch index from an outcome predicate to the questions learning from it. Key:
     /// string(predicate) "\x00" id16(question).

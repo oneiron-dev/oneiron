@@ -101,7 +101,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         verified: &VerifiedSlip,
     ) -> Result<bool> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         let claims = verified.claims();
         Ok(now >= claims.issued_at
@@ -121,7 +121,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &[u8; 32],
     ) -> Result<bool> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let now = self.instant_in_txn(txn)?.secs();
         Ok(fold.slip_is_live(id)
             && fold.slips.mints.get(id).is_some_and(|mint| {
@@ -213,7 +213,7 @@ impl Vault {
             })
             .collect();
         self.put_authority_log_entries_in_txn(&mut txn, &rows)?;
-        let fresh = self.authority_fold_readonly_in_txn(&txn)?;
+        let fresh = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify_authority(issuer.secret(), &fresh, now)?;
         HOST_ROOT_SLIP_CACHE.put(&self.store, &mut txn, &cache_key, &slip.to_token()?)?;
         txn.commit()?;
@@ -223,7 +223,7 @@ impl Vault {
     pub fn verified_host_root_slip(&self, issuer: &HostSlipIssuer) -> Result<VerifiedSlip> {
         let slip = self.ensure_host_root_slip(issuer)?;
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         slip.verify(
             issuer.secret(),
             &fold,
@@ -242,7 +242,7 @@ impl Vault {
         signature: &[u8],
     ) -> Result<VerifiedSlip> {
         let txn = self.store.env.read_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         slip.verify(
             issuer.secret(),
@@ -284,7 +284,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         slip.verify(issuer.secret(), &fold, now, &challenge, signature)
     }
@@ -306,7 +306,7 @@ impl Vault {
         issuer: &HostSlipIssuer,
         claims: SlipClaims,
     ) -> Result<CapabilitySlip> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         if claims.issued_at > now || claims.expires_at <= now {
@@ -330,11 +330,8 @@ impl Vault {
                 now,
             )],
         )?;
-        slip.verify_authority(
-            issuer.secret(),
-            &self.authority_fold_readonly_in_txn(txn)?,
-            now,
-        )?;
+        let fresh = self.authority_view_readonly_in_txn(txn)?;
+        slip.verify_authority(issuer.secret(), &fresh, now)?;
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
@@ -369,7 +366,7 @@ impl Vault {
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
         let challenge =
@@ -401,7 +398,7 @@ impl Vault {
         issuer: &HostSlipIssuer,
         op: AuthorityOp,
     ) -> Result<()> {
-        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(issuer, &fold, op, now)?;

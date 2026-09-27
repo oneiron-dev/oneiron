@@ -80,7 +80,7 @@ const RETRIEVAL_TRACE_FORK_INDEX: SideTable<([u8; 32], RetrievalRunId), PresentM
 /// Reported retrieval run outcome. Key: id16 ":" string — a literal `:`
 /// separator, not the door's plain fixed-then-rest tuple, so it gets a
 /// hand-spelled key type.
-struct OutcomeKey(RetrievalRunId, String);
+pub(super) struct OutcomeKey(pub(super) RetrievalRunId, pub(super) String);
 
 impl SideKey for OutcomeKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
@@ -110,7 +110,7 @@ impl SideKey for OutcomeKey {
 /// Codec fixed `Raw` (see the decls.rs note): decode also enforces the
 /// version byte, so [`RawValue`] delegates to the module's own
 /// `encode_retrieval_outcome`/`decode_retrieval_outcome`.
-const RETRIEVAL_OUTCOME: SideTable<OutcomeKey, RetrievalOutcomeRecord, Raw> =
+pub(super) const RETRIEVAL_OUTCOME: SideTable<OutcomeKey, RetrievalOutcomeRecord, Raw> =
     SideTable::new(&side_table::RETRIEVAL_OUTCOME);
 
 impl RawValue for RetrievalOutcomeRecord {
@@ -312,6 +312,7 @@ impl Store {
             accepted: outcome.accepted,
             metadata: outcome.metadata,
             updated_at: self.clock.now_recorded_at(),
+            reward_evidence: None,
         };
         let mut wtxn = self.env.write_txn()?;
         if !RETRIEVAL_RUN.contains(self, &wtxn, &record.run_id)? {
@@ -325,7 +326,16 @@ impl Store {
             ));
         }
         let key = OutcomeKey(record.run_id, record.key.clone());
+        if RETRIEVAL_OUTCOME
+            .get(self, &wtxn, &key)?
+            .is_some_and(|existing| existing.reward_evidence.is_some())
+        {
+            return Err(Error::InvalidConfig(
+                "raw retrieval outcome cannot replace a gated end outcome".to_owned(),
+            ));
+        }
         RETRIEVAL_OUTCOME.put(self, &mut wtxn, &key, &record)?;
+
         wtxn.commit()?;
         Ok(())
     }
@@ -647,7 +657,7 @@ pub(in crate::store) fn decode_retrieval_run(raw: &[u8]) -> Result<RetrievalRunR
     Ok(record)
 }
 
-fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
+pub(super) fn encode_retrieval_outcome(record: &RetrievalOutcomeRecord) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(record)
         .map_err(|_| Error::InvariantViolation("retrieval outcome telemetry encode failed"))
 }
@@ -682,7 +692,7 @@ pub(super) fn retrieval_outcomes_for_run_in_txn(
     Ok(records)
 }
 
-fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
+pub(super) fn vet_retrieval_outcome(outcome: &RetrievalOutcome) -> Result<()> {
     if outcome.key.is_empty()
         || outcome.key.len() > RETRIEVAL_OUTCOME_KEY_MAX_LEN
         || !outcome

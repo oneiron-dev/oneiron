@@ -100,6 +100,16 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
         vault.claim_write_disposition(&early).unwrap(),
         Some(CausalWriteDisposition::Quarantined)
     );
+    let txn = vault.store.env.read_txn().unwrap();
+    let cached = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    let reference = super::readonly_fold::uncached_reference_fold(&vault, &txn);
+    let early_body = crate::claim::decode_claim_body(&body(bind_hash), true).unwrap();
+    assert_eq!(
+        claim_causal_admitted(&cached, &early_body),
+        claim_causal_admitted(&reference, &early_body)
+    );
+    assert!(!claim_causal_admitted(&cached, &early_body));
+    drop(txn);
     let concurrent = EntityId::now();
     assert!(matches!(
         vault
