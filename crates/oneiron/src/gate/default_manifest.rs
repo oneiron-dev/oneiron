@@ -56,6 +56,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     Value::from("initial_owner_secs"),
                     Value::from(365_u64 * 24 * 60 * 60),
                 ),
+                (
+                    Value::from("precedence"),
+                    Value::from("vault_ceiling_holder_narrows"),
+                ),
             ]),
         ),
         (

@@ -19,7 +19,9 @@ use crate::gate::constants::{
     POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
-use crate::gate::resolution::{CommOptOutPosture, CredentialLifetimePolicy};
+use crate::gate::resolution::{
+    CommOptOutPosture, CredentialLifetimePolicy, CredentialLifetimePrecedence,
+};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::decode_map_util::{
@@ -58,7 +60,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
-    pub(in crate::gate) credential_lifetimes: CredentialLifetimePolicy,
+    pub(in crate::gate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -121,14 +123,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let engine_version_floor = version_gt(&min_engine_version, env!("CARGO_PKG_VERSION"))?;
     let defaults = parse_axes(required_value(&entries, POLICY_DEFAULTS_KEY)?)?;
     let credential_lifetimes = match single_map_value(&entries, POLICY_CREDENTIAL_LIFETIMES_KEY) {
-        MapValue::Missing => CredentialLifetimePolicy::default(),
+        MapValue::Missing => None,
         MapValue::Duplicate => return None,
         MapValue::Present(Value::Map(rows)) => {
-            if rows.len() != 2
+            if rows.len() != 3
                 || rows.iter().any(|(key, _)| {
                     !matches!(
                         key.as_str(),
-                        Some("oauth_exchange_secs" | "initial_owner_secs")
+                        Some("oauth_exchange_secs" | "initial_owner_secs" | "precedence")
                     )
                 })
             {
@@ -138,10 +140,19 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 MapValue::Present(value) => value.as_u64().filter(|secs| *secs > 0),
                 MapValue::Missing | MapValue::Duplicate => None,
             };
-            CredentialLifetimePolicy {
+            let precedence = match single_map_value(rows, "precedence") {
+                MapValue::Present(Value::String(value))
+                    if value.as_str() == Some("vault_ceiling_holder_narrows") =>
+                {
+                    CredentialLifetimePrecedence::VaultCeilingHolderNarrows
+                }
+                _ => return None,
+            };
+            Some(CredentialLifetimePolicy {
                 oauth_exchange_secs: duration("oauth_exchange_secs")?,
                 initial_owner_secs: duration("initial_owner_secs")?,
-            }
+                precedence,
+            })
         }
         MapValue::Present(_) => return None,
     };

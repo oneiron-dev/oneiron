@@ -72,18 +72,24 @@ impl CommOptOutPosture {
     }
 }
 
-/// Per-vault maxima for the two host-minted credential paths. The seeded
-/// manifest declares these values; later trusted packs can only lower them.
+/// Trusted vault duration policy. The shipped manifest carries the defaults;
+/// the runtime itself provides no numeric fallback or hidden ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CredentialLifetimePolicy {
     pub(crate) oauth_exchange_secs: u64,
     pub(crate) initial_owner_secs: u64,
+    pub(crate) precedence: CredentialLifetimePrecedence,
 }
-impl Default for CredentialLifetimePolicy {
-    fn default() -> Self {
-        Self {
-            oauth_exchange_secs: 3600,
-            initial_owner_secs: 365 * 24 * 60 * 60,
+
+/// Explicit precedence row: the holder can only narrow the vault ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CredentialLifetimePrecedence {
+    VaultCeilingHolderNarrows,
+}
+impl CredentialLifetimePrecedence {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::VaultCeilingHolderNarrows => "vault_ceiling_holder_narrows",
         }
     }
 }
@@ -91,6 +97,8 @@ impl CredentialLifetimePolicy {
     pub(crate) fn restrict(&mut self, other: Self) {
         self.oauth_exchange_secs = self.oauth_exchange_secs.min(other.oauth_exchange_secs);
         self.initial_owner_secs = self.initial_owner_secs.min(other.initial_owner_secs);
+        // The decoder admits only the closed, shrink-only precedence law.
+        self.precedence = other.precedence;
     }
 }
 
@@ -99,7 +107,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
-    pub(crate) credential_lifetimes: CredentialLifetimePolicy,
+    pub(crate) credential_lifetimes: Option<CredentialLifetimePolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

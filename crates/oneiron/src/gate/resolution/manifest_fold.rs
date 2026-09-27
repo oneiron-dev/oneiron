@@ -30,7 +30,11 @@ pub(crate) fn resolve_credential_lifetimes(
             "credential lifetime policy is unavailable".into(),
         ));
     }
-    Ok(resolved.credential_lifetimes)
+    resolved.credential_lifetimes.ok_or_else(|| {
+        Error::InvalidConfig(
+            "credential lifetime policy missing from trusted vault manifests".into(),
+        )
+    })
 }
 
 pub(crate) fn resolve_policy_manifest(
@@ -90,9 +94,13 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.unsupported_schema_seen |= decoded.unsupported_schema;
                 resolution.diagnostics.engine_version_floor_seen |= decoded.engine_version_floor;
                 resolution.diagnostics.unknown_axis_seen |= decoded.unknown_axis_seen;
-                resolution
-                    .credential_lifetimes
-                    .restrict(decoded.credential_lifetimes);
+                if let Some(lifetimes) = decoded.credential_lifetimes {
+                    if let Some(resolved) = &mut resolution.credential_lifetimes {
+                        resolved.restrict(lifetimes);
+                    } else {
+                        resolution.credential_lifetimes = Some(lifetimes);
+                    }
+                }
                 resolution.source_trust.merge(decoded.source_trust);
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
