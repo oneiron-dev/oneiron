@@ -169,6 +169,9 @@ pub(crate) fn reconcile_project_rooms(
                 Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
                 other => other?,
             };
+        if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {
+            return Err(invalid_room());
+        }
         if previous
             .as_ref()
             .is_some_and(|old| old.project_id != id.to_hex())
@@ -176,6 +179,12 @@ pub(crate) fn reconcile_project_rooms(
             return Err(invalid());
         }
         if previous.as_ref() == Some(&room) {
+            // A batch can submit the exact derived room beside its PROJECT.
+            // Even when no room rewrite is needed, its owner marker must land.
+            let marker = [ROOM_PROJECT, room_id.as_bytes()].concat();
+            if store.vault_meta.get(txn, &marker)?.as_deref() != Some(id.as_bytes()) {
+                store.vault_meta.put(txn, &marker, id.as_bytes())?;
+            }
             continue;
         }
         let change = ProjectRoomChange {
