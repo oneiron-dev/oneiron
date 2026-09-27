@@ -10,6 +10,7 @@ mod inbox_sync;
 mod normalize_keys;
 mod sandbox_host;
 mod seat_policy;
+mod verified_connect;
 mod verified_send;
 
 use std::collections::HashSet;
@@ -45,6 +46,10 @@ pub use self::seat_policy::{
     LinkedInSandboxHostHarness, LinkedInSeatDispatchState, LinkedInSeatPolicyAction,
     LinkedInSeatPolicyDecision, LinkedInSeatSandboxPolicy, linkedin_connect_consent_screen_copy,
     run_linkedin_kill_switch,
+};
+pub use self::verified_connect::{
+    LinkedInConnectionObservation, LinkedInConnectionState, LinkedInMcpConnectRequest,
+    LinkedInMcpConnectTransport, LinkedInMcpVerifiedConnectSink, LinkedInVerifiedConnectPlan,
 };
 pub use self::verified_send::{
     LinkedInMcpSendMessageRequest, LinkedInMcpSendTransport, LinkedInMcpVerifiedSendSink,
