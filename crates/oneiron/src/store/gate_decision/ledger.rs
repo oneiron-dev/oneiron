@@ -15,26 +15,18 @@ use super::keys::{
     gate_decision_grant_ref_index_key, gate_decision_grant_ref_index_prefix,
     logical_uuid_v7_successor,
 };
+use super::orcb;
 use super::types::{
     GATE_DECISION_LEDGER_VERSION, GateClaimIndexBackfill, GateDecisionId, GateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
 
-/// Gate-decision ledger row, keyed by decision id. Codec fixed `Raw` (see the
-/// decls.rs note): [`RawValue`] delegates to
-/// [`encode_gate_decision`]/[`decode_gate_decision`].
-pub(super) const LEDGER: SideTable<GateDecisionId, GateDecisionRecord, Raw> =
+/// The stored value is plain named MessagePack or encrypted ORCB bytes;
+/// the Store door decodes with its current custody root after this typed read.
+pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-
-impl RawValue for GateDecisionRecord {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_gate_decision(self)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_gate_decision(bytes)?)
-    }
-}
+const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
+    SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
 /// for the grant-ref and attempt-run secondary indexes.
@@ -85,6 +77,19 @@ fn tail_id(bytes: &[u8], context: &'static str) -> Result<[u8; 16]> {
 }
 
 impl Store {
+    /// Decode one row against its key, decrypting only claim-bound ORCB values.
+    pub(in crate::store) fn decode_gate_decision_value(
+        &self,
+        decision_id: GateDecisionId,
+        raw: &[u8],
+    ) -> Result<GateDecisionRecord> {
+        if orcb::is_orcb(raw) {
+            orcb::decode_hot(&self.core.gate_custody_root, decision_id, raw)
+        } else {
+            decode_gate_decision(raw)
+        }
+    }
+
     /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
     /// claim-bound ledger row and sets the durable completeness flag in ONE
     /// write txn, so a crash leaves either nothing or everything (RCPT-1
@@ -199,6 +204,19 @@ impl Store {
         record: &GateDecisionRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
+        if record.claim_id.is_some() {
+            // The first claim-bound append pins a path to LIVE exterior custody
+            // in the same LMDB transaction as the value. Restoring the image
+            // elsewhere reuses that path, never a backed-up key copy.
+            let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
+            match CUSTODY_ROOT.get(self, &*wtxn, &())? {
+                Some(bound) if bound != expected => {
+                    return Err(Error::CorruptedIndex("gate decision custody binding"));
+                }
+                Some(_) => {}
+                None => CUSTODY_ROOT.put(self, wtxn, &(), &expected)?,
+            }
+        }
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
@@ -381,7 +399,9 @@ impl Store {
         mut visit: impl FnMut(GateDecisionRecord) -> Result<()>,
     ) -> Result<()> {
         for row in LEDGER.iter_from(self, txn, &[])? {
-            let (decision_id, record) = row?;
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -410,9 +430,10 @@ impl Store {
         txn: &RoTxn<'_>,
         decision_id: GateDecisionId,
     ) -> Result<Option<GateDecisionRecord>> {
-        let Some(record) = LEDGER.get(self, txn, &decision_id)? else {
+        let Some(raw) = LEDGER.get(self, txn, &decision_id)? else {
             return Ok(None);
         };
+        let record = self.decode_gate_decision_value(decision_id, &raw)?;
         if record.decision_id != decision_id {
             return Err(Error::CorruptedIndex("gate decision ledger"));
         }
@@ -504,7 +525,9 @@ impl Store {
         let upper = before.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut records = Vec::with_capacity(limit.min(RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT));
         for row in LEDGER.iter_rev_range(self, rtxn, Bound::Unbounded, upper)? {
-            let (decision_id, record) = row?;
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -544,7 +567,13 @@ fn append_gate_decision_row_in_txn(
     if LEDGER.contains(store, wtxn, &record.decision_id)? {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    LEDGER.put(store, wtxn, &record.decision_id, record)?;
+    let value = if record.claim_id.is_some() {
+        orcb::encode_hot(store.gate_key_root(), record)?
+    } else {
+        encode_gate_decision(record)?
+    };
+    LEDGER.put(store, wtxn, &record.decision_id, &value)?;
+
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         GRANT_REF_INDEX.put(
             store,

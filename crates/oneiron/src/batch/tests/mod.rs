@@ -169,6 +169,7 @@ fn fixture_task_fact() -> Vec<u8> {
             task_ref: entity(0x35),
             kind: crate::task_authority::TaskAuthorityFactKind::Owner,
             actor_ref: entity(0x31),
+            assigned_ref: None,
             occurred_at: 40,
         },
     )

@@ -30,6 +30,15 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 
 /// A stored, dispatchable AGENT_DEF row the failure scope can bind to.
 fn put_scope_agent(vault: &Vault, seed: u8, agent_id: &str) -> Result<EntityId> {
+    put_scope_agent_with_ceiling(vault, seed, agent_id, AgentCeiling::Proposed)
+}
+
+fn put_scope_agent_with_ceiling(
+    vault: &Vault,
+    seed: u8,
+    agent_id: &str,
+    ceiling: AgentCeiling,
+) -> Result<EntityId> {
     let id = test_id(seed);
     let definition = AgentDefinition::new(
         agent_id,
@@ -41,7 +50,7 @@ fn put_scope_agent(vault: &Vault, seed: u8, agent_id: &str) -> Result<EntityId> 
         Vec::new(),
         None,
         AgentScope::All,
-        AgentCeiling::Proposed,
+        ceiling,
         None,
         ClaimApprovalStatus::Approved,
         ClaimLifecycleStatus::Active,
@@ -344,6 +353,14 @@ fn first_transient_retry_mints_distinct_scheduled_child() -> Result<()> {
     assert_eq!(scheduled_attempt.state, AttemptState::Scheduled);
     assert_eq!(scheduled_attempt.attempt_count, 0);
     assert_eq!(scheduled_attempt.scheduled_at, Some(RETRY_AT));
+    assert_eq!(
+        DreamerRunnerStore::new(&vault)
+            .run_tree(scheduled_attempt.id)?
+            .unwrap()
+            .attempt_id,
+        scheduled_attempt.id,
+        "a retry must carry its private runner tree in the same transaction"
+    );
     assert_eq!(consecutive_transients.get(), 1);
 
     let queue = AttemptQueue::new(&vault);
@@ -1034,5 +1051,262 @@ fn malformed_healer_scope_cannot_commit_a_failure_or_case() -> Result<()> {
             assert!(vault.store.vault_meta.get(&txn, &key)?.is_none());
         }
     }
+    Ok(())
+}
+
+/// The runner's production typed-evidence door, not a direct policy-unit call.
+#[test]
+fn runner_typed_failure_dispatches_case_bound_propose_only_healer() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let healer = put_scope_agent(&vault, 0x32, "oneiron.agent.healer")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let mut policy = auto_policy(agent);
+    policy.healer_slot = crate::agent_dispatch::HealerSlot::AgentDef {
+        agent_def_ref: healer.to_hex(),
+    };
+    let runner = DreamerRunnerStore::new(&vault);
+    let outcome = runner.fail_agent_dispatch_with_evidence(
+        failure_input(&leased, permanent(), 20),
+        policy.clone(),
+    )?;
+    let FailureLadderOutcome::Healer(result) = outcome else {
+        panic!("permanent evidence must dispatch a healer");
+    };
+    let HealerSlotOutcome::Dispatched(status) = &result.slot else {
+        panic!("configured healer must dispatch");
+    };
+    assert_eq!(status.input.healer_case.as_ref(), Some(&result.case));
+    assert_eq!(status.attempt.run_id, leased.run_id);
+    assert_eq!(status.input.definition.ceiling, AgentCeiling::Proposed);
+    assert_eq!(status.input.depth_remaining, Some(1));
+    assert_eq!(
+        AttemptQueue::new(&vault).get(leased.id)?.unwrap().state,
+        AttemptState::Failed
+    );
+    assert!(
+        runner
+            .fail_agent_dispatch_with_evidence(failure_input(&leased, permanent(), 21), policy,)
+            .is_err(),
+        "a second delivery must not dispatch another healer"
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn runner_typed_failure_refuses_auto_retry_for_classifier_evidence() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let outcome = DreamerRunnerStore::new(&vault).fail_agent_dispatch_with_evidence(
+        failure_input(
+            &leased,
+            evidence(
+                TypedFailureVerdict::Retryable,
+                Some(DetectorTier::T2Classifier),
+            ),
+            20,
+        ),
+        auto_policy(agent),
+    )?;
+    assert!(matches!(outcome, FailureLadderOutcome::Human(_)));
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn runner_untyped_failure_cannot_bypass_agent_dispatch_ladder() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    DreamerRunnerStore::new(&vault)
+        .fail(crate::dreamer_runner::FailDreamerAttempt {
+            id: leased.id,
+            lease_owner: LEASE_OWNER.into(),
+            attempt_count: leased.attempt_count,
+            reason: "opaque prose".into(),
+            now: 20,
+        })
+        .expect_err("agent failure requires typed evidence");
+    assert_eq!(
+        AttemptQueue::new(&vault).get(leased.id)?.unwrap().state,
+        AttemptState::Leased
+    );
+    Ok(())
+}
+
+/// One bounded healer executes its reference-context handoff through ScopedRead
+/// before it diagnoses. Merely copying case refs into an enqueue payload is
+/// insufficient to pass this composition test.
+#[test]
+fn permanent_failure_healer_reads_diagnostic_and_emits_case_bound_proposal() -> Result<()> {
+    use crate::agent_dispatch::{DispatchHealer, HealerSlot};
+    use crate::edge::EdgeActorClass;
+    use crate::self_heal::{
+        DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
+        DiagnosticSourceKind, RepairConsentRoute, RepairOperation, diagnostic_event_id,
+        encode_diagnostic_event_body,
+    };
+    use crate::write_envelope::WriteActor;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open_owned(dir.path(), VaultConfig::device())?;
+    let agent = put_scope_agent(&vault, 0x31, "oneiron.agent.failing")?;
+    let healer = put_scope_agent(&vault, 0x32, "oneiron.agent.healer")?;
+    let checkpoint = test_id(0x51);
+    let thread = test_id(0x52);
+    vault.put_entity(
+        &checkpoint,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"pre-fail checkpoint fixture",
+    )?;
+    vault.put_entity(
+        &thread,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation::ConversationBody::default().to_bytes()?,
+    )?;
+    let diagnostic = DiagnosticEvent {
+        detector_id: "test.permanent_failure".into(),
+        event_class: DiagnosticEventClass::McpActionRejected,
+        actor_class: "system".into(),
+        actor_ref: None,
+        source: DiagnosticSourceKind::Receipt,
+        criticality: DiagnosticCriticality::Normal,
+        expected: Value::from(1),
+        actual: Value::from(0),
+        delta: Value::from(-1),
+        replay: DiagnosticReplayCoordinate {
+            content_hash: [7; 32],
+            run_ref: Some(RUN_ID.into()),
+            checkpoint_ref: Some(checkpoint.to_hex()),
+        },
+        evidence_refs: vec![checkpoint],
+        untrusted_detail: None,
+        valid_from: 1,
+        valid_to: None,
+    };
+    let diagnostic_id = diagnostic_event_id(
+        &diagnostic.detector_id,
+        &encode_diagnostic_event_body(&diagnostic)?,
+    );
+    vault.emit_diagnostic_event(&diagnostic_id, &diagnostic)?;
+    crate::test_util::authorize_readers(&vault, &[healer.to_hex().as_str()]);
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    let mut input = failure_input(&leased, permanent(), 20);
+    input.evidence.evidence_ref = Some(diagnostic_id.to_hex());
+    input.pre_fail_checkpoint_ref = checkpoint;
+    input.qa_thread_ref = thread;
+    let mut policy = auto_policy(agent);
+    policy.healer_slot = HealerSlot::AgentDef {
+        agent_def_ref: healer.to_hex(),
+    };
+    let FailureLadderOutcome::Healer(routed) =
+        DreamerRunnerStore::new(&vault).fail_agent_dispatch_with_evidence(input, policy)?
+    else {
+        panic!("permanent evidence routes a healer");
+    };
+    let HealerSlotOutcome::Dispatched(dispatched) = &routed.slot else {
+        panic!("case-bound healer dispatched");
+    };
+    assert_eq!(dispatched.input.depth_remaining, Some(1));
+    let case = dispatched
+        .input
+        .healer_case
+        .as_ref()
+        .expect("healer receives case refs");
+    assert_eq!(case.evidence_ref, diagnostic_id.to_hex());
+    assert_eq!(case.pre_fail_checkpoint_ref, checkpoint.to_hex());
+    assert_eq!(case.qa_thread_ref, thread.to_hex());
+    let actor = WriteActor::new(healer, EdgeActorClass::Agent);
+    let registration = vault.register_prod_healer(actor);
+    let read = vault.scoped_read(
+        crate::claim::ScopedReadActorKey::new(healer.to_hex()).expect("healer identity"),
+    );
+    assert!(
+        read.read(&[crate::claim::PointRead::id(checkpoint)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    assert!(
+        read.read(&[crate::claim::PointRead::id(thread)], None)?
+            .single()
+            .value
+            .is_some()
+    );
+    let (read_id, observed) = registration
+        .failure_corpus()?
+        .value
+        .into_iter()
+        .find(|(id, _)| id.to_hex() == case.evidence_ref)
+        .expect("healer can read its durable diagnostic through ScopedRead");
+    assert_eq!(read_id, diagnostic_id);
+    assert_eq!(
+        observed.replay.checkpoint_ref.as_deref(),
+        Some(case.pre_fail_checkpoint_ref.as_str())
+    );
+    let route = match observed.event_class {
+        DiagnosticEventClass::McpActionRejected => HealerRepairRoute::PromptInjectAndForkResume {
+            agent_ref: case.scope.agent_ref.clone(),
+            prompt_ref: observed.evidence_refs[0].to_hex(),
+            checkpoint_ref: case.pre_fail_checkpoint_ref.clone(),
+            diagnosis_ref: read_id.to_hex(),
+        },
+        _ => panic!("unexpected detector family"),
+    };
+    let ClaimOutcome::Claimed(healer_lease) = AttemptQueue::new(&vault).claim(ClaimAttempt {
+        lease_owner: LEASE_OWNER.into(),
+        now: 21,
+    })?
+    else {
+        panic!("healer lease");
+    };
+    assert_eq!(healer_lease.id, dispatched.attempt.id);
+    let proposal_id = test_id(0x81);
+    let bundle = AgentDispatcher::new(&vault).propose_healer_repair(
+        healer_lease.id,
+        LEASE_OWNER,
+        healer_lease.attempt_count,
+        proposal_id,
+        route.clone(),
+        "healer-read-session",
+    )?;
+    assert_eq!(
+        bundle.proposals()[0].route(),
+        RepairConsentRoute::HumanReview
+    );
+    assert!(matches!(&bundle.proposals()[0].proposal().operation,
+        RepairOperation::FixAgent {case_ref, route: actual}
+            if case_ref == &case.case_ref && actual == &route));
+    assert_eq!(
+        vault.healer_proposal(&proposal_id)?.unwrap().state,
+        crate::self_heal::healer_host::ProposalState::Proposed
+    );
+    let above = put_scope_agent_with_ceiling(
+        &vault,
+        0x33,
+        "oneiron.agent.above_propose",
+        AgentCeiling::Auto,
+    )?;
+    let error = AgentDispatcher::new(&vault)
+        .dispatch_healer_slot(DispatchHealer {
+            slot: HealerSlot::AgentDef {
+                agent_def_ref: above.to_hex(),
+            },
+            case: routed.case.clone(),
+            run_id: Some(RUN_ID.into()),
+            now: 22,
+        })
+        .expect_err("above-Proposed healer cannot be dispatched");
+    assert_eq!(error.kind(), crate::ErrorKind::AgentNotDispatchable);
+    assert_eq!(
+        AttemptQueue::new(&vault).list()?.len(),
+        2,
+        "a proposal never executes a fork or task retry"
+    );
     Ok(())
 }

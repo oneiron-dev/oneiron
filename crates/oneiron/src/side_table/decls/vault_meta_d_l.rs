@@ -238,6 +238,8 @@ side_tables! {
     /// `decode_critical_confirm_invalidation`.
     CRITICAL_CONFIRM_INVALIDATION: VaultMeta b"gate_critical_invalidation:v0:" Raw;
     /// Grant-reference index over the gate decision ledger. Key: u64be len + string + id16.
+    /// Exterior-key root binding of encrypted claim-bound gate decisions. Key: ().
+    GATE_DECISION_CUSTODY_ROOT: VaultMeta b"gate_decision:custody_root:v1" Raw;
     GATE_DECISION_GRANT_REF_INDEX: VaultMeta b"gate_decision:grant_ref_index:v1:" Raw;
     /// Gate decision ledger row. Key: id16.
     ///

@@ -5,6 +5,7 @@ use super::support::{invalid_row, normalized_ref};
 use super::{
     AuthenticatedOwner, ConsentDomain, ConsentReceipt, GrantBound, bound_catastrophe_class,
 };
+use crate::authority::VerifiedSlip;
 use crate::error::GateError;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -154,11 +155,92 @@ fn validate_row(row: StoredProposal, reference: &str) -> Result<StoredProposal> 
     Ok(row)
 }
 impl Vault {
-    /// Host-stamped agent admission. This parks a proposal and a pending receipt;
-    /// it never writes a standing-grant row or changes an effective ceiling.
-    pub fn propose_widen(
+    /// A verified agent may propose an action widening, but cannot grant it.
+    pub fn propose_action_widen(
+        &self,
+        credential: &VerifiedSlip,
+        bound: GrantBound,
+        owner_ref: &str,
+        expires_at: u64,
+    ) -> Result<WidenProposal> {
+        self.propose_credential_widen(credential, WidenKind::Action, bound, owner_ref, expires_at)
+    }
+
+    /// A verified agent may propose a disclosure widening, but cannot grant it.
+    pub fn propose_disclosure_widen(
+        &self,
+        credential: &VerifiedSlip,
+        bound: GrantBound,
+        owner_ref: &str,
+        expires_at: u64,
+    ) -> Result<WidenProposal> {
+        self.propose_credential_widen(
+            credential,
+            WidenKind::Disclosure,
+            bound,
+            owner_ref,
+            expires_at,
+        )
+    }
+
+    /// A verified agent may propose an auto-confirm widening, but cannot grant it.
+    pub fn propose_auto_confirm_widen(
+        &self,
+        credential: &VerifiedSlip,
+        bound: GrantBound,
+        owner_ref: &str,
+        expires_at: u64,
+    ) -> Result<WidenProposal> {
+        self.propose_credential_widen(
+            credential,
+            WidenKind::AutoConfirm,
+            bound,
+            owner_ref,
+            expires_at,
+        )
+    }
+
+    fn propose_credential_widen(
+        &self,
+        credential: &VerifiedSlip,
+        kind: WidenKind,
+        bound: GrantBound,
+        owner_ref: &str,
+        expires_at: u64,
+    ) -> Result<WidenProposal> {
+        let claims = credential.claims();
+        // A read-only VerifiedSlip is reusable. This door has no atomic
+        // SlipConsume, so refuse one-shots (including offline caveats) rather
+        // than spending them outside the proposal transaction.
+        if claims.single_use {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "single-use credential cannot file a widen proposal",
+            )));
+        }
+        if claims.actor_class.as_deref() != Some("agent") || !credential.allows_verb(kind.label()) {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "agent credential lacks widen proposal authority",
+            )));
+        }
+        let agent = crate::EntityId::from_hex(&claims.holder_ref).map_err(|_| {
+            Error::Gate(GateError::InvalidConsentBound(
+                "agent credential lacks entity binding",
+            ))
+        })?;
+        self.propose_widen_with_credential(
+            WriteActor::new(agent, EdgeActorClass::Agent),
+            credential,
+            kind,
+            bound,
+            owner_ref,
+            expires_at,
+        )
+    }
+
+    fn propose_widen_with_credential(
         &self,
         actor: WriteActor,
+        credential: &VerifiedSlip,
         kind: WidenKind,
         bound: GrantBound,
         owner_ref: &str,
@@ -186,6 +268,13 @@ impl Vault {
         let reference = proposal_ref(&canonical_delta, &proposer, &owner_ref, now, expires_at);
         validate_reference_shape(&reference)?;
         self.with_write_txn(|txn| {
+            // Recheck in the committing transaction: a verified handle can be
+            // revoked or expire between proof verification and this write.
+            if !self.capability_slip_is_live_in_txn(&*txn, credential)? {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "agent credential is no longer live",
+                )));
+            }
             let raw = self
                 .store
                 .entities

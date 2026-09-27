@@ -12,7 +12,7 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
-pub use curator::{CuratorRubric, CuratorTrigger};
+pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{DreamerTuningConfig, HarnessEvaluation, RetuneThresholds};
 use rmpv::Value;
 pub const MAINTENANCE_QUEUE_KIND: &str = "dreamer.maintenance";

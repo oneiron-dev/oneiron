@@ -19,7 +19,9 @@ impl Store {
         mut matches: impl FnMut(&GateDecisionRecord) -> bool,
     ) -> Result<Option<GateDecisionId>> {
         for row in LEDGER.iter_from(self, txn, &[])? {
-            let (decision_id, record) = row?;
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }

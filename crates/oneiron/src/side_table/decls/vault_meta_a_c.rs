@@ -48,6 +48,8 @@ side_tables! {
     /// Channel pointer (published/preview) naming the fork hash a codebase artifact currently serves.
     /// Key: channel byte + u16be length + string (artifact id).
     ARTIFACT_POINTER: VaultMeta b"artifact:pointer:v1:" Raw;
+    /// Immutable publish admission receipt keyed by publish entity id16.
+    ARTIFACT_PUBLISH_ADMISSION: VaultMeta b"artifact:publish:admission:v1:" LegacyJson;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;

@@ -65,6 +65,9 @@ impl Vault {
     /// Create-new output only. Checkpoint id hashes the entire canonical image.
     pub fn snapshot_checkpoint(&self, path: &Path, created_at: u64) -> Result<String> {
         let txn = self.store.env.read_txn()?;
+        // Refuse a checkpoint that cannot read CURRENT exterior custody; it
+        // cannot package key bytes to paper over a missing/shredded key.
+        self.store.for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
         // Only claim/summary bodies have a canonical re-embedding path today.
         // Diagnostics are deliberately runtime-only. Other explicit vectors must
         // not silently disappear.
@@ -222,6 +225,9 @@ impl Vault {
         }) {
             return Err(codec_error());
         }
+        // Authenticate every ORCB row against LIVE exterior custody before
+        // creating a destination. A checkpoint never carries a key copy.
+        crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"])?;
         // Existing content is never replaced or partially restored over.
         std::fs::create_dir(destination)?;
         let vault = Self::open_owned(destination, config.clone())?;
@@ -262,6 +268,15 @@ impl Vault {
         drop(vault);
         // Re-open through all ABI, model, analyzer and manifest gates before rebuilding.
         let vault = Self::open_owned(destination, config)?;
+        // The image carries only a binding to current exterior custody, never
+        // the keys. Verify EVERY claim-bound receipt against those live keys
+        // before reporting a successful restore, wake, or migration.
+        {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+        }
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
             rebuild::rebuild(&vault)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
