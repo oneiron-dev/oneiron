@@ -11,9 +11,9 @@ mod identity_kind;
 mod kernel;
 mod ledgers;
 mod projection;
+mod record;
 mod send_receipt_txn;
 mod session;
-mod suppression;
 
 #[cfg(test)]
 mod tests;
@@ -67,14 +67,14 @@ pub(crate) use self::ledgers::{
     overwrite_attempt_pack_receipt_for_test, put_attempt_pack_receipt_for_test,
 };
 pub(crate) use self::projection::{COMMITMENT_TRIGGER_PREFIX, commitment_trigger_ref};
-pub(crate) use self::send_receipt_txn::{
-    delivered_send_exists_in_txn, persist_send_receipt_in_txn,
+pub(crate) use self::record::{
+    put_suppression_in_txn, stage_receipt_record_index, suppression_for_intent,
+    suppression_receipt_id, validate_receipt_record_put,
 };
 #[cfg(feature = "sync")]
-pub(crate) use self::suppression::validate_suppression_asset_body;
-pub(crate) use self::suppression::{
-    put_suppression_in_txn, reject_suppression_asset_delete, stage_suppression_asset_index,
-    suppression_for_intent, suppression_receipt_id, validate_suppression_asset_put,
+pub(crate) use self::record::{validate_receipt_record_body, validate_receipt_record_time};
+pub(crate) use self::send_receipt_txn::{
+    delivered_send_exists_in_txn, persist_send_receipt_in_txn,
 };
 
 // The flat receipt.rs module used to provide these names to the test module

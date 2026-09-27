@@ -380,8 +380,8 @@ fn validate_admitted_replicated_body(id: &EntityId, entity_type: u8, body: &[u8]
                 "CompanionRecord storage retired; use PERSON/FACET",
             )));
         }
-        crate::registry::ENTITY_TYPE_ASSET => {
-            crate::receipt::validate_suppression_asset_body(id, body)?;
+        crate::registry::ENTITY_TYPE_RECEIPT_RECORD => {
+            crate::receipt::validate_receipt_record_body(id, body)?;
         }
         crate::registry::ENTITY_TYPE_TASK => {
             crate::habit::task_role_from_body_bytes(body)?;
@@ -500,10 +500,14 @@ mod suppression_carrier_tests {
     #[test]
     fn replicated_admission_refuses_truncated_and_wrong_id_suppression_assets() {
         let id = EntityId::from_bytes([0x87; 16]).expect("fixture id");
-        let magic = b"oneiron:outbound-suppression:v1\0";
+        let malformed = b"invalid receipt";
         assert!(
-            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_ASSET, magic)
-                .is_err()
+            validate_admitted_replicated_body(
+                &id,
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                malformed
+            )
+            .is_err()
         );
         let receipt = ReceiptRecord {
             receipt_id: format!(
@@ -524,17 +528,18 @@ mod suppression_carrier_tests {
             ]
             .into(),
         };
-        let mut body = magic.to_vec();
-        body.extend(
-            rmp_serde::to_vec_named(&ForgedCarrier {
-                intent_id: [0x88; 32],
-                receipt,
-            })
-            .expect("encode forged carrier"),
-        );
+        let body = rmp_serde::to_vec_named(&ForgedCarrier {
+            intent_id: [0x88; 32],
+            receipt,
+        })
+        .expect("encode forged carrier");
         assert!(
-            validate_admitted_replicated_body(&id, crate::registry::ENTITY_TYPE_ASSET, &body)
-                .is_err()
+            validate_admitted_replicated_body(
+                &id,
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                &body
+            )
+            .is_err()
         );
     }
 }

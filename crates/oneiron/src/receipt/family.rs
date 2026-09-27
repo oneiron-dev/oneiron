@@ -28,7 +28,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
-use super::suppression::scan_suppression_receipts;
+use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};

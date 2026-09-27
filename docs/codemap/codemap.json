@@ -25249,6 +25249,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/record.rs",
+     "purpose": "First-class, replicated immutable terminal outbound receipt record",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -25270,16 +25280,6 @@
      "surface": {
       "fn": 7,
       "struct": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/receipt/suppression.rs",
-     "purpose": "Replicated, immutable observation of a suppressed outbound intent",
-     "surface": {
-      "crate-vis": 8
      }
     },
     {
@@ -25660,7 +25660,7 @@
      "path": "src/registry/type_bytes.rs",
      "purpose": "Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant",
      "surface": {
-      "const": 46
+      "const": 47
      }
     },
     {
@@ -30094,7 +30094,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 18,
       "re-export": 14
      }
@@ -30342,6 +30342,16 @@
      "path": "src/sync/quota/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/receipt_ingest.rs",
+     "purpose": "ONE-1881: one validated, writer-locked receive path for terminal receipts",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -34773,7 +34783,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34908,7 +34918,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2063,
+   "source_files": 2064,
    "test_files": 705
   },
   "oneiron-android": {

@@ -1824,21 +1824,18 @@ fn suppression_carrier_fixture(divergent: bool) -> (EntityId, Vec<u8>) {
         fields,
     };
     let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.suppression.asset.v1\0");
+    hash.update(b"oneiron.outbound.receipt_record.v1\0");
     hash.update(&intent_id);
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
     bytes[6] = (bytes[6] & 0x0f) | 0x70;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let id = EntityId::from_bytes(bytes).expect("fixture id");
-    let mut body = b"oneiron:outbound-suppression:v1\0".to_vec();
-    body.extend(
-        rmp_serde::to_vec_named(&SuppressionCarrierFixture {
-            intent_id,
-            receipt: &receipt,
-        })
-        .expect("encode suppression fixture"),
-    );
+    let body = rmp_serde::to_vec_named(&SuppressionCarrierFixture {
+        intent_id,
+        receipt: &receipt,
+    })
+    .expect("encode suppression fixture");
     (id, body)
 }
 
@@ -1850,19 +1847,24 @@ fn exercise_suppression_remote_quarantine(observer: bool, divergent: bool) -> cr
     let good = EntityId::now();
     let (bad, payload) = if divergent {
         let (id, original) = suppression_carrier_fixture(false);
-        vault.put_entity(
-            &id,
-            crate::registry::ENTITY_TYPE_ASSET,
-            valid_time_range(),
-            LEARNED_AT,
-            &original,
-        )?;
+        vault.with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .put_replicated(
+                    &id,
+                    crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                    TimeRange {
+                        start: LEARNED_AT,
+                        end: LEARNED_AT,
+                    },
+                    LEARNED_AT,
+                    &original,
+                )
+                .apply(txn)
+        })?;
         (id, suppression_carrier_fixture(true).1)
     } else {
-        (
-            EntityId::now(),
-            b"oneiron:outbound-suppression:v1\0".to_vec(),
-        )
+        (EntityId::now(), b"invalid receipt".to_vec())
     };
     let original = vault.get_raw(&bad)?;
     let subscriptions = observer
@@ -1872,8 +1874,11 @@ fn exercise_suppression_remote_quarantine(observer: bool, divergent: bool) -> cr
         &entities,
         &bad.to_hex(),
         &entity_blob(
-            crate::registry::ENTITY_TYPE_ASSET,
-            valid_time_range(),
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
             LEARNED_AT,
             &payload,
         ),
@@ -1947,13 +1952,21 @@ fn forward_remat_quarantines_divergent_suppression_and_keeps_original() -> crate
 fn remote_suppression_tombstone_quarantines_without_erasing_receipt() -> crate::Result<()> {
     let (_dir, vault) = test_vault_with_dir();
     let (id, body) = suppression_carrier_fixture(false);
-    vault.put_entity(
-        &id,
-        crate::registry::ENTITY_TYPE_ASSET,
-        valid_time_range(),
-        LEARNED_AT,
-        &body,
-    )?;
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                TimeRange {
+                    start: LEARNED_AT,
+                    end: LEARNED_AT,
+                },
+                LEARNED_AT,
+                &body,
+            )
+            .apply(txn)
+    })?;
     let original = vault.get_raw(&id)?;
     let doc = create_window_doc("test-user", &WindowKey::new(WINDOW));
     let sibling = EntityId::now();
@@ -1978,7 +1991,263 @@ fn remote_suppression_tombstone_quarantines_without_erasing_receipt() -> crate::
     let rows = quarantined_records(&vault)?;
     assert!(
         rows.iter()
-            .any(|(_, row)| row.reason_code == "SuppressionReceiptDivergence")
+            .any(|(_, row)| row.reason_code == "MaintenanceKindNotWritable")
+    );
+    Ok(())
+}
+
+/// Matrix: protected receipt arrival is independent of tombstone order and
+/// of which production materializer runs first. The sibling is ordinary ASSET.
+fn receipt_arrival_matrix(observer: bool, order: u8) -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_dir, vault) = test_vault_with_dir();
+    let window = WindowKey::new(WINDOW);
+    let materializer = Arc::new(Materializer::new());
+    let doc = create_window_doc("receipt-arrival", &window);
+    let entities = doc.get_map("entities");
+    let tombstones = doc.get_map("tombstones");
+    let (id, body) = suppression_carrier_fixture(false);
+    let sibling = EntityId::now();
+    let receipt_blob = entity_blob(
+        crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+        TimeRange {
+            start: LEARNED_AT,
+            end: LEARNED_AT,
+        },
+        LEARNED_AT,
+        &body,
+    );
+    let listener = observer
+        .then(|| crate::sync::bridge::register_observer_b(&doc, &vault, &materializer, WINDOW));
+    if order == 0 {
+        map_insert_bytes(&entities, &id.to_hex(), &receipt_blob)?;
+        doc.commit();
+        if !observer {
+            forward_rematerialize(&vault, &doc, &materializer, &window)?;
+        }
+    }
+    if order == 2 {
+        map_insert_bytes(&tombstones, &id.to_hex(), b"1")?;
+        doc.commit();
+        if !observer {
+            forward_rematerialize(&vault, &doc, &materializer, &window)?;
+        }
+        let txn = vault.store.env.read_txn()?;
+        assert!(vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?);
+        drop(txn);
+    }
+    if order != 2 {
+        map_insert_bytes(&tombstones, &id.to_hex(), b"1")?;
+    }
+    map_insert_bytes(&entities, &id.to_hex(), &receipt_blob)?;
+    map_insert_bytes(
+        &entities,
+        &sibling.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            b"ordinary sibling",
+        ),
+    )?;
+    doc.commit();
+    if !observer {
+        forward_rematerialize(&vault, &doc, &materializer, &window)?;
+    }
+    assert_eq!(
+        vault.get_raw(&id)?.as_deref(),
+        Some(receipt_blob.as_slice())
+    );
+    assert_eq!(
+        vault.get(&sibling)?.as_deref(),
+        Some(b"ordinary sibling".as_slice())
+    );
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|record| record.outcome == "suppressed")
+    );
+    assert!(quarantined_records(&vault)?.iter().any(|(_, row)| {
+        row.container == QuarantineContainer::Tombstones
+            && row.reason_code == "MaintenanceKindNotWritable"
+    }));
+    let txn = vault.store.env.read_txn()?;
+    assert!(!vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?);
+    drop(txn);
+    // A byte-identical echo must still run the protected ingest, not the
+    // generic before-write shortcut. A later remat cannot revive `dt:`.
+    forward_rematerialize(&vault, &doc, &materializer, &window)?;
+    assert_eq!(
+        vault.get_raw(&id)?.as_deref(),
+        Some(receipt_blob.as_slice())
+    );
+    drop(listener);
+    Ok(())
+}
+
+#[test]
+fn observer_receipt_arrival_orders_preserve_audited_suppression() -> crate::Result<()> {
+    for order in 0..3 {
+        receipt_arrival_matrix(true, order)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn forward_receipt_arrival_orders_preserve_audited_suppression() -> crate::Result<()> {
+    for order in 0..3 {
+        receipt_arrival_matrix(false, order)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn reverse_receipt_recovery_preserves_audit_and_quarantines_tombstone() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let (_dir, vault) = test_vault_with_dir();
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("reverse-receipt", &window);
+    let (id, body) = suppression_carrier_fixture(false);
+    vault.with_write_txn(|txn| {
+        vault
+            .batch_in()
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                TimeRange {
+                    start: LEARNED_AT,
+                    end: LEARNED_AT,
+                },
+                LEARNED_AT,
+                &body,
+            )
+            .apply(txn)
+    })?;
+    map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1")?;
+    doc.commit();
+    crate::sync::window::reverse_rematerialize(&vault, &doc, &window)?;
+    assert!(map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_some());
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
+    assert!(
+        vault
+            .receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?
+            .iter()
+            .any(|record| record.outcome == "suppressed")
+    );
+    assert!(
+        quarantined_records(&vault)?
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Tombstones)
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinary_asset_keeps_delete_wins_in_receipt_window() -> crate::Result<()> {
+    let (_dir, vault) = test_vault_with_dir();
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("asset-delete", &window);
+    let asset = EntityId::now();
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &asset.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_ASSET,
+            valid_time_range(),
+            LEARNED_AT,
+            b"ordinary",
+        ),
+    )?;
+    map_insert_bytes(&doc.get_map("tombstones"), &asset.to_hex(), b"1")?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
+    assert!(vault.get_raw(&asset)?.is_none());
+    assert!(
+        !quarantined_records(&vault)?
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Tombstones)
+    );
+    Ok(())
+}
+
+#[test]
+fn receipt_record_reopen_and_exact_rematerialization_preserve_audit() -> crate::Result<()> {
+    use crate::receipt::{ReceiptKind, ReceiptQuery};
+    let dir = tempfile::tempdir()?;
+    let mut cfg = VaultConfig::device();
+    cfg.map_size = 16 * 1024 * 1024;
+    let vault = Vault::open(dir.path(), cfg.clone())?;
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("receipt-reopen", &window);
+    let (id, body) = suppression_carrier_fixture(false);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+            &body,
+        ),
+    )?;
+    map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1")?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
+    let before = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
+    assert_eq!(before.len(), 1);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), cfg)?;
+    forward_rematerialize(&reopened, &doc, &Materializer::new(), &window)?;
+    assert_eq!(
+        reopened.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?,
+        before
+    );
+    let txn = reopened.store.env.read_txn()?;
+    assert!(!reopened.local_hard_delete_marker_exists_in_txn(&txn, &id)?);
+    Ok(())
+}
+
+#[test]
+fn invalid_receipt_cannot_claim_tombstone_protection() -> crate::Result<()> {
+    let (_dir, vault) = test_vault_with_dir();
+    let window = WindowKey::new(WINDOW);
+    let doc = create_window_doc("invalid-receipt", &window);
+    let id = EntityId::now();
+    map_insert_bytes(&doc.get_map("tombstones"), &id.to_hex(), b"1")?;
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+            TimeRange {
+                start: LEARNED_AT,
+                end: LEARNED_AT,
+            },
+            LEARNED_AT,
+            b"not a validated receipt record",
+        ),
+    )?;
+    doc.commit();
+    forward_rematerialize(&vault, &doc, &Materializer::new(), &window)?;
+    assert!(vault.get_raw(&id)?.is_none());
+    let txn = vault.store.env.read_txn()?;
+    assert!(vault.local_hard_delete_marker_exists_in_txn(&txn, &id)?);
+    drop(txn);
+    let quarantined = quarantined_records(&vault)?;
+    assert!(
+        quarantined
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Entities
+                && row.reason_code == "InvalidSuppressionReceiptBody")
+    );
+    assert!(
+        !quarantined
+            .iter()
+            .any(|(_, row)| row.container == QuarantineContainer::Tombstones)
     );
     Ok(())
 }

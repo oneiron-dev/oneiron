@@ -998,7 +998,6 @@ fn replicated_suppression_artifact_projects_on_another_vault()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
     use crate::batch::ENTITY_METADATA_HEADER_LEN;
     use crate::receipt::{ReceiptKind, ReceiptQuery};
-    use crate::registry::ENTITY_TYPE_ASSET;
     let (_tmp, source) = temp_vault();
     let actor = entity(0x78);
     source.put_entity(
@@ -1034,67 +1033,70 @@ fn replicated_suppression_artifact_projects_on_another_vault()
     let suppressed = source.dispatch_outbound_intent(request("second"), &mut sink)?;
     assert_eq!(suppressed.outcome, OutboundDispatchOutcome::Suppressed);
     let (_peer_tmp, peer) = temp_vault();
-    // A replicated ASSET lands through the ordinary batch/entity door. The
-    // private intent ledger is deliberately NOT copied to the peer.
-    for asset in source.entities_by_type(ENTITY_TYPE_ASSET)? {
-        let raw = source.get_raw(&asset)?.expect("source asset");
-        peer.put_entity(
-            &asset,
-            ENTITY_TYPE_ASSET,
-            crate::temporal::TimeRange {
-                start: 1_000,
-                end: 1_000,
-            },
-            1_000,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-        )?;
-    }
-    let asset = source
-        .entities_by_type(ENTITY_TYPE_ASSET)?
+    // A replicated receipt uses its maintenance-kind batch door; an ordinary
+    // public put cannot mint the record or substitute an ASSET at its id.
+    let record = source
+        .entities_by_type(crate::registry::ENTITY_TYPE_RECEIPT_RECORD)?
         .into_iter()
-        .find(|id| {
-            source.get_raw(id).expect("read ASSET").is_some_and(|raw| {
-                raw[ENTITY_METADATA_HEADER_LEN..].starts_with(b"oneiron:outbound-suppression:v1\0")
-            })
-        })
-        .expect("suppression ASSET");
-    let raw = source.get_raw(&asset)?.expect("source asset");
+        .next()
+        .expect("source receipt record");
+    let raw = source.get_raw(&record)?.expect("source record");
     let at = crate::temporal::TimeRange {
         start: 1_000,
         end: 1_000,
     };
-    // Hostile replica and public API use this same ASSET body gate.
     assert!(
         peer.put_entity(
-            &entity(0x85),
-            ENTITY_TYPE_ASSET,
+            &record,
+            crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
             at,
             1_000,
             &raw[ENTITY_METADATA_HEADER_LEN..]
         )
-        .is_err(),
-        "wrong ID"
+        .is_err()
     );
-    assert!(
-        peer.put_entity(&asset, ENTITY_TYPE_ASSET, at, 1_000, b"ordinary content")
-            .is_err(),
-        "cannot replace a receipt with ordinary content"
-    );
+    let put_maintenance = |id: EntityId, body: &[u8]| -> crate::Result<()> {
+        peer.with_write_txn(|txn| {
+            crate::batch::apply_ops(
+                &peer.store,
+                &peer.config,
+                &peer.analyzer,
+                txn,
+                vec![crate::batch::BatchOp::Put {
+                    id,
+                    entity_type: crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
+                    occurred: at,
+                    learned_at: 1_000,
+                    data: body.to_vec(),
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                }],
+                peer.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )
+        })
+    };
+    put_maintenance(record, &raw[ENTITY_METADATA_HEADER_LEN..])?;
+    for (id, body) in [
+        (entity(0x85), &raw[ENTITY_METADATA_HEADER_LEN..]),
+        (record, &b"bad receipt"[..]),
+    ] {
+        assert!(put_maintenance(id, body).is_err());
+    }
     assert!(
         peer.put_entity(
-            &asset,
-            ENTITY_TYPE_ASSET,
+            &record,
+            crate::registry::ENTITY_TYPE_ASSET,
             at,
             1_000,
-            b"oneiron:outbound-suppression:v1\0"
+            b"ordinary content"
         )
-        .is_err(),
-        "cannot truncate a receipt"
+        .is_err()
     );
-    // Some ASSET delete paths are a no-op rather than a typed refusal. Either
-    // way this committed receipt must remain queryable and replay-safe.
-    let deletion = peer.delete_entity(&asset);
-    assert!(deletion.is_err() || peer.get_raw(&asset)?.is_some());
+    assert!(peer.delete_entity(&record).is_err());
     let projected = peer.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
     assert_eq!(projected, vec![suppressed.receipt]);
     let scan = peer.scan_receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Outbound))?;
@@ -1263,14 +1265,23 @@ fn malformed_unrelated_suppression_asset_is_refused_before_it_can_poison_receipt
     use crate::receipt::{ReceiptKind, ReceiptQuery};
     let (_tmp, vault) = temp_vault();
     let at = crate::temporal::TimeRange { start: 1, end: 1 };
+    // Ordinary ASSETs remain opaque, including legacy-looking bytes. The
+    // registered audit kind is maintenance-only and rejects malformed input.
+    vault.put_entity(
+        &entity(0x86),
+        crate::registry::ENTITY_TYPE_ASSET,
+        at,
+        1,
+        b"oneiron:outbound-suppression:v1\0",
+    )?;
     assert!(
         vault
             .put_entity(
-                &entity(0x86),
-                crate::registry::ENTITY_TYPE_ASSET,
+                &entity(0x87),
+                crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
                 at,
                 1,
-                b"oneiron:outbound-suppression:v1\0"
+                b"invalid"
             )
             .is_err()
     );

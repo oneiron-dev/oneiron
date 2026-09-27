@@ -1,7 +1,7 @@
-//! Replicated, immutable observation of a suppressed outbound intent.
+//! First-class, replicated immutable terminal outbound receipt record.
 //!
-//! The effect ledger remains device-local authority; this ASSET is the synced
-//! receipt surface, not permission for a peer to mutate the local send queue.
+//! The effect ledger remains device-local send authority. The record is
+//! synced audit evidence, never a permit to execute a transport.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,11 +12,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::outbound_intent_ledger::IntentId;
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_ASSET;
+use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
-const MAGIC: &[u8] = b"oneiron:outbound-suppression:v1\0";
 const LOCAL_PREFIX: &[u8] = b"outbound:suppression_receipt:v1:";
 const INDEX_PREFIX: &[u8] = b"outbound:suppression_index:v1:";
 
@@ -40,14 +39,18 @@ fn local_key(id: &IntentId) -> Vec<u8> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SuppressionAsset {
+struct ReceiptRecordEnvelope {
     intent_id: IntentId,
     receipt: ReceiptRecord,
 }
 
-fn asset_id(intent_id: &IntentId) -> Result<EntityId> {
+/// A body checked against its deterministic record id and terminal outcome.
+/// Only this checked shape may enter the synced audit index.
+struct ValidatedReceiptRecord(ReceiptRecordEnvelope);
+
+fn record_id(intent_id: &IntentId) -> Result<EntityId> {
     let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.outbound.suppression.asset.v1\0");
+    hash.update(b"oneiron.outbound.receipt_record.v1\0");
     hash.update(intent_id);
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&hash.finalize().as_bytes()[..16]);
@@ -56,44 +59,56 @@ fn asset_id(intent_id: &IntentId) -> Result<EntityId> {
     EntityId::from_bytes(bytes)
 }
 
-fn decode(id: EntityId, body: &[u8]) -> Result<Option<SuppressionAsset>> {
-    let Some(raw) = body.strip_prefix(MAGIC) else {
-        return Ok(None);
-    };
-    let asset: SuppressionAsset = rmp_serde::from_slice(raw)
-        .map_err(|_| Error::CorruptedIndex("outbound suppression asset"))?;
-    if asset_id(&asset.intent_id)? != id
+fn decode(id: EntityId, body: &[u8]) -> Result<ReceiptRecordEnvelope> {
+    let asset: ReceiptRecordEnvelope = rmp_serde::from_slice(body)
+        .map_err(|_| Error::CorruptedIndex("outbound suppression record"))?;
+    if record_id(&asset.intent_id)? != id
         || asset.receipt.receipt_kind != ReceiptKind::Outbound
         || asset.receipt.outcome != "suppressed"
         || asset.receipt.receipt_id != suppression_receipt_id(&asset.intent_id)
         || asset.receipt.fields.get("suppression").map(String::as_str) != Some("dedupe")
         || !asset.receipt.fields.contains_key("dedupe_key")
     {
-        return Err(Error::CorruptedIndex("outbound suppression asset binding"));
+        return Err(Error::CorruptedIndex("outbound suppression record binding"));
     }
-    Ok(Some(asset))
+    Ok(asset)
 }
 
 /// Incoming bytes have no store dependency. Relabel ONLY this untrusted
 /// decode failure as a remote rejection; the same decoder reading an already
 /// stored row still reports local `CorruptedIndex` and fails closed.
-fn decode_incoming(id: EntityId, data: &[u8]) -> Result<Option<SuppressionAsset>> {
-    decode(id, data).map_err(|_| {
+fn decode_incoming(id: EntityId, data: &[u8]) -> Result<ValidatedReceiptRecord> {
+    decode(id, data).map(ValidatedReceiptRecord).map_err(|_| {
         Error::Record(RecordError::InvalidSuppressionReceiptBody(
             "malformed or mismatched carrier",
         ))
     })
 }
 
-/// Stateless half of shared local/replicated admission. Other ASSETs are
+/// Stateless half of shared local/replicated admission. Other RECEIPT_RECORDs are
 /// opaque; a body claiming this domain must decode and bind its exact ID.
-pub(crate) fn validate_suppression_asset_body(id: &EntityId, data: &[u8]) -> Result<()> {
+#[cfg(feature = "sync")]
+pub(crate) fn validate_receipt_record_body(id: &EntityId, data: &[u8]) -> Result<()> {
     decode_incoming(*id, data).map(|_| ())
 }
 
-/// The one ASSET put door covers both a malformed new carrier and an ordinary
+pub(crate) fn validate_receipt_record_time(
+    id: &EntityId,
+    data: &[u8],
+    occurred_at: u64,
+) -> Result<()> {
+    let validated = decode_incoming(*id, data)?;
+    if validated.0.receipt.occurred_at != occurred_at {
+        return Err(Error::Record(RecordError::InvalidSuppressionReceiptBody(
+            "receipt time and entity envelope disagree",
+        )));
+    }
+    Ok(())
+}
+
+/// The one RECEIPT_RECORD put door covers both a malformed new carrier and an ordinary
 /// body replacing an already committed carrier (including same-ID replay).
-pub(crate) fn validate_suppression_asset_put(
+pub(crate) fn validate_receipt_record_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -102,15 +117,21 @@ pub(crate) fn validate_suppression_asset_put(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<()> {
+    if entity_type == ENTITY_TYPE_RECEIPT_RECORD {
+        validate_receipt_record_time(id, data, occurred.start)?;
+        if occurred.start != occurred.end || learned_at != occurred.start {
+            return Err(Error::Record(RecordError::InvalidSuppressionReceiptBody(
+                "receipt time and entity envelope disagree",
+            )));
+        }
+    }
     if let Some(prior) = store.entities.get(txn, id.as_bytes())? {
         let header = EntityMetadataHeader::parse(&prior)
             .ok_or(Error::CorruptedIndex("outbound suppression prior header"))?;
-        if header.entity_type == ENTITY_TYPE_ASSET
-            && prior[ENTITY_METADATA_HEADER_LEN..].starts_with(MAGIC)
-        {
+        if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
             // A corrupt STORED carrier is never blamed on an incoming peer.
             decode(*id, &prior[ENTITY_METADATA_HEADER_LEN..])?;
-            if entity_type != ENTITY_TYPE_ASSET
+            if entity_type != ENTITY_TYPE_RECEIPT_RECORD
                 || prior.get(ENTITY_METADATA_HEADER_LEN..) != Some(data)
                 || header.occurred_start != occurred.start
                 || header.occurred_end != occurred.end
@@ -120,28 +141,23 @@ pub(crate) fn validate_suppression_asset_put(
             }
         }
     }
-    if entity_type == ENTITY_TYPE_ASSET {
-        validate_suppression_asset_body(id, data)?;
-    }
     Ok(())
 }
 
-/// Rebuildable projection index: the normal ASSET materializer calls this for
-/// local writes and for every replicated ASSET it accepts. Its keys enumerate
-/// only suppression observations, never unrelated content ASSETs.
-pub(crate) fn stage_suppression_asset_index(
+/// Rebuildable projection index: the normal RECEIPT_RECORD materializer calls this for
+/// local writes and for every replicated RECEIPT_RECORD it accepts. Its keys enumerate
+/// only suppression observations, never unrelated content RECEIPT_RECORDs.
+pub(crate) fn stage_receipt_record_index(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     entity_type: u8,
     data: &[u8],
 ) -> Result<()> {
-    if entity_type != ENTITY_TYPE_ASSET {
+    if entity_type != ENTITY_TYPE_RECEIPT_RECORD {
         return Ok(());
     }
-    let Some(asset) = decode(*id, data)? else {
-        return Ok(());
-    };
+    let asset = decode_incoming(*id, data)?.0;
     let key = index_key(id);
     if let Some(previous) = store.vault_meta.get(txn, &key)?
         && previous.as_ref() != asset.intent_id.as_slice()
@@ -152,32 +168,6 @@ pub(crate) fn stage_suppression_asset_index(
     Ok(())
 }
 
-pub(crate) fn reject_suppression_asset_delete(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
-    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
-        return Ok(());
-    };
-    let header = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("outbound suppression delete header"))?;
-    if header.entity_type == ENTITY_TYPE_ASSET
-        && raw[ENTITY_METADATA_HEADER_LEN..].starts_with(MAGIC)
-    {
-        // Corrupt STORED bytes stay local/fail-closed. A valid carrier named
-        // by a remote tombstone is a typed refusal of that incoming operation.
-        decode(*id, &raw[ENTITY_METADATA_HEADER_LEN..])?;
-        return Err(Error::Record(RecordError::SuppressionReceiptDivergence));
-    }
-    if store.vault_meta.get(txn, &index_key(id))?.is_some() {
-        return Err(Error::CorruptedIndex(
-            "outbound suppression index without carrier",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn put_suppression_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -185,20 +175,17 @@ pub(crate) fn put_suppression_in_txn(
     receipt: &ReceiptRecord,
     now: u64,
 ) -> Result<()> {
-    let id = asset_id(intent_id)?;
+    let id = record_id(intent_id)?;
     if vault.store.port_entity_record(txn, &id)?.is_some() {
         return Err(Error::CorruptedIndex(
-            "outbound suppression asset id occupied",
+            "outbound suppression record id occupied",
         ));
     }
-    let mut body = MAGIC.to_vec();
-    body.extend(
-        rmp_serde::to_vec_named(&SuppressionAsset {
-            intent_id: *intent_id,
-            receipt: receipt.clone(),
-        })
-        .map_err(|_| Error::InvariantViolation("outbound suppression encode"))?,
-    );
+    let body = rmp_serde::to_vec_named(&ReceiptRecordEnvelope {
+        intent_id: *intent_id,
+        receipt: receipt.clone(),
+    })
+    .map_err(|_| Error::InvariantViolation("outbound suppression encode"))?;
     if vault
         .store
         .vault_meta
@@ -209,19 +196,30 @@ pub(crate) fn put_suppression_in_txn(
             "outbound suppression local receipt occupied",
         ));
     }
-    vault
-        .batch_in()
-        .put(
-            &id,
-            ENTITY_TYPE_ASSET,
-            TimeRange {
+    crate::batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        vec![crate::batch::BatchOp::Put {
+            id,
+            entity_type: ENTITY_TYPE_RECEIPT_RECORD,
+            occurred: TimeRange {
                 start: now,
                 end: now,
             },
-            now,
-            &body,
-        )
-        .apply(txn)?;
+            learned_at: now,
+            data: body,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )?;
     let encoded = rmp_serde::to_vec_named(receipt)
         .map_err(|_| Error::InvariantViolation("outbound suppression receipt encode"))?;
     vault
@@ -232,17 +230,16 @@ pub(crate) fn put_suppression_in_txn(
 }
 
 pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Result<ReceiptRecord> {
-    let id = asset_id(intent_id)?;
+    let id = record_id(intent_id)?;
     let txn = vault.store.env.read_txn()?;
     let row = vault
         .store
         .port_entity_record(&txn, &id)?
-        .ok_or(Error::CorruptedIndex("outbound suppression asset missing"))?;
-    if row.entity_type != ENTITY_TYPE_ASSET {
-        return Err(Error::CorruptedIndex("outbound suppression asset type"));
+        .ok_or(Error::CorruptedIndex("outbound suppression record missing"))?;
+    if row.entity_type != ENTITY_TYPE_RECEIPT_RECORD {
+        return Err(Error::CorruptedIndex("outbound suppression record type"));
     }
-    let asset =
-        decode(id, &row.body)?.ok_or(Error::CorruptedIndex("outbound suppression asset shape"))?;
+    let asset = decode(id, &row.body)?;
     let local = vault
         .store
         .vault_meta
@@ -285,14 +282,13 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
         let stored = vault
             .store
             .port_entity_record(&txn, &id)?
-            .ok_or(Error::CorruptedIndex("outbound suppression asset index"))?;
-        if stored.entity_type != ENTITY_TYPE_ASSET {
+            .ok_or(Error::CorruptedIndex("outbound suppression record index"))?;
+        if stored.entity_type != ENTITY_TYPE_RECEIPT_RECORD {
             return Err(Error::CorruptedIndex(
-                "outbound suppression asset type index",
+                "outbound suppression record type index",
             ));
         }
-        let asset = decode(id, &stored.body)?
-            .ok_or(Error::CorruptedIndex("outbound suppression indexed shape"))?;
+        let asset = decode(id, &stored.body)?;
         if asset.intent_id != indexed_intent {
             return Err(Error::CorruptedIndex("outbound suppression index target"));
         }

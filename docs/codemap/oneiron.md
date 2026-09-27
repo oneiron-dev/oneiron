@@ -2047,9 +2047,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/receipt/ledgers.rs` | src | m | 3 fn · 14 crate-vis | — | — |
 | `src/receipt/mod.rs` | src | s | 8 re-export · 12 crate-vis | — | Unified receipt-family query surface over existing receipt emitters |
 | `src/receipt/projection.rs` | src | m | 5 struct · 3 fn · 8 crate-vis | BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection, ReceiptProjectionIntent, ReceiptProjectionRun | — |
+| `src/receipt/record.rs` | src | m | 8 crate-vis | — | First-class, replicated immutable terminal outbound receipt record |
 | `src/receipt/send_receipt_txn.rs` | src | s | 2 crate-vis | — | Send receipt persistence inside a caller-owned transaction |
 | `src/receipt/session.rs` | src | s | 2 struct · 7 fn | SessionLocalReceiptLog, SessionReceiptClose | — |
-| `src/receipt/suppression.rs` | src | m | 8 crate-vis | — | Replicated, immutable observation of a suppressed outbound intent |
 | `src/receipt/tests.rs` | test | XL | — | — | — |
 | `src/recovery.rs` | src | s | 2 struct · 2 enum · 7 fn · 3 const · 1 mod · 4 re-export · 3 crate-vis | QuarantinedArtifact, RecoveryArtifact, RecoveryArtifactFailure, RecoveryArtifactLoad | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `src/recovery/canonical.rs` | src | m | 6 struct · 6 fn · 2 const · 9 crate-vis | CanonicalBaseEdge, CanonicalContainerManifest, CanonicalEntity, CanonicalSchemaManifest, CanonicalSnapshot, CanonicalTombstone | CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction |
@@ -2080,7 +2080,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/registry/pack_byte_map/tests.rs` | test | m | — | — | PackByteMap contract tests: public results, persisted rows, and typed refusals |
 | `src/registry/pack_byte_map/types.rs` | src | s | 5 struct · 4 fn · 3 crate-vis | PackByteMapSnapshot, PackInstanceEnvelope, PackInstanceOrigin, PackKindIdentity, PackKindRegistration | Name-bearing portable kinds, local registrations, and instance envelopes |
 | `src/registry/registry_table.rs` | src | m | 1 struct · 4 fn · 1 const · 2 crate-vis | EntityTypeRegistryEntry | Registry rows: the `ENTITY_TYPE_REGISTRY` table and its lookups |
-| `src/registry/type_bytes.rs` | src | s | 46 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
+| `src/registry/type_bytes.rs` | src | s | 47 const | — | Entity type bytes: every statically allocated `ENTITY_TYPE_*` constant |
 | `src/registry/validation.rs` | src | s | 3 crate-vis | — | Static validation of entity type bytes, including public-write gates |
 | `src/registry/zones.rs` | src | s | 2 enum · 1 fn · 9 const | EntityClassification, TypeByteZone | Type-byte zones: classification, zone map, and the `zone_of` table |
 | `src/repo_mutation/conflict.rs` | src | m | 2 fn · 4 crate-vis | — | — |
@@ -2453,7 +2453,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/manager.rs` | src | m | 1 struct · 12 fn · 7 crate-vis | WindowManager | Production window manager: ARCH-0023b startup orchestration + registry |
 | `src/sync/manager/document_api.rs` | src | s | 3 fn · 2 crate-vis | — | Entity document access through the vault's canonical window/selector owner |
 | `src/sync/manager/tests.rs` | test | s | — | — | — |
-| `src/sync/mod.rs` | src | s | 18 mod · 14 re-export · 3 crate-vis | — | CRDT sync layer for Oneiron |
+| `src/sync/mod.rs` | src | s | 18 mod · 14 re-export · 4 crate-vis | — | CRDT sync layer for Oneiron |
 | `src/sync/note.rs` | src | s | 6 crate-vis | — | Native NOTE carriers for ordinary window sync, distinct from history-free recovery |
 | `src/sync/note/codec.rs` | src | s | 3 crate-vis | — | Binding validation of untrusted NOTE proposal values and workflow metadata |
 | `src/sync/note/materialize.rs` | src | s | 1 crate-vis | — | Peer windows retain erasure markers, never authorize NOTE mutation |
@@ -2476,6 +2476,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/queue/tests.rs` | test | XL | — | — | — |
 | `src/sync/quota.rs` | src | m | 2 struct · 3 fn · 2 const · 7 crate-vis | MaintenanceIngestQuotaConfig, MaintenanceIngestQuotaSnapshot | Device-local maintenance ingest security bounds |
 | `src/sync/quota/tests.rs` | test | s | — | — | — |
+| `src/sync/receipt_ingest.rs` | src | s | 3 crate-vis | — | ONE-1881: one validated, writer-locked receive path for terminal receipts |
 | `src/sync/replay.rs` | src | s | 1 struct · 1 fn | ReplicatedEntity | Explicit-tier entity replay for importers outside the window carrier |
 | `src/sync/schema.rs` | src | m | 6 fn · 2 crate-vis | — | CRDT Doc schema creation for the sync layer |
 | `src/sync/selector/admission.rs` | src | m | 1 enum · 2 fn · 2 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
