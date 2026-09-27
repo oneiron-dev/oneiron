@@ -320,6 +320,9 @@ fn class_scoped_reads_refuse_missing_invalid_or_unverifiable_identity() -> Resul
             &bytes,
         );
         vault.store.entities.put(txn, binding_id.as_bytes(), &raw)?;
+        // This hostile raw fixture bypasses the AUTHORITY_LOG write door;
+        // bump the cache generation exactly as an admitted authority put does.
+        crate::authority::advance_authority_cache_generation(&vault.store, txn)?;
         Ok(())
     })?;
     assert!(
