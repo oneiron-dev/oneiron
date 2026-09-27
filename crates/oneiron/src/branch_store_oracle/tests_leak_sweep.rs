@@ -17,7 +17,7 @@ use super::tests_substrate::{full_db_census, seed_base_turn, temp_vault};
 #[test]
 fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     let census_before = full_db_census(&vault)?;
     let session = seam::SessionVault::enter(&vault, "oracle-native-crash").expect("enter session");
     assert_eq!(
@@ -29,7 +29,7 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     drop(session);
     drop(vault);
 
-    let reopened = Vault::open(tmp.path(), VaultConfig::default()).expect("reopen vault");
+    let reopened = Vault::open(tmp.path(), telemetry_config()).expect("reopen vault");
     assert_eq!(
         full_db_census(&reopened)?,
         census_before,
@@ -54,7 +54,8 @@ fn direct_substrate_crash_evaporation_leaves_zero_base_residue() -> Result<()> {
 /// while the transcript and receipt counts continue to hold.
 #[test]
 fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     let mut session = seam::SessionVault::enter(&vault, "oracle-close").expect("enter session");
     // The witness door requires a base-resident actor, so bind it BEFORE the
     // baseline: the room must be charged for its own rows, not for its actor.
@@ -104,7 +105,7 @@ fn master_close_deletes_transcript_and_context_receipts_keeps_floor_receipts() -
 #[test]
 fn crash_evaporation_leaves_zero_base_residue() -> Result<()> {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let vault = Vault::open(tmp.path(), VaultConfig::default()).expect("open vault");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     let mut session = seam::SessionVault::enter(&vault, "oracle-crash").expect("enter session");
     session.bind_actor()?;
     let census_before = full_db_census(&vault)?;
@@ -160,7 +161,8 @@ fn enter_is_single_shot_per_session_ref() {
 /// `edge_exists` (R19), ScopedRead reads (R10), telemetry.
 #[test]
 fn base_leak_sweep_every_reader_family_sees_no_overlay_rows() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(tmp.path(), telemetry_config()).expect("open vault");
     let base_turn = seed_base_turn(&vault, 1_000);
     let mut session = seam::SessionVault::enter(&vault, "oracle-sweep").expect("enter session");
     let actor = session.bind_actor()?;
@@ -549,4 +551,11 @@ fn off_record_turns_stay_unextractable_after_mode_flip() -> Result<()> {
 
     session.close()?;
     Ok(())
+}
+
+fn telemetry_config() -> VaultConfig {
+    VaultConfig {
+        retrieval_telemetry_capture: true,
+        ..VaultConfig::default()
+    }
 }
