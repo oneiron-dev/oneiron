@@ -1373,7 +1373,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "re-export": 4
      }
     },
@@ -26317,6 +26317,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RunAskWait"
+     ],
+     "path": "src/run_tree/ask_wait.rs",
+     "purpose": "Durable step-local wait bindings for run-branch ask handles",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "GateConsentBundle",
       "GateConsentBundleAction",
       "GateConsentBundleMember",
@@ -26340,7 +26354,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -34871,7 +34885,7 @@
      "purpose": "Shared retrieval execution quality, independent of result counts and ranking"
     },
     "run_tree": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35195,7 +35209,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2076,
+   "source_files": 2077,
    "test_files": 714
   },
   "oneiron-android": {

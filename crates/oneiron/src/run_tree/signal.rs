@@ -52,6 +52,10 @@ pub enum RunSignalKind {
 pub enum RunSignalState {
     Pending,
     Settled,
+    /// Permanent cancel refusal when the nonterminal receipt reserve is full.
+    RefusedCancelCapacity,
+    /// A cancel target ceased being available before its breakpoint.
+    RefusedCancelUnavailable,
 }
 
 /// A per-branch idempotency receipt, kept after consumption for retry replay.
@@ -205,6 +209,7 @@ impl RunTreeAdapter<'_> {
                 if let Some(reason) = reason {
                     field(reason)?;
                 }
+                crate::attempt_queue::validate_signal_cancel(&input.actor, reason.as_deref())?;
             }
             RunSignalKind::AskAnswer {
                 handle,
@@ -239,6 +244,24 @@ impl RunTreeAdapter<'_> {
         if record.signals.len() >= MAX_SIGNALS {
             return Err(Error::InvalidConfig("Signal inbox full".into()));
         }
+        if matches!(input.kind, RunSignalKind::Cancel { .. }) {
+            let pending = record
+                .signals
+                .iter()
+                .filter(|signal| {
+                    signal.state == RunSignalState::Pending
+                        && matches!(signal.kind, RunSignalKind::Cancel { .. })
+                })
+                .count();
+            if !crate::attempt_queue::signal_cancel_headroom(
+                record.cancel_receipts().len(),
+                pending,
+            ) {
+                return Err(Error::InvalidConfig(
+                    "Signal cancel receipt capacity exhausted".into(),
+                ));
+            }
+        }
         if let RunSignalKind::AskAnswer {
             handle,
             who,
@@ -266,6 +289,13 @@ impl RunTreeAdapter<'_> {
                     kind: *kind,
                     at,
                 });
+                super::ask_wait::signal_waiters_in_txn(
+                    self.vault,
+                    &mut txn,
+                    input.branch,
+                    handle,
+                    at.saturating_mul(1000),
+                )?;
             }
         }
         let signal = RunBranchSignal {
@@ -356,10 +386,13 @@ impl RunTreeAdapter<'_> {
             .filter(|s| s.state == RunSignalState::Pending)
             .cloned()
             .collect();
+        // Each cancel has its own outcome. A permanent rail refusal cannot
+        // roll back earlier accepted requests or starve later instructions.
+        let mut cancel_results = Vec::new();
         for signal in &pending {
             if let RunSignalKind::Cancel { standing, reason } = &signal.kind {
                 let now = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
-                let outcome = self.queue.request_cancel_in_txn(
+                let state = match self.queue.request_cancel_in_txn(
                     &mut txn,
                     RequestAttemptCancel {
                         id: branch,
@@ -369,57 +402,60 @@ impl RunTreeAdapter<'_> {
                         reason: reason.clone(),
                         now,
                     },
-                )?;
-                if !matches!(
-                    outcome,
-                    CancelRequestOutcome::Requested { .. }
-                        | CancelRequestOutcome::AlreadyLanding(_)
                 ) {
-                    return Err(Error::InvalidConfig(
-                        "Signal cancel request not accepted".into(),
-                    ));
-                }
+                    Ok(
+                        CancelRequestOutcome::Requested { .. }
+                        | CancelRequestOutcome::AlreadyLanding(_),
+                    ) => RunSignalState::Settled,
+                    Ok(
+                        CancelRequestOutcome::NoStanding(_)
+                        | CancelRequestOutcome::NotRunning(_)
+                        | CancelRequestOutcome::AlreadySettled(_),
+                    ) => RunSignalState::RefusedCancelUnavailable,
+                    Err(error) if crate::attempt_queue::signal_cancel_receipts_full(&error) => {
+                        RunSignalState::RefusedCancelCapacity
+                    }
+                    Err(error) => return Err(error),
+                };
+                cancel_results.push((signal.key.clone(), state));
             }
         }
-        // request_cancel_in_txn rewrites the same row: reload before settling.
+        // The cancel rail may have rewritten this same row. Never overwrite
+        // its receipts with the pre-request snapshot.
         record = self
             .queue
             .get_in_txn(&txn, branch)?
             .expect("branch existed in transaction");
         for signal in &mut record.signals {
-            if signal.state == RunSignalState::Pending
-                && matches!(
-                    signal.kind,
-                    RunSignalKind::Cancel { .. } | RunSignalKind::AskAnswer { .. }
-                )
-            {
-                // Both effects already committed in this transaction (ask at
-                // admission, cancel above). Instructions need worker ack.
+            if signal.state != RunSignalState::Pending {
+                continue;
+            }
+            if matches!(signal.kind, RunSignalKind::AskAnswer { .. }) {
                 signal.state = RunSignalState::Settled;
+            } else if let Some((_, state)) =
+                cancel_results.iter().find(|(key, _)| key == &signal.key)
+            {
+                signal.state = *state;
             }
         }
-        if pending.iter().any(|signal| {
-            matches!(
-                signal.kind,
-                RunSignalKind::Cancel { .. } | RunSignalKind::AskAnswer { .. }
-            )
-        }) {
+        let resolved: Vec<_> = pending
+            .into_iter()
+            .map(|mut signal| {
+                if let Some(row) = record.signals.iter().find(|row| row.key == signal.key) {
+                    signal.state = row.state;
+                }
+                signal
+            })
+            .collect();
+        if resolved
+            .iter()
+            .any(|signal| signal.state != RunSignalState::Pending)
+        {
             self.save(&mut txn, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
         }
-        Ok(pending
-            .into_iter()
-            .map(|mut signal| {
-                if matches!(
-                    signal.kind,
-                    RunSignalKind::Cancel { .. } | RunSignalKind::AskAnswer { .. }
-                ) {
-                    signal.state = RunSignalState::Settled;
-                }
-                signal
-            })
-            .collect())
+        Ok(resolved)
     }
 
     /// Confirms one steer/interject only after the worker has applied it.
@@ -510,6 +546,7 @@ pub(crate) fn validate_signal_rows(record: &crate::attempt_queue::AttemptRecord)
                 if let Some(reason) = reason {
                     field(reason)?;
                 }
+                crate::attempt_queue::validate_signal_cancel(&signal.actor, reason.as_deref())?;
             }
             RunSignalKind::AskAnswer {
                 handle,

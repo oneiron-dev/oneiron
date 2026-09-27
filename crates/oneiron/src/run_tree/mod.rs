@@ -5,6 +5,7 @@
 
 mod a2a;
 mod adapter;
+mod ask_wait;
 mod consent;
 mod render;
 mod signal;
@@ -14,6 +15,7 @@ mod types;
 
 pub use self::a2a::project_attempt_to_a2a;
 pub use self::adapter::{RunTreeAdapter, mark_run_tree_failure};
+pub use self::ask_wait::RunAskWait;
 pub use self::consent::{
     GATE_CONSENT_BUNDLE_DOMAIN, GATE_CONSENT_BUNDLE_FALLBACK_LABEL,
     GATE_CONSENT_BUNDLE_SCHEMA_VERSION, GateConsentBundle, GateConsentBundleAction,

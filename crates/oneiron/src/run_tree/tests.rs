@@ -1523,3 +1523,400 @@ fn branch_ask_signals_partial_answers_and_cancel_uses_soft_rail() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn cancel_signal_refuses_poison_inputs_without_blocking_interject() -> Result<()> {
+    use super::{RunSignalInput, RunSignalKind, RunSignalState};
+    use crate::attempt_queue::CancelStanding;
+    let (_dir, vault) = open_vault();
+    let row = enqueue(
+        &DreamerRunnerStore::new(&vault),
+        "worker",
+        None,
+        1,
+        "run-cancel-poison",
+    )?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 2,
+    })?
+    else {
+        panic!("expected claimed branch");
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    let cancel = |actor: String, reason: String| RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-cancel-poison".into(),
+        key: actor.clone(),
+        actor,
+        kind: RunSignalKind::Cancel {
+            standing: CancelStanding::Authority,
+            reason: Some(reason),
+        },
+    };
+    for input in [
+        cancel("runtime".into(), "stop".into()),
+        cancel("a".repeat(129), "stop".into()),
+        cancel("operator".into(), "r".repeat(2049)),
+    ] {
+        assert!(adapter.signal(input).is_err());
+    }
+    let interject = RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-cancel-poison".into(),
+        key: "good".into(),
+        actor: "operator".into(),
+        kind: RunSignalKind::Interject {
+            content: "continue".into(),
+        },
+    };
+    adapter.signal(interject)?;
+    let delivered = adapter.breakpoint(
+        row.attempt.id,
+        "run-cancel-poison",
+        "worker",
+        claimed.attempt_count,
+    )?;
+    assert_eq!(delivered.len(), 1);
+    assert_eq!(delivered[0].state, RunSignalState::Pending);
+    assert!(
+        queue
+            .get(row.attempt.id)?
+            .unwrap()
+            .cancel_receipts()
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn cancel_signal_capacity_refusal_is_cached_and_does_not_starve_interject() -> Result<()> {
+    use super::{RunSignalInput, RunSignalKind, RunSignalState};
+    use crate::attempt_queue::{
+        CancelRequestOutcome, CancelStanding, LandingTrigger, RequestAttemptCancel,
+    };
+    let (_dir, vault) = open_vault();
+    let row = enqueue(
+        &DreamerRunnerStore::new(&vault),
+        "worker",
+        None,
+        1,
+        "run-cancel-full",
+    )?;
+    let queue = crate::AttemptQueue::new(&vault);
+    let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 2,
+    })?
+    else {
+        panic!("expected claimed branch");
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    let cancel = RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-cancel-full".into(),
+        key: "cancel-pending".into(),
+        actor: "operator".into(),
+        kind: RunSignalKind::Cancel {
+            standing: CancelStanding::Authority,
+            reason: Some("stop".into()),
+        },
+    };
+    adapter.signal(cancel.clone())?;
+    let interject = RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-cancel-full".into(),
+        key: "interject-pending".into(),
+        actor: "operator".into(),
+        kind: RunSignalKind::Interject {
+            content: "keep working".into(),
+        },
+    };
+    adapter.signal(interject)?;
+    for _ in 0..crate::attempt_queue::MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS {
+        assert!(matches!(
+            queue.request_cancel(RequestAttemptCancel {
+                id: row.attempt.id,
+                actor: "operator".into(),
+                standing: CancelStanding::Authority,
+                trigger: LandingTrigger::CancelRequest,
+                reason: Some("ordinary request".into()),
+                now: 3,
+            })?,
+            CancelRequestOutcome::Requested { .. }
+        ));
+    }
+    // The preflight cap now rejects a NEW cancel while an earlier key remains replayable.
+    assert!(
+        adapter
+            .signal(RunSignalInput {
+                key: "extra".into(),
+                ..cancel.clone()
+            })
+            .is_err()
+    );
+    let effects = adapter.breakpoint(
+        row.attempt.id,
+        "run-cancel-full",
+        "worker",
+        claimed.attempt_count,
+    )?;
+    assert_eq!(effects.len(), 2);
+    assert_eq!(effects[0].state, RunSignalState::RefusedCancelCapacity);
+    assert_eq!(effects[1].state, RunSignalState::Pending);
+    assert_eq!(
+        adapter.signal(cancel)?.state,
+        RunSignalState::RefusedCancelCapacity
+    );
+    assert_eq!(
+        queue.get(row.attempt.id)?.unwrap().cancel_receipts().len(),
+        crate::attempt_queue::MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
+    );
+    assert_eq!(
+        adapter
+            .breakpoint(
+                row.attempt.id,
+                "run-cancel-full",
+                "worker",
+                claimed.attempt_count
+            )?
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn run_ask_step_wait_wakes_only_bound_step_and_survives_reopen() -> Result<()> {
+    use super::{RunAskAnswerKind, RunAskQuestion, RunAskWait, RunSignalInput, RunSignalKind};
+    use crate::edge::EdgeActorClass;
+    use crate::entity_id::EntityId;
+    use crate::llm::DurableStepContext;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+    let (dir, vault) = open_vault();
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    let runner = DreamerRunnerStore::new(&vault);
+    let first = enqueue(&runner, "first", None, 2, "run-wait")?;
+    let sibling = enqueue(&runner, "sibling", None, 3, "run-wait")?;
+    let queue = crate::AttemptQueue::new(&vault);
+    for id in [first.attempt.id, sibling.attempt.id] {
+        let ClaimOutcome::Claimed(claimed) = queue.claim(ClaimAttempt {
+            lease_owner: "worker".into(),
+            now: 4,
+        })?
+        else {
+            panic!("expected branch claim");
+        };
+        assert_eq!(claimed.id, id);
+    }
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: first.attempt.id,
+        run_id: Some("run-wait".into()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject: actor,
+        deadline: None,
+        now_ms: 5_000,
+    };
+    let other_ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: sibling.attempt.id,
+        run_id: Some("run-wait".into()),
+        envelope_actor: ctx.envelope_actor,
+        subject: actor,
+        deadline: None,
+        now_ms: 5_000,
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    let questions = vec![
+        RunAskQuestion {
+            who: "alice".into(),
+            prompt: "First?".into(),
+            options: vec![],
+            deadline: None,
+        },
+        RunAskQuestion {
+            who: "bob".into(),
+            prompt: "Second?".into(),
+            options: vec![],
+            deadline: None,
+        },
+    ];
+    adapter.open_ask(
+        first.attempt.id,
+        "run-wait",
+        "worker",
+        1,
+        "ask",
+        questions.clone(),
+    )?;
+    adapter.open_ask(
+        sibling.attempt.id,
+        "run-wait",
+        "worker",
+        1,
+        "other",
+        questions,
+    )?;
+    let RunAskWait::Pending { .. } = adapter.wait_ask(&ctx, "ask", "step-1")? else {
+        panic!("step must park");
+    };
+    let RunAskWait::Pending { .. } = adapter.wait_ask(&other_ctx, "other", "unrelated")? else {
+        panic!("unrelated step must park independently");
+    };
+    assert!(adapter.consume_ask_wait(&ctx, "ask", "step-1")?.is_none());
+    let answer = |who: &str| RunSignalInput {
+        branch: first.attempt.id,
+        run_id: "run-wait".into(),
+        key: format!("answer-{who}"),
+        actor: who.into(),
+        kind: RunSignalKind::AskAnswer {
+            handle: "ask".into(),
+            who: who.into(),
+            answer: format!("yes-{who}"),
+            kind: RunAskAnswerKind::Word,
+        },
+    };
+    adapter.signal(answer("alice"))?;
+    let partial = adapter
+        .consume_ask_wait(&ctx, "ask", "step-1")?
+        .expect("signal woke step");
+    assert_eq!(partial.answers.len(), 1);
+    assert!(
+        adapter
+            .consume_ask_wait(&other_ctx, "other", "unrelated")?
+            .is_none()
+    );
+    assert_eq!(
+        queue.get(sibling.attempt.id)?.unwrap().state,
+        AttemptState::Leased
+    );
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: first.attempt.id,
+        run_id: Some("run-wait".into()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject: actor,
+        deadline: None,
+        now_ms: 6_000,
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    assert_eq!(
+        adapter
+            .consume_ask_wait(&ctx, "ask", "step-1")?
+            .unwrap()
+            .answers
+            .len(),
+        1
+    );
+    let RunAskWait::Pending { .. } = adapter.wait_ask(&ctx, "ask", "step-2")? else {
+        panic!("next partial wait must park a new step");
+    };
+    adapter.signal(answer("bob"))?;
+    assert_eq!(
+        adapter
+            .consume_ask_wait(&ctx, "ask", "step-2")?
+            .unwrap()
+            .answers
+            .len(),
+        2
+    );
+    assert!(matches!(
+        adapter.wait_ask(&ctx, "ask", "late")?,
+        RunAskWait::Available(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn run_ask_answer_before_wait_returns_available_without_parking() -> Result<()> {
+    use super::{RunAskAnswerKind, RunAskQuestion, RunAskWait, RunSignalInput, RunSignalKind};
+    use crate::edge::EdgeActorClass;
+    use crate::entity_id::EntityId;
+    use crate::llm::DurableStepContext;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::write_envelope::WriteActor;
+    let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"actor",
+    )?;
+    let row = enqueue(
+        &DreamerRunnerStore::new(&vault),
+        "first",
+        None,
+        2,
+        "run-early",
+    )?;
+    let ClaimOutcome::Claimed(claimed) = crate::AttemptQueue::new(&vault).claim(ClaimAttempt {
+        lease_owner: "worker".into(),
+        now: 3,
+    })?
+    else {
+        panic!("claim");
+    };
+    let adapter = RunTreeAdapter::new(&vault);
+    adapter.open_ask(
+        row.attempt.id,
+        "run-early",
+        "worker",
+        claimed.attempt_count,
+        "ask",
+        vec![RunAskQuestion {
+            who: "alice".into(),
+            prompt: "Ready?".into(),
+            options: vec![],
+            deadline: None,
+        }],
+    )?;
+    adapter.signal(RunSignalInput {
+        branch: row.attempt.id,
+        run_id: "run-early".into(),
+        key: "answer".into(),
+        actor: "alice".into(),
+        kind: RunSignalKind::AskAnswer {
+            handle: "ask".into(),
+            who: "alice".into(),
+            answer: "yes".into(),
+            kind: RunAskAnswerKind::Word,
+        },
+    })?;
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id: row.attempt.id,
+        run_id: Some("run-early".into()),
+        envelope_actor: WriteActor::new(actor, EdgeActorClass::Agent),
+        subject: actor,
+        deadline: None,
+        now_ms: 4_000,
+    };
+    let RunAskWait::Available(ask) = adapter.wait_ask(&ctx, "ask", "step")? else {
+        panic!("already answered; no trap needed");
+    };
+    assert_eq!(ask.answers.len(), 1);
+    assert_eq!(
+        crate::AttemptQueue::new(&vault)
+            .get(row.attempt.id)?
+            .unwrap()
+            .state,
+        AttemptState::Leased
+    );
+    Ok(())
+}
