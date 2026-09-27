@@ -20,7 +20,7 @@ fn on_device_request() -> LlmRequest {
             purpose: CallPurpose::Consolidation,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("default".to_owned()),
@@ -336,7 +336,7 @@ fn request_for(purpose: CallPurpose, locality: ModelLocality) -> LlmRequest {
             purpose,
             class: CallClass::BestEffort,
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("default".to_owned()),
