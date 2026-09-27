@@ -94,6 +94,11 @@ pub(super) fn hash_policy_frontier_v0(
         );
     }
 
+    if let Some(policy) = &resolution.weave_correction_policy {
+        hash_str(hasher, "weave_correction_policy");
+        policy.hash_into(hasher);
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

@@ -76,6 +76,7 @@ impl CommOptOutPosture {
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) policy_values: Vec<PolicyValueRow>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,

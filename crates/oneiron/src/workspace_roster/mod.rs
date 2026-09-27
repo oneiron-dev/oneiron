@@ -116,7 +116,10 @@ pub(crate) use project::{
     seed_root_project, validate_project_body, validate_project_edge_delete,
     validate_project_edge_put, validate_project_graph, validate_room_body,
 };
-pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange};
+pub use project::{
+    PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
+    ProjectRole, ProjectRoom, ProjectRoomChange,
+};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;

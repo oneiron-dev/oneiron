@@ -136,6 +136,12 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
                 resolution.policy_values.extend(decoded.policy_values);
+                if let Some(quota) = decoded.weave_correction_policy {
+                    match &mut resolution.weave_correction_policy {
+                        Some(existing) => existing.restrict(quota),
+                        slot @ None => *slot = Some(quota),
+                    }
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

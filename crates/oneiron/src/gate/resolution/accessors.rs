@@ -44,6 +44,17 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Effective correction quota from the resolved manifest, never from a
+    /// caller-supplied request. Malformed policy cannot authorize a label.
+    pub(crate) fn weave_correction_limit(&self, holder: &str) -> Option<usize> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.weave_correction_policy
+            .as_ref()
+            .map(|policy| policy.limit_for(holder))
+    }
+
     #[must_use]
     pub(in crate::gate) fn policy_value_row(
         &self,

@@ -7798,7 +7798,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -7903,6 +7903,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "WeaveLinkCorrection"
+     ],
+     "path": "src/claim/scoped_read/weave_correction.rs",
+     "purpose": "Authenticated wrong-link labels emitted by the live weave report",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "WeaveItem",
       "WeaveReader",
       "WeaveReport",
@@ -7913,6 +7927,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
+      "crate-vis": 2,
       "enum": 3,
       "fn": 1,
       "struct": 3
@@ -16987,7 +17002,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -17281,7 +17296,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 3
      }
     },
@@ -17347,7 +17362,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -17703,6 +17718,16 @@
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/weave_correction_policy.rs",
+     "purpose": "Vault-resident per-link correction quota and resolution precedence",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -22511,7 +22536,7 @@
      "path": "src/memory/witness/base.rs",
      "purpose": "Base witness program: container resolve, K7 door, batch write, text ops, session bump",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -29288,7 +29313,7 @@
      "path": "src/skill/doors.rs",
      "purpose": "Typed Vault doors for SKILL records",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6
      }
     },
@@ -31304,13 +31329,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -34964,6 +34989,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ProjectBudgetShare",
+      "ProjectGoalRecord",
+      "ProjectMintReceipt"
+     ],
+     "path": "src/workspace_roster/project/mint.rs",
+     "purpose": "Owner-confirmed project birth: one card, one atomic Grant and project branch",
+     "surface": {
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
@@ -34976,11 +35016,12 @@
       "crate-vis": 17,
       "enum": 1,
       "fn": 8,
+      "re-export": 1,
       "struct": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/projection.rs",
@@ -34990,7 +35031,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",
@@ -36072,7 +36113,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36499,7 +36540,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37171,7 +37212,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37187,7 +37228,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2205,
+   "source_files": 2208,
    "test_files": 755
   },
   "oneiron-android": {
