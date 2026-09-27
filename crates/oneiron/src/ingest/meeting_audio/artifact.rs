@@ -17,9 +17,25 @@ pub struct ProducedMeetingTranscript {
 
 impl ProducedMeetingTranscript {
     pub(super) fn new(json: String, recording_id: String) -> AudioResult<Self> {
-        // Exercise the real consumer rather than maintaining a second schema
-        // validator. This is pure normalization, not import admission.
+        let artifact = Self::from_json(json)?;
+        if artifact.recording_id != recording_id {
+            return Err(AudioError::Serialization);
+        }
+        Ok(artifact)
+    }
+
+    /// Recover the exact saved artifact bytes for a later authenticated bulk
+    /// consent decision. This validates through the real consumer and derives
+    /// the binding from the document, never from caller-supplied turn IDs.
+    pub fn from_json(json: String) -> AudioResult<Self> {
         let normalized = INGEST_SOURCE_REGISTRY.normalize(MEETING_TRANSCRIPT_SOURCE_ID, &json)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|_| AudioError::Serialization)?;
+        let recording_id = value["recording"]["recording_id"]
+            .as_str()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or(AudioError::Serialization)?
+            .to_owned();
         let source_record_ids = normalized
             .records
             .into_iter()

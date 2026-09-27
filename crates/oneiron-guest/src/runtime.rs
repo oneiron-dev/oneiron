@@ -105,8 +105,11 @@ fn run<T: Read + Write + 'static>(
     if input.source.len() > MAX_SOURCE || !(1..=4096).contains(&input.pids) {
         return Err(Error::Runtime("source size"));
     }
+    // The pinned QuickJS component consumes over 12 million fuel just for its
+    // first-party readiness probe. Match the bounded code-mode runtime's
+    // 100-million ceiling so the foreign interpreter can actually start.
     store
-        .set_fuel(10_000_000)
+        .set_fuel(100_000_000)
         .map_err(|_| Error::Runtime("fuel setup"))?;
     let mut linker = Linker::new(engine);
     link_imports(&mut linker).map_err(|_| Error::Runtime("read import setup"))?;
@@ -124,7 +127,16 @@ fn run<T: Read + Write + 'static>(
     // Wasmtime performs canonical post-return inside call; either trap refuses proposals.
     let (output,) = run
         .call(&mut *store, (input.source.clone(),))
-        .map_err(|_| Error::Runtime("component trapped"))?;
+        .map_err(|error| {
+            if matches!(
+                error.downcast_ref::<wasmtime::Trap>(),
+                Some(wasmtime::Trap::OutOfFuel)
+            ) {
+                Error::Runtime("component fuel exhausted")
+            } else {
+                Error::Runtime("component trapped")
+            }
+        })?;
     if store.data().poisoned {
         return Err(Error::Protocol("credential transport failed"));
     }

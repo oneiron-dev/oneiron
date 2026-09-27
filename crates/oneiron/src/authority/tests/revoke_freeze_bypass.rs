@@ -602,6 +602,82 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
     );
 }
 
+/// A frozen grant can later fail its own transition when the widen matures.
+/// Its verified child revoke must retain the floor, not its invalid parent.
+#[test]
+fn revoke_floor_survives_frozen_grant_later_becoming_invalid() {
+    let freeze = pending_widen_freeze(253);
+    let key = freeze.fixture.owner_key.clone();
+    // A second BindActor on this live key is invalid after maturity, but while
+    // the widen is pending this grant waits before its transition is checked.
+    let invalid_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&key, scope_entity(0x76), "human", 10),
+        104,
+    );
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![invalid_hash],
+        5,
+        revoke_actor_op(&key, 10),
+        105,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = freeze.entries;
+    entries.extend([invalid_grant, revoke.clone()]);
+    let mut first_seen = freeze.first_seen;
+    first_seen.insert(invalid_hash, freeze.now_secs);
+    first_seen.insert(revoke_hash, freeze.now_secs);
+
+    let frozen = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    assert!(frozen.valid_entries.contains(&revoke_hash));
+    assert!(!frozen.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&frozen, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+
+    let matured = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert!(!matured.pending_widens.contains_key(&freeze.widen_hash));
+    assert_eq!(
+        binding_rejection(&matured, &entries[4]),
+        Some(ActorBindingRejection::BindingExists)
+    );
+    assert!(
+        matured
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    assert!(!matured.valid_entries.contains(&invalid_hash));
+    assert_eq!(
+        folded_status(&matured, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(
+        &matured,
+        &freeze.fixture.actor,
+        "human"
+    ));
+
+    // A bad co-signature cannot inherit the ancestry exception.
+    let mut bad_revoke = revoke;
+    bad_revoke.cosigns[0].signature[0] ^= 1;
+    entries[5] = bad_revoke;
+    let bad = fold_authority_log_with_seen_times(
+        &entries,
+        &first_seen,
+        freeze.now_secs + DEFAULT_PENDING_WIDEN_DELAY_SECS + 1,
+    );
+    assert_eq!(folded_status(&bad, &key), Some(ActorBindingStatus::Active));
+}
+
 #[test]
 fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
     let owner = ed_key(231);
@@ -676,4 +752,132 @@ fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
     let fold = fold_authority_log(&[genesis, bind, enroll, wrong]);
     assert!(!fold.valid_entries.contains(&wrong_hash));
     assert!(actor_binding_is_active(&fold, &actor, "human"));
+}
+
+#[test]
+fn verified_revoke_survives_one_of_two_frozen_branches_becoming_invalid() {
+    let freeze = pending_widen_freeze(220);
+    let key = freeze.fixture.owner_key.clone();
+    let invalid_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.widen_hash],
+        4,
+        bind_op(&key, scope_entity(0x76), "human", 10),
+        104,
+    );
+    let invalid_hash = authority_entry_hash(&invalid_grant).unwrap();
+    let second_widen = cosigned_entry(
+        &freeze.fixture,
+        vec![freeze.bind_hash],
+        5,
+        AuthorityOp::EnrollDevice {
+            device: device(
+                authority_key_from_ed(&ed_key(225)),
+                ROLE_AGENT,
+                AuthorityTier::Software,
+            ),
+        },
+        105,
+    );
+    let second_widen_hash = authority_entry_hash(&second_widen).unwrap();
+    let frozen_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![second_widen_hash],
+        6,
+        rebind_op(&key, freeze.fixture.actor, "human", 10),
+        106,
+    );
+    let frozen_hash = authority_entry_hash(&frozen_grant).unwrap();
+    let merge_grant = cosigned_entry(
+        &freeze.fixture,
+        vec![invalid_hash, frozen_hash],
+        7,
+        rebind_op(&key, freeze.fixture.actor, "human", 20),
+        107,
+    );
+    let merge_hash = authority_entry_hash(&merge_grant).unwrap();
+    let revoke = cosigned_entry(
+        &freeze.fixture,
+        vec![merge_hash],
+        8,
+        revoke_actor_op(&key, 21),
+        108,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = freeze.entries.clone();
+    entries.extend([
+        invalid_grant,
+        second_widen,
+        frozen_grant,
+        merge_grant,
+        revoke,
+    ]);
+    let mut first_seen = freeze.first_seen.clone();
+    first_seen.insert(
+        freeze.widen_hash,
+        freeze.now_secs - DEFAULT_PENDING_WIDEN_DELAY_SECS + 10,
+    );
+    for hash in [
+        invalid_hash,
+        second_widen_hash,
+        frozen_hash,
+        merge_hash,
+        revoke_hash,
+    ] {
+        first_seen.insert(hash, freeze.now_secs);
+    }
+    let before = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
+    assert!(before.pending_widens.contains_key(&freeze.widen_hash));
+    assert!(before.pending_widens.contains_key(&second_widen_hash));
+    assert!(before.valid_entries.contains(&revoke_hash));
+    assert_eq!(
+        folded_status(&before, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert_eq!(
+        before.actor_write_disposition(&freeze.fixture.actor, "human", None),
+        CausalWriteDisposition::Quarantined,
+    );
+    let later = freeze.now_secs + 11;
+    let after = fold_authority_log_with_seen_times(&entries, &first_seen, later);
+    assert!(!after.pending_widens.contains_key(&freeze.widen_hash));
+    assert!(after.pending_widens.contains_key(&second_widen_hash));
+    assert_eq!(
+        binding_rejection(&after, &entries[4]),
+        Some(ActorBindingRejection::BindingExists),
+    );
+    for hash in [invalid_hash, frozen_hash, merge_hash] {
+        assert!(!after.valid_entries.contains(&hash));
+    }
+    assert_eq!(
+        folded_status(&after, &key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert_eq!(
+        after.actor_write_disposition(&freeze.fixture.actor, "human", None),
+        CausalWriteDisposition::Quarantined,
+    );
+    let mut bad_primary = entries.clone();
+    bad_primary[8].signer.signature[0] ^= 1;
+    assert_eq!(
+        folded_status(
+            &fold_authority_log_with_seen_times(&bad_primary, &first_seen, later),
+            &key
+        ),
+        Some(ActorBindingStatus::Active)
+    );
+    let mut bad_cosign = entries.clone();
+    bad_cosign[8].cosigns[0].signature[0] ^= 1;
+    assert_eq!(
+        folded_status(
+            &fold_authority_log_with_seen_times(&bad_cosign, &first_seen, later),
+            &key
+        ),
+        Some(ActorBindingStatus::Active)
+    );
+    entries.reverse();
+    assert_eq!(
+        fold_authority_log_with_seen_times(&entries, &first_seen, later),
+        after
+    );
 }

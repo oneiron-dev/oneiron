@@ -1,7 +1,9 @@
 //! Authenticated semantic NOTE commands. Peer Loro bytes never authorize writes.
 
 use super::document::{NoteDocument, invalid};
-use super::document_store::{load, persist, require_note_writer, validate_pin_source};
+use super::document_store::{
+    load, persist_authoritative, require_note_writer, validate_pin_source,
+};
 use super::{NoteEdit, NoteEditOutcome, NotePin};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::{EdgeActorClass, EntityId, WriteActor};
@@ -24,6 +26,7 @@ pub struct NoteOperation {
 pub enum NoteChange {
     Edit { base: Vec<u8>, edits: Vec<NoteEdit> },
     Cite { pin: NotePin },
+    SetTitle { title: String },
 }
 
 /// Durable provenance authored only by the admission door. Commit messages
@@ -284,6 +287,10 @@ impl Memory<'_> {
                     )?))
                 }
             }
+            NoteChange::SetTitle { title } => {
+                doc.set_title(title, &actor)?;
+                None
+            }
             NoteChange::Cite { pin } => {
                 validate_pin_source(self.vault(), txn, pin)?;
                 doc.add_pin(pin, &actor)?;
@@ -303,7 +310,7 @@ impl Memory<'_> {
                         command_hash: hash,
                     },
                 )?;
-                persist(self.vault(), txn, &doc)?;
+                persist_authoritative(self.vault(), txn, &doc)?;
                 NoteEditOutcome::Applied(doc.view()?)
             }
         };
@@ -366,7 +373,7 @@ fn propose_claim(
 ) -> MemoryResult<CommitReceipt> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use crate::{ClaimCandidate, WriteEnvelope, WriteProvenance};
-    let id = EntityId::now();
+    let id = memory.vault().new_entity_id()?;
     let claim_value =
         rmpv::Value::from(serde_json::to_string(op).map_err(|_| invalid("NOTE proposal encode"))?);
     let candidate = ClaimCandidate::new(
@@ -386,7 +393,7 @@ fn propose_claim(
         WriteProvenance::new(rmpv::Value::from("note.propose_claim"))?,
         ClaimApprovalStatus::Proposed,
     );
-    let now = crate::unix_seconds_now();
+    let now = memory.vault().now_recorded_at();
     memory
         .vault()
         .batch_in()

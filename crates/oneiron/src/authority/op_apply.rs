@@ -102,6 +102,26 @@ pub(super) fn apply_op(
     }
 }
 
+/// One max/union transition for both ordinarily folded revokes and verified
+/// log-derived restrictive facts. Never carries permissive binding content.
+pub(super) fn record_actor_revoke(
+    state: &mut FoldState,
+    authority_key: &AuthorityKey,
+    epoch: u64,
+    entry_hash: AuthorityEntryHash,
+) {
+    let watermark = state
+        .actor_binding_revocations
+        .entry(authority_key.clone())
+        .or_insert(0);
+    *watermark = (*watermark).max(epoch);
+    state
+        .actor_revocation_hashes
+        .entry(authority_key.clone())
+        .or_default()
+        .insert(entry_hash);
+}
+
 /// The actor-binding transition table (ONE-1604-D2).
 ///
 /// Evaluated against the MERGED ancestry state — the fold is the ordering, so
@@ -120,16 +140,7 @@ pub(super) fn apply_actor_binding(
             authority_key,
             epoch,
         } => {
-            let watermark = state
-                .actor_binding_revocations
-                .entry(authority_key.clone())
-                .or_insert(0);
-            *watermark = (*watermark).max(*epoch);
-            state
-                .actor_revocation_hashes
-                .entry(authority_key.clone())
-                .or_default()
-                .insert(entry_hash);
+            record_actor_revoke(state, authority_key, *epoch, entry_hash);
             return Ok(());
         }
         AuthorityOp::BindActor {

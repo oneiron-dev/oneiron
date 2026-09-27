@@ -137,7 +137,7 @@ fn nearest_unfrozen_ancestor_state(
 /// [`nearest_unfrozen_ancestor_state`]: a branch that dead-ends in an invalid,
 /// missing, or otherwise-waiting ancestor refuses the classification outright,
 /// so "frozen" never widens to mean "stuck for some reason we did not identify."
-fn entry_is_frozen_by_pending_widen(
+pub(in crate::authority) fn entry_is_frozen_by_pending_widen(
     entry: &AuthorityLogEntry,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,

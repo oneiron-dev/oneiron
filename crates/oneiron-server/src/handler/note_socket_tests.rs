@@ -551,7 +551,12 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         super::documents::document_delivery(&server, &state, &stale_receipt).unwrap(),
         vec![stale_receipt.clone()]
     );
-    vault.delete_entity(&source).unwrap();
+    vault
+        .delete_entity_with_options(
+            &source,
+            oneiron::deletion::DeleteEntityOptions { purge: true },
+        )
+        .unwrap();
     assert!(vault.note_document(note).unwrap().pins.is_empty());
     assert_eq!(
         super::documents::document_delivery(&server, &state, &notice)
@@ -761,5 +766,148 @@ async fn owner_document_lane_refuses_a_principal_that_is_not_the_owner() {
             &mut state,
         )
         .is_err()
+    );
+}
+
+#[tokio::test]
+async fn selector_note_frames_gate_size_schema_and_titles_before_commit() {
+    note_frames_gate(false).await;
+}
+
+/// Run alone with `cargo nextest run -p oneiron-server --all-features
+/// --run-ignored -E 'test(note_socket_stage1_p99_under_100ms)'` on an idle host.
+/// The regular socket test above keeps all functional checks on every run.
+#[tokio::test]
+#[ignore = "isolated latency acceptance lane; see note_socket_stage1_p99_under_100ms"]
+async fn note_socket_stage1_p99_under_100ms() {
+    note_frames_gate(true).await;
+}
+
+async fn note_frames_gate(check_latency: bool) {
+    use super::{conn_state::ConnState, documents::handle_document};
+    use std::time::Instant;
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"author",
+        )
+        .unwrap();
+    let actor = oneiron::WriteActor::new(owner, EdgeActorClass::Human);
+    let first = vault.create_note("research", "first", actor).unwrap();
+    let second = vault.create_note("research", "second", actor).unwrap();
+    let grant_id = EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        owner,
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
+    let server = SyncServer::new(
+        vault.clone(),
+        SyncServerConfig {
+            auth_secret: Some(SECRET.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut state = ConnState::new(transport::PROTOCOL_VERSION);
+    state.bound_auth = Some(crate::test_credentials::authenticate(
+        &server,
+        &format!(
+            "scope=core:read,core:write;principal_ref={};actor_class=human;jti={JTI}",
+            owner.to_hex()
+        ),
+    ));
+    let (direct, _responses) = tokio::sync::mpsc::unbounded_channel();
+    let request =
+        oneiron::sync::encode_selector_vv_request(&selector, &loro::VersionVector::new().encode())
+            .unwrap();
+    for note in [first, second] {
+        handle_document(
+            &server,
+            1,
+            note,
+            document_sub_tags::REQUEST,
+            &request,
+            &direct,
+            &mut state,
+        )
+        .unwrap();
+    }
+    let send_op = |note, operation: &NoteOperation, state: &mut ConnState| {
+        handle_document(
+            &server,
+            1,
+            note,
+            document_sub_tags::NOTE_OPS,
+            &operation.encode().unwrap(),
+            &direct,
+            state,
+        )
+    };
+    let title = |value: &str| NoteOperation {
+        request_id: EntityId::now(),
+        change: NoteChange::SetTitle {
+            title: value.into(),
+        },
+    };
+    let first_title = title("  Work   Plan ");
+    send_op(first, &first_title, &mut state).unwrap();
+    assert_eq!(
+        vault.note_document(first).unwrap().title.as_deref(),
+        Some("  Work   Plan ")
+    );
+    let duplicate = title("work plan");
+    let before = vault.note_document(second).unwrap();
+    assert!(send_op(second, &duplicate, &mut state).is_err());
+    assert_eq!(vault.note_document(second).unwrap(), before);
+    let bad_schema = br#"{"request_id":"00000000000000000000000000000001","change":{"kind":"set_title","title":"ok","unknown":1}}"#;
+    assert!(
+        handle_document(
+            &server,
+            1,
+            second,
+            document_sub_tags::NOTE_OPS,
+            bad_schema,
+            &direct,
+            &mut state
+        )
+        .is_err()
+    );
+    let oversize = command(&vault, second, 0, 0, &"x".repeat(1024 * 1024 + 1));
+    assert!(send_op(second, &oversize, &mut state).is_err());
+    assert_eq!(vault.note_document(second).unwrap(), before);
+    if check_latency {
+        let mut times = Vec::new();
+        for _ in 0..100 {
+            let operation = title("work plan other");
+            let start = Instant::now();
+            send_op(second, &operation, &mut state).unwrap();
+            times.push(start.elapsed());
+        }
+        times.sort();
+        eprintln!("NOTE socket handler p99: {:?}", times[98]);
+        assert!(times[98] < Duration::from_millis(100));
+    } else {
+        send_op(second, &title("work plan other"), &mut state).unwrap();
+    }
+    assert_eq!(
+        vault.note_document(second).unwrap().title.as_deref(),
+        Some("work plan other")
+    );
+    assert!(
+        vault
+            .edges_out(&second)
+            .unwrap()
+            .iter()
+            .any(|edge| { edge.kind == oneiron::EdgeKind::AuthoredBy && edge.target == owner })
     );
 }
