@@ -12,7 +12,7 @@ use crate::{
 };
 use heed::RoTxn;
 
-fn install_key(name: &str) -> Vec<u8> {
+pub(super) fn install_key(name: &str) -> Vec<u8> {
     [b"pack.install.v1/".as_slice(), name.as_bytes()].concat()
 }
 fn predicate_key(name: &str) -> Vec<u8> {
@@ -94,6 +94,9 @@ impl Vault {
                 source_id: ask.source_id.to_hex(),
                 pack_name: source.manifest.name.clone(),
                 content_hash: source.content_hash().to_hex(),
+                kind: source.manifest.kind,
+                adapter: source.manifest.adapter.clone(),
+                engine_version: None,
                 status,
                 candidate_reason,
                 hub_id: ask.hub.hub_id.to_hex(),
@@ -294,6 +297,8 @@ impl Vault {
                     .ok_or_else(|| invalid("installed source is unavailable"))?;
                 if source.manifest.name != name
                     || source.content_hash().to_hex() != receipt.content_hash
+                    || source.manifest.kind != receipt.kind
+                    || source.manifest.adapter != receipt.adapter
                 {
                     return Err(invalid("installed source identity drift"));
                 }
@@ -368,7 +373,7 @@ fn candidate_key(source: &PackSource) -> Vec<u8> {
     ]
     .concat()
 }
-fn pack_permissions(
+pub(super) fn pack_permissions(
     source: &PackSource,
     prior: Option<&PackInstallReceipt>,
 ) -> Result<PackPermissions> {

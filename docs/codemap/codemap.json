@@ -29109,7 +29109,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -29156,6 +29156,24 @@
       "crate-vis": 2,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/builtin.rs",
+     "purpose": "Engine-embedded connector source and local first-open installation",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/builtin/tests.rs",
+     "purpose": "First-open installed inventory and inert built-in provenance",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -29211,7 +29229,7 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 5
      }
     },
@@ -36039,7 +36057,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 50,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36244,8 +36262,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 729
+   "source_files": 2141,
+   "test_files": 730
   },
   "oneiron-android": {
    "files": [

@@ -461,7 +461,12 @@ fn generic_transports_capture_real_pack_sources_without_installing() -> Result<(
             .fetch_pack_from_adapter(&liar, &wrong, &publisher, at, 5)
             .is_err()
     );
-    assert_eq!(vault.list_pack_sources()?.len(), 1);
+    assert!(
+        vault
+            .list_pack_sources()?
+            .iter()
+            .any(|(source_id, _)| *source_id == id)
+    );
     routes.insert("/knowledge/guide.md".into(), (200, b"drift".to_vec()));
     let drift = StaticHttp::new(routes);
     assert!(

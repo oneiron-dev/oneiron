@@ -20,7 +20,7 @@ fn source_survives_reopen_and_all_formats_roundtrip_without_installing() -> Resu
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
     let id = vault.stage_pack_source(&source, at(1), 2)?;
     assert_eq!(vault.stage_pack_source(&source, at(3), 4)?, id);
-    assert_eq!(vault.list_pack_sources()?, vec![(id, source.clone())]);
+    assert!(vault.list_pack_sources()?.contains(&(id, source.clone())));
     drop(vault);
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
@@ -481,14 +481,12 @@ fn agent_knowledge_rejects_typed_credentials_at_source_stage_and_archive_doors()
     let id = vault.stage_pack_source(&source, at(1), 1)?;
     assert_eq!(vault.get_pack_source(&id)?, Some(source.clone()));
     let artifact = vault.export_whole_vault(PackFormat::Json)?;
-    assert_eq!(
+    assert!(
         vault
             .read_whole_vault_json(artifact.bytes())?
             .packs
             .iter()
-            .filter(|pack| matches!(pack, ExportPack::Source(_)))
-            .count(),
-        1
+            .any(|pack| matches!(pack, ExportPack::Source(row) if row.entity_id == id.to_hex()))
     );
 
     let ExportBody::MessagePack(ExportValue::Map(entries)) = &mut row.body else {
