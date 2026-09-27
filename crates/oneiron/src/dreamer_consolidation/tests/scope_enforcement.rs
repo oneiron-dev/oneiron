@@ -75,6 +75,8 @@ fn branch_resources_enforce_exact_reads_writes_and_revisions() -> Result<()> {
         kind: ReflectionGapKind::ContradictionLeftStanding,
         subject: conversation,
         evidence_turn_refs: turns.clone(),
+        evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -127,6 +129,46 @@ impl LlmBackend for ScopeBackend {
 }
 
 #[test]
+fn assembly_preserves_stricter_internal_taint_after_parent_reread() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (attempt, turns, conversation) =
+        admitted_attempt_fixture(&vault, &store, 0x41, &[("user", "one cited statement")])?;
+    let (partition, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
+    let snapshot = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let branch = BranchResources::open_at_pin(
+        &vault,
+        vault.dreamer_authority()?,
+        partition,
+        &turns,
+        attempt.status.attempt.id,
+        None,
+        Some(&snapshot),
+    )?;
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 1,
+        ..Default::default()
+    })?;
+    let mut output = candidate(conversation, "profile.name", "a value", None);
+    output.evidence_turn_refs = turns;
+    // An already derived restriction (e.g. a prior-head ancestor) must not
+    // be overwritten just because this turn's own source is UserStated.
+    output.evidence_meet = ClaimSource::Imported;
+    derive_id(&mut output, attempt.status.attempt.id)?;
+    let assembled = super::super::assembly::assemble(&vault, &branch, vec![output], 21_000)?;
+    assert_eq!(assembled.candidates.len(), 1);
+    assert_eq!(assembled.candidates[0].evidence_meet, ClaimSource::Imported);
+    assert_eq!(
+        branch
+            .write_fence()
+            .evidence_source(&assembled.candidates[0])?,
+        ClaimSource::Imported
+    );
+    Ok(())
+}
+
+#[test]
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
@@ -155,6 +197,8 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
         backend: &backend,
@@ -401,7 +445,7 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
             items.push(
                 serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
-            "value": "same text", "evidence_turn_refs": [turns[0].to_hex()]}),
+            "value": "same text", "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
             );
         }
         let judge = text_response(match resolution {
@@ -443,6 +487,8 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let result = block_on_ready(executor.execute(&attempt, &mut ctx));
         if resolution == "missing" {
@@ -638,6 +684,13 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         super::super::branch_scope::resolve_scope(&vault, Some(child_id), None, None)?,
         Some(scope.clone())
     );
+    let prepared = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let Some(super::super::AttemptPreparation::Ready(child_plan)) = prepared.preparation(child_id)
+    else {
+        panic!("parent-bound branch must prepare at this revision")
+    };
+    assert_eq!(child_plan.scope(), Some(&scope));
+
     let (decoded_key, _, _) = decode_partition_payload(&attempt.status.payload.input)?;
     assert_eq!(decoded_key, partition);
     let branch = BranchResources::open(
@@ -704,6 +757,8 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&attempt, &mut ctx))?,
@@ -940,25 +995,35 @@ fn production_epoch_timestamps_hold_then_release_and_rank_source_diversity() -> 
         epoch * 1_000 + 1_000,
     )?;
     assert_eq!(ranked.candidates[0].claim_id, recent.claim_id);
-    // Extraction timestamps are already milliseconds when no evidence supplies
-    // a stored seconds-scale timestamp (possible when the configured minimum is zero).
+    // A zero-evidence input is an assembler hold, never a verified claim.
+    // The base selector still measures its millisecond first-seen time without
+    // a stored TURN when the policy minimum is zero.
     recent.evidence_turn_refs.clear();
     recent.learned_at = epoch * 1_000;
     diversity.evidence_minimum = 0;
     diversity.soak_ms = 50_000;
-    vault.set_consolidation_selection(&diversity)?;
-    assert!(
-        super::super::assembly::assemble(
-            &vault,
-            &branch,
-            vec![recent.clone()],
-            epoch * 1_000 + 49_999
-        )?
-        .held
-    );
-    assert!(
-        !super::super::assembly::assemble(&vault, &branch, vec![recent], epoch * 1_000 + 50_000)?
+    let input = selection::SelectionCandidate {
+        claim_id: recent.claim_id,
+        first_seen_ms: recent.learned_at,
+        evidence_count: 0,
+        fan_in: 0,
+        new_refs: 0,
+        signals: selection::StrengthSignals {
+            type_prior: 0.5,
+            frequency: 0.0,
+            recency: 0.0,
+            diversity: 0.0,
+        },
+    };
+    assert_eq!(
+        selection::select_candidates(&[input.clone()], epoch * 1_000 + 49_999, &diversity)?
             .held
+            .len(),
+        1,
+    );
+    assert_eq!(
+        selection::select_candidates(&[input], epoch * 1_000 + 50_000, &diversity)?.ready,
+        vec![recent.claim_id],
     );
     Ok(())
 }
@@ -997,7 +1062,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             text_response(
                 serde_json::json!({"candidates":[{
                     "subject":subject.to_hex(),"predicate":"profile.name","value":"supported",
-                    "evidence_turn_refs":ids.iter().map(EntityId::to_hex).collect::<Vec<_>>()
+                    "evidence_refs":ids.iter().map(|id| serde_json::json!({"source_id":id.to_hex(), "byte_range":[0,1]})).collect::<Vec<_>>()
                 }]})
                 .to_string(),
             )
@@ -1016,6 +1081,8 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let result = {
             let mut executor = ConsolidationExecutor {
@@ -1054,6 +1121,8 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
             "independent new evidence",
             22,
         );
+        // The next wake freezes the retry-expanded TURN set BEFORE admission.
+        let retry_pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
         let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
             scope: DreamerConsolidationScope::Micro,
             local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
@@ -1075,6 +1144,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         };
         let backend = ScriptedBackend::new(vec![Ok(response(&[turns[0], next_turn]))]);
         ctx.now_ms = retry_at * 1_000;
+        ctx.prepared_wake = Some(&retry_pin);
         let mut executor = ConsolidationExecutor {
             backend: &backend,
             guard: &guard,
