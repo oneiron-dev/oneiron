@@ -42732,6 +42732,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AutoDevicePrecedence",
       "EmbedderArgs",
       "EmbedderConfig",
       "EmbedderConfigOverride",
@@ -42740,6 +42741,7 @@
       "EmbedderProvider",
       "EmbedderQuant",
       "EndpointEmbedderConfig",
+      "LocalDevicePolicy",
       "LocalEmbedderConfig"
      ],
      "path": "src/config/embedder.rs",
@@ -42747,13 +42749,13 @@
      "surface": {
       "const": 6,
       "crate-vis": 2,
-      "enum": 4,
+      "enum": 5,
       "fn": 7,
-      "struct": 5
+      "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/config/embedder_tests.rs",
@@ -42779,6 +42781,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
