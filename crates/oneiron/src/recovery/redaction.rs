@@ -43,11 +43,13 @@ impl CanonicalSnapshot {
                 .windows(span.len())
                 .any(|part| part == span.as_bytes())
         };
-        if next
-            .doc_snapshots
-            .iter()
-            .any(|row| row.text.contains(&span))
-            || next.base_edges.iter().any(|row| copied(&row.value))
+        if next.doc_snapshots.iter().any(|row| {
+            row.text.contains(&span)
+                || row
+                    .title
+                    .as_deref()
+                    .is_some_and(|title| title.contains(&span))
+        }) || next.base_edges.iter().any(|row| copied(&row.value))
             || next.tombstones.iter().any(|row| copied(&row.value))
             || next.entity_blobs.iter().any(|row| copied(&row.blob))
             || next

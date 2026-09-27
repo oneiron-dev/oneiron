@@ -28,6 +28,8 @@ pub(crate) fn delete_document_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let hex = id.to_hex();
+    super::title_index::remove_erased_in_txn(store, txn, *id)?;
+
     for prefix in ["d:e:", "sv:e:", "ssv:e:", "m:u_seq:e:", "ds:e:"] {
         store.sync_state.delete(txn, &format!("{prefix}{hex}"))?;
     }

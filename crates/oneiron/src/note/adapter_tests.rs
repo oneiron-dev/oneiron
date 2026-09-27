@@ -183,7 +183,13 @@ fn canonical_adapter_recovery_uses_fresh_history_and_preserves_authorship() {
         )
         .unwrap();
     let view = vault.note_document(note).unwrap();
-    let rebuilt = recovery::rebuild(note, &view.markdown, &view.authorship).unwrap();
+    let rebuilt = recovery::rebuild(
+        note,
+        &view.markdown,
+        view.title.as_deref(),
+        &view.authorship,
+    )
+    .unwrap();
     let next = document::NoteDocument::from_loro(note, rebuilt)
         .unwrap()
         .view()
@@ -287,7 +293,7 @@ fn canonical_adapter_window_proposals_are_values_not_retired_history() {
     assert_eq!(rmp_serde::from_slice::<String>(&encoded).unwrap(), "safe");
     crate::sync::note::validate(&carrier).unwrap();
 
-    let historical = documents::proposal_value(note, "retired secret").unwrap();
+    let historical = documents::proposal_value(note, "retired secret", None).unwrap();
     historical.get_text("body").delete(0, 14).unwrap();
     historical.get_text("body").insert(0, "safe").unwrap();
     historical.commit();

@@ -44,7 +44,7 @@ impl Vault {
                     .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
                     .apply(txn)?;
                 let doc = super::document_store::load(self, txn, id)?;
-                super::document_store::persist(self, txn, &doc)?;
+                super::document_store::persist_authoritative(self, txn, &doc)?;
                 Ok(id)
             })
     }
@@ -107,7 +107,7 @@ impl Vault {
                         )
                         .apply(txn)?;
                         let doc = super::document_store::load(self, txn, fork)?;
-                        super::document_store::persist(self, txn, &doc)?;
+                        super::document_store::persist_authoritative(self, txn, &doc)?;
                     }
                     ENTITY_TYPE_ASSET => {
                         if !owner {

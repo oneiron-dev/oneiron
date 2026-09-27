@@ -383,7 +383,10 @@ pub(crate) fn live_frontier_in_txn(
 }
 
 mod document_store;
+mod title_index;
 pub(crate) use birth::document_birth_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};
 #[cfg(feature = "sync")]
