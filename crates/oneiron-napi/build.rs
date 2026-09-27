@@ -15,7 +15,7 @@ extern crate napi_build;
 use std::path::{Path, PathBuf};
 
 /// Engine source carrying the `MEMORY_PACK_VERSION` declaration.
-const PACK_VERSION_SOURCE: &str = "../oneiron/src/memory/recall.rs";
+const PACK_VERSION_SOURCE: &str = "../oneiron/src/memory/recall/mod.rs";
 
 /// The npm package whose major must match it.
 const PACKAGE_JSON: &str = "../../packages/oneiron/package.json";
