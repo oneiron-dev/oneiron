@@ -90,3 +90,157 @@ fn owner_drills_from_group_to_own_traces_and_receipts_without_consent_while_non_
     ));
     Ok(())
 }
+
+/// One signed authority root, a non-bootstrap human binding, and its signed
+/// revocation. The same stored failure is read before and after the revoke.
+fn bind_owner_with_revocation(
+    vault: &Vault,
+    actor: EntityId,
+) -> Result<crate::authority::AuthorityLogEntry> {
+    use crate::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityKey, AuthorityLogEntry,
+        AuthorityOp, AuthoritySignature, AuthorityTier, DeviceAuthority, GenesisRecoveryStep,
+        ROLE_ADMIN, ROLE_OWNER,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let signing = SigningKey::from_bytes(&[0x76; 32]);
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let sign = |mut entry: AuthorityLogEntry| {
+        entry.signer.signature = signing
+            .sign(&crate::authority::authority_transcript(&entry).expect("transcript"))
+            .to_bytes()
+            .to_vec();
+        entry
+    };
+    let entry = |seq, vault_id, parents, op| AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: parents,
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: 100 + seq,
+    };
+    let genesis = sign(entry(
+        0,
+        None,
+        Vec::new(),
+        AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+            genesis_nonce: [0x86; 32],
+            recovery: GenesisRecoveryStep::Saved([1; 32]),
+            tier_floor: AuthorityTier::Software,
+            pending_widen_delay_secs: crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        },
+    ));
+    let vault_id = crate::authority::genesis_vault_id(&genesis)?;
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis)?;
+    let bind = sign(entry(
+        1,
+        Some(vault_id),
+        vec![genesis_hash],
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: actor,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    ));
+    let bind_hash = crate::authority::authority_entry_hash(&bind)?;
+    vault.put_authority_log_entries(&[
+        (genesis, TimeRange { start: 1, end: 1 }, 1),
+        (bind, TimeRange { start: 2, end: 2 }, 2),
+    ])?;
+    Ok(sign(entry(
+        2,
+        Some(vault_id),
+        vec![bind_hash],
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+    )))
+}
+
+#[test]
+fn authority_bound_owner_drills_but_unbound_and_revoked_humans_cannot() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let owner = person(&vault, 0xb6)?;
+    let unbound = person(&vault, 0xb7)?;
+    let agent = put_scope_agent(&vault, 0xb8, "custom.authority")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, indeterminate(), 20),
+        policy_with(agent, 3, FailureEscalationMode::Human),
+    )?;
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(leased.id, class)?;
+    // No authority root means a non-bootstrap PERSON cannot claim this read.
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&owner, class, leased.id),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
+    let revoke = bind_owner_with_revocation(&vault, owner.actor())?;
+    assert_eq!(
+        vault
+            .drill_custom_agent_failure(&owner, class, leased.id)?
+            .trace
+            .id,
+        leased.id
+    );
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&unbound, class, leased.id),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
+    vault.put_authority_log_entries(&[(revoke, TimeRange { start: 3, end: 3 }, 3)])?;
+    assert!(matches!(
+        vault.drill_custom_agent_failure(&owner, class, leased.id),
+        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+    ));
+    Ok(())
+}
+
+#[test]
+fn deleted_agent_definition_keeps_retained_failure_member_drillable() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let owner_id = vault.ensure_embedded_owner_actor().expect("seed owner");
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let agent = put_scope_agent(&vault, 0xb9, "custom.historical")?;
+    let leased = leased_dispatch(&vault, agent, 10)?;
+    AttemptQueue::new(&vault).append_manifest_entry(
+        leased.id,
+        ManifestEntry::new(ManifestKind::Skill, "skill.historical", "1", 11),
+    )?;
+    FailureLadder::new(&vault).handle_attempt_failure(
+        failure_input(&leased, indeterminate(), 20),
+        policy_with(agent, 3, FailureEscalationMode::Human),
+    )?;
+    let class = FailureSignalClass::TaskFailure;
+    vault.record_custom_agent_failure(leased.id, class)?;
+    assert!(vault.delete_entity(&agent)?);
+    let group = vault.custom_agent_failure_groups()?.remove(0);
+    assert_eq!(group.member_refs, vec![leased.id]);
+    let drill = vault.drill_custom_agent_failure(&owner, group.class, group.member_refs[0])?;
+    assert_eq!(drill.trace.id, leased.id);
+    assert_eq!(
+        drill.receipt_refs,
+        vec![crate::receipt::attempt_pack_receipt_id(&leased.id)]
+    );
+    Ok(())
+}

@@ -39,11 +39,21 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
             if owner.actor() != crate::vault::embedded_owner_actor_id()? {
-                return Err(Error::Gate(
-                    crate::error::GateError::ConsentOwnerNotAuthenticated(
-                        "failure drill requires the vault owner",
-                    ),
-                ));
+                // An unrooted vault has no authority-bound non-bootstrap owner.
+                // Store-truth PERSON status alone is not a tier-0 read grant.
+                let denied = || {
+                    Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+                        "failure drill requires a live owner binding",
+                    ))
+                };
+                let fold = self
+                    .authority_fold_readonly_in_txn(&txn)
+                    .map_err(|_| denied())?;
+                if fold.vault_id.is_none() || fold.vault_root_is_conflicted() {
+                    return Err(denied());
+                }
+                crate::memory::verify_owner_actor_binding_in_txn(self, &txn, owner.actor())
+                    .map_err(|_| denied())?;
             }
             member_in_txn(self, &txn, attempt_id, class)?
         };

@@ -87,7 +87,8 @@ fn custom_agent_ref(record: &AttemptRecord) -> Result<crate::entity_id::EntityId
 
 /// Point-check a caller-selected member and class on the SAME snapshot used
 /// for owner validation. A stale group result cannot turn into a read of an
-/// unrelated attempt, including one whose definition was retired meanwhile.
+/// unrelated attempt. The terminal dispatch snapshot is the historical
+/// identity proof: deletion of the live definition does not delete its trace.
 pub(super) fn member_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -103,19 +104,7 @@ pub(super) fn member_in_txn(
     let record = AttemptQueue::new(vault)
         .get_in_txn(txn, attempt_id)?
         .ok_or(Error::CorruptedIndex("custom-agent failure"))?;
-    let agent_ref =
-        custom_agent_ref(&record).map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
-    let live = crate::vault::live_entity_row_in_txn(&vault.store, txn, &agent_ref)?;
-    let crate::vault::LiveEntityRow::Live { entity_type, body } = live else {
-        return Err(Error::EntityNotFound);
-    };
-    if entity_type != ENTITY_TYPE_AGENT_DEF
-        || crate::agent_def::decode_agent_definition(&body)?
-            .logical_id
-            .is_some()
-    {
-        return Err(Error::EntityNotFound);
-    }
+    custom_agent_ref(&record).map_err(|_| Error::CorruptedIndex("custom-agent failure"))?;
     Ok(record)
 }
 
