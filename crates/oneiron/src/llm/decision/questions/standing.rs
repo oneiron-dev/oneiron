@@ -314,6 +314,8 @@ pub fn backfill_standing_answer(
                     providers: input.providers,
                     band: record.definition.dial.band,
                     band_version: 0,
+                    evidence_versions: Vec::new(),
+                    cost_per_thousand: None,
                 },
                 human_ask: None,
             },
