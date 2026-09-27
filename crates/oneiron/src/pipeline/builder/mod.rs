@@ -240,7 +240,7 @@ impl<'a> PipelineBuilder<'a> {
     ///
     /// Each value replaces the class-derived decay factor of that CLAIM
     /// candidate and must be finite and within `[0, 1]`; an inadmissible
-    /// value fails the run closed with [`Error::InvalidConfig`]. Entries
+    /// value fails the run closed with [`crate::error::Error::InvalidConfig`]. Entries
     /// for non-claim entities are inert (non-claims stay at `1.0`), and a
     /// superseded, retracted or validity-expired claim stays at `0.0` — an
     /// override never resurfaces a closed claim.
@@ -592,7 +592,7 @@ impl<'a> PipelineBuilder<'a> {
     /// authority for — a run that has since asked for a different scope.
     /// Setting `ActiveSet` here WITHOUT [`PipelineBuilder::active_worlds`] or
     /// [`PipelineBuilder::default_active_worlds`] leaves no selection behind
-    /// and fails the run closed with [`Error::InvalidConfig`].
+    /// and fails the run closed with [`crate::error::Error::InvalidConfig`].
     pub fn world(mut self, scope: WorldScope) -> Self {
         if !matches!(scope, WorldScope::ActiveSet) {
             self.active_world_selection = None;
@@ -607,7 +607,7 @@ impl<'a> PipelineBuilder<'a> {
     /// The selection is never persisted and never widens: at execution time it
     /// is checked against the owner-granted ALLOWED-SET claims about
     /// `agent_ref` (`core.world_access.allowed_set`), and a member outside that
-    /// grant fails the run closed with [`Error::InvalidConfig`] rather than
+    /// grant fails the run closed with [`crate::error::Error::InvalidConfig`] rather than
     /// falling back to [`WorldScope::All`] or dropping the offending member.
     /// Base reality — base claims and every non-claim entity — survives only
     /// when the selection sets `include_base`.

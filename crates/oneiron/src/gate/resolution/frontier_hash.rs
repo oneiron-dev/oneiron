@@ -43,6 +43,11 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if let Some(policy) = &resolution.pack_install_policy {
+        hash_str(hasher, "pack_install_policy");
+        let value = policy.encode();
+        hash_opt_value(hasher, Some(&value))?;
+    }
     // An absent/empty hosted policy changes no decision and keeps the
     // established frontier bytes for manifests that never named this knob.
     if !resolution.hosted_tts.rows.is_empty() {
@@ -72,6 +77,11 @@ pub(super) fn hash_policy_frontier_v0(
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);
+    }
+
+    if let Some(policy) = &resolution.weave_correction_policy {
+        hash_str(hasher, "weave_correction_policy");
+        policy.hash_into(hasher);
     }
 
     hash_len(hasher, resolution.packs.len());
