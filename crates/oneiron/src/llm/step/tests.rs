@@ -2893,16 +2893,52 @@ fn option_link_void_wakes_a_parked_code_mode_peer_wait_without_settling_ask()
     let fixture = step_fixture(&vault, 10)?;
     let step_hash = request_fixture().canonical_hash().expect("hash");
     let trap = open_peer_wait(&vault, &fixture, first.group_ref, step_hash)?;
-    assert_eq!(
-        trap_head(&vault, &trap.trap_claim_id)?.1.state,
-        DreamerTrapState::Waiting
-    );
+    let runner = DreamerRunnerStore::new(&vault);
+    let other_status = match runner.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "consolidation-step-test".into(),
+        input: rmpv::Value::from("other wait"),
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: Some("void-run-b".into()),
+        now: 10,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status,
+    };
+    let other_fixture = StepFixture {
+        attempt_id: other_status.attempt.id,
+        actor: fixture.actor,
+        subject: fixture.subject,
+    };
+    let other_trap = open_peer_wait(&vault, &other_fixture, first.group_ref, [0xB4; 32])?;
+    for wait in [&trap, &other_trap] {
+        assert_eq!(
+            trap_head(&vault, &wait.trap_claim_id)?.1.state,
+            DreamerTrapState::Waiting
+        );
+    }
     vault.void_ask_option_link(&link.token)?;
-    assert_eq!(
-        trap_head(&vault, &trap.trap_claim_id)?.1.state,
-        DreamerTrapState::Sent
-    );
-    assert_eq!(resume_peer_result_steps(&vault, DELEGATE_NOW + 10)?, 1);
+    for wait in [&trap, &other_trap] {
+        assert_eq!(
+            trap_head(&vault, &wait.trap_claim_id)?.1.state,
+            DreamerTrapState::Sent
+        );
+    }
+    // Run A consumes and durably acknowledges the group generation before
+    // B's recovery. B's own Sent trap is still a valid signal.
+    let sent_at = trap_head(&vault, &trap.trap_claim_id)?
+        .1
+        .at
+        .max(trap_head(&vault, &other_trap.trap_claim_id)?.1.at);
+    consume_trap_signal(&vault, &runner, &trap, sent_at + 1)?;
+    crate::task_verb::ack_option_void_generation(&vault, first.group_ref, 1)?;
+    assert!(!crate::task_verb::has_option_link_void(
+        &vault,
+        first.group_ref
+    )?);
+    assert_eq!(reconcile_peer_result_signals(&vault, sent_at + 2)?, 0);
+    assert_eq!(resume_peer_result_steps(&vault, sent_at + 2)?, 1);
+    assert_eq!(runner.parked_attempt(other_fixture.attempt_id)?, None);
     assert_eq!(
         DreamerRunnerStore::new(&vault).parked_attempt(fixture.attempt_id)?,
         None

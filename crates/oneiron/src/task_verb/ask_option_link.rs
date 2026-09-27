@@ -41,6 +41,11 @@ pub(super) fn option_void_generation_in(
     counter_in(vault, txn, &counter_key(VOID_GENERATION_PREFIX, group))
 }
 
+pub(crate) fn option_void_generation(vault: &Vault, group: EntityId) -> crate::Result<u64> {
+    let txn = vault.store.env.read_txn()?;
+    option_void_generation_in(vault, &txn, group)
+}
+
 pub(crate) fn has_option_link_void(vault: &Vault, group: EntityId) -> crate::Result<bool> {
     let txn = vault.store.env.read_txn()?;
     Ok(

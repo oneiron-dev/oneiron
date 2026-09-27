@@ -82,11 +82,8 @@ pub fn send_peer_result_signal(
     now: u64,
 ) -> Result<Option<EntityId>> {
     crate::task_verb::settle_ask_if_due(vault, task_ref)?;
-    if !crate::task_verb::task_is_terminal(vault, task_ref)?
-        && !crate::task_verb::has_option_link_void(vault, task_ref)?
-    {
-        return Ok(None);
-    }
+    let terminal = crate::task_verb::task_is_terminal(vault, task_ref)?;
+    let unobserved_void = crate::task_verb::has_option_link_void(vault, task_ref)?;
     let mut first = None;
     let mut prefix = DREAMER_PRIVATE_PEER_WAIT_PREFIX.to_vec();
     prefix.extend_from_slice(task_ref.as_bytes());
@@ -97,6 +94,20 @@ pub fn send_peer_result_signal(
             DreamerTrapState::Sent | DreamerTrapState::Consumed
         ) {
             continue;
+        }
+        let already_marked = ask_void_trap_signal(vault, binding.trap_claim_id)?;
+        if !terminal && !unobserved_void && !already_marked {
+            continue;
+        }
+        if !terminal && unobserved_void && !already_marked {
+            // Commit the per-trap proof BEFORE signaling. A crash in this gap
+            // leaves pending work that reconcile will signal even if a different
+            // run acknowledges the group generation in the meantime.
+            mark_ask_void_trap(
+                vault,
+                binding.trap_claim_id,
+                crate::task_verb::option_void_generation(vault, task_ref)?,
+            )?;
         }
         let signal = send_trap_signal(
             vault,
@@ -132,6 +143,34 @@ pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
         }
     }
     Ok(sent)
+}
+
+// An ask-void signal is bound to each waiting trap before the trap becomes
+// Sent. Another run's group-level acknowledgement cannot invalidate a signal
+// that this trap has not consumed yet.
+const ASK_VOID_TRAP_PREFIX: &[u8] = b"tasks.ask.peer_void_trap.v1:";
+
+fn ask_void_trap_key(trap: EntityId) -> Vec<u8> {
+    [ASK_VOID_TRAP_PREFIX, trap.as_bytes()].concat()
+}
+
+fn ask_void_trap_signal(vault: &Vault, trap: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .vault_meta
+        .get(&txn, &ask_void_trap_key(trap))?
+        .is_some())
+}
+
+fn mark_ask_void_trap(vault: &Vault, trap: EntityId, generation: u64) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        vault
+            .store
+            .vault_meta
+            .put(txn, &ask_void_trap_key(trap), &generation.to_be_bytes())?;
+        Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +385,10 @@ pub(super) fn peer_wait_binding_delete_in_txn(
         .store
         .vault_meta
         .delete(wtxn, &peer_wait_trap_key(trap_claim_id))?;
+    vault
+        .store
+        .vault_meta
+        .delete(wtxn, &ask_void_trap_key(*trap_claim_id))?;
     Ok(())
 }
 
@@ -359,7 +402,7 @@ pub(crate) fn resume_peer_result_steps(vault: &Vault, now_ms: u64) -> Result<usi
         let (_, head) = trap_head(vault, &binding.trap_claim_id)?;
         if head.state != DreamerTrapState::Sent
             || (!crate::task_verb::task_is_terminal(vault, binding.task_ref)?
-                && !crate::task_verb::has_option_link_void(vault, binding.task_ref)?)
+                && !ask_void_trap_signal(vault, binding.trap_claim_id)?)
         {
             continue;
         }
