@@ -581,7 +581,34 @@ impl Memory<'_> {
                         }
                     }
                     let (pack, vector_completed) = builder.run_with_vector_status()?;
-                    let pack = pack.value;
+                    let mut pack = pack.value;
+                    // The pipeline's primary-candidate gate does not cover a
+                    // context pack's auxiliary payload. Reapply the resolved
+                    // ordinary type floor before either rendering or item
+                    // projection; a named-kind query uses a different door.
+                    {
+                        // Release the LMDB read slot before item hydration opens its
+                        // own snapshot (nested reads are not supported by this store).
+                        let txn = self
+                            .vault
+                            .store
+                            .env
+                            .read_txn()
+                            .map_err(crate::Error::from)?;
+                        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
+                        let floor = policy.retrieval_floor_for_actor(None);
+                        let filter = crate::gate::narrow_retrieval_filter(&floor, None)?;
+                        let admits = |kind| {
+                            crate::pipeline::retrieval_type_allowed(
+                                &filter,
+                                None,
+                                &self.vault.store,
+                                kind,
+                            )
+                        };
+                        pack.results.retain(|entity| admits(entity.entity_type));
+                        pack.neighbors.retain(|entity| admits(entity.entity_type));
+                    }
                     let total = pack.stats.candidates_considered as u64;
                     let rendered = pack_format.map(|fmt| {
                         let config = SerializeConfig {

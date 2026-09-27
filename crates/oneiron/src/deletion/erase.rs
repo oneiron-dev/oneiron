@@ -9,8 +9,6 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::deindex_entity;
 use crate::batch::deindex_lexical_query_hints_for_target;
-use crate::batch::delete_from_phonetic_postings;
-use crate::bm25;
 use crate::claim::ClaimSubject;
 use crate::edge::EdgeConfirmationStatus;
 use crate::edge::EdgeProvenanceFlags;
@@ -21,6 +19,7 @@ use crate::identity_topology::{
     StoredIdentityOpAction, decode_identity_topology_event_body,
     encode_identity_topology_event_body,
 };
+use crate::ports::{RetrievalIndexMaintenance, ShortIdStoreMaintenance};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
@@ -430,9 +429,9 @@ impl Vault {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
         crate::note::erase::purge(self, wtxn, id)?;
-        bm25::deindex_text(&self.store, wtxn, id)?;
+        self.port_retrieval_clear_text_for_soft_erase(wtxn, id)?;
         crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, id)?;
-        delete_from_phonetic_postings(&self.store, wtxn, id)?;
+        self.port_retrieval_clear_phonetic_for_soft_erase(wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
@@ -443,10 +442,9 @@ impl Vault {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
         self.store.clear_pending_embedding(wtxn, id)?;
-        let entity_had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let entity_had_vector = self.port_retrieval_clear_vector_for_soft_erase(wtxn, id)?;
         let mut had_vector =
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
-        crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;
@@ -816,24 +814,8 @@ impl Vault {
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || self.store.entities.get(txn, id.as_bytes())?.is_some()
-            || self.store.vectors.get(txn, id.as_bytes())?.is_some()
-            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
-            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
-            || self
-                .store
-                .text_doc_field_lengths
-                .get(txn, id.as_bytes())?
-                .is_some()
-            || self
-                .store
-                .phonetic_forward
-                .get(txn, id.as_bytes())?
-                .is_some()
-            || self
-                .store
-                .short_ids_reverse
-                .get(txn, id.as_bytes())?
-                .is_some()
+            || self.port_retrieval_delete_scope_exists(txn, id)?
+            || self.port_short_id_mapping_exists(txn, id)?
         {
             return Ok(true);
         }
