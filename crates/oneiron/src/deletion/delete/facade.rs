@@ -73,6 +73,39 @@ impl Vault {
         Ok(outcome)
     }
 
+    /// Under the single LMDB writer, refuse live grants and fence the target
+    /// before either headerful or headerless tombstone publication. Fully
+    /// absent IDs never reach this method.
+    pub(super) fn reserve_user_brief_delete(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        gate: Option<&GatedDeletion<'_>>,
+    ) -> Result<()> {
+        if matches!(
+            reason,
+            DeleteReason::UserDelete | DeleteReason::UserHardDelete
+        ) {
+            let mut txn = self.store.env.write_txn()?;
+            reverify_deletion_authority_before_publication(gate, &txn)?;
+            if !crate::share::active_brief_shares_for(
+                &self.store,
+                &txn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?
+            .is_empty()
+            {
+                return Err(Error::InvariantViolation(
+                    "active brief share requires confirmed delete",
+                ));
+            }
+            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
+            txn.commit()?;
+        }
+        Ok(())
+    }
+
     fn delete_entity_with_reason_impl(
         &self,
         id: &EntityId,
@@ -114,33 +147,7 @@ impl Vault {
         // header read, forcing the headerful leg every run. No-op in
         // production.
         signal_after_delete_probe(self);
-        // Reserve this identity before publication. Grant creation checks this
-        // durable fence under the same LMDB writer; a grant cannot slip
-        // between the final live-grant check and the CRDT retraction. A crash
-        // leaves a fail-closed fence, and a fresh preview can retry deletion.
-        if matches!(
-            reason,
-            DeleteReason::UserDelete | DeleteReason::UserHardDelete
-        ) {
-            let mut txn = self.store.env.write_txn()?;
-            // The fence is a durable effect. A gated owner must still hold
-            // authority in this writer's view before it can be committed.
-            reverify_deletion_authority_before_publication(gate.as_ref(), &txn)?;
-            if !crate::share::active_brief_shares_for(
-                &self.store,
-                &txn,
-                id,
-                self.store.clock.now_recorded_at(),
-            )?
-            .is_empty()
-            {
-                return Err(Error::InvariantViolation(
-                    "active brief share requires confirmed delete",
-                ));
-            }
-            crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
-            txn.commit()?;
-        }
+        self.reserve_user_brief_delete(id, reason, gate.as_ref())?;
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is
@@ -211,6 +218,10 @@ impl Vault {
                 }
             }
             wtxn.commit()?;
+            if existed {
+                gate.as_ref()
+                    .inspect(|gate| gate.note_soft_scrub_committed());
+            }
             // An archive publishes nothing (`publishes_crdt_tombstone` is
             // false for exactly one reason): there is no remote-binding act
             // to re-gate, and nothing for a peer to obey, so the local `ac:`

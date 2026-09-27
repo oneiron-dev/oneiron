@@ -872,9 +872,15 @@ fn deleting_record_retires_scope_stamp_even_for_same_id_same_bytes() -> Result<(
         crate::batch::deindex_entity(&vault.store, txn, &id)?;
         Ok(())
     })?;
-    let txn = vault.store.env.read_txn()?;
-    let mut stamp_key = b"scope:record:v1:".to_vec();
-    stamp_key.extend_from_slice(id.as_bytes());
-    assert!(vault.store.vault_meta.get(&txn, &stamp_key)?.is_none());
+    assert!(vault.record_scope(&id)?.is_none());
+    // Replaying byte-identical content at the same id does not inherit the
+    // erased record's locally authored scope; a normal local put would mint a
+    // new stamp and would not exercise this identity-reuse boundary.
+    vault
+        .batch()
+        .put_replicated(&id, 1, test_time_range(10, 10), 20, raw)
+        .commit()?;
+    assert_eq!(vault.get(&id)?.as_deref(), Some(raw.as_slice()));
+    assert!(vault.record_scope(&id)?.is_none());
     Ok(())
 }

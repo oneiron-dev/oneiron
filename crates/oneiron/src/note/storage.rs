@@ -107,3 +107,27 @@ pub(crate) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::StateOnly(None))
         .map_err(|_| invalid("canonical document state"))
 }
+
+/// Current NOTE text-plane identity for an impact preview. Read the canonical
+/// head and its complete Loro frontier in the SAME owner-authorized snapshot
+/// (and again in the committing writer); the entity envelope does not move
+/// when someone edits NOTE prose or citations.
+pub(crate) fn delete_preview_fingerprint(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<[u8; 32]>> {
+    let header = crate::batch::EntityMetadataHeader::parse(raw)
+        .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_NOTE {
+        return Ok(None);
+    }
+    let head = super::documents::head_in(&vault.store, txn, id)?.0;
+    let doc = load_for_erasure(vault, txn, id)?;
+    let mut hash = blake3::Hasher::new_derive_key("oneiron/delete-preview-note/v1");
+    hash.update(head.as_bytes());
+    hash.update(&doc.oplog_vv().encode());
+    hash.update(&doc.state_frontiers().encode());
+    Ok(Some(*hash.finalize().as_bytes()))
+}

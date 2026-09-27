@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 pub struct DeleteEntityPreview {
     entity: EntityId,
     fingerprint: [u8; 32],
+    note_fingerprint: Option<[u8; 32]>,
     shared_with: Vec<(EntityId, EntityId)>,
 }
 
@@ -67,7 +68,10 @@ impl DeleteEntityPreview {
             .entities
             .get(txn, self.entity.as_bytes())?
             .ok_or(Error::ConcurrentWrite("delete preview stale"))?;
-        if blake3::hash(&raw).as_bytes() != &self.fingerprint {
+        if blake3::hash(&raw).as_bytes() != &self.fingerprint
+            || crate::note::storage::delete_preview_fingerprint(vault, txn, self.entity, &raw)?
+                != self.note_fingerprint
+        {
             return Err(Error::ConcurrentWrite("delete preview stale"));
         }
         Ok(())
@@ -75,24 +79,29 @@ impl DeleteEntityPreview {
 }
 
 impl Vault {
-    /// Read-only impact before a user confirms one delete. Direct brief
-    /// grants are named; federation delivery is deliberately not guessed.
-    pub(crate) fn preview_entity_delete(&self, id: &EntityId) -> Result<DeleteEntityPreview> {
-        let txn = self.store.env.read_txn()?;
+    /// The owner authority fold and all impact fields use one read snapshot.
+    pub(crate) fn preview_entity_delete_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<DeleteEntityPreview> {
         let raw = self
             .store
             .entities
-            .get(&txn, id.as_bytes())?
+            .get(txn, id.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let shared_with = crate::share::active_brief_shares_for(
             &self.store,
-            &txn,
+            txn,
             id,
             self.store.clock.now_recorded_at(),
         )?;
         Ok(DeleteEntityPreview {
             entity: *id,
             fingerprint: *blake3::hash(&raw).as_bytes(),
+            note_fingerprint: crate::note::storage::delete_preview_fingerprint(
+                self, txn, *id, &raw,
+            )?,
             shared_with,
         })
     }

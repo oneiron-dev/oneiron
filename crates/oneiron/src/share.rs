@@ -417,7 +417,7 @@ pub(crate) fn active_brief_shares_for(
     id: &EntityId,
     now: u64,
 ) -> Result<Vec<(EntityId, EntityId)>> {
-    let brief_ref = format!("brief:{}", id.to_hex());
+    let brief_ref = id.to_hex();
     let mut shares = Vec::new();
     for row in store
         .type_index
@@ -528,11 +528,7 @@ impl Vault {
         // A past hard purge is an irreversible identity fence. A new brief
         // grant must not point at that same id, even when the caller reuses
         // the exact opaque `brief:<hex>` handle after deleting the record.
-        if let Some(id) = share
-            .brief_ref
-            .strip_prefix("brief:")
-            .and_then(|s| EntityId::from_hex(s).ok())
-        {
+        if let Ok(id) = EntityId::from_hex(&share.brief_ref) {
             if self
                 .store
                 .vault_meta
