@@ -12,7 +12,7 @@ use super::keys::{
     gate_decision_claim_index_prefix, gate_decision_claim_ref_key, gate_decision_claim_ref_prefix,
     gate_decision_claim_refs_key, gate_decision_grant_ref_index_key,
     gate_decision_grant_ref_index_prefix, gate_decision_id_from_key, gate_decision_key,
-    gate_decision_upper_bound, logical_uuid_v7_successor,
+    gate_decision_unapplied_preflight_key, gate_decision_upper_bound, logical_uuid_v7_successor,
 };
 use super::orcb;
 use super::types::{
@@ -281,6 +281,49 @@ impl Store {
         self.delete_gate_decision_record_in_txn(wtxn, &record)
     }
 
+    /// Marks a preflight decision that belongs to an unapplied batch op.
+    /// These markers exist only within the batch's write transaction: every
+    /// successful op consumes its marker before commit; errors abort the txn.
+    pub(crate) fn mark_unapplied_preflight_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        self.vault_meta.put(
+            wtxn,
+            &gate_decision_unapplied_preflight_key(decision_id),
+            b"1",
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn consume_unapplied_preflight_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<()> {
+        if !self
+            .vault_meta
+            .delete(wtxn, &gate_decision_unapplied_preflight_key(decision_id))?
+        {
+            return Err(Error::InvariantViolation(
+                "unapplied preflight marker missing",
+            ));
+        }
+        Ok(())
+    }
+
+    fn is_unapplied_preflight_decision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        decision_id: GateDecisionId,
+    ) -> Result<bool> {
+        Ok(self
+            .vault_meta
+            .get(txn, &gate_decision_unapplied_preflight_key(decision_id))?
+            .is_some())
+    }
+
     /// Rewrites every live row for a deleted claim to its retention skeleton
     /// inside the caller's destructive transaction. The claim index is retained
     /// for discovery of skeletons; the grant-ref index is removed because its
@@ -299,6 +342,12 @@ impl Store {
         records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
         let mut changed = pending;
         for mut record in records {
+            // Batch preflight stages receipts for *future* ops in this same
+            // txn. Their marker is consumed only after their op applies; a
+            // delete before that op must not scrub its future receipt.
+            if self.is_unapplied_preflight_decision_in_txn(&*wtxn, record.decision_id)? {
+                continue;
+            }
             if record.redacted_at.is_some() {
                 if !self
                     .gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?
@@ -338,11 +387,10 @@ impl Store {
         // live v0 resolution from a v1 skeleton. Remove it and every index
         // inside this same destructive transaction, before verification.
         self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
-        if !self
-            .verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)?
-            .is_empty()
-        {
-            return Err(Error::CorruptedIndex("gate decision claim erasure"));
+        for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
+            if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
+                return Err(Error::CorruptedIndex("gate decision claim erasure"));
+            }
         }
         Ok(changed)
     }

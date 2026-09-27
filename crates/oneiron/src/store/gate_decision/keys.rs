@@ -50,6 +50,16 @@ pub(in crate::store) const GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE: [u
 /// Per-decision constituent ids for a multi-claim inbox bundle. Its indexed
 /// counterpart is an acceleration only; the complete sidecar is the source
 /// for independent scan verification. Both are shredded with the bundle row.
+// Uncommitted-only batch preflight protection. A batch records every future
+// write decision before applying its first op; deletion may scrub only the
+// decisions already consumed. Markers are removed as each op applies, and
+// never survive a successful batch commit.
+const GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX: &[u8] = b"gate_decision_unapplied_preflight:v0:";
+
+pub(super) fn gate_decision_unapplied_preflight_key(id: GateDecisionId) -> Vec<u8> {
+    index_key_with_id(GATE_DECISION_UNAPPLIED_PREFLIGHT_PREFIX, &id.as_bytes())
+}
+
 pub(super) const GATE_DECISION_CLAIM_REFS_PREFIX: &[u8] = b"gate_decision_claim_refs:v0:";
 pub(super) const GATE_DECISION_CLAIM_REF_INDEX_PREFIX: &[u8] = b"gate_decision_by_claim_ref:v0:";
 

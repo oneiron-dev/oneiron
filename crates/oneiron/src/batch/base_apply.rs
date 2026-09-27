@@ -200,6 +200,12 @@ pub(super) fn apply_ops_with_origin(
     let mut pending_embedding_tokens_written = HashMap::<EntityId, Vec<u8>>::new();
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
+    // Preflight wrote decisions for EVERY operation before phase-two starts.
+    // Mark only the unapplied ones inside this txn; a physical tear must
+    // redact past decisions but leave a later put's binding intact. Each
+    // successful operation consumes its own marker below, so put-then-delete
+    // still erases the put and no marker survives a successful commit.
+    mark_unapplied_preflight_decisions(store, wtxn, &preflight_gate_decision_ids)?;
     let iter = ReplayIter {
         remaining: std::mem::take(&mut ops.ops).into_iter(),
         replay,
@@ -326,6 +332,7 @@ pub(super) fn apply_ops_with_origin(
                     preflight_decision_id,
                     origin,
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if let Some((source_id, source_bytes)) = applied.portable_agent_source {
                     apply_ops_with_origin(
                         store,
@@ -470,6 +477,7 @@ pub(super) fn apply_ops_with_origin(
                     claim_gate_prechecked,
                     preflight_decision_id,
                 )?;
+                consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if !internal_lexical_query_hint {
                     claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
                 }
@@ -591,6 +599,7 @@ pub(super) fn apply_ops_with_origin(
                 // invariant below stays exact.
                 let lapse_decision_ids =
                     take_lapse_decisions(&mut preflight_gate_decision_ids, &ids);
+                let consumed_ids = preflight_decisions(&lapse_decision_ids);
                 crate::commitment::lapse_commitments_in_txn(
                     store,
                     config,
@@ -603,6 +612,7 @@ pub(super) fn apply_ops_with_origin(
                     write_policy.as_ref(),
                     lapse_decision_ids,
                 )?;
+                consume_preflight_decisions(store, wtxn, consumed_ids.into_iter().map(Some))?;
             }
         }
     }
@@ -844,6 +854,34 @@ fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) -> Result<boo
 }
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;
+
+fn preflight_decisions(ids: &PreflightDecisionIds) -> Vec<crate::store::GateDecisionId> {
+    ids.values()
+        .flat_map(|queue| queue.iter().flatten().copied())
+        .collect()
+}
+
+fn mark_unapplied_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: &PreflightDecisionIds,
+) -> Result<()> {
+    for id in preflight_decisions(ids) {
+        store.mark_unapplied_preflight_decision_in_txn(wtxn, id)?;
+    }
+    Ok(())
+}
+
+fn consume_preflight_decisions(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    ids: impl IntoIterator<Item = Option<crate::store::GateDecisionId>>,
+) -> Result<()> {
+    for id in ids.into_iter().flatten() {
+        store.consume_unapplied_preflight_decision_in_txn(wtxn, id)?;
+    }
+    Ok(())
+}
 
 fn take_lapse_decisions(
     preflight: &mut PreflightDecisionIds,
