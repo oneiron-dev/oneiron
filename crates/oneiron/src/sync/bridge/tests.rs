@@ -128,9 +128,10 @@ fn companion_record(
     persona_ref: EntityId,
     sensitivity: crate::federation::Sensitivity,
 ) -> CompanionRecord {
-    CompanionRecord::persona(
+    CompanionRecord::relationship(
         CompanionScope::neutral(),
         persona_ref,
+        EntityId::from_bytes_unchecked([0xFE; 16]),
         Value::from("private companion tuning"),
         CompanionProvenance::new(
             EntityId::from_bytes_unchecked([0xB8; 16]),

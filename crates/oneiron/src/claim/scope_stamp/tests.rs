@@ -254,9 +254,10 @@ fn identity_facet_replay_and_export_use_content_sensitivity_not_export_classific
     let (_dir, vault) = vault()?;
     let person = entity(43);
     let facet = entity(44);
-    let record = crate::companion::CompanionRecord::persona(
+    let record = crate::companion::CompanionRecord::relationship(
         crate::companion::CompanionScope::neutral(),
         person,
+        entity(0xFE),
         Value::from("persona"),
         crate::companion::CompanionProvenance::new(
             person,

@@ -275,18 +275,6 @@ func specializedInputsCompile(client: Oneiron) throws {
     let _: String = checkin.habitRef
     let _: EntityRefReceipt = try client.putHabitCheckin(input: checkin)
 
-    let companion = CompanionRecordInput(
-        id: nil,
-        ownerRef: "person:compile-only",
-        personaRef: "persona:compile-only",
-        value: WireJson(canonicalJson: "{}"),
-        source: "compile-only",
-        retiredAt: nil,
-        learnedAt: 0
-    )
-    let _: String = companion.personaRef
-    let _: EntityRefReceipt = try client.putCompanionRecord(input: companion)
-
     let imported = AdmitImportedClaimInput(
         sourceId: "compile-only",
         sourceRecordId: "compile-only",

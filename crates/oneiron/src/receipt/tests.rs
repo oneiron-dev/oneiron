@@ -193,9 +193,10 @@ fn provenance(actor: EntityId) -> CompanionProvenance {
 }
 
 fn companion_record(actor: EntityId) -> CompanionRecord {
-    CompanionRecord::persona(
+    CompanionRecord::relationship(
         CompanionScope::neutral(),
         entity(0x51),
+        EntityId::from_bytes_unchecked([0xFE; 16]),
         rmpv::Value::from("persona"),
         provenance(actor),
         crate::federation::Sensitivity::Public,

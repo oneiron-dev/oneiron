@@ -27,13 +27,12 @@ mod error;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, ClaimInput, ClaimListFilter,
-    ClaimView, CommitReceipt, CompanionRecordInput, ConsolidationJobInput, DeleteReceipt,
-    DreamerJobRef, DreamerJobView, Effort, EntityRefReceipt, EntityView, FacadeReceipt,
-    ForgetSelector, HabitCheckinInput, LexicalHit, MemoryItem, MemoryPack, MemoryProvenance,
-    NeighborHit, NeighborOpts, OpenOptions, OutboundDraftInput, OutboundIntentReceipt,
-    PendingWrite, RecallScope, RetrievalMeta, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
-    StructuralPutInput, TextIndexField, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt,
-    WitnessTurn,
+    ClaimView, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DreamerJobRef, DreamerJobView,
+    Effort, EntityRefReceipt, EntityView, FacadeReceipt, ForgetSelector, HabitCheckinInput,
+    LexicalHit, MemoryItem, MemoryPack, MemoryProvenance, NeighborHit, NeighborOpts, OpenOptions,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, RecallScope, RetrievalMeta,
+    SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
+    WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 pub use error::OneironError;
 

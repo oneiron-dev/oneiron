@@ -87,8 +87,6 @@ pub struct CompanionBirthIntent {
     pub actor_ref: EntityId,
     /// Existing work `FACET` the companion is associated with.
     pub work_facet_ref: EntityId,
-    /// Caller-supplied id for the companion-register record.
-    pub companion_record_ref: EntityId,
     /// Caller-supplied id for the scoped companion-profile read grant.
     pub profile_grant_ref: EntityId,
     /// Caller-supplied composition for the companion's actor.
@@ -248,7 +246,6 @@ impl MemberOnboardingIntent {
             minted.extend([
                 companion.person_ref,
                 companion.actor_ref,
-                companion.companion_record_ref,
                 companion.profile_grant_ref,
             ]);
             referenced.push(companion.work_facet_ref);

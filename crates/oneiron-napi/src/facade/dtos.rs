@@ -290,25 +290,6 @@ pub struct NapiHabitCheckinInput {
     pub learned_at: Option<i64>,
 }
 
-/// One companion persona registration.
-#[napi(object)]
-pub struct NapiCompanionRecordInput {
-    /// Deterministic 32-hex record id; omitted ⇒ generated.
-    pub id: Option<String>,
-    /// Owner PERSON ref (personal scope).
-    pub owner_ref: String,
-    /// Companion persona PERSON ref.
-    pub persona_ref: String,
-    /// Opaque record value.
-    pub value: serde_json::Value,
-    /// Provenance source; omitted ⇒ user_stated.
-    pub source: Option<String>,
-    /// Retire the record at this time after creation.
-    pub retired_at: Option<i64>,
-    /// Creation time (Unix seconds).
-    pub learned_at: i64,
-}
-
 /// One imported-evidence claim admission (B1a).
 #[napi(object)]
 pub struct NapiAdmitImportedClaimInput {

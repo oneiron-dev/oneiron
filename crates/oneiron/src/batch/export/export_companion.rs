@@ -11,7 +11,6 @@ pub const COMPANION_EXPORT_LAYER_VERSION: u16 = 1;
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompanionExportLayer {
     layer_version: u16,
-    personas: Vec<CompanionExportRecord>,
     relationships: Vec<CompanionExportRecord>,
 }
 
@@ -49,7 +48,6 @@ fn export_layer(
     channel: &crate::federation::Scope,
     identity: Option<&ChannelIdentity>,
 ) -> CompanionExportLayer {
-    let mut personas = Vec::new();
     let mut relationships = Vec::new();
 
     for (key, record) in records.iter() {
@@ -64,14 +62,13 @@ fn export_layer(
         };
 
         match record.kind() {
-            CompanionRecordKind::Persona => personas.push(exported),
+            CompanionRecordKind::Persona => continue,
             CompanionRecordKind::Relationship => relationships.push(exported),
         }
     }
 
     CompanionExportLayer {
         layer_version: COMPANION_EXPORT_LAYER_VERSION,
-        personas,
         relationships,
     }
 }
@@ -96,23 +93,18 @@ impl CompanionExportLayer {
     }
 
     #[must_use]
-    pub fn personas(&self) -> &[CompanionExportRecord] {
-        &self.personas
-    }
-
-    #[must_use]
     pub fn relationships(&self) -> &[CompanionExportRecord] {
         &self.relationships
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.personas.len() + self.relationships.len()
+        self.relationships.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.personas.is_empty() && self.relationships.is_empty()
+        self.relationships.is_empty()
     }
 }
 

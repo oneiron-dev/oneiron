@@ -151,27 +151,24 @@ pub(crate) fn companion_register_subject_payload(
     subject: &oneiron::CompanionSubject,
 ) -> CompanionRegisterSubjectPayload {
     match subject {
-        oneiron::CompanionSubject::Persona { persona_ref } => CompanionRegisterSubjectPayload {
-            kind: "persona".to_owned(),
-            persona_ref: Some(persona_ref.to_hex()),
-            relationship_ref: None,
-        },
         oneiron::CompanionSubject::Relationship {
             source_ref,
             target_ref,
         } => CompanionRegisterSubjectPayload {
             kind: "relationship".to_owned(),
-            persona_ref: None,
             relationship_ref: Some(CompanionRegisterRelationshipRefPayload {
                 source_ref: source_ref.to_hex(),
                 target_ref: target_ref.to_hex(),
             }),
         },
+        oneiron::CompanionSubject::Persona { .. } => CompanionRegisterSubjectPayload {
+            kind: "unknown".to_owned(),
+            relationship_ref: None,
+        },
         _ => {
             tracing::warn!("unknown companion register subject variant in API response");
             CompanionRegisterSubjectPayload {
                 kind: "unknown".to_owned(),
-                persona_ref: None,
                 relationship_ref: None,
             }
         }
@@ -183,10 +180,9 @@ pub(crate) fn companion_register_kind_from_wire(
     field: &'static str,
 ) -> Result<oneiron::CompanionRecordKind, ApiError> {
     match value {
-        "persona" => Ok(oneiron::CompanionRecordKind::Persona),
         "relationship" => Ok(oneiron::CompanionRecordKind::Relationship),
         _ => Err(ApiError::bad_request(
-            "kind must be persona or relationship",
+            "kind must be relationship",
             Some(field),
         )),
     }

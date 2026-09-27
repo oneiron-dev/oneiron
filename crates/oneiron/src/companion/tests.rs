@@ -450,16 +450,17 @@ fn companion_queue_claim_fails_undecodable_task_payload() -> Result<()> {
 }
 
 #[test]
-fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<()> {
+fn companion_register_creates_and_looks_up_relationships() -> Result<()> {
     let neutral = CompanionScope::neutral();
     let persona_ref = entity(0x60);
     let source_ref = entity(0x12);
     let target_ref = entity(0x13);
 
-    let persona = CompanionRecord::persona(
+    let first_relationship = CompanionRecord::relationship(
         neutral.clone(),
         persona_ref,
-        Value::from("neutral persona"),
+        entity(0xFE),
+        Value::from("first relationship"),
         provenance(0x5A),
         crate::federation::Sensitivity::Public,
     );
@@ -473,12 +474,12 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
     );
 
     let mut register = CompanionRegister::new();
-    assert!(register.register(persona.clone())?.is_none());
+    assert!(register.register(first_relationship.clone())?.is_none());
     assert!(register.register(relationship.clone())?.is_none());
 
     assert_eq!(
-        register.lookup_persona(&neutral, persona_ref),
-        Some(&persona)
+        register.lookup_relationship(&neutral, persona_ref, entity(0xFE)),
+        Some(&first_relationship)
     );
     assert_eq!(
         register.lookup_relationship(&neutral, source_ref, target_ref),
@@ -486,6 +487,30 @@ fn companion_register_creates_and_looks_up_persona_and_relationship() -> Result<
     );
     assert_eq!(register.len(), 2);
     Ok(())
+}
+
+#[test]
+fn persona_subjects_are_rejected_by_record_validation_encoding_and_registration() {
+    let record = CompanionRecord::new(
+        CompanionScope::neutral(),
+        CompanionSubject::persona(entity(0x5F)),
+        Value::from("persona rows are not persisted"),
+        provenance(0x5E),
+        ClaimLifecycleStatus::Active,
+        crate::federation::Sensitivity::Public,
+    );
+
+    assert!(matches!(record.validate(), Err(Error::InvalidClaimBody(_))));
+    assert!(matches!(
+        encode_companion_record_body(&record),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    let mut register = CompanionRegister::new();
+    assert!(matches!(
+        register.register(record),
+        Err(Error::InvalidClaimBody(_))
+    ));
+    assert!(register.is_empty());
 }
 
 #[test]
@@ -497,23 +522,26 @@ fn companion_register_keeps_neutral_personal_and_shared_vault_scopes_separate() 
     let shared = CompanionScope::shared_vault(7);
 
     let mut register = CompanionRegister::new();
-    register.register(CompanionRecord::persona(
+    register.register(CompanionRecord::relationship(
         neutral.clone(),
         persona_ref,
+        entity(0xFE),
         Value::from("neutral"),
         provenance(0xB1),
         crate::federation::Sensitivity::Public,
     ))?;
-    register.register(CompanionRecord::persona(
+    register.register(CompanionRecord::relationship(
         personal.clone(),
         persona_ref,
+        entity(0xFE),
         Value::from("personal"),
         provenance(0xB2),
         crate::federation::Sensitivity::Restricted,
     ))?;
-    register.register(CompanionRecord::persona(
+    register.register(CompanionRecord::relationship(
         shared.clone(),
         persona_ref,
+        entity(0xFE),
         Value::from("shared"),
         provenance(0xB3),
         crate::federation::Sensitivity::Private,
@@ -521,19 +549,19 @@ fn companion_register_keeps_neutral_personal_and_shared_vault_scopes_separate() 
 
     assert_eq!(
         register
-            .lookup_persona(&neutral, persona_ref)
+            .lookup_relationship(&neutral, persona_ref, entity(0xFE))
             .map(|r| &r.value),
         Some(&Value::from("neutral"))
     );
     assert_eq!(
         register
-            .lookup_persona(&personal, persona_ref)
+            .lookup_relationship(&personal, persona_ref, entity(0xFE))
             .map(|r| &r.value),
         Some(&Value::from("personal"))
     );
     assert_eq!(
         register
-            .lookup_persona(&shared, persona_ref)
+            .lookup_relationship(&shared, persona_ref, entity(0xFE))
             .map(|r| &r.value),
         Some(&Value::from("shared"))
     );
@@ -550,10 +578,11 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
     let neutral = CompanionScope::neutral();
     let personal = CompanionScope::personal(person_ref);
     let mut register = CompanionRegister::new();
-    let neutral_persona = CompanionRecord::persona(
+    let neutral_relationship = CompanionRecord::relationship(
         neutral,
+        person_ref,
         persona_ref,
-        Value::from("neutral fallback persona"),
+        Value::from("neutral fallback relationship"),
         provenance(0xC8),
         crate::federation::Sensitivity::Public,
     );
@@ -569,17 +598,19 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
         provenance(0xC9),
         crate::federation::Sensitivity::Restricted,
     );
-    register.register(neutral_persona.clone())?;
+    register.register(neutral_relationship.clone())?;
     register.register(personal_relationship.clone())?;
 
     let mut expressions = CompanionExpressionRegister::new();
-    expressions.update(neutral_persona.key(), CompanionExpression::Unrestricted)?;
+    expressions.update(
+        neutral_relationship.key(),
+        CompanionExpression::Unrestricted,
+    )?;
     expressions.update(personal_relationship.key(), CompanionExpression::Warm)?;
 
     let resolution = register.resolve_companion_scope(
         &expressions,
         Some(person_ref),
-        Some(persona_ref),
         Some((person_ref, persona_ref)),
     );
 
@@ -588,7 +619,6 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
         resolution.source,
         CompanionScopeResolutionSource::RelationshipRecord
     );
-    assert_eq!(resolution.persona_key, None);
     assert_eq!(
         resolution.relationship_key,
         Some(personal_relationship.key())
@@ -602,47 +632,55 @@ fn companion_scope_resolution_prefers_warm_personal_relationship_boundary() -> R
 }
 
 #[test]
-fn companion_scope_resolution_falls_back_to_neutral_persona_and_blocks_orphan_expression()
+fn companion_scope_resolution_falls_back_to_neutral_relationship_and_blocks_orphan_expression()
 -> Result<()> {
     let persona_ref = entity(0x25);
     let person_ref = entity(0x26);
     let neutral = CompanionScope::neutral();
     let mut register = CompanionRegister::new();
-    let neutral_persona = CompanionRecord::persona(
+    let neutral_relationship = CompanionRecord::relationship(
         neutral.clone(),
+        person_ref,
         persona_ref,
         Value::from("neutral @Oneiron"),
         provenance(0xCA),
         crate::federation::Sensitivity::Public,
     );
-    register.register(neutral_persona.clone())?;
+    register.register(neutral_relationship.clone())?;
 
     let mut expressions = CompanionExpressionRegister::new();
     expressions.update(
-        CompanionRecordKey::persona(CompanionScope::personal(person_ref), persona_ref),
+        CompanionRecordKey::relationship(
+            CompanionScope::personal(person_ref),
+            person_ref,
+            persona_ref,
+        ),
         CompanionExpression::Warm,
     )?;
-    expressions.update(neutral_persona.key(), CompanionExpression::Professional)?;
+    expressions.update(
+        neutral_relationship.key(),
+        CompanionExpression::Professional,
+    )?;
 
     let resolution = register.resolve_companion_scope(
         &expressions,
         Some(person_ref),
-        Some(persona_ref),
         Some((person_ref, persona_ref)),
     );
     assert_eq!(resolution.scope, neutral);
     assert_eq!(
         resolution.source,
-        CompanionScopeResolutionSource::PersonaRecord
+        CompanionScopeResolutionSource::RelationshipRecord
     );
-    assert_eq!(resolution.persona_key, Some(neutral_persona.key()));
-    assert_eq!(resolution.relationship_key, None);
+    assert_eq!(
+        resolution.relationship_key,
+        Some(neutral_relationship.key())
+    );
     assert_eq!(resolution.expression, CompanionExpression::Professional);
 
     let orphan_only = CompanionRegister::new().resolve_companion_scope(
         &expressions,
         Some(person_ref),
-        Some(persona_ref),
         Some((person_ref, persona_ref)),
     );
     assert_eq!(orphan_only.scope, CompanionScope::neutral());
@@ -695,10 +733,11 @@ fn companion_register_body_round_trip_carries_provenance_lifecycle_and_export() 
 
 #[test]
 fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<()> {
-    let record = CompanionRecord::persona(
+    let record = CompanionRecord::relationship(
         CompanionScope::neutral(),
         entity(0x36),
-        Value::from("eventless v2 persona"),
+        entity(0xFE),
+        Value::from("eventless v2 relationship"),
         provenance(0xD6),
         crate::federation::Sensitivity::Public,
     );
@@ -773,10 +812,11 @@ fn companion_register_body_requires_current_schema_lifecycle_events() -> Result<
 
 #[test]
 fn companion_register_body_rejects_legacy_v1_outside_open_sweep() -> Result<()> {
-    let record = CompanionRecord::persona(
+    let record = CompanionRecord::relationship(
         CompanionScope::neutral(),
         entity(0x37),
-        Value::from("legacy v1 persona"),
+        entity(0xFE),
+        Value::from("legacy v1 relationship"),
         provenance(0x5C),
         crate::federation::Sensitivity::Public,
     );
@@ -816,9 +856,10 @@ fn companion_register_create_canonicalizes_caller_lifecycle_history() -> Result<
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let id = entity(0xC1);
     let forged_id = entity(0xC5);
-    let mut record = CompanionRecord::persona(
+    let mut record = CompanionRecord::relationship(
         CompanionScope::personal(entity(0xC2)),
         entity(0xC3),
+        entity(0xFE),
         Value::from("canonical create"),
         provenance(0xC4),
         crate::federation::Sensitivity::Public,
@@ -874,9 +915,10 @@ fn companion_register_raw_revived_put_requires_matching_retired_history() -> Res
     let forged_id = entity(0xD3);
     let mismatched_id = entity(0xD4);
     let duplicate_id = entity(0xD8);
-    let record = CompanionRecord::persona(
+    let record = CompanionRecord::relationship(
         CompanionScope::personal(entity(0xD5)),
         entity(0xD6),
+        entity(0xFE),
         Value::from("revived row"),
         provenance(0x5D),
         crate::federation::Sensitivity::Public,
@@ -988,9 +1030,10 @@ fn companion_register_raw_revived_put_accepts_same_batch_retired_history() -> Re
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let retired_id = entity(0x5E);
     let revived_id = entity(0xE2);
-    let record = CompanionRecord::persona(
+    let record = CompanionRecord::relationship(
         CompanionScope::personal(entity(0xE3)),
         entity(0xE4),
+        entity(0xFE),
         Value::from("same batch revived row"),
         provenance(0xE5),
         crate::federation::Sensitivity::Public,
@@ -1083,7 +1126,11 @@ fn companion_export_expression_register_updates_and_fails_closed_on_future_value
 
     let err = register
         .update(
-            CompanionRecordKey::persona(CompanionScope::shared_vault(0), persona_ref),
+            CompanionRecordKey::relationship(
+                CompanionScope::shared_vault(0),
+                persona_ref,
+                entity(0xFE),
+            ),
             CompanionExpression::Unrestricted,
         )
         .expect_err("invalid shared-vault expression scope must fail closed");
@@ -1104,7 +1151,7 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let neutral_id = entity(0x51);
     let personal_id = entity(0x52);
     let shared_id = entity(0x53);
-    let neutral_persona = entity(0x61);
+    let neutral_source = entity(0x61);
     let personal_person = entity(0x62);
     let shared_source = entity(0x63);
     let shared_target = entity(0x64);
@@ -1112,16 +1159,18 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let personal_scope = CompanionScope::personal(personal_person);
     let shared_scope = CompanionScope::shared_vault(9);
 
-    let neutral = CompanionRecord::persona(
+    let neutral = CompanionRecord::relationship(
         neutral_scope.clone(),
-        neutral_persona,
+        neutral_source,
+        entity(0xFE),
         Value::from("neutral @Oneiron"),
         provenance(0xD1),
         crate::federation::Sensitivity::Public,
     );
-    let personal = CompanionRecord::persona(
+    let personal = CompanionRecord::relationship(
         personal_scope.clone(),
-        neutral_persona,
+        neutral_source,
+        entity(0xFE),
         Value::Map(vec![(
             Value::from("note"),
             Value::from("private-person-note"),
@@ -1313,14 +1362,14 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
         },
     );
     assert_eq!(export.len(), 1);
-    let exported = export.personas()[0].record();
+    let exported = export.relationships()[0].record();
     assert_eq!(exported.key(), neutral_created.key());
     assert_eq!(exported.value, neutral_created.value);
     assert_eq!(exported.provenance, neutral_created.provenance);
     assert_eq!(exported.lifecycle, ClaimLifecycleStatus::Active);
     assert_eq!(exported.sensitivity, crate::federation::Sensitivity::Public);
     assert_eq!(
-        export.personas()[0].expression(),
+        export.relationships()[0].expression(),
         Some(CompanionExpression::Warm)
     );
 
@@ -1393,9 +1442,9 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     );
     assert!(
         register
-            .lookup_persona(&neutral_scope, neutral_persona)
+            .lookup_relationship(&neutral_scope, neutral_source, entity(0xFE))
             .is_none(),
-        "active register queries must exclude retired persona records"
+        "active register queries must exclude retired relationship records"
     );
     let duplicate_after_retire = vault
         .create_companion_record(&entity(0x59), &neutral, 16)
@@ -1474,8 +1523,8 @@ fn companion_register_api_persists_updates_exports_and_retires_privately() -> Re
     let register = vault.companion_register()?;
     assert_eq!(register.records_in_scope(&neutral_scope).count(), 1);
     let registered = register
-        .lookup_persona(&neutral_scope, neutral_persona)
-        .expect("revived persona is active");
+        .lookup_relationship(&neutral_scope, neutral_source, entity(0xFE))
+        .expect("revived relationship is active");
     for stored in [&stored_revived, registered] {
         assert_eq!(stored.key(), revived.key());
         assert_eq!(stored.value, revived.value);

@@ -338,9 +338,6 @@ fn companion_scope_to_json(scope: &CompanionScope) -> Value {
 
 fn companion_subject_to_json(subject: &CompanionSubject) -> Value {
     match subject {
-        CompanionSubject::Persona { persona_ref } => {
-            json!({ "kind": "persona", "persona_ref": persona_ref.to_hex() })
-        }
         CompanionSubject::Relationship {
             source_ref,
             target_ref,

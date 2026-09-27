@@ -80,7 +80,7 @@ pub fn resolve_entity_ref(vault: &Vault, reference: &str) -> MemoryResult<Entity
 /// [`Memory::with_verified_actor_write_txn`] so the store-truth actor
 /// check and mutation share one LMDB write transaction. The enumerated verbs
 /// are witness, claim_retract, put_structural, put_habit_checkin,
-/// put_companion_record, put_blob_artifact, append_blob_version,
+/// put_blob_artifact, append_blob_version,
 /// enqueue_consolidation, and schedule_outbound's schedule-time Gate decision
 /// followed by its durable enqueue. The claim
 /// doors (commit, claim_upsert, admit_imported_claim, seed_claims) are skipped:

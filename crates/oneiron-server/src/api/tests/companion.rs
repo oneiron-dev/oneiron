@@ -800,17 +800,23 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         "value": { "source": "settings" }
     });
     let neutral_record = json!({
-        "kind": "persona",
+        "kind": "relationship",
         "scope": { "kind": "neutral" },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
+        "subject": {
+            "kind": "relationship",
+            "relationship_ref": { "source_ref": source_ref, "target_ref": target_ref }
+        },
         "value": { "style": "neutral @Oneiron" },
         "provenance": provenance.clone(),
         "sensitivity": "public"
     });
     let personal_record = json!({
-        "kind": "persona",
+        "kind": "relationship",
         "scope": { "kind": "personal", "person_ref": person_ref },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
+        "subject": {
+            "kind": "relationship",
+            "relationship_ref": { "source_ref": person_ref, "target_ref": persona_ref }
+        },
         "value": { "note": "private per-person companion note" },
         "provenance": provenance.clone(),
         "sensitivity": "restricted"
@@ -870,6 +876,70 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
         assert_eq!(body["id"], Value::from(id.clone()));
         assert_eq!(body["record"]["lifecycle"], Value::from("active"));
     }
+
+    let persona_record = json!({
+        "kind": "persona",
+        "scope": { "kind": "personal", "person_ref": person_ref },
+        "subject": { "kind": "persona" },
+        "value": { "style": "warm" },
+        "provenance": provenance.clone(),
+        "sensitivity": "restricted"
+    });
+    let (status, body) = route_json(
+        server.clone(),
+        core_request(
+            "POST",
+            "/v1/companion/register/records",
+            "companion:register:write",
+            Some(&json!({
+                "id": seeded_test_entity_id(0x1219_0012).to_hex(),
+                "record": persona_record.clone()
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("record.kind")
+    );
+
+    let persona_update_path = format!("/v1/companion/register/records/{personal_id}");
+    let (status, body) = route_json(
+        server.clone(),
+        core_request(
+            "POST",
+            &persona_update_path,
+            "companion:register:write",
+            Some(&json!({ "record": persona_record })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
+    assert_eq!(
+        error_envelope(&body)["details"]["field"],
+        Value::from("record.kind")
+    );
+
+    let mut mixed_subject_record = neutral_record.clone();
+    mixed_subject_record["subject"]["persona_ref"] = Value::from(persona_ref.clone());
+    let (status, body) = route_json(
+        server.clone(),
+        core_request(
+            "POST",
+            "/v1/companion/register/records",
+            "companion:register:write",
+            Some(&json!({
+                "id": seeded_test_entity_id(0x1219_0014).to_hex(),
+                "record": mixed_subject_record
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&body, "BAD_REQUEST");
 
     // The retired export-classification spellings are not sensitivity rungs:
     // they fail closed on the sensitivity door, never resolving to a rung.
@@ -1003,9 +1073,12 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     );
 
     let updated_record = json!({
-        "kind": "persona",
+        "kind": "relationship",
         "scope": { "kind": "personal", "person_ref": person_ref },
-        "subject": { "kind": "persona", "persona_ref": persona_ref },
+        "subject": {
+            "kind": "relationship",
+            "relationship_ref": { "source_ref": person_ref, "target_ref": persona_ref }
+        },
         "value": { "note": "updated private per-person companion note" },
         "provenance": body["record"]["provenance"].clone(),
         "sensitivity": "restricted"
@@ -1068,9 +1141,12 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     let reactivate_request = json!({
         "learned_at": 37_u64,
         "record": {
-            "kind": "persona",
+            "kind": "relationship",
             "scope": { "kind": "personal", "person_ref": person_ref },
-            "subject": { "kind": "persona", "persona_ref": persona_ref },
+            "subject": {
+                "kind": "relationship",
+                "relationship_ref": { "source_ref": person_ref, "target_ref": persona_ref }
+            },
             "value": { "note": "reactivated private note" },
             "provenance": body["record"]["provenance"].clone(),
             "sensitivity": "restricted"
@@ -1110,6 +1186,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
     );
 
     let ending_id = seeded_test_entity_id(0x1219_0011).to_hex();
+    let ending_target_ref = seeded_test_entity_id(0x1219_0015).to_hex();
     let ending_private_note = "route-private-relationship-note-one1488";
     let ending_record = json!({
         "kind": "relationship",
@@ -1118,7 +1195,7 @@ async fn v1_companion_register_api_create_update_read_and_retire_typed_envelopes
             "kind": "relationship",
             "relationship_ref": {
                 "source_ref": person_ref,
-                "target_ref": persona_ref
+                "target_ref": ending_target_ref
             }
         },
         "value": { "note": ending_private_note },

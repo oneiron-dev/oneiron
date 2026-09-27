@@ -183,9 +183,10 @@ fn companion_record_body_in_scope_with_lifecycle(
     sensitivity: Sensitivity,
     lifecycle: ClaimLifecycleStatus,
 ) -> Vec<u8> {
-    let mut record = CompanionRecord::persona(
+    let mut record = CompanionRecord::relationship(
         scope,
         persona_ref,
+        EntityId::from_bytes_unchecked([0xFE; 16]),
         Value::from("private companion tuning"),
         CompanionProvenance::new(
             entity_id(0xB8),

@@ -169,7 +169,6 @@ CompanionExpression
 CompanionExpressionRegister
 CompanionProvenance
 CompanionRecord
-CompanionRecordInput
 CompanionRecordKind
 CompanionScope
 CompanionScopeResolutionSource

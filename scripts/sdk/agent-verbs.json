@@ -726,16 +726,6 @@
       "context": "definition"
     },
     {
-      "name": "put_companion_record",
-      "uniffi": {
-        "args": {
-          "input": "CompanionRecordInput"
-        },
-        "output": "EntityRefReceipt"
-      },
-      "context": "definition"
-    },
-    {
       "name": "admit_imported_claim",
       "uniffi": {
         "args": {

@@ -239,12 +239,25 @@ impl Vault {
         baseline: &JsonValue,
         at: u64,
     ) -> Result<()> {
-        object(baseline)?;
         let mut txn = self.store.env.write_txn()?;
+        self.put_persona_baseline_in_txn(&mut txn, person, baseline, at)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Transaction-composable baseline write for an already-authorized caller.
+    pub(crate) fn put_persona_baseline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        person: &EntityId,
+        baseline: &JsonValue,
+        at: u64,
+    ) -> Result<()> {
+        object(baseline)?;
         let raw = self
             .store
             .entities
-            .get(&txn, person.as_bytes())?
+            .get(&*txn, person.as_bytes())?
             .ok_or(Error::EntityNotFound)?
             .into_owned();
         let header = EntityMetadataHeader::parse(&raw)
@@ -273,9 +286,42 @@ impl Vault {
                 at,
                 &bytes,
             )
-            .apply(&mut txn)?;
-        txn.commit()?;
+            .apply(txn)?;
         Ok(())
+    }
+
+    /// Seeds a PERSON baseline once without replacing a later identity edit.
+    pub(crate) fn ensure_persona_baseline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        person: &EntityId,
+        baseline: &JsonValue,
+        at: u64,
+    ) -> Result<()> {
+        let raw = self
+            .store
+            .entities
+            .get(&*txn, person.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("persona PERSON header"))?;
+        if header.entity_type != ENTITY_TYPE_PERSON {
+            return Err(Error::InvalidEntityType(header.entity_type));
+        }
+        let fields = body_fields(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if let Some((_, existing)) = fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(BASELINE_KEY))
+        {
+            let existing: BaselineWire = from_value(existing)?;
+            if existing.schema_version != 1 || existing.baseline != *baseline {
+                return Err(invalid_companion(
+                    "PERSON baseline is already bound to a different identity",
+                ));
+            }
+            return Ok(());
+        }
+        self.put_persona_baseline_in_txn(txn, person, baseline, at)
     }
 
     /// Creates or updates an explicit scenario mask belonging to this PERSON.
