@@ -8594,10 +8594,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/compaction.rs",
+     "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_run/storage/compaction/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 1
      }
     },
@@ -9948,12 +9966,23 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "mod": 1,
       "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/driver/integration.rs",
+     "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -9973,12 +10002,12 @@
       "MarginLaw",
       "SwapPlan"
      ],
-     "path": "src/compaction/driver.rs",
+     "path": "src/compaction/driver/mod.rs",
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 23,
+      "fn": 22,
       "struct": 8,
       "trait": 1
      }
@@ -9993,13 +10022,13 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 4,
-      "crate-vis": 5,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutputAffordance",
@@ -10007,14 +10036,16 @@
       "OutputContextView",
       "OutputDecayPolicy",
       "OutputRef",
-      "OutputTier"
+      "OutputTier",
+      "OutputWorkingContext"
      ],
      "path": "src/compaction/output.rs",
      "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
-      "struct": 4
+      "fn": 15,
+      "struct": 5
      }
     },
     {
@@ -10034,7 +10065,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/compaction/tests/driver_regressions.rs",
@@ -15737,18 +15768,18 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 3,
-      "fn": 5,
+      "fn": 7,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -15778,7 +15809,8 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
      "surface": {
-      "fn": 1
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -15788,7 +15820,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -15797,6 +15829,14 @@
      "notable": [],
      "path": "src/engine_executor/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/output_decay.rs",
+     "purpose": "Model-facing output decay and successful native compaction on the real REPL path",
      "surface": {}
     },
     {
@@ -35917,7 +35957,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35994,7 +36034,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36232,7 +36272,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36990,8 +37030,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2193,
-   "test_files": 745
+   "source_files": 2195,
+   "test_files": 747
   },
   "oneiron-android": {
    "files": [
