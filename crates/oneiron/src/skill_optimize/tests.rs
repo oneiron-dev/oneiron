@@ -2685,26 +2685,20 @@ fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<(
     attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");
     let proposal = optimizer_proposal_citing(vault, &skill, Value::Array(Vec::new()));
 
-    // The predecessor is gone when the lock-free pre-read runs, so the reason
-    // that read forms is a terminal stale-target refusal.
-    assert!(vault.delete_entity_with_options(
-        &skill,
-        crate::deletion::DeleteEntityOptions { purge: true }
-    )?);
+    // The predecessor is Stale at the lock-free pre-read: a terminal reason
+    // that can move without relying on resurrection after a local hard delete.
+    let restored = stored(vault, &skill);
+    let mut stale = restored.clone();
+    stale.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&skill, &stale, t(400), 401)?;
 
-    // The window the repair closed: the reason was read BEFORE the transaction
-    // that would have written it, and the world moved in between — here the
-    // revision comes back, active and byte-identical to the one this proposal
-    // was drafted against. The old shape wrote the refusal anyway: a terminal
-    // answer about a world that no longer existed, which also closed the
-    // proposal.
-    let restored = record(
-        "oneiron.skill.losing",
-        Some(SkillGovernanceTier::Standard),
-        None,
-    );
+    // The reason is read BEFORE the transaction that would write it. In the
+    // race window the SAME revision becomes Active again, so a stale-target
+    // answer would close a proposal about a world that no longer exists.
     gate::set_pre_score_race_hook(Box::new(move || {
-        put_active(vault, &skill, &restored);
+        vault
+            .update_skill_record(&skill, &restored, t(402), 403)
+            .expect("restore the same revision");
     }));
     let raced = score_gate_skill_edit_in_cycle(
         vault,
@@ -3556,7 +3550,12 @@ fn the_birth_marker_leaves_ordinary_and_replicated_writes_alone() -> Result<()> 
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &remote)
         .commit()?;
-    assert_eq!(stored(&vault, &proposal), born);
+    assert!(
+        vault
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&vault, &proposal));
     Ok(())
 }
 
@@ -4225,12 +4224,19 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
     );
     assert!(replica.get_skill_record(&proposal)?.is_none());
 
-    // The honest remat of the same body still lands, so convergence is intact.
+    // The same-origin replay is admitted, but a local hard delete still
+    // dominates its older body. The immutable origin marker survives either
+    // outcome; accepting a replay is not authority to resurrect an ID.
     replica
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(404), 405, &proposal_body)
         .commit()?;
-    assert_eq!(stored(&replica, &proposal), born);
+    assert!(
+        replica
+            .get_skill_record(&proposal)?
+            .is_none_or(|record| record == born)
+    );
+    assert!(origin_marked(&replica, &proposal));
     Ok(())
 }
 

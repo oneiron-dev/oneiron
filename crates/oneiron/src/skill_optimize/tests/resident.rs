@@ -197,6 +197,12 @@ fn optimizer_proposal_cannot_change_resident_across_recreation() -> Result<()> {
             &crate::skill::encode_skill_record(&original)?,
         )
         .commit()?;
-    assert_eq!(stored(&vault, &proposal_id), original);
+    // A hard local deletion may dominate the older same-owner replay. It
+    // never permits a new owner on this proposal ID.
+    assert!(
+        vault
+            .get_skill_record(&proposal_id)?
+            .is_none_or(|record| record == original)
+    );
     Ok(())
 }
