@@ -34,6 +34,51 @@ fn standing_outbound_grant_codec_round_trips_active_grant() -> Result<()> {
 }
 
 #[test]
+fn artifact_publish_grant_codec_round_trips_without_broad_send_authority() -> Result<()> {
+    let grant = StandingOutboundGrant::from_grant_mint_intent(
+        &intent(GrantMintIntentScope::ArtifactPublish {
+            artifact: "site".to_owned(),
+        }),
+        10,
+        vec![0xA5; 32],
+        [0xB6; 32],
+    )?;
+    let encoded = encode_standing_outbound_grant_body(&grant)?;
+    let decoded = decode_standing_outbound_grant_body(&encoded)?;
+    assert_eq!(decoded, grant);
+    assert!(
+        decoded
+            .scope
+            .matches_effect("publish", "artifact", Some("site"), None)
+    );
+    assert!(
+        !decoded
+            .scope
+            .matches_effect("publish", "artifact", Some("other"), None)
+    );
+    assert!(
+        !decoded
+            .scope
+            .matches_effect("send", "email", Some("site"), None)
+    );
+    for broad in [
+        StandingOutboundGrantScope::VerbClass {
+            verb_class: "publish".to_owned(),
+        },
+        StandingOutboundGrantScope::Contact {
+            contact_ref: "site".to_owned(),
+        },
+        StandingOutboundGrantScope::BriefVerbClass {
+            brief_ref: "site".to_owned(),
+            verb_class: "publish".to_owned(),
+        },
+    ] {
+        assert!(!broad.matches_effect("publish", "artifact", Some("site"), Some("site")));
+    }
+    Ok(())
+}
+
+#[test]
 fn scoped_mcp_grant_codec_round_trips_all_payload_axes() -> Result<()> {
     let grant = StandingOutboundGrant {
         authority_scope: crate::federation::scope_codec::effect_preset(),
