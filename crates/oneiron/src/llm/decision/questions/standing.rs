@@ -29,6 +29,18 @@ pub struct StandingAnswer {
 struct Source {
     kind: u8,
     claim: Option<ClaimBody>,
+    position: (EntityId, EntityId, EntityId),
+    sensitivity: u8,
+}
+
+fn singleton(axis: &crate::federation::ScopeAxis<crate::federation::ScopeId>) -> Result<EntityId> {
+    let crate::federation::ScopeAxis::Some(ids) = axis else {
+        return Err(invalid("unrepresentable evidence scope"));
+    };
+    if ids.len() != 1 {
+        return Err(invalid("unrepresentable evidence scope"));
+    }
+    Ok(ids.iter().next().expect("one scope member").0)
 }
 
 fn standing_record(
@@ -114,15 +126,35 @@ fn sources_in_txn(
             hasher.update(&(frontier.len() as u64).to_be_bytes());
             hasher.update(&frontier);
         }
-        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?
+            .ok_or(Error::EntityNotFound)?;
+        let position = (
+            singleton(&scope.facets)?,
+            singleton(&scope.audience)?,
+            singleton(&scope.worlds)?,
+        );
+        let sensitivity = match scope.sensitivity {
+            crate::federation::SensitivityCeiling::AtMost(level) => match level {
+                crate::federation::Sensitivity::Public => 0,
+                crate::federation::Sensitivity::Private => 1,
+                crate::federation::Sensitivity::Sensitive => 2,
+                crate::federation::Sensitivity::Restricted => 3,
+            },
+            crate::federation::SensitivityCeiling::Bottom => {
+                return Err(invalid("unrepresentable evidence sensitivity"));
+            }
+        };
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         let claim = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-            Some(crate::claim::decode_claim_body(&body, true)?)
+            Some(crate::claim::decode_claim_body(body, true)?)
         } else {
             None
         };
         sources.push(Source {
             kind: header.entity_type,
             claim,
+            position,
+            sensitivity,
         });
     }
     Ok((*hasher.finalize().as_bytes(), sources))
@@ -337,8 +369,20 @@ fn constrain_sources(
     let mut world = None;
     let mut rel = None;
     let mut scope: Vec<(Value, Value)> = Vec::new();
+    let mut sensitivity = 2_u8;
     let principal_hex = principal.to_hex();
     for source in sources {
+        sensitivity = sensitivity.min(source.sensitivity);
+        for (slot, id) in [
+            (&mut facet, source.position.0),
+            (&mut project, source.position.1),
+            (&mut world, source.position.2),
+        ] {
+            if slot.is_some_and(|existing| existing != id) {
+                return Err(invalid("incompatible evidence scope"));
+            }
+            *slot = Some(id);
+        }
         let Some(body) = &source.claim else {
             taint = crate::dreamer_consolidation::source_meet(taint, ClaimSource::Imported);
             continue;
@@ -349,19 +393,6 @@ fn constrain_sources(
         );
         if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
             taint = crate::dreamer_consolidation::source_meet(taint, inherited);
-        }
-        for (slot, id) in [
-            (&mut facet, body.scope_facet),
-            (&mut project, body.scope_project),
-            (
-                &mut world,
-                body.world.unwrap_or(crate::claim::base_world_id()),
-            ),
-        ] {
-            if slot.is_some_and(|existing| existing != id) {
-                return Err(invalid("incompatible evidence scope"));
-            }
-            *slot = Some(id);
         }
         if let Some(id) = body.rel {
             if rel.is_some_and(|existing| existing != id) {
@@ -376,7 +407,8 @@ fn constrain_sources(
             for (key, value) in entries {
                 match key.as_str() {
                     Some(
-                        "evidence_taint" | "facet" | "facet_ref" | "facetRef" | "scopeProjectId",
+                        "evidence_taint" | "facet" | "facet_ref" | "facetRef" | "scopeProjectId"
+                        | "sensitivity",
                     ) => continue,
                     Some("typed_question_principal")
                         if value.as_str() == Some(principal_hex.as_str()) =>
@@ -397,6 +429,9 @@ fn constrain_sources(
                 }
             }
         }
+    }
+    if sensitivity < 2 {
+        scope.push((Value::from("sensitivity"), Value::from(sensitivity)));
     }
     if let Some(id) = facet {
         scope.push((Value::from("facet"), Value::Binary(id.as_bytes().to_vec())));

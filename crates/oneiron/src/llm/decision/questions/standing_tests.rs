@@ -383,10 +383,20 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
     let owner = EntityId::now();
     let unit = EntityId::now();
     let evidence = EntityId::now();
-    for id in [owner, unit, evidence] {
+    for id in [owner, unit] {
         person(&vault, id)?;
     }
     grant(&vault, owner)?;
+    let mut fact = crate::claim::ClaimBody::new(
+        "review.source",
+        crate::claim::ClaimSubject::Entity(unit),
+        rmpv::Value::from("evidence"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Approved,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    fact.source = Some(crate::claim::ClaimSource::Imported);
+    vault.put_claim(&evidence, &fact, TimeRange { start: 1, end: 1 }, 1)?;
     let actor = WriteActor::new(owner, EdgeActorClass::Human);
     let id = create_question(&vault, owner, definition(unit, "Answer?"), 10)?
         .definition
@@ -397,6 +407,17 @@ fn removed_evidence_and_landed_claim_cannot_be_replayed_from_cache() -> TestResu
     answer.source_frontier =
         standing_source_frontier(&vault, owner, id, 1, actor, unit, &answer.evidence)?;
     let stored = backfill_standing_answer(&vault, owner, id, 1, actor, answer.clone(), 11)?;
+    assert_eq!(
+        vault.get_claim(&stored.claim)?.expect("landed").scope_facet,
+        crate::claim::substrate_facet_id(unit),
+    );
+    let incompatible = EntityId::now();
+    person(&vault, incompatible)?;
+    let mut conflicting = input(unit);
+    conflicting.evidence.push(incompatible);
+    conflicting.source_frontier =
+        standing_source_frontier(&vault, owner, id, 1, actor, unit, &conflicting.evidence)?;
+    assert!(backfill_standing_answer(&vault, owner, id, 1, actor, conflicting, 11).is_err());
     assert_eq!(
         backfill_standing_answer(&vault, owner, id, 1, actor, answer.clone(), 12)?.claim,
         stored.claim
