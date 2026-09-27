@@ -5,7 +5,6 @@ use rmpv::Value;
 
 use crate::actor_claims::{actor_archive_references, is_actor_claim_predicate};
 use crate::dreamer_consolidation::decode_consolidation_evidence;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 
@@ -20,7 +19,7 @@ pub(crate) fn has_live_support_in_txn(
     txn: &RoTxn<'_>,
     body: &ClaimBody,
 ) -> Result<bool> {
-    let refs: Vec<EntityId> = if is_actor_claim_predicate(&body.predicate) {
+    let (refs, turns_only) = if is_actor_claim_predicate(&body.predicate) {
         let chat_lane = body
             .evidence
             .as_ref()
@@ -38,18 +37,29 @@ pub(crate) fn has_live_support_in_txn(
         let Some(Some((_, turns))) = actor_archive_references(body).map(|refs| refs.chat) else {
             return Ok(false);
         };
-        turns
+        (turns, true)
     } else if let Some(evidence) = &body.evidence {
         match decode_consolidation_evidence(evidence) {
-            Ok(Some(envelope)) => envelope.refs,
-            Ok(None) => return Ok(true),
+            Ok(Some(envelope)) => (envelope.refs, false),
+            Ok(None) => {
+                // A partially keyed consolidation envelope is not an ordinary
+                // opaque evidence map with no support obligation.
+                return Ok(!evidence.as_map().is_some_and(|fields| {
+                    fields.iter().any(|(key, _)| {
+                        matches!(key.as_str(), Some("refs" | "chain" | "source_meet"))
+                    })
+                }));
+            }
             Err(_) => return Ok(false),
         }
     } else {
         return Ok(true);
     };
     for id in refs {
-        if crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live() {
+        if let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+            crate::vault::live_entity_row_in_txn(store, txn, &id)?
+            && (!turns_only || entity_type == crate::registry::ENTITY_TYPE_TURN)
+        {
             return Ok(true);
         }
     }

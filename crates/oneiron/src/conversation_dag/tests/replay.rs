@@ -272,7 +272,15 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     );
     assert!(vault.get(&sentinel).unwrap().is_none());
     assert_eq!(vault.get(&root).unwrap().as_ref(), Some(&original));
-    vault.batch().delete(&root).commit().unwrap();
+    assert_eq!(
+        vault.batch().delete(&root).commit().unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag,
+    );
+    // The raw door is closed; this mechanical fixture still proves the
+    // persistent append pin after a reason-aware hard purge.
+    vault
+        .delete_room_record_unchecked_for_replay_test(&root, crate::DeleteReason::UserHardDelete)
+        .unwrap();
     drop(vault);
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
     assert_eq!(
@@ -318,7 +326,15 @@ fn adoption_pins_an_imported_root_without_freezing_unadopted_turns() {
         )
         .unwrap();
     assert!(vault.migrate_conversation_dag(&conv).unwrap());
-    vault.batch().delete(&root).commit().unwrap();
+    assert_eq!(
+        vault.batch().delete(&root).commit().unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag,
+    );
+    // The raw door is closed; this mechanical fixture still proves the
+    // persistent append pin after a reason-aware hard purge.
+    vault
+        .delete_room_record_unchecked_for_replay_test(&root, crate::DeleteReason::UserHardDelete)
+        .unwrap();
     assert_eq!(
         vault
             .put_entity(&root, ENTITY_TYPE_TURN, time(1), 1, &body("recreated"))

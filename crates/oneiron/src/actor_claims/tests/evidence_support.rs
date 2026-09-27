@@ -3,11 +3,12 @@ use super::*;
 use crate::authority::HostSlipIssuer;
 use crate::claim::ScopedReadActorKey;
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
+use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 fn replicate_with_text(vault: &Vault, body: &ClaimBody, text: &str) -> Result<EntityId> {
     let id = EntityId::now();
-    vault
+    let mut batch = vault
         .batch()
         .put_replicated(
             &id,
@@ -16,8 +17,11 @@ fn replicate_with_text(vault: &Vault, body: &ClaimBody, text: &str) -> Result<En
             50,
             &crate::claim::encode_claim_body(body)?,
         )
-        .text(&id, &[("body", text)])
-        .commit()?;
+        .text(&id, &[("body", text)]);
+    if let ClaimSubject::Entity(subject) = body.subject {
+        batch = batch.edge(&id, EdgeKind::ClaimOf, &subject, 1.0);
+    }
+    batch.commit()?;
     Ok(id)
 }
 
@@ -40,7 +44,7 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
     let ActorClaimLane::Chat { session, turns } = &evidence.lane else {
         unreachable!();
     };
-    assert!(turns.len() >= 1);
+    assert!(!turns.is_empty());
     let erased = turns[0];
     let live = turns[1];
     let single_evidence = ActorClaimEvidence::chat(*session, vec![erased], 32)?;
@@ -101,6 +105,37 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
     assert!(vault.get_claim(&late_mixed)?.is_some());
     assert!(read.get(&late_single)?.is_none());
     assert!(read.get(&late_mixed)?.is_some());
+    let facade = vault.memory(actor, EdgeActorClass::Human);
+    assert!(
+        facade
+            .get_entity(&late_single.to_hex())
+            .expect("read claim")
+            .is_none()
+    );
+    assert!(
+        facade
+            .get_entity(&late_mixed.to_hex())
+            .expect("read claim")
+            .is_some()
+    );
+    let listed = facade
+        .claim_list(&crate::memory::ClaimListFilter {
+            subject_ref: Some(actor.to_hex()),
+            predicate: None,
+            lifecycle: Some("active".into()),
+            limit: 100,
+        })
+        .expect("list claims");
+    assert!(
+        listed
+            .iter()
+            .all(|view| view.claim_ref != late_single.to_hex())
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|view| view.claim_ref == late_mixed.to_hex())
+    );
     assert_eq!(skill_fit_for(&vault, &actor, &skill)?, None);
     assert!(vault.get_claim(&fit)?.is_some());
 
@@ -148,5 +183,96 @@ fn erased_evidence_arriving_after_tombstone_is_suppressed_but_live_support_survi
     let hits = vault.query().search_text("othererasedneedle", 10).run()?;
     assert!(!hits.iter().any(|hit| hit.id == unsupported));
     assert!(hits.iter().any(|hit| hit.id == corroborated));
+    Ok(())
+}
+
+#[test]
+fn receiving_room_replica_hides_claim_arriving_after_real_tombstone() -> Result<()> {
+    let (_source_dir, source) = temp_vault();
+    let person = put_actor(&source)?;
+    let byline = crate::WriteActor::new(person, EdgeActorClass::Human);
+    crate::conversation_dag::fixtures::grant(&source, byline, true);
+    let room = EntityId::now();
+    source.create_conversation(
+        room,
+        &crate::conversation::ConversationBody {
+            member_ids: vec![person],
+            ..Default::default()
+        },
+        byline,
+        1,
+    )?;
+    let turn = source
+        .append_dag_record(&crate::conversation_dag::fixtures::input(
+            room, None, true, byline,
+        ))?
+        .id;
+    let session = source.spawn_dag_sub_session(&turn, byline)?;
+    let claim = write_actor_claim(
+        &source,
+        ActorClaimRow::Lesson {
+            actor: person,
+            text: "received sole evidence".into(),
+        },
+        &ActorClaimEvidence::chat(session, vec![turn], 25)?,
+    )?;
+
+    let (_peer_dir, peer) = temp_vault();
+    for id in [person, room, turn, session] {
+        let raw = source.get_raw_unsealed(&id)?.unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                header.entity_type,
+                t(header.occurred_start),
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()?;
+    }
+    peer.batch().edge_checked(&turn, &room, 1.0).commit()?;
+    let request_id = *uuid::Uuid::now_v7().as_bytes();
+    peer.apply_replayed_tombstone(
+        &turn,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::GdprDelete,
+            deleted_at: 30,
+            request_id,
+        }
+        .encode(),
+    )?;
+    assert!(peer.get(&turn)?.is_none());
+    let late = replicate_with_text(
+        &peer,
+        &source.get_claim(&claim)?.unwrap(),
+        "received sole evidence",
+    )?;
+    assert!(peer.get_claim(&late)?.is_some(), "history is retained");
+    let issuer = HostSlipIssuer::from_secret(b"receiving room read")?;
+    peer.ensure_host_root_slip(&issuer)?;
+    let proof = peer.verified_host_root_slip(&issuer)?;
+    let read = peer.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    assert!(read.get(&late)?.is_none());
+    assert!(
+        !peer
+            .query()
+            .search_text("received sole evidence", 10)
+            .run()?
+            .iter()
+            .any(|hit| hit.id == late)
+    );
+    assert!(
+        peer.memory(person, EdgeActorClass::Human)
+            .claim_list(&crate::memory::ClaimListFilter {
+                subject_ref: Some(person.to_hex()),
+                predicate: None,
+                lifecycle: Some("active".into()),
+                limit: 10,
+            })
+            .expect("list peer claims")
+            .iter()
+            .all(|view| view.claim_ref != late.to_hex())
+    );
     Ok(())
 }

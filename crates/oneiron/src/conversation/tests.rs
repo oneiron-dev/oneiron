@@ -909,7 +909,9 @@ fn scope_summary_and_merge_header_require_every_covered_membership_window() {
     for id in [summary, claim, record] {
         assert!(!audience_admits(&vault, id, bob).unwrap());
     }
-    vault.batch().delete(&before).commit().unwrap();
+    vault
+        .delete_room_record(room, before, actor, crate::DeleteReason::UserHardDelete)
+        .unwrap();
     for id in [summary, claim, record] {
         assert!(!audience_admits(&vault, id, actor.entity_ref()).unwrap());
     }

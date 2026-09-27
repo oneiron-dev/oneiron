@@ -342,6 +342,15 @@ fn conflicted_roots_never_restore_local_creator_or_initial_role_powers() {
     );
     assert_eq!(vault.get(&record).unwrap(), saved);
     assert!(vault.conversation_body(room).unwrap().roles.is_empty());
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&txn, &erasure_key(room, bob.entity_ref()))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
@@ -409,8 +418,8 @@ fn room_soft_shell_escalates_through_authorized_gdpr_and_keeps_dag_usable() {
         .erase_room_person(room, bob.entity_ref(), owner)
         .unwrap();
     assert_eq!(erased.len(), 1);
-    assert_eq!(erased[0].receipt_id.is_some(), true);
-    assert_eq!(erased[0].sweep_key.is_some(), true);
+    assert!(erased[0].receipt_id.is_some());
+    assert!(erased[0].sweep_key.is_some());
     assert!(vault.get_raw_unsealed(&first).unwrap().is_none());
     assert_eq!(
         vault
@@ -477,8 +486,8 @@ fn deleting_root_middle_or_head_keeps_live_trunk_and_append() {
             remaining
         );
         vault.rebuild_conversation_canonical(&room).unwrap();
-        vault.move_head(&room, remaining[0]).unwrap();
-        vault.move_head(&room, *remaining.last().unwrap()).unwrap();
+        vault.move_head(&room, &remaining[0]).unwrap();
+        vault.move_head(&room, remaining.last().unwrap()).unwrap();
         let appended = vault
             .append_dag_record(&record(&vault, room, owner, 6))
             .unwrap()
@@ -542,5 +551,155 @@ fn imported_turn_has_unknown_person_author_but_owner_can_policy_delete_it() {
             .unwrap()
             .receipt_id
             .is_some()
+    );
+}
+
+#[test]
+fn replayed_soft_then_hard_room_tombstone_keeps_surviving_line() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let root = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    let child = vault
+        .append_dag_record(&record(&vault, room, owner, 4))
+        .unwrap()
+        .id;
+    let request = *uuid::Uuid::now_v7().as_bytes();
+    let soft = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 5,
+        request_id: request,
+    };
+    // Observer B runs after the window tombstone has become visibility truth.
+    vault
+        .with_write_txn(|txn| {
+            crate::ports::TombstoneStore::port_tombstone_create(&vault, txn, &root, soft)
+        })
+        .unwrap();
+    vault
+        .apply_replayed_tombstone(&root, &soft.encode())
+        .unwrap();
+    assert!(vault.is_deleted_shell(&root).unwrap());
+    assert_eq!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line,
+        vec![child]
+    );
+    vault
+        .apply_replayed_tombstone(
+            &root,
+            &crate::deletion::TombstoneValueV2 {
+                reason: crate::deletion::TombstoneReason::GdprDelete,
+                deleted_at: 6,
+                request_id: request,
+            }
+            .encode(),
+        )
+        .unwrap();
+    assert!(vault.get_raw_unsealed(&root).unwrap().is_none());
+    assert_eq!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line,
+        vec![child]
+    );
+    assert!(
+        vault
+            .resolve_dag_scope(&crate::conversation_dag::ScopeSelector {
+                conversation: room,
+                session: None,
+                path: crate::conversation_dag::ScopePath::Canonical,
+                include_forks: false,
+            })
+            .unwrap()
+            .records
+            == [child]
+    );
+}
+
+#[test]
+fn room_admin_can_policy_hard_delete_an_authors_soft_shell() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    vault
+        .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
+        .unwrap();
+    let root = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    vault
+        .delete_room_record(room, root, owner, crate::DeleteReason::UserDelete)
+        .unwrap();
+    let outcome = vault
+        .delete_room_record(room, root, bob, crate::DeleteReason::PolicyDelete)
+        .unwrap();
+    assert!(outcome.receipt_id.is_some());
+    assert!(vault.get_raw_unsealed(&root).unwrap().is_none());
+    assert!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line
+            .is_empty()
+    );
+}
+
+#[test]
+fn erasure_pages_over_mixed_authors_and_soft_shells_without_skipping() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    let mut theirs = Vec::new();
+    let mut retained = Vec::new();
+    for at in 3..10 {
+        let writer = if at % 2 == 0 { bob } else { owner };
+        let id = vault
+            .append_dag_record(&record(&vault, room, writer, at))
+            .unwrap()
+            .id;
+        if writer == bob {
+            theirs.push(id);
+        } else {
+            retained.push(id);
+        }
+    }
+    vault
+        .delete_room_record(room, theirs[0], bob, crate::DeleteReason::UserDelete)
+        .unwrap();
+    let ledger = vault.membership_ledger(room).unwrap();
+    let outcomes = vault
+        .erase_room_person(room, bob.entity_ref(), owner)
+        .unwrap();
+    assert_eq!(outcomes.len(), theirs.len());
+    assert!(outcomes.iter().all(|outcome| outcome.receipt_id.is_some()));
+    for id in theirs {
+        assert!(vault.get(&id).unwrap().is_none());
+    }
+    for id in &retained {
+        assert!(vault.get(id).unwrap().is_some());
+    }
+    assert_eq!(
+        vault
+            .main_line(&room, Default::default())
+            .unwrap()
+            .main_line,
+        retained
+    );
+    assert_eq!(vault.membership_ledger(room).unwrap(), ledger);
+    assert!(
+        vault
+            .erase_room_person(room, bob.entity_ref(), owner)
+            .unwrap()
+            .is_empty()
     );
 }

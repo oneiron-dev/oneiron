@@ -429,7 +429,7 @@ fn room_turn_generic_delete_and_membership_removal_are_refused_after_edge_loss()
             crate::registry::ENTITY_TYPE_CONVERSATION,
             test_time_range(1, 1),
             1,
-            b"room",
+            &rmp_serde::to_vec_named(&serde_json::json!({})).expect("room body"),
         )
         .put(&turn, ENTITY_TYPE_TURN, test_time_range(1, 1), 1, &body)
         .edge(&turn, EdgeKind::ChildOf, &room, 1.0)

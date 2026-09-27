@@ -211,12 +211,20 @@ impl Memory<'_> {
             if views.len() >= filter.limit {
                 break;
             }
-            let Some(body) = self.vault.get_claim(&id)? else {
-                continue;
+            // Resolve body and evidence in one snapshot, then release the
+            // LMDB reader slot before claim_view opens its short-ref read.
+            let body = {
+                let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+                let Some(body) = self.vault.get_claim_in_txn(&txn, &id)? else {
+                    continue;
+                };
+                if !crate::claim::claim_generic_readable(&body)
+                    || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+                {
+                    continue;
+                }
+                body
             };
-            if !crate::claim::claim_generic_readable(&body) {
-                continue;
-            }
             if let Some(predicate) = &filter.predicate
                 && body.predicate != *predicate
             {
@@ -409,7 +417,9 @@ impl Memory<'_> {
             else {
                 return Ok(None);
             };
-            if !crate::claim::claim_generic_readable(&body) {
+            if !crate::claim::claim_generic_readable(&body)
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+            {
                 return Ok(None);
             }
         }

@@ -303,10 +303,9 @@ pub(crate) fn room_turn_owner(
             .entities()
             .get(txn, target.as_bytes())?
             .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_CONVERSATION))
+            && owner.replace(target).is_some()
         {
-            if owner.replace(target).is_some() {
-                return Err(Error::CorruptedIndex("multiple room TURN owners"));
-            }
+            return Err(Error::CorruptedIndex("multiple room TURN owners"));
         }
     }
     Ok(owner)

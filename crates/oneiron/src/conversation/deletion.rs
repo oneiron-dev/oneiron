@@ -1,6 +1,6 @@
 //! Actor-bound room deletion and per-person erasure over the existing delete door.
 use super::*;
-use crate::conversation_dag::{actor_in_txn, conversation_of, edge_ids, require_type};
+use crate::conversation_dag::{actor_in_txn, conversation_of};
 use crate::deletion::{DeleteEntityOutcome, DeleteReason, DeletionGateContext, GatedDeletion};
 use crate::edge::EdgeKind;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
@@ -85,7 +85,7 @@ fn check_delete(
             }
         }
         DeleteReason::GdprDelete if subject.is_some() && subject == author => {
-            let role = if actor.entity_ref() == author {
+            let role = if Some(actor.entity_ref()) == author {
                 authorize(vault, txn, actor)?;
                 RoomRole::Member
             } else {

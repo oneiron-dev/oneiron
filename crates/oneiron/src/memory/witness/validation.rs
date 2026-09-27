@@ -53,7 +53,7 @@ pub(super) fn validate_existing_witness_turn(
     turn_id: &EntityId,
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
-    incoming_person: Option<EntityId>,
+    _incoming_person: Option<EntityId>,
 ) -> MemoryResult<bool> {
     let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
         return Ok(false);
@@ -64,11 +64,11 @@ pub(super) fn validate_existing_witness_turn(
             "the witnessed turn ref resolves to a non-TURN entity",
         ));
     }
-    if decode_witness_turn_person(&raw.body)? != incoming_person {
-        return Err(MemoryError::bad_request(
-            "the witnessed turn already belongs to another author",
-        ));
-    }
+    // The first writer's PERSON byline is immutable. A later witness call may
+    // append messages under a different actor (including a SYSTEM interleave)
+    // without claiming to become the author of the existing TURN. The re-put
+    // below preserves these bytes exactly; malformed stored bylines still fail.
+    decode_witness_turn_person(&raw.body)?;
     let stored_speaker = decode_witness_turn_speaker(&raw.body)?;
     if incoming_speaker.is_some_and(|incoming| incoming != stored_speaker) {
         return Err(MemoryError::bad_request(

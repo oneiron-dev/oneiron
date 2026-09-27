@@ -241,6 +241,7 @@ impl Memory<'_> {
                 return Ok(false);
             };
             Ok(claim_surfaceable(&body)
+                && crate::claim::has_live_support_in_txn(store, txn, &body)?
                 && body.world == world
                 && predicate.is_none_or(|predicate| body.predicate == predicate))
         };
@@ -664,11 +665,19 @@ impl Memory<'_> {
             self.vault
                 .entities_by_type_page(ENTITY_TYPE_CLAIM, None, SCOPE_HONESTY_SCAN_CAP)?;
         let mut worlds = BTreeSet::new();
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         for id in ids {
-            let Some(body) = self.vault.get_claim(&id)? else {
+            let Some(body) = self.vault.get_claim_in_txn(&txn, &id)? else {
                 continue;
             };
-            if !claim_surfaceable(&body) {
+            if !claim_surfaceable(&body)
+                || !crate::claim::has_live_support_in_txn(&self.vault.store, &txn, &body)?
+            {
                 continue;
             }
             if let Some(world) = body.world
