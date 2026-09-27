@@ -119,7 +119,7 @@ fn effect_outcome(vault: &Vault, channel: &str) -> Result<GateOutcome> {
     let policy = policy(vault)?;
     vault.with_write_txn(|txn| {
         Ok(
-            evaluate_external_effect_policy(&vault.store, txn, &effect, &policy, None, None)?
+            evaluate_external_effect_policy(&vault.store, txn, &effect, &policy, None, None, None)?
                 .outcome(),
         )
     })

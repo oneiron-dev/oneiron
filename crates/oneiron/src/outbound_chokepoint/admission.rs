@@ -123,6 +123,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
             PreparedAuthorization::None => None,
         },
+        None,
     )?;
     if governance.outcome() != GateOutcome::Allow {
         let (decision_id, decision) =

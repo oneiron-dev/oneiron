@@ -4,7 +4,9 @@ use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::gate::{self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome};
+use crate::gate::{
+    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateOutcome, GateProvenanceHandles,
+};
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -17,7 +19,10 @@ pub(super) fn gate_input(
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: request.actor.gate_actor(),
-        provenance: request.actor.provenance(),
+        provenance: GateProvenanceHandles {
+            mail_content_ref: request.intent.content_ref.clone(),
+            ..request.actor.provenance()
+        },
         verb: verb_contract.kind.clone(),
         channel: request.intent.channel.clone(),
         channel_identity_ref: request.channel_identity_ref,

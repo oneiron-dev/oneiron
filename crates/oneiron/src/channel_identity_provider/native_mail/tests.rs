@@ -433,9 +433,9 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     assert!(adapter.dispatch_send(&vault, forged, &mut sink).is_err());
     assert_eq!(sink.0.len(), 2);
     vault.transition_channel_identity(&id, ChannelIdentityState::Released, None, 30, None)?;
-    let replayed = vault
-        .dispatch_outbound_intent(completed_replay, &mut sink)
-        .expect("completed native-mail replay must validate from frozen admission");
+    let replayed = adapter
+        .dispatch_send(&vault, completed_replay, &mut sink)
+        .expect("adapter completed replay must validate from frozen admission");
     assert_eq!(
         replayed.outcome,
         OutboundDispatchOutcome::DeliveredToChannel
@@ -456,11 +456,18 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
     };
     use crate::temporal::TimeRange;
-    struct Sink(usize);
+    struct Sink {
+        calls: usize,
+        fail_next: bool,
+    }
     impl OutboundExecutionSink for Sink {
         fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-            self.0 += 1;
-            OutboundExecutionOutcome::delivered_to_channel("host:once")
+            self.calls += 1;
+            if std::mem::take(&mut self.fail_next) {
+                OutboundExecutionOutcome::failed("definite non-delivery")
+            } else {
+                OutboundExecutionOutcome::delivered_to_channel("host:once")
+            }
         }
     }
     let dir = tempfile::tempdir()?;
@@ -543,7 +550,8 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         &bytes,
     )?;
     let intent = OutboundIntent::from_trigger(
-        OutboundIntentDraft::new("actor", "send", "email", "NEW@EXAMPLE.TEST"),
+        OutboundIntentDraft::new("actor", "send", "email", "NEW@EXAMPLE.TEST")
+            .content_ref("draft:approved"),
         OutboundIntentTrigger::agent_immediate("session:once"),
     );
     let request = crate::outbound::OutboundDispatchRequest::new(
@@ -556,26 +564,66 @@ fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
         OutboundDeliveryWindowDecision::DeliverNow,
     )
     .channel_identity_ref(identity);
-    let mut sink = Sink(0);
+    let mut sink = Sink {
+        calls: 0,
+        fail_next: false,
+    };
     let held = adapter
         .dispatch_send(&vault, request.clone(), &mut sink)
         .expect("cold send reaches gate");
     assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
-    assert_eq!(sink.0, 0);
+    assert_eq!(sink.calls, 0);
     adapter.approve_send_once(&vault, &owner, &request)?;
+    let mut replacement = request.clone();
+    replacement.intent.content_ref = Some("draft:replacement".into());
+    let refused = adapter
+        .dispatch_send(&vault, replacement, &mut sink)
+        .expect("replacement goes to Gate, not transport");
+    assert_eq!(refused.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.calls, 0);
+    let mut windowed = request.clone();
+    windowed.window_decision = OutboundDeliveryWindowDecision::Hold {
+        reason: "quiet_window".into(),
+        retry_at: Some(30),
+    };
+    let parked = adapter
+        .dispatch_send(&vault, windowed, &mut sink)
+        .expect("window hold keeps the one-send tap available");
+    assert_eq!(parked.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.calls, 0);
     let sent = adapter
         .dispatch_send(&vault, request.clone(), &mut sink)
         .expect("owner one-shot releases this send");
     assert_eq!(sent.outcome, OutboundDispatchOutcome::DeliveredToChannel);
-    assert_eq!(sink.0, 1);
+    assert_eq!(sink.calls, 1);
     assert!(adapter.approve_send_once(&vault, &owner, &request).is_err());
     let mut other = request;
     other.receipt_id = "mail-09:other-receipt".into();
     other.intent_ref = "mail-09:other-intent".into();
     let held = adapter
-        .dispatch_send(&vault, other, &mut sink)
+        .dispatch_send(&vault, other.clone(), &mut sink)
         .expect("other cold send reaches gate");
     assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
-    assert_eq!(sink.0, 1);
+    assert_eq!(sink.calls, 1);
+    adapter.approve_send_once(&vault, &owner, &other)?;
+    sink.fail_next = true;
+    let failed = adapter
+        .dispatch_send(&vault, other.clone(), &mut sink)
+        .expect("definite non-delivery retains the admitted one-send approval");
+    assert_eq!(failed.outcome, OutboundDispatchOutcome::Failed);
+    assert_eq!(sink.calls, 2);
+    let retried = adapter
+        .dispatch_send(&vault, other.clone(), &mut sink)
+        .expect("same frozen send retries under its spent approval");
+    assert_eq!(retried.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.calls, 3);
+    let mut third = other;
+    third.intent_ref = "mail-09:third-intent".into();
+    third.receipt_id = "mail-09:third-receipt".into();
+    let held = adapter
+        .dispatch_send(&vault, third, &mut sink)
+        .expect("third send has no approval");
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.calls, 3);
     Ok(())
 }

@@ -140,6 +140,8 @@ impl OutboundDispatchPipeline {
             window_decision,
         );
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        let mail_approval =
+            frozen_mail_approval(vault, &effect, native_mail_recipient, replay.as_ref())?;
         // Only executable sends (or replays needing binding validation) freeze bytes.
         let payload = if matches!(
             admission.decision,
@@ -163,6 +165,7 @@ impl OutboundDispatchPipeline {
                 channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
                 counterparty_ref: request.counterparty_ref.as_deref(),
                 native_mail_recipient: native_mail_recipient.then_some(true),
+                native_mail_approve_once: mail_approval,
                 has_opted_in: request.gate.has_opted_in,
                 has_permission: request.gate.has_permission,
                 requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
@@ -237,6 +240,37 @@ impl OutboundDispatchPipeline {
             verdict,
         ))
     }
+}
+
+/// Freeze the engine-observed available tap with the first admission. A
+/// replay retains that exact field; it never recomputes availability after
+/// the first admission has spent the marker.
+fn frozen_mail_approval(
+    vault: &Vault,
+    effect: &crate::gate::ExternalEffectGateInput,
+    native_mail: bool,
+    replay: Option<&crate::outbound_intent_ledger::IntentLedgerRecord>,
+) -> std::result::Result<Option<String>, OutboundDispatchError> {
+    if !native_mail {
+        return Ok(None);
+    }
+    if let Some(record) = replay {
+        let frozen: serde_json::Value =
+            serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
+        return match frozen.get("native_mail_approve_once") {
+            Some(serde_json::Value::String(digest)) => Ok(Some(digest.clone())),
+            None => Ok(None),
+            _ => Err(invalid_replay()),
+        };
+    }
+    let Some(digest) = crate::gate::native_mail_cold_approval_digest(effect) else {
+        return Ok(None);
+    };
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(
+        crate::consent::approve_once_authorization_in_txn(&vault.store, &txn, &digest)?
+            .map(|_| digest.to_hex()),
+    )
 }
 
 /// Bind one canonical native-mail recipient to gate, ledger and transport.

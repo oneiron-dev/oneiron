@@ -39,9 +39,20 @@ pub(in crate::gate) fn native_mail_cold_composed_effect(
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron.native_mail.cold_send.approve_once.v1");
     let id_hex = identity.to_hex();
+    let content = effect.provenance.mail_content_ref.as_deref();
     for part in [id_hex.as_str(), recipient, send] {
         hasher.update(&(part.len() as u64).to_le_bytes());
         hasher.update(part.as_bytes());
+    }
+    match content {
+        Some(content) => {
+            hasher.update(&[1]);
+            hasher.update(&(content.len() as u64).to_le_bytes());
+            hasher.update(content.as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
     }
     let mut facts = external_effect_facts(effect);
     facts.operation_kind = format!("external:email:send:once:{}", hasher.finalize().to_hex());

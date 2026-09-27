@@ -108,6 +108,7 @@ pub(crate) fn evaluate_external_effect_policy(
     policy: &PolicyManifestResolution,
     required_grant_id: Option<EntityId>,
     prepared: Option<&crate::outbound_consent::tool_call::PreparedToolCall>,
+    admitted_mail_retry: Option<crate::consent::EffectDigest>,
 ) -> Result<ExternalEffectGovernance> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let (mut hydrated_effect, counterparty_send_override) =
@@ -160,6 +161,23 @@ pub(crate) fn evaluate_external_effect_policy(
     )?;
     let provisional = hydrated_effect.gate_input(agent_definition_ceiling, None);
     let requirement = external_effect_action_requirement(&hydrated_effect);
+    let mail_retry_authorized = if mail_cold
+        && let (Some(expected), Some(composed)) = (
+            admitted_mail_retry,
+            native_mail_cold_composed_effect(&hydrated_effect),
+        )
+        && expected == composed.digest()
+    {
+        crate::consent::approve_once_is_spent_in_txn(store, &*wtxn, &expected)?
+    } else {
+        false
+    };
+    if mail_retry_authorized
+        && let Some(bound) = requirement.as_ref()
+        && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
+    {
+        consent_grants.push(crate::consent::StandingConsentGrant::Action(grant));
+    }
     if mail_graduated
         && let Some(bound) = requirement.as_ref()
         && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
@@ -213,13 +231,17 @@ pub(crate) fn evaluate_external_effect_policy(
     } else {
         external_effect_composed_effect(&hydrated_effect)
     };
-    let approve_once = composed
-        .as_ref()
-        .map(|effect| {
-            crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
-        })
-        .transpose()?
-        .flatten();
+    let approve_once = if mail_retry_authorized {
+        None // The first admission spent it; this exact Pending retry reuses it.
+    } else {
+        composed
+            .as_ref()
+            .map(|effect| {
+                crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
+            })
+            .transpose()?
+            .flatten()
+    };
     let consent = if mail_cold {
         composed.as_ref().map(|effect| {
             ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
@@ -244,7 +266,7 @@ pub(crate) fn evaluate_external_effect_policy(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
-        effect.mail_approve_once = mail_cold && approve_once.is_some();
+        effect.mail_approve_once = mail_cold && (approve_once.is_some() || mail_retry_authorized);
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()
@@ -527,7 +549,8 @@ pub(crate) fn check_external_effect_policy(
     policy: &PolicyManifestResolution,
     admit_for_execution: bool,
 ) -> Result<(GateDecisionId, GateDecision, Option<EffectorBudgetCharge>)> {
-    let mut governance = evaluate_external_effect_policy(store, wtxn, effect, policy, None, None)?;
+    let mut governance =
+        evaluate_external_effect_policy(store, wtxn, effect, policy, None, None, None)?;
     let mut effector_charge = None;
     if admit_for_execution && governance.outcome() == GateOutcome::Allow {
         let (charge, exhausted) = charge_admitted_external_effect(
@@ -540,6 +563,17 @@ pub(crate) fn check_external_effect_policy(
             governance.deny_budget_exhausted();
         }
         effector_charge = charge;
+    }
+    // A parked native-mail send is a governance observation, not an admitted
+    // effect. Keep its one-send owner tap available for the later window wake.
+    if !admit_for_execution
+        && governance
+            .input
+            .external_effect
+            .as_ref()
+            .is_some_and(|effect| effect.mail_approve_once)
+    {
+        governance.approve_once = None;
     }
     let (decision_id, decision) = record_external_effect_policy(store, wtxn, governance)?;
     Ok((decision_id, decision, effector_charge))

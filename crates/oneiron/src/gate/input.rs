@@ -52,6 +52,9 @@ pub(crate) struct GateProvenanceHandles {
     pub(crate) substrate_ref: Option<EntityId>,
     pub(crate) source_revision_ref: Option<[u8; ENTITY_ID_LEN]>,
     pub(crate) body_snapshot_ref: Option<[u8; ENTITY_ID_LEN]>,
+    /// Native-mail one-shot content handle, supplied by the frozen intent
+    /// and hashed into the owner-approved effect. Never an authority source.
+    pub(crate) mail_content_ref: Option<String>,
     pub(crate) dreamer_run_id: Option<String>,
 }
 

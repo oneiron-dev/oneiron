@@ -90,9 +90,11 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         if request.intent.channel != "email"
             || request.intent.verb != "send"
             || identity.address_or_handle != self.address_for_identity(identity_ref)
-            || !identity.may_send()
             || identity.binding.actor_ref() != request.actor.actor_entity_ref
         {
+            return Err(invalid().into());
+        }
+        if !identity.may_send() && !completed_mail_replay(vault, &request)? {
             return Err(invalid().into());
         }
         // The common dispatch door canonicalizes and binds the recipient
@@ -142,6 +144,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
             },
             provenance: GateProvenanceHandles {
                 actor_entity_ref: Some(actor),
+                mail_content_ref: request.intent.content_ref.clone(),
                 ..GateProvenanceHandles::default()
             },
             verb: "send".into(),
@@ -293,6 +296,47 @@ impl<H: NativeMailHost> ChannelIdentityProviderAdapter for NativeMailAdapter<H> 
         event.payload_ref = mail.payload_ref;
         Ok(event)
     }
+}
+
+/// Only a terminal, frozen native-mail send may bypass today's sender
+/// lifecycle on the adapter facade. The dispatcher still compares the full
+/// caller request to its admitted payload before returning the recorded result.
+fn completed_mail_replay(vault: &Vault, request: &OutboundDispatchRequest) -> Result<bool> {
+    use crate::outbound_intent_ledger::{
+        IntentState, RecordedOutboundOutcome, read_intent_for_attempt_in_txn,
+    };
+    let logical_ref = request
+        .ledger_identity_ref
+        .as_deref()
+        .unwrap_or(&request.intent_ref);
+    let attempt = crate::outbound::outbound_dispatch_attempt_id(logical_ref)
+        .map_err(|_| Error::InvalidConfig("invalid native-mail replay reference".into()))?;
+    let txn = vault.store.env.read_txn()?;
+    let record = read_intent_for_attempt_in_txn(vault, &txn, attempt, 0)
+        .map_err(|_| Error::InvalidConfig("invalid native-mail replay record".into()))?;
+    let Some(record) = record else {
+        return Ok(false);
+    };
+    if record.state != IntentState::Done
+        || record.recorded_outcome != Some(RecordedOutboundOutcome::Acked)
+        || record.server != "email"
+        || record.tool != "send"
+    {
+        return Ok(false);
+    }
+    let frozen: serde_json::Value = serde_json::from_slice(record.payload())
+        .map_err(|_| Error::CorruptedIndex("native-mail replay payload"))?;
+    Ok(frozen
+        .get("native_mail_recipient")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+        && frozen
+            .get("channel_identity_ref")
+            .and_then(serde_json::Value::as_str)
+            == request
+                .channel_identity_ref
+                .map(|id| id.to_hex())
+                .as_deref())
 }
 
 /// Canonical recipient used by both the Gate and the frozen transport intent.

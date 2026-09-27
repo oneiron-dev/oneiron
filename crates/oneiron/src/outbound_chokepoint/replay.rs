@@ -16,6 +16,38 @@ use crate::outbound_intent_ledger::{
     record_definite_non_delivery,
 };
 
+/// Retry proof comes only from an admitted, frozen Pending record whose
+/// previous transport attempt definitely did not deliver. The digest must
+/// still match today's exact gate input; the Gate then checks its spent marker
+/// and all live policy walls without minting/spending a second approval.
+fn admitted_mail_retry_digest(
+    record: &crate::outbound_intent_ledger::IntentLedgerRecord,
+    gate: &crate::gate::ExternalEffectGateInput,
+) -> Result<Option<crate::consent::EffectDigest>, IntentLedgerError> {
+    if record.state != IntentState::Pending
+        || record.recorded_outcome != Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+    {
+        return Ok(None);
+    }
+    let frozen: serde_json::Value = serde_json::from_slice(record.payload())
+        .map_err(|_| IntentLedgerError::InvalidRecord("invalid frozen mail approval"))?;
+    let Some(stored) = frozen.get("native_mail_approve_once") else {
+        return Ok(None);
+    };
+    let stored = stored.as_str().ok_or(IntentLedgerError::InvalidRecord(
+        "invalid frozen mail approval",
+    ))?;
+    let digest = gate::native_mail_cold_approval_digest(gate).ok_or(
+        IntentLedgerError::InvalidRecord("invalid frozen mail approval"),
+    )?;
+    if stored != digest.to_hex() {
+        return Err(IntentLedgerError::InvalidRecord(
+            "frozen mail approval mismatch",
+        ));
+    }
+    Ok(Some(digest))
+}
+
 pub(super) enum RecoveryGovernance {
     Allow,
     Block(&'static str),
@@ -173,6 +205,7 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
                 PreparedAuthorization::None => None,
             },
+            admitted_mail_retry_digest(&record, &posting_gate)?,
         )?;
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
