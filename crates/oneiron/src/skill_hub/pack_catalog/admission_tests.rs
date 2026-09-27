@@ -1984,3 +1984,68 @@ value = print(4)
     assert!(vault.installed_pack("alice.tools")?.is_none());
     Ok(())
 }
+
+#[test]
+fn nested_closure_cannot_inherit_a_builtin_name_across_function_scopes() -> Result<()> {
+    for (call, builtin, arg, scope) in [
+        ("log", "print", 1, "shipped"),
+        ("log", "len", 1, "shipped"),
+        ("sqrt", "print", 4, "owner"),
+        ("sqrt", "len", 4, "owner"),
+        ("sqrt", "print", 4, "holder"),
+        ("sqrt", "len", 4, "holder"),
+    ] {
+        let script = format!(
+            "def outer():\n    from math import {call} as {builtin}\n    def inner():\n        return {builtin}({arg})\n    return inner()\nvalue = outer()\n"
+        );
+        let pack = connector_script_source(&script)?;
+        let (_dir, vault, owner, reference, publisher) =
+            fixture(SkillHubTrustTier::Verified, &pack)?;
+        let id = vault.stage_pack_source(&pack, TimeRange { start: 3, end: 3 }, 3)?;
+        if scope != "shipped" {
+            vault.set_pack_install_policy_override(
+                &owner,
+                PackInstallPolicyOverride {
+                    holder_ref: (scope == "holder").then(|| publisher.identity().to_owned()),
+                    allowed_python_calls: Some(vec!["print".into(), "len".into()]),
+                    ..PackInstallPolicyOverride::default()
+                },
+            )?;
+            let txn = vault.store.env.read_txn()?;
+            let effective = crate::gate::resolve_policy_manifest(&vault.store, &txn)?
+                .pack_install_policy()
+                .expect("resolved policy")
+                .effective(publisher.identity());
+            assert!(!effective.allowed_calls.contains("math.sqrt"));
+        }
+        let ask = vault.prepare_pack_install(
+            id,
+            &reference,
+            &publisher,
+            &Qualification {
+                runtime: true,
+                passed: true,
+            },
+        )?;
+        let reason = ask.blocked_reason().expect("nested closure must hold");
+        assert!(
+            reason.contains("unsupported Python nested function"),
+            "{scope} {script}: {reason}"
+        );
+        assert!(matches!(
+            vault.approve_pack_install(&ask, &owner),
+            Err(crate::error::Error::Registry(
+                crate::error::RegistryError::PackInstallRuleBlocked { .. }
+            ))
+        ));
+        assert_eq!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Blocked {
+                reason: reason.into()
+            }
+        );
+        assert_no_pack_consent(&vault, &ask)?;
+        assert!(vault.installed_pack("alice.tools")?.is_none());
+    }
+    Ok(())
+}

@@ -42,6 +42,7 @@ struct Analyzer<'a> {
     remaining: usize,
     allowed_calls: &'a BTreeSet<String>,
     module_bindings: BTreeSet<String>,
+    function_nesting: usize,
 }
 
 pub(super) fn screen_script(
@@ -76,6 +77,7 @@ impl AnalyzedScript {
             remaining: MAX_AST_NODES,
             allowed_calls,
             module_bindings: BTreeSet::new(),
+            function_nesting: 0,
         };
         analyzer.module_bindings = analyzer.collect_module_bindings(tree.root_node())?;
         analyzer.statement(tree.root_node(), 0)?;
@@ -272,6 +274,12 @@ impl Analyzer<'_> {
         Ok(())
     }
     fn function(&mut self, node: Node<'_>, depth: usize) -> Result<(), String> {
+        // A nested definition closes over its enclosing function's bindings.
+        // This bounded profile cannot prove late capture/rebinding across that
+        // scope, so no nested definition may create a clear install verdict.
+        if self.function_nesting != 0 {
+            return Err("unsupported Python nested function".into());
+        }
         let name = self.name(Self::child(node, "name")?)?;
         if matches!(name.as_str(), "eval" | "exec" | "open" | "__import__") {
             return Err("call outside the sandbox".into());
@@ -297,6 +305,7 @@ impl Analyzer<'_> {
             remaining: self.remaining,
             allowed_calls: self.allowed_calls,
             module_bindings: self.module_bindings.clone(),
+            function_nesting: self.function_nesting + 1,
         };
         for param in Self::named(parameters) {
             let name = local.name(param)?;
