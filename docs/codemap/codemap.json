@@ -1986,7 +1986,7 @@
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "struct": 6
      }
     },
@@ -2476,13 +2476,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/batch/authority_log.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -2732,7 +2732,7 @@
      "path": "src/batch/export/document_snapshot.rs",
      "purpose": "Snapshot enumeration for whole-vault export",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -2797,21 +2797,6 @@
       "crate-vis": 6,
       "enum": 2,
       "fn": 3,
-      "struct": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CompanionExportLayer",
-      "CompanionExportRecord"
-     ],
-     "path": "src/batch/export/export_companion.rs",
-     "purpose": "Companion-layer export filtering",
-     "surface": {
-      "const": 1,
-      "fn": 9,
       "struct": 2
      }
     },
@@ -2926,7 +2911,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2,
-      "re-export": 10
+      "re-export": 9
      }
     },
     {
@@ -2964,7 +2949,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/batch/export/tests.rs",
@@ -2976,9 +2961,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/facet_identity.rs",
-     "purpose": "PERSON/FACET persona materialization shared by authored and replayed masks",
+     "purpose": "FACET overwrite checks for immutable substrate identity and retired privacy axes",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -3036,7 +3021,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 2
      }
@@ -3048,11 +3033,11 @@
      "path": "src/batch/ops_pipeline.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/batch/person_substrate.rs",
@@ -3328,7 +3313,7 @@
      "path": "src/batch/types.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 16
      }
     },
     {
@@ -3336,9 +3321,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/batch/vad_postcommit.rs",
-     "purpose": "Transaction-owner handoff for explicit Dreamer consent approvals",
+     "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
@@ -3391,7 +3376,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SigningAction",
@@ -3419,13 +3404,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/fold.rs",
      "purpose": "Pure projection of the append-only esign claim family",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -3441,6 +3426,29 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EsignLifecycleRules",
+      "EsignNoticeSwitches"
+     ],
+     "path": "src/blob_artifact/esign/lifecycle.rs",
+     "purpose": "Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/blob_artifact/esign/lifecycle_tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -3449,7 +3457,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 2,
-      "re-export": 7
+      "re-export": 9
      }
     },
     {
@@ -3488,12 +3496,27 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EsignNotice"
+     ],
+     "path": "src/blob_artifact/esign/notice_dispatch.rs",
+     "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "EsignOutboundCommand",
       "EsignOutboundVerb"
      ],
      "path": "src/blob_artifact/esign/outbound.rs",
      "purpose": "SGN-02 uses the ordinary OF-327 gate and durable intent ledger",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -6573,7 +6596,7 @@
      "path": "src/channel_identity/binding.rs",
      "purpose": "ChannelIdentity binding and fulfillment values with scope strings",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 9
      }
@@ -6649,7 +6672,7 @@
      "path": "src/channel_identity/record.rs",
      "purpose": "Vault-resident ChannelIdentity record with validators, transitions, and claims",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 9,
       "struct": 1
      }
@@ -9877,10 +9900,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/companion/codec.rs",
-     "purpose": "Canonical MessagePack codec for companion records, scope, subject, and provenance",
+     "purpose": "Scope/subject task payload codecs and JSON value conversion for persona input",
      "surface": {
-      "crate-vis": 8,
-      "fn": 4
+      "crate-vis": 6,
+      "fn": 2
      }
     },
     {
@@ -9888,10 +9911,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/companion/keys.rs",
-     "purpose": "Pinned on-disk constants for companion records and task payloads",
+     "purpose": "Retired register discriminator and durable companion task payload keys",
      "surface": {
-      "const": 8,
-      "crate-vis": 19
+      "const": 5,
+      "crate-vis": 8
      }
     },
     {
@@ -9899,21 +9922,17 @@
      "kind": "src",
      "notable": [],
      "path": "src/companion/mod.rs",
-     "purpose": "Companion relationship/persona record substrate",
+     "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
-      "crate-vis": 2,
-      "re-export": 6
+      "crate-vis": 4,
+      "re-export": 5
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CompanionExpression",
-      "CompanionLifecycleEvent",
-      "CompanionLifecycleEventKind",
-      "CompanionProvenance",
-      "CompanionRecord",
       "CompanionRecordKey",
       "CompanionRecordKind",
       "CompanionScope",
@@ -9922,10 +9941,10 @@
      "path": "src/companion/model.rs",
      "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
      "surface": {
-      "crate-vis": 4,
-      "enum": 5,
-      "fn": 34,
-      "struct": 4
+      "crate-vis": 3,
+      "enum": 4,
+      "fn": 13,
+      "struct": 1
      }
     },
     {
@@ -9940,7 +9959,7 @@
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 3
      }
@@ -9965,8 +9984,6 @@
       "CompanionTaskStatus",
       "CompleteCompanionTask",
       "CompleteCompanionTaskOutcome",
-      "EndCompanionRelationship",
-      "EndCompanionRelationshipOutcome",
       "EnqueueCompanionTask",
       "EnqueueCompanionTaskOutcome",
       "FailCompanionTask",
@@ -9979,53 +9996,37 @@
      "surface": {
       "enum": 6,
       "fn": 13,
-      "struct": 10
+      "struct": 8
      }
     },
     {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [
-      "CompanionExpressionRegister",
-      "CompanionRegister",
-      "CompanionScopeResolution",
-      "CompanionScopeResolutionSource"
-     ],
-     "path": "src/companion/register.rs",
-     "purpose": "In-memory companion registers with scope and expression resolution",
-     "surface": {
-      "enum": 1,
-      "fn": 19,
-      "struct": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/companion/store.rs",
-     "purpose": "Transaction key-lookup scans over the companion-register type index",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/companion/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/companion/tests/support.rs",
+     "purpose": "Valid retired FACET bytes, used only to prove every old write/replay door refuses them",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/companion/vault.rs",
-     "purpose": "Vault record APIs for companion profiles, relationships, and register snapshots",
+     "purpose": "Vault access-grant query for a companion PERSON profile",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9
+      "fn": 1
      }
     },
     {
@@ -10063,10 +10064,39 @@
      "path": "src/config/failure_signals.rs",
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RedactionKind",
+      "RedactionSpan",
+      "Tier2Redactor",
+      "Tier2Sample"
+     ],
+     "path": "src/config/failure_signals/samples.rs",
+     "purpose": "Vault-local tier-2 sampling",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/config/failure_signals/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -11529,7 +11559,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_pack/l2_base/tests.rs",
@@ -13717,23 +13747,28 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DigestProposal",
       "ProactivityCadence",
       "ProactivityDigest",
+      "ProactivityPolicyProposal",
+      "ProactivityPolicyRequest",
+      "ProactivityPresentation",
       "UrgentDigestWake"
      ],
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "fn": 3,
-      "struct": 4
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 13,
+      "struct": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/digest/tests.rs",
@@ -21405,6 +21440,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ExportOptions",
+      "MemoryExport"
+     ],
+     "path": "src/memory/export.rs",
+     "purpose": "Full-vault memory export through the existing five-format pack writers",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExpressionPreferenceInput",
       "ExpressionPreferenceReceipt",
       "ExpressionPreferenceView"
@@ -21536,7 +21585,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -21820,7 +21869,7 @@
      "surface": {}
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/memory/tests/commit_claims.rs",
@@ -21833,6 +21882,14 @@
      "notable": [],
      "path": "src/memory/tests/delete_tombstone.rs",
      "purpose": "Safe-delete receipts, crash recovery, tombstone publish boundary, and soft-erase edge cases",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/export.rs",
+     "purpose": "The public export verb renders the full vault and hydratable short refs",
      "surface": {}
     },
     {
@@ -23391,7 +23448,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -23402,9 +23459,9 @@
       "OutboundDispatchPipeline"
      ],
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
-     "purpose": "O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner…",
+     "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -23417,6 +23474,16 @@
      "purpose": "Pending gate-outcome name and gate-vs-manifest policy-risk resolution",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/request_binding.rs",
+     "purpose": "One normalized outbound request and the single ledger replay validator",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -23466,7 +23533,7 @@
      "path": "src/outbound/dispatch_pipeline/vault.rs",
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -23534,7 +23601,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 3
      }
     },
@@ -23555,7 +23622,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -26179,6 +26246,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/dispatch_observation.rs",
+     "purpose": "Passive OF-327 per-try audit observations; never resend authority",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -26231,7 +26308,7 @@
      "path": "src/receipt/identity_kind.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -26275,7 +26352,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 8
      }
     },
@@ -28252,7 +28329,7 @@
      "path": "src/serialize/token_budget.rs",
      "purpose": "Grouping, section/type token-budget enforcement, size estimation, and pack token-stats collection",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 15
      }
     },
     {
@@ -28903,7 +28980,7 @@
      "path": "src/skill_hub/admission.rs",
      "purpose": "Consent-bound held-out admission, using the existing host scorer and lifecycle write door",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -28954,13 +29031,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9,
+      "fn": 1
      }
     },
     {
@@ -28979,7 +29057,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -29001,7 +29079,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 8
      }
@@ -30804,9 +30882,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/bridge/companion_identity.rs",
-     "purpose": "Companion-register admission/scrub, identity topology ingest, and edge key/value helpers",
+     "purpose": "Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -32471,7 +32549,7 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "fn": 32
+      "fn": 33
      }
     },
     {
@@ -34174,11 +34252,11 @@
      "path": "src/workspace_roster/steps.rs",
      "purpose": "Ordered onboarding writes and idempotent primitives",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests.rs",
@@ -34186,7 +34264,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/authorization.rs",
@@ -35045,14 +35123,14 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 84,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 39,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35283,14 +35361,14 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
     "companion": {
-     "files": 11,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Companion relationship/persona record substrate"
+     "purpose": "Companion task queue and PERSON/FACET persona compilation"
     },
     "config": {
-     "files": 3,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -35738,7 +35816,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 78,
+     "files": 80,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -35773,7 +35851,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35899,7 +35977,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36272,8 +36350,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
-   "test_files": 730
+   "source_files": 2144,
+   "test_files": 734
   },
   "oneiron-android": {
    "files": [
@@ -37621,7 +37699,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/loop_tests.rs",
@@ -37801,7 +37879,7 @@
      "path": "src/tick/timer.rs",
      "purpose": "Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 3
      }
@@ -38917,7 +38995,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 23
+      "fn": 24
      }
     },
     {
@@ -39200,7 +39278,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 24
+      "fn": 25
      }
     },
     {
@@ -40255,7 +40333,7 @@
      "path": "src/api/companion/errors.rs",
      "purpose": "Companion error constructors",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -40263,9 +40341,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/companion/mod.rs",
-     "purpose": "Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record…",
+     "purpose": "Companion control-plane surface: access grants and psych-mirror profiles",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 5
      }
     },
     {
@@ -40276,26 +40354,6 @@
      "purpose": "Companion profile routes, DTOs, and state builders",
      "surface": {
       "crate-vis": 24
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/companion/register.rs",
-     "purpose": "Companion register record routes and DTOs",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/companion/register_wire.rs",
-     "purpose": "Register wire-format converters and validators",
-     "surface": {
-      "crate-vis": 14
      }
     },
     {
@@ -40619,7 +40677,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/facade/tests.rs",
@@ -43331,7 +43389,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "tests/it/remote_pairing.rs",
@@ -43396,7 +43454,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 156,
+     "files": 154,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -43573,7 +43631,7 @@
    },
    "over_bar": 4,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 229,
+   "source_files": 227,
    "test_files": 98
   },
   "oneiron-uniffi": {

@@ -147,8 +147,6 @@ pub(crate) enum CoreScope {
     Auth,
     CompanionProfileRead,
     CompanionAccessGrantWrite,
-    CompanionRegisterRead,
-    CompanionRegisterWrite,
     OrgAdmin(oneiron::federation::OrgAdminPower),
 }
 
@@ -161,8 +159,6 @@ impl CoreScope {
             Self::Auth => "core:auth",
             Self::CompanionProfileRead => "companion:profile:read",
             Self::CompanionAccessGrantWrite => "companion:access-grant:write",
-            Self::CompanionRegisterRead => "companion:register:read",
-            Self::CompanionRegisterWrite => "companion:register:write",
             Self::OrgAdmin(power) => power.as_str(),
         }
     }
@@ -175,8 +171,6 @@ impl CoreScope {
             "core:auth" => Some(Self::Auth),
             "companion:profile:read" => Some(Self::CompanionProfileRead),
             "companion:access-grant:write" => Some(Self::CompanionAccessGrantWrite),
-            "companion:register:read" => Some(Self::CompanionRegisterRead),
-            "companion:register:write" => Some(Self::CompanionRegisterWrite),
             value => oneiron::federation::OrgAdminPower::parse(value).map(Self::OrgAdmin),
         }
     }
@@ -189,8 +183,6 @@ impl CoreScope {
             Self::Auth,
             Self::CompanionProfileRead,
             Self::CompanionAccessGrantWrite,
-            Self::CompanionRegisterRead,
-            Self::CompanionRegisterWrite,
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::AddMember),
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::RemoveMember),
             Self::OrgAdmin(oneiron::federation::OrgAdminPower::AssignRole),
