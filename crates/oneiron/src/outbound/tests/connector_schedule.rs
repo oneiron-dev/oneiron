@@ -722,6 +722,35 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
     use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
     use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 
+    fn active_touch_times(vault: &Vault, party: EntityId) -> crate::Result<Vec<u64>> {
+        let mut times = Vec::new();
+        for id in vault.claims_for_subject(&party)? {
+            let Some(body) = vault.get_claim(&id)? else {
+                continue;
+            };
+            if body.predicate != crate::comm::PREDICATE_COMM_LAST_TOUCH {
+                continue;
+            }
+            let claim = crate::comm::CommClaim::from_claim_body(&body)?;
+            if claim.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+                || claim.valid_to.is_some()
+            {
+                continue;
+            }
+            let crate::comm::CommClaimValue::LastTouch {
+                party_ref,
+                occurred_at,
+                ..
+            } = claim.value
+            else {
+                unreachable!("last-touch predicate has a last-touch value")
+            };
+            assert_eq!(party_ref, party);
+            times.push(occurred_at);
+        }
+        Ok(times)
+    }
+
     let (_tmp, vault) = temp_vault();
     let actor = entity(0x52);
     put_connector_task_actor(&vault, actor, 120)?;
@@ -736,10 +765,18 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
         120,
     );
     draft.verb = "replace".to_owned();
+    draft.target = "transport:shared-correction-inbox".to_owned();
+    let party = "party:correction-recipient";
+    crate::comm::record_comm_send_receipt(&vault, party, "email", 100)
+        .expect("record older delivered message");
+    crate::comm::run_comm_projector(&vault).expect("project older touch");
+    let party_ref =
+        crate::comm::resolve_or_create_comm_party(&vault, party).expect("resolve prior party");
+    assert_eq!(active_touch_times(&vault, party_ref)?, vec![100]);
     vault
         .memory(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&draft)
-        .expect("schedule outbound");
+        .schedule_outbound_for_counterparty(&draft, party)
+        .expect("schedule bound correction email");
     let task_ref = vault.connector_send_tasks()?[0].task_ref;
     let mut executor = RecordingExecutor {
         outcome: OutboundExecutionOutcome::failed("provider_timeout").with_possible_delivery(),
@@ -752,6 +789,8 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
             .unwrap(),
         0
     );
+    crate::comm::run_comm_projector(&vault).expect("failed retry cannot advance touch");
+    assert_eq!(active_touch_times(&vault, party_ref)?, vec![100]);
     let retry = AttemptQueue::new(&vault).enqueue(EnqueueAttempt {
         kind: BRIDGE_OUTBOUND_ATTEMPT_KIND.to_owned(),
         payload: connector_send_attempt_payload(task_ref)?,
@@ -766,6 +805,31 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
             .run_connector_task_executor(&mut executor, 121)
             .unwrap(),
         1
+    );
+
+    crate::comm::run_comm_projector(&vault).expect("project delivered correction");
+    assert_eq!(active_touch_times(&vault, party_ref)?, vec![121]);
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            &draft.target,
+            "email",
+        )
+        .expect("transport target is not a party"),
+        0
+    );
+    crate::comm::run_comm_projector(&vault).expect("replay delivered correction");
+    assert_eq!(active_touch_times(&vault, party_ref)?, vec![121]);
+    assert_eq!(
+        crate::comm::count_total_comm_claim_rows(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            party,
+            "email",
+        )
+        .expect("touch history"),
+        2
     );
 
     assert_eq!(executor.idempotency_keys.len(), 2);

@@ -208,6 +208,9 @@ fn is_delivered_message(channel: &str, verb: &str) -> bool {
             ("line", "reply" | "push" | "send_media")
                 | ("telegram" | "imessage_bridge", "send_media")
                 | ("linkedin", "send_dm")
+                // Email replace delivers a new correction message, unlike an
+                // in-place edit on a chat transport.
+                | ("email", "replace")
         )
 }
 
