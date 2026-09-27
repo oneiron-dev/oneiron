@@ -177,6 +177,19 @@ impl Vault {
         self.validate_identity_op_actor_in_txn(&*wtxn, write)?;
 
         let participants = op.participants();
+        for participant in &participants {
+            if crate::deletion::topology_delete_reservation_in_txn(
+                &self.store,
+                &*wtxn,
+                participant,
+            )?
+            .is_some()
+            {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology participant reserved for deletion",
+                )));
+            }
+        }
         match self.validate_identity_op_participants_in_txn(&*wtxn, op)? {
             IdentityTopologyParticipantValidation::Complete => {}
             IdentityTopologyParticipantValidation::Deferred => {
@@ -438,10 +451,10 @@ impl Vault {
         let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
         let record = StoredIdentityOpEvent {
             seq,
-            validated_at_write: true,
+            validated_at_write: false,
             invalidated: false,
             at: now,
-            actor: write.actor,
+            actor: None,
             source: write.source,
             approval: write.approval,
             confidence: write.confidence,
@@ -465,13 +478,41 @@ impl Vault {
         // precede the `facet_of` stamps that point at them, and ONE-1645's
         // write-time table fails closed on a stamp whose endpoint has no row.
         ops.extend(effects);
-        // Pre-seal this validated decision before the reserved shell edges
-        // consult the fold in this batch; an error rolls it all back.
-        super::store_entity_helpers::mark_identity_event_validated_in_txn(
-            &self.store,
+        // The signed disposition is a separate immutable type-76 event. A
+        // receiver can replay the two rows in either order and bind by digest.
+        let disposition = super::AdmissionDisposition::sign(
+            self,
             wtxn,
-            &event_id,
+            event_id,
+            &record,
+            super::AdmissionVerdict::Validated,
+            None,
         )?;
+        let disposition_record = StoredIdentityOpEvent {
+            seq: self.next_identity_topology_seq_in_txn(wtxn)?,
+            validated_at_write: false,
+            invalidated: false,
+            at: now,
+            actor: None,
+            source: write.source,
+            approval: crate::claim::ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::AdmissionDisposition(disposition),
+        };
+        ops.push(BatchOp::Put {
+            id: self.store.clock.entity_id()?,
+            entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            data: encode_identity_topology_event_body(&disposition_record)?,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
         apply_ops(
             &self.store,
             &self.config,
@@ -483,6 +524,17 @@ impl Vault {
             false,
             true,
         )?;
+        if let Some(actor) = write.actor {
+            super::record_author_attribution_in_txn(
+                self,
+                wtxn,
+                event_id,
+                super::core_digest(&record)?,
+                actor,
+                write.source,
+                now,
+            )?;
+        }
         if write.is_effective() {
             if let StoredIdentityOpAction::Merge { sources, survivor } = &record.action {
                 let input = encode_identity_topology_event_body(&record)?;

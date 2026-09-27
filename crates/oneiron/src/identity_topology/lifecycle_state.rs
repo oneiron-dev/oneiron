@@ -235,7 +235,8 @@ pub(crate) fn shell_edge_sources_for_store_in_txn(
             )
             | IdentityTopologyAction::Undo { .. }
             | IdentityTopologyAction::ResolveProposal { .. }
-            | IdentityTopologyAction::CancelProposal { .. } => {}
+            | IdentityTopologyAction::CancelProposal { .. }
+            | IdentityTopologyAction::Disposition => {}
         }
     }
     Ok(touched)

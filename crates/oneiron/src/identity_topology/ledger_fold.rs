@@ -15,7 +15,6 @@ use super::lifecycle_state::EntityLifecycleState;
 use super::op_apply::IdentityTopologyParticipantValidation;
 use super::op_vocabulary::IdentityTopologyOp;
 use super::store_entity_helpers::{
-    identity_event_actor_invalid_in_txn, identity_event_validated_in_txn,
     identity_topology_entity_type_for_store_in_txn, identity_topology_events_for_store_in_txn,
     validate_identity_op_participants_for_store_in_txn,
 };
@@ -24,6 +23,8 @@ use super::transition_table::{IdentityTopologyRejection, ProposalOutcome, evalua
 /// One ledger action: apply an op, or undo a previously applied event.
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentityTopologyAction {
+    /// A signed admission statement; processed by the joined projection.
+    Disposition,
     /// Apply the op through the transition table.
     Apply(IdentityTopologyOp),
     /// Counter-event reverting a previously applied event (r1: undo is an
@@ -106,6 +107,7 @@ pub fn fold_identity_topology_log(events: &[IdentityTopologyEvent]) -> IdentityT
             continue;
         }
         match &event.action {
+            IdentityTopologyAction::Disposition => {}
             IdentityTopologyAction::Apply(op) => match evaluate_transition(&fold.states, op) {
                 Ok(transitions) => {
                     for (entity, state) in transitions {
@@ -213,9 +215,6 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
     for event in events {
-        if identity_event_actor_invalid_in_txn(store, rtxn, &event.event_id)? {
-            continue;
-        }
         let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
             store,
             rtxn,
@@ -224,52 +223,67 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
         .ok_or(crate::error::Error::CorruptedIndex(
             "identity topology event index",
         ))?;
-        if record.invalidated {
+        if matches!(
+            record.action,
+            super::StoredIdentityOpAction::AdmissionDisposition(_)
+                | super::StoredIdentityOpAction::AuthorAttribution { .. }
+                | super::StoredIdentityOpAction::AuthorRedaction { .. }
+        ) {
             continue;
         }
-        let sealed = identity_event_validated_in_txn(store, rtxn, &event.event_id)?;
+        let verdict = super::admission_disposition::joined_verdict_for_store_in_txn(
+            store,
+            rtxn,
+            &event.event_id,
+            &record,
+        )?;
+        if verdict.is_some_and(|v| v != super::AdmissionVerdict::Validated) {
+            continue;
+        }
+        let sealed = verdict == Some(super::AdmissionVerdict::Validated);
+        // A complete row set is not a validation witness. Applied history
+        // remains pending until a signed, core-bound admission fact arrives;
+        // no delete marker or missing author can manufacture that fact.
+        if !sealed
+            && matches!(
+                event.approval,
+                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+            )
+        {
+            continue;
+        }
         let references_complete = match &event.action {
+            IdentityTopologyAction::Disposition => false,
             IdentityTopologyAction::Apply(op) => {
-                if sealed {
-                    true
-                } else {
-                    match validate_identity_op_participants_for_store_in_txn(store, rtxn, op)? {
-                        IdentityTopologyParticipantValidation::Complete => true,
-                        IdentityTopologyParticipantValidation::Invalid(_) => false,
-                        IdentityTopologyParticipantValidation::Deferred => {
-                            // A producer stamp alone cannot authorize a
-                            // never-materialized participant. Only a local
-                            // hard-delete marker for each missing id can stand
-                            // in for a row previously validated by the writer.
-                            if !record.validated_at_write {
-                                false
-                            } else {
-                                let mut accounted = true;
-                                for participant in op.participants() {
-                                    if identity_topology_entity_type_for_store_in_txn(
-                                        store,
+                match validate_identity_op_participants_for_store_in_txn(store, rtxn, op)? {
+                    IdentityTopologyParticipantValidation::Complete => true,
+                    IdentityTopologyParticipantValidation::Invalid(_) => false,
+                    IdentityTopologyParticipantValidation::Deferred if sealed => {
+                        // Signed history survives deletion, but does not
+                        // authorize a partial shell for a merely late row.
+                        let mut accounted = true;
+                        for participant in op.participants() {
+                            if identity_topology_entity_type_for_store_in_txn(
+                                store,
+                                rtxn,
+                                &participant,
+                            )?
+                            .is_none()
+                                && store
+                                    .sync_state
+                                    .get(
                                         rtxn,
-                                        &participant,
+                                        &crate::deletion::local_hard_delete_key(&participant),
                                     )?
                                     .is_none()
-                                        && store
-                                            .sync_state
-                                            .get(
-                                                rtxn,
-                                                &crate::deletion::local_hard_delete_key(
-                                                    &participant,
-                                                ),
-                                            )?
-                                            .is_none()
-                                    {
-                                        accounted = false;
-                                        break;
-                                    }
-                                }
-                                accounted
+                            {
+                                accounted = false;
+                                break;
                             }
                         }
+                        accounted
                     }
+                    IdentityTopologyParticipantValidation::Deferred => false,
                 }
             }
             IdentityTopologyAction::Undo { target } => {
@@ -330,33 +344,34 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 }
             }
         };
-        // A writer-stamped author is historical, not a live authority
-        // dependency. An unstamped legacy event still waits for the actor
-        // to materialize before its first local validation witness is set.
-        let actor_complete = sealed
-            || record.actor.is_none()
-            || match record.actor {
-                Some(actor) if record.validated_at_write => {
-                    match identity_topology_entity_type_for_store_in_txn(
-                        store,
-                        rtxn,
-                        &actor.entity_ref(),
-                    )? {
-                        Some(kind) => {
-                            crate::provenance::validate_actor_class(kind, actor.actor_class())
-                                .is_ok()
-                        }
-                        None => store
+        // The author is not embedded in the immutable decision. A bound
+        // attribution that later materializes with the wrong class is an
+        // observed admission failure, even if its producer supplied a signed
+        // positive fact. A missing actor is historical only when the same
+        // replica has deletion evidence; a merely late actor still defers.
+        let actor = super::effective_author_in_txn(store, rtxn, event.event_id)?.or(record.actor);
+        let actor_complete = match actor {
+            None => true,
+            Some(actor) => match identity_topology_entity_type_for_store_in_txn(
+                store,
+                rtxn,
+                &actor.entity_ref(),
+            )? {
+                Some(kind) => {
+                    crate::provenance::validate_actor_class(kind, actor.actor_class()).is_ok()
+                }
+                None => {
+                    sealed
+                        && store
                             .sync_state
                             .get(
                                 rtxn,
                                 &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
                             )?
-                            .is_some(),
-                    }
+                            .is_some()
                 }
-                Some(_) | None => false,
-            };
+            },
+        };
         if references_complete && actor_complete {
             effective.push(event);
         }

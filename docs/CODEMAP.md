@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2122 | 723 | 10 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2125 | 723 | 11 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 14 | 9 | 0 |
@@ -103,7 +103,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `counterparty_contact` | dir | 7 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 11 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 7 | m | — | Multi-critic review node primitives |
-| `deletion` | dir | 17 | m | yes | ARCH-0038 deletion/redaction contract types |
+| `deletion` | dir | 18 | m | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 8 | s | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 5 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 10 | m | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
@@ -140,7 +140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `identity` | file | 1 | m | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) |
 | `identity_redirect` | file+dir | 2 | m | yes | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `identity_reputation` | file+dir | 2 | m | — | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
-| `identity_topology` | dir | 18 | m | yes | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
+| `identity_topology` | dir | 20 | m | yes | ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an… |
 | `inbox` | dir | 5 | m | yes | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `ingest` | dir | 41 | m | yes | Ingest source registry and source-local normalization |
 | `interlocutor` | file+dir | 2 | m | yes | Interlocutor resolution substrate (OF-365 ILD-1) |
@@ -219,7 +219,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `thread_lens` | file+dir | 2 | m | — | Channel-agnostic conversation thread lens (ONE-1567 / LNKD-5) |
 | `thread_passport` | file+dir | 8 | m | yes | Email thread passports and the sticky per-thread mask (ONE-1827, OF-347 INB-02) |
 | `tokenizer` | file | 1 | s | — | — |
-| `vault` | dir | 20 | m | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `vault` | dir | 20 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 17 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `voice_cascade` | file+dir | 22 | L | — | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 9 | m | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |

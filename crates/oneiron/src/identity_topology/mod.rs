@@ -69,6 +69,8 @@
 //! lifecycle read and the redirect projection route through it. D11's
 //! "edges are canonical" holds unchanged for every edge-ful op.
 
+mod admission_disposition;
+mod attribution;
 mod distinct_claim;
 mod event_body_codec;
 mod ledger_fold;
@@ -87,6 +89,19 @@ pub(crate) use topology_queries::ActiveMergeDeleteRole;
 mod transition_table;
 mod wire_keys;
 
+pub(crate) use admission_disposition::core_digest;
+#[cfg(all(test, feature = "sync"))]
+pub(crate) use admission_disposition::signed_validated_row_for_test;
+pub use admission_disposition::{AdmissionDisposition, AdmissionVerdict};
+#[cfg(feature = "sync")]
+pub(crate) use attribution::{
+    attribution_carrier_key, author_attribution_redacted_in_txn,
+    reconcile_author_attribution_in_txn, redacted_keys_in_txn, redaction_carrier_key,
+};
+pub(crate) use attribution::{
+    effective_author_in_txn, record_author_attribution_in_txn, redact_actor_in_txn,
+    redact_author_attribution_in_txn,
+};
 pub use distinct_claim::distinct_pair_key;
 pub use ledger_fold::{
     IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold, fold_identity_topology_log,
@@ -125,11 +140,7 @@ use reassignment_map::{
     REASSIGNMENT_ORIGIN_META_PREFIX, REASSIGNMENT_TARGET_META_PREFIX, ReassignmentContext,
     apply_reassignment_in_txn,
 };
-pub(crate) use store_entity_helpers::{
-    actor_valid_before_author_scrub_in_txn, forget_identity_event_validation_in_txn,
-    guard_batch_identity_delete_in_txn, invalidate_identity_events_for_participant_delete_in_txn,
-    mark_identity_event_actor_invalid_in_txn,
-};
+pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
 pub(crate) use shell_edge_reconcile::{

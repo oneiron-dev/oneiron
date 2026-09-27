@@ -63,7 +63,10 @@ impl Vault {
             // that a review happened.
             StoredIdentityOpAction::Undo { .. }
             | StoredIdentityOpAction::ProposalResolution { .. }
-            | StoredIdentityOpAction::ProposalCancellation { .. } => {
+            | StoredIdentityOpAction::ProposalCancellation { .. }
+            | StoredIdentityOpAction::AdmissionDisposition(_)
+            | StoredIdentityOpAction::AuthorAttribution { .. }
+            | StoredIdentityOpAction::AuthorRedaction { .. } => {
                 return Err(Error::Sync(SyncError::IdentityTopologyRejected(
                     IdentityTopologyRejection::NotUndoable { event: *event },
                 )));

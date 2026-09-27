@@ -138,7 +138,9 @@ fn event_count(vault: &Vault) -> usize {
     vault
         .identity_topology_events_in_txn(&rtxn)
         .expect("scan events")
-        .len()
+        .into_iter()
+        .filter(|event| !matches!(event.action, IdentityTopologyAction::Disposition))
+        .count()
 }
 
 /// Writes a raw shell edge through the INTERNAL op path (the public
@@ -592,7 +594,8 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     assert_eq!(reassignment.entries[0].item, ClaimSubject::Entity(id(0x71)));
     assert_eq!(reassignment.assigned_and_residue_counts(), (1, 1));
 
-    // Merge + undo round trips, with actor and evidence carried.
+    // Immutable merge + undo cores round trip; attribution is carried by a
+    // separate erasable record and never embedded in the decision core.
     let cases = vec![
         StoredIdentityOpEvent {
             seq: 1,
@@ -601,7 +604,7 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
 
             invalidated: false,
             at: 100,
-            actor: Some(actor),
+            actor: None,
             source: ClaimSource::UserStated,
             approval: ClaimApprovalStatus::Approved,
             confidence: 1.0,
@@ -628,8 +631,24 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
             evidence: None,
             action: StoredIdentityOpAction::Undo { target: b },
         },
+        StoredIdentityOpEvent {
+            seq: 4,
+            validated_at_write: false,
+            invalidated: false,
+            at: 300,
+            actor: None,
+            source: ClaimSource::UserStated,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::AuthorAttribution {
+                target: a,
+                core_digest: [7; 32],
+                actor,
+            },
+        },
     ];
-    assert_eq!(cases.len(), 2);
+    assert_eq!(cases.len(), 3);
     for record in cases {
         let bytes = encode_identity_topology_event_body(&record).expect("encode");
         let decoded = decode_identity_topology_event_body(&bytes).expect("decode");
@@ -1290,7 +1309,10 @@ fn undo_merge_removes_edges_restores_active_and_appends_counter_event() {
         .identity_topology_event(&counter)
         .expect("read counter event")
         .expect("counter exists");
-    assert_eq!(counter_record.seq, 2);
+    assert_eq!(
+        counter_record.seq, 3,
+        "a signed admission fact follows the first decision"
+    );
     assert_eq!(
         counter_record.action,
         StoredIdentityOpAction::Undo { target: event }
@@ -1754,6 +1776,55 @@ fn put_identity_event_record(vault: &Vault, event_id: EntityId, record: &StoredI
         .expect("plant replicated record");
 }
 
+/// A replicated decision's signed producer admission is its own immutable
+/// type-76 fact. Keep the two puts separate so the tests explicitly exercise
+/// the pre-reconcile graph and out-of-order participant materialization.
+fn put_validated_identity_event_record(
+    vault: &Vault,
+    event_id: EntityId,
+    record: &StoredIdentityOpEvent,
+) {
+    put_identity_event_record(vault, event_id, record);
+    vault
+        .with_write_txn(|wtxn| {
+            let fact = super::admission_disposition::AdmissionDisposition::sign(
+                vault,
+                wtxn,
+                event_id,
+                record,
+                AdmissionVerdict::Validated,
+                None,
+            )?;
+            let witness = StoredIdentityOpEvent {
+                seq: record.seq + 1,
+                validated_at_write: false,
+                invalidated: false,
+                at: record.at,
+                actor: None,
+                source: record.source,
+                approval: ClaimApprovalStatus::Auto,
+                confidence: 1.0,
+                evidence: None,
+                action: StoredIdentityOpAction::AdmissionDisposition(fact),
+            };
+            let witness_id = vault.store.clock.entity_id()?;
+            let mut raw = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
+            raw.extend_from_slice(&record.at.to_be_bytes());
+            raw.extend_from_slice(&record.at.to_be_bytes());
+            raw.extend_from_slice(&record.at.to_be_bytes());
+            raw.extend_from_slice(&encode_identity_topology_event_body(&witness)?);
+            vault
+                .store
+                .entities
+                .put(wtxn, witness_id.as_bytes(), &raw)?;
+            let mut type_key = vec![ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT];
+            type_key.extend_from_slice(witness_id.as_bytes());
+            vault.store.type_index.put(wtxn, &type_key, &[])?;
+            Ok(())
+        })
+        .expect("signed producer admission witness");
+}
+
 fn replicated_merge_record(
     sources: Vec<EntityId>,
     survivor: EntityId,
@@ -1783,7 +1854,7 @@ fn partial_multi_participant_merge_authorizes_no_shell_until_complete() {
     let missing_source = id(0x63);
     let event_id = id(0x70);
     let record = replicated_merge_record(vec![present_source, missing_source], survivor, 50);
-    put_identity_event_record(&vault, event_id, &record);
+    put_validated_identity_event_record(&vault, event_id, &record);
 
     vault
         .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
@@ -1816,7 +1887,7 @@ fn partial_multi_head_split_authorizes_no_shell_until_complete() {
     let present_head = put_person(&vault, 0x62);
     let missing_head = id(0x63);
     let event_id = id(0x70);
-    put_identity_event_record(
+    put_validated_identity_event_record(
         &vault,
         event_id,
         &StoredIdentityOpEvent {
@@ -1868,7 +1939,7 @@ fn plain_local_put_retriggers_deferred_topology_at_shared_boundary() {
     let survivor = id(0x61);
     let source = id(0x62);
     let event_id = id(0x70);
-    put_identity_event_record(
+    put_validated_identity_event_record(
         &vault,
         event_id,
         &replicated_merge_record(vec![source], survivor, 50),
@@ -2364,8 +2435,8 @@ fn local_sequence_allocator_keeps_headroom_after_largest_replicated_seq() {
         vault
             .read_identity_topology_seq_in_txn(&rtxn)
             .expect("read seq clock"),
-        last_network_sequence + 1,
-        "the successful local allocation advances into retained headroom"
+        last_network_sequence + 2,
+        "the decision and its signed admission fact both advance the clock"
     );
 }
 
@@ -2443,7 +2514,7 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
     // Reconciliation derives the shell edge from the validated ledger.
     let merge_event = id(0x70);
     let merge_record = replicated_merge_record(vec![loser], survivor, 50);
-    put_identity_event_record(&vault, merge_event, &merge_record);
+    put_validated_identity_event_record(&vault, merge_event, &merge_record);
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
@@ -2479,7 +2550,7 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
             target: merge_event,
         },
     };
-    put_identity_event_record(&vault, undo_event, &undo_record);
+    put_validated_identity_event_record(&vault, undo_event, &undo_record);
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, undo_record.seq)?;
@@ -2507,7 +2578,7 @@ fn out_of_order_ingest_reconciles_every_changed_shell_source() {
 
     let later_id = id(0x72);
     let later = replicated_merge_record(vec![b], a, 2);
-    put_identity_event_record(&vault, later_id, &later);
+    put_validated_identity_event_record(&vault, later_id, &later);
     vault
         .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
         .expect("reconcile later event first");
@@ -2520,7 +2591,7 @@ fn out_of_order_ingest_reconciles_every_changed_shell_source() {
 
     let earlier_id = id(0x71);
     let earlier = replicated_merge_record(vec![a], c, 1);
-    put_identity_event_record(&vault, earlier_id, &earlier);
+    put_validated_identity_event_record(&vault, earlier_id, &earlier);
     let rtxn = vault.store.env.read_txn().expect("read txn");
     let expected = fold_identity_topology_log(
         &vault
@@ -2558,7 +2629,7 @@ fn idempotent_reconcile_repairs_both_mandated_edge_values() {
     let loser = put_person(&vault, 0x62);
     let event_id = id(0x70);
     let record = replicated_merge_record(vec![loser], survivor, 50);
-    put_identity_event_record(&vault, event_id, &record);
+    put_validated_identity_event_record(&vault, event_id, &record);
     vault
         .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
         .expect("initial reconcile");
@@ -2625,7 +2696,7 @@ fn undo_of_ingested_merge_orders_after_it_in_the_fold() {
     let loser = put_person(&vault, 0x62);
     let merge_event = id(0x70);
     let merge_record = replicated_merge_record(vec![loser], survivor, 50);
-    put_identity_event_record(&vault, merge_event, &merge_record);
+    put_validated_identity_event_record(&vault, merge_event, &merge_record);
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, merge_record.seq)?;
@@ -3484,7 +3555,7 @@ fn fold_rejected_duplicate_resolution_mints_no_outcome_receipt() {
             amended_body: None,
         },
     };
-    put_identity_event_record(&vault, id(0xB9), &loser_row);
+    put_validated_identity_event_record(&vault, id(0xB9), &loser_row);
 
     let receipts = proposal_outcome_receipts(&vault);
     assert_eq!(
@@ -3864,7 +3935,7 @@ fn sync_reconcile_derives_and_retires_replicated_assignment_rows() {
             applied_residue: 0,
         },
     };
-    put_identity_event_record(&vault, event_id, &record);
+    put_validated_identity_event_record(&vault, event_id, &record);
     assert!(
         vault.claims_assigned_to(&head).expect("head").is_empty(),
         "planting the row alone assigns nothing"
@@ -3877,7 +3948,7 @@ fn sync_reconcile_derives_and_retires_replicated_assignment_rows() {
 
     // Retire the split by replicating its counter-event: the reconciler
     // re-derives from the fold, which no longer mandates the rows.
-    put_identity_event_record(
+    put_validated_identity_event_record(
         &vault,
         id(0x75),
         &StoredIdentityOpEvent {
@@ -5311,49 +5382,94 @@ fn generic_batch_delete_cannot_bypass_active_merge_or_open_proposal_guard() {
 
 #[test]
 fn writer_verified_event_arriving_after_author_and_head_erasure_keeps_history_without_ghost_edge() {
-    let (_dir, vault) = open_vault();
-    let survivor = put_person(&vault, 0x61);
-    let source = put_person(&vault, 0x62);
-    let author = put_person(&vault, 0x63);
-    vault
-        .delete_entity_with_reason(&author, crate::deletion::DeleteReason::GdprDelete)
-        .expect("author erased before event arrives");
-    vault
-        .delete_entity(&survivor)
-        .expect("head erased before event arrives");
-    let event = id(0x70);
-    let mut record = replicated_merge_record(vec![source], survivor, 50);
-    record.actor = Some(WriteActor::new(author, EdgeActorClass::Human));
-    record.validated_at_write = true;
-    put_identity_event_record(&vault, event, &record);
-    let rtxn = vault.store.env.read_txn().expect("read txn");
-    let store_events =
-        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
-            &vault.store,
-            &rtxn,
-        )
-        .expect("store fold");
-    assert_eq!(
-        store_events,
-        vault
-            .fold_effective_identity_topology_events_in_txn(&rtxn)
-            .expect("vault fold")
+    let (_writer_dir, writer) = open_vault();
+    let survivor = put_person(&writer, 0x61);
+    let source = put_person(&writer, 0x62);
+    let author = put_person(&writer, 0x63);
+    let write = IdentityOpWrite::auto(ClaimSource::Inferred)
+        .with_actor(WriteActor::new(author, EdgeActorClass::Human));
+    let (event, _) = expect_applied(
+        writer
+            .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+            .expect("validated writer mints core and signed admission fact"),
     );
-    assert_eq!(
-        fold_identity_topology_log(&store_events)
-            .current_event
-            .get(&source),
-        Some(&event)
-    );
-    drop(rtxn);
-    vault
-        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
-        .expect("reconcile without resurrecting an edge to erased head");
+    let core = writer
+        .identity_topology_event(&event)
+        .expect("core read")
+        .expect("immutable decision");
     assert!(
-        !vault
-            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
-            .expect("read edge")
+        core.actor.is_some(),
+        "public reader hydrates separate attribution"
     );
+    let mut immutable = core;
+    immutable.actor = None;
+    let (witness_id, witness) = {
+        let rtxn = writer.store.env.read_txn().expect("writer read txn");
+        writer
+            .store
+            .type_index
+            .prefix_iter(&rtxn, &[ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT])
+            .expect("all type-76 records")
+            .find_map(|entry| {
+                let (key, _) = entry.expect("type-index row");
+                let id = crate::vault::entity_id_from_type_index_key(&key)
+                    .expect("event id from type-index key");
+                let row = writer
+                    .identity_topology_event_in_txn(&rtxn, &id)
+                    .expect("stored event")?;
+                matches!(&row.action, StoredIdentityOpAction::AdmissionDisposition(fact)
+                    if fact.target == event)
+                .then_some((id, row))
+            })
+            .expect("writer minted signed admission")
+    };
+    for witness_first in [false, true] {
+        let (_dir, vault) = open_vault();
+        put_person(&vault, 0x61);
+        put_person(&vault, 0x62);
+        put_person(&vault, 0x63);
+        vault
+            .delete_entity_with_reason(&author, crate::deletion::DeleteReason::GdprDelete)
+            .expect("author erased before decision arrives");
+        vault
+            .delete_entity(&survivor)
+            .expect("head erased before decision arrives");
+        if witness_first {
+            put_identity_event_record(&vault, witness_id, &witness);
+            put_identity_event_record(&vault, event, &immutable);
+        } else {
+            put_identity_event_record(&vault, event, &immutable);
+            put_identity_event_record(&vault, witness_id, &witness);
+        }
+        let rtxn = vault.store.env.read_txn().expect("peer read txn");
+        let store_events =
+            super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+                &vault.store,
+                &rtxn,
+            )
+            .expect("store fold");
+        assert_eq!(
+            store_events,
+            vault
+                .fold_effective_identity_topology_events_in_txn(&rtxn)
+                .expect("vault fold")
+        );
+        assert_eq!(
+            fold_identity_topology_log(&store_events)
+                .current_event
+                .get(&source),
+            Some(&event)
+        );
+        drop(rtxn);
+        vault
+            .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+            .expect("reconcile without resurrecting an edge to erased head");
+        assert!(
+            !vault
+                .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+                .expect("read edge")
+        );
+    }
 }
 
 #[test]
@@ -5555,8 +5671,8 @@ fn reversed_event_ids_still_protect_middle_source_in_chained_merge() {
     let first = id(0x72);
     let second = id(0x71);
     assert!(second < first, "second event enumerates before first");
-    put_identity_event_record(&vault, first, &replicated_merge_record(vec![c], b, 1));
-    put_identity_event_record(&vault, second, &replicated_merge_record(vec![b], a, 2));
+    put_validated_identity_event_record(&vault, first, &replicated_merge_record(vec![c], b, 1));
+    put_validated_identity_event_record(&vault, second, &replicated_merge_record(vec![b], a, 2));
     vault
         .with_write_txn(|wtxn| {
             vault.advance_identity_topology_seq_in_txn(wtxn, 2)?;
@@ -5564,4 +5680,90 @@ fn reversed_event_ids_still_protect_middle_source_in_chained_merge() {
         })
         .expect("join replicated seq and reconcile both shells");
     assert_chained_merge_middle_is_protected(&vault, a, b, c, first, second);
+}
+
+#[test]
+fn signed_dispositions_bind_immutable_core_and_join_in_both_orders() {
+    use super::admission_disposition::{
+        AdmissionDisposition, AdmissionVerdict, core_digest, joined_verdict_for_store_in_txn,
+    };
+    for disposition_first in [false, true] {
+        let (_dir, vault) = open_vault();
+        let target = id(0x80);
+        let witness = id(0x81);
+        let core = replicated_merge_record(vec![id(0x61)], id(0x62), 101);
+        let signed = vault
+            .with_write_txn(|txn| {
+                AdmissionDisposition::sign(
+                    &vault,
+                    txn,
+                    target,
+                    &core,
+                    AdmissionVerdict::RefusedNonStructural,
+                    Some(id(0x61)),
+                )
+            })
+            .unwrap();
+        let sidecar = StoredIdentityOpEvent {
+            seq: 102,
+            validated_at_write: false,
+            invalidated: false,
+            at: 201,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::AdmissionDisposition(signed.clone()),
+        };
+        assert_eq!(signed.core_digest, core_digest(&core).unwrap());
+        if disposition_first {
+            put_identity_event_record(&vault, witness, &sidecar);
+            put_identity_event_record(&vault, target, &core);
+        } else {
+            put_identity_event_record(&vault, target, &core);
+            put_identity_event_record(&vault, witness, &sidecar);
+        }
+        let read = vault.store.env.read_txn().unwrap();
+        assert_eq!(
+            joined_verdict_for_store_in_txn(&vault.store, &read, &target, &core).unwrap(),
+            Some(AdmissionVerdict::RefusedNonStructural)
+        );
+        assert_eq!(
+            vault
+                .identity_topology_event_in_txn(&read, &target)
+                .unwrap()
+                .unwrap(),
+            core,
+            "disposition must not rewrite decision bytes"
+        );
+        let mut tampered = signed;
+        tampered.core_digest = [1; 32];
+        assert!(tampered.verify().is_err(), "signature binds the digest");
+    }
+}
+
+#[test]
+fn unsigned_producer_stamp_and_local_marker_cannot_seal_missing_participant() {
+    let (_dir, vault) = open_vault();
+    let target = id(0x80);
+    let mut core = replicated_merge_record(vec![id(0x61)], id(0x62), 101);
+    core.validated_at_write = true;
+    put_identity_event_record(&vault, target, &core);
+    // A stale local cache row from the old patchwork is not signed proof.
+    vault
+        .with_write_txn(|txn| {
+            let mut key = b"it:validated:".to_vec();
+            key.extend_from_slice(target.as_bytes());
+            vault.store.vault_meta.put(txn, &key, &[])?;
+            Ok(())
+        })
+        .unwrap();
+    let read = vault.store.env.read_txn().unwrap();
+    assert!(
+        vault
+            .fold_effective_identity_topology_events_in_txn(&read)
+            .unwrap()
+            .is_empty()
+    );
 }

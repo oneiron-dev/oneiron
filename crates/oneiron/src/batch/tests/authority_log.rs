@@ -426,6 +426,28 @@ fn ingest_replicated_identity_topology_event_for_test(
             vault, wtxn, id, &header, &blob, &body, 7,
         )
         .map(|_| ())
+    })?;
+    let (fact_id, fact) =
+        crate::identity_topology::signed_validated_row_for_test(vault, *id, record)?;
+    let fact_body = crate::identity_topology::encode_identity_topology_event_body(&fact)?;
+    let mut fact_blob = Vec::with_capacity(ENTITY_METADATA_HEADER_LEN + fact_body.len());
+    fact_blob.push(crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT);
+    for _ in 0..3 {
+        fact_blob.extend_from_slice(&1u64.to_be_bytes());
+    }
+    fact_blob.extend_from_slice(&fact_body);
+    let fact_header = EntityMetadataHeader::parse(&fact_blob).expect("admission fact header");
+    vault.with_write_txn(|wtxn| {
+        crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn(
+            vault,
+            wtxn,
+            &fact_id,
+            &fact_header,
+            &fact_blob,
+            &fact_body,
+            7,
+        )
+        .map(|_| ())
     })
 }
 

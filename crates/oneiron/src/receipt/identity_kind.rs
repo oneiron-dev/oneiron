@@ -123,9 +123,19 @@ pub(super) fn identity_topology_receipts(
         .take(scan_cap)
     {
         let event_id = entry?;
-        let record = vault
+        let mut record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if matches!(
+            record.action,
+            crate::identity_topology::StoredIdentityOpAction::AdmissionDisposition(_)
+                | crate::identity_topology::StoredIdentityOpAction::AuthorAttribution { .. }
+                | crate::identity_topology::StoredIdentityOpAction::AuthorRedaction { .. }
+        ) {
+            continue;
+        }
+        record.actor =
+            crate::identity_topology::effective_author_in_txn(&vault.store, rtxn, event_id)?;
         if query.end_at.is_some_and(|end_at| record.at > end_at)
             || query.start_at.is_some_and(|start_at| record.at < start_at)
         {
@@ -339,6 +349,11 @@ fn identity_topology_receipt(
         // caller dispatches on the action before reaching this projector.
         StoredIdentityOpAction::ProposalResolution { proposal, .. } => {
             Some(format!("event:{}", proposal.to_hex()))
+        }
+        StoredIdentityOpAction::AdmissionDisposition(_)
+        | StoredIdentityOpAction::AuthorAttribution { .. }
+        | StoredIdentityOpAction::AuthorRedaction { .. } => {
+            unreachable!("sidecars do not project as topology receipts")
         }
     };
 

@@ -58,8 +58,7 @@ impl Vault {
                 return Ok(ActiveMergeDeleteRole::Source);
             }
             survivor_role |= *id == *survivor;
-            actor |= record
-                .actor
+            actor |= super::effective_author_in_txn(&self.store, rtxn, event.event_id)?
                 .is_some_and(|author| author.entity_ref() == *id);
         }
         Ok(if survivor_role {
@@ -92,7 +91,18 @@ impl Vault {
     /// authored and door-validated).
     pub fn identity_topology_event(&self, id: &EntityId) -> Result<Option<StoredIdentityOpEvent>> {
         let rtxn = self.store.env.read_txn()?;
-        self.identity_topology_event_in_txn(&rtxn, id)
+        let Some(mut record) = self.identity_topology_event_in_txn(&rtxn, id)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            record.action,
+            StoredIdentityOpAction::AuthorAttribution { .. }
+                | StoredIdentityOpAction::AuthorRedaction { .. }
+                | StoredIdentityOpAction::AdmissionDisposition(_)
+        ) {
+            record.actor = super::effective_author_in_txn(&self.store, &rtxn, *id)?;
+        }
+        Ok(Some(record))
     }
 
     /// CLAIM ids a topology decision assigned to `target` (ARCH-0055 r2/r5),

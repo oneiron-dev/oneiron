@@ -8,7 +8,6 @@ use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
-use crate::identity_topology::invalidate_identity_events_for_participant_delete_in_txn;
 use crate::ppr;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
 use crate::secret_custody::validate_replicated_custody_put;
@@ -567,7 +566,6 @@ pub(super) fn apply_ops_with_origin(
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
                 crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, &id)?;
-                invalidate_identity_events_for_participant_delete_in_txn(store, wtxn, &id)?;
                 let (_existed, had_vector, deleted_graph_state, neighbors) =
                     deindex_entity(store, wtxn, &id)?;
                 claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;

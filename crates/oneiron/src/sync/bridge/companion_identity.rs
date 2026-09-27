@@ -63,8 +63,21 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
             let record =
                 crate::identity_topology::decode_replicated_identity_topology_event_body(data)
                     .map_err(|_| crate::Error::CorruptedIndex("identity topology event body"))?;
-            validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
+            validate_replicated_identity_topology_record_before_mutation(
+                vault, &*wtxn, id, &record,
+            )?;
             vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+            if let crate::identity_topology::StoredIdentityOpAction::AuthorAttribution {
+                target,
+                ..
+            }
+            | crate::identity_topology::StoredIdentityOpAction::AuthorRedaction {
+                target,
+                ..
+            } = record.action
+            {
+                crate::identity_topology::reconcile_author_attribution_in_txn(vault, wtxn, target)?;
+            }
             vault.neutralize_delete_protected_marker_in_txn(
                 wtxn,
                 id,
@@ -80,7 +93,11 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         None => {}
     }
     let record = crate::identity_topology::decode_replicated_identity_topology_event_body(data)?;
-    validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, &record)?;
+    validate_replicated_identity_topology_record_before_mutation(vault, &*wtxn, id, &record)?;
+    if crate::identity_topology::author_attribution_redacted_in_txn(&vault.store, &*wtxn, &record)?
+    {
+        return Ok(false);
+    }
     let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
         vault,
         wtxn,
@@ -107,6 +124,12 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         return Err(err);
     }
     vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;
+    if let crate::identity_topology::StoredIdentityOpAction::AuthorAttribution { target, .. }
+    | crate::identity_topology::StoredIdentityOpAction::AuthorRedaction { target, .. } =
+        record.action
+    {
+        crate::identity_topology::reconcile_author_attribution_in_txn(vault, wtxn, target)?;
+    }
     vault.reconcile_identity_topology_edges_in_txn(wtxn)?;
     vault.neutralize_delete_protected_marker_in_txn(
         wtxn,
@@ -123,8 +146,10 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
 fn validate_replicated_identity_topology_record_before_mutation(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
     record: &crate::identity_topology::StoredIdentityOpEvent,
 ) -> Result<()> {
+    vault.validate_identity_disposition_binding_in_txn(rtxn, id, record)?;
     vault
         .validate_replicated_identity_topology_event_in_txn(rtxn, record)
         .map_err(|err| match err {

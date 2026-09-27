@@ -128,3 +128,15 @@ pub(super) const PLAN_READ_THROUGH: &str = "read_through";
 
 pub(super) const EVIDENCE_KEY_REFS: &str = "refs";
 pub(super) const EVIDENCE_KEY_RATIONALE: &str = "rationale";
+
+/// Signed, append-only admission disposition for one immutable decision core.
+pub(super) const EVENT_KIND_ADMISSION_DISPOSITION: &str = "admission_disposition";
+pub(super) const BODY_KEY_CORE_DIGEST: &str = "core_digest";
+pub(super) const BODY_KEY_VERDICT: &str = "verdict";
+pub(super) const BODY_KEY_REASON: &str = "reason";
+pub(super) const BODY_KEY_SIGNER: &str = "signer_pk";
+pub(super) const BODY_KEY_SIGNATURE: &str = "signature";
+pub(super) const EVENT_KIND_AUTHOR_ATTRIBUTION: &str = "author_attribution";
+pub(super) const EVENT_KIND_AUTHOR_REDACTION: &str = "author_redaction";
+pub(super) const BODY_KEY_ATTR_ACTOR: &str = "at_actor";
+pub(super) const BODY_KEY_ATTR_CLASS: &str = "at_class";

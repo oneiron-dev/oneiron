@@ -31,6 +31,10 @@ use crate::store::{GateDecisionId, Store};
 use super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::sweep_queue::HardEraseSweepExtras;
 use super::tombstone::{ReplayedTombstoneOutcome, decode_tombstone_value, local_hard_delete_key};
+use super::topology_delete_intent::{
+    clear_own_topology_delete_in_txn, guard_topology_delete_request_in_txn,
+    settled_topology_delete_in_txn,
+};
 use crate::error::{ClaimError, RegistryError};
 
 /// ARCH-0038 delete-interplay refs captured from an `edge.provenance` Claim
@@ -284,14 +288,17 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
+        request_id: Option<&[u8; 16]>,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
-        crate::identity_topology::invalidate_identity_events_for_participant_delete_in_txn(
-            &self.store,
-            wtxn,
-            id,
-        )?;
+        let settled = match request_id {
+            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
+            None => false,
+        };
+        if !settled {
+            self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+        }
+        self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -327,11 +334,7 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        crate::identity_topology::invalidate_identity_events_for_participant_delete_in_txn(
-            &self.store,
-            wtxn,
-            id,
-        )?;
+        self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
@@ -505,11 +508,16 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, wtxn, id)?;
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        if decode_tombstone_value(raw_value).is_hard() {
+        let decoded = decode_tombstone_value(raw_value);
+        guard_topology_delete_request_in_txn(&self.store, wtxn, id, decoded.request_id.as_ref())?;
+        let settled = match decoded.request_id.as_ref() {
+            Some(request) => settled_topology_delete_in_txn(&self.store, wtxn, id, request)?,
+            None => false,
+        };
+        if decoded.is_hard() && !settled {
             self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
         }
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
-        let decoded = decode_tombstone_value(raw_value);
         // Cleanup is local visibility, never a replicated deletion intent.
         // Accepting byte 5 here would irreversibly scrub a retained archive
         // (or an unrelated row) without the cleanup predicate or owner decision.
@@ -558,6 +566,9 @@ impl Vault {
                 &super::tombstone::identity_soft_delete_key(id),
                 &[],
             )?;
+            if let Some(request) = decoded.request_id.as_ref() {
+                clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+            }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
                 changed: had_body
                     || had_vector
@@ -605,6 +616,9 @@ impl Vault {
                     );
                 }
             }
+            if let Some(request) = decoded.request_id.as_ref() {
+                clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+            }
             return Ok(ReplayedTombstoneOutcome::HardPurged {
                 erased: false,
                 receipt_id: None,
@@ -616,7 +630,7 @@ impl Vault {
         // of the erased head are cascaded here too — before the purge takes
         // the shell edges with it, in the caller's transaction.
         let cascaded_shells = self.cascade_hard_erase_to_redirect_shells_in_txn(wtxn, id)?;
-        self.purge_entity_active_store_in_txn(wtxn, id)?;
+        self.purge_entity_active_store_in_txn(wtxn, id, decoded.request_id.as_ref())?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
@@ -669,6 +683,9 @@ impl Vault {
             },
             sweep_extras(captured.as_ref()),
         )?;
+        if let Some(request) = decoded.request_id.as_ref() {
+            clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
+        }
         Ok(ReplayedTombstoneOutcome::HardPurged {
             erased: true,
             receipt_id: Some(receipt_id),

@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
 
+use super::admission_disposition::AdmissionDisposition;
 use super::event_body_codec::{
     decode_action, decode_actor, decode_evidence, decode_str_field, decode_u64_field,
     encode_action_entries, id_value, ids_value, map_field,
@@ -101,6 +102,18 @@ pub enum StoredIdentityOpAction {
     /// moves no lifecycle state — on an approving ruling the APPLIED op is
     /// recorded as its own ordinary event, and this row records the
     /// decision about it.
+    AdmissionDisposition(AdmissionDisposition),
+    /// Erasable attribution carrier (never part of the decision core).
+    AuthorAttribution {
+        target: EntityId,
+        core_digest: [u8; 32],
+        actor: WriteActor,
+    },
+    /// Permanent, independent redaction fact dominating late attribution.
+    AuthorRedaction {
+        target: EntityId,
+        core_digest: [u8; 32],
+    },
     ProposalResolution {
         /// The resolved type-76 `Proposed` event.
         proposal: EntityId,
@@ -127,6 +140,9 @@ impl StoredIdentityOpAction {
             Self::Undo { .. } => EVENT_KIND_UNDO,
             Self::ProposalCancellation { .. } => EVENT_KIND_PROPOSAL_CANCELLATION,
             Self::ProposalResolution { .. } => EVENT_KIND_PROPOSAL_RESOLUTION,
+            Self::AdmissionDisposition(_) => super::wire_keys::EVENT_KIND_ADMISSION_DISPOSITION,
+            Self::AuthorAttribution { .. } => super::wire_keys::EVENT_KIND_AUTHOR_ATTRIBUTION,
+            Self::AuthorRedaction { .. } => super::wire_keys::EVENT_KIND_AUTHOR_REDACTION,
         }
     }
 
@@ -142,7 +158,10 @@ impl StoredIdentityOpAction {
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
             | Self::ProposalCancellation { .. }
-            | Self::ProposalResolution { .. } => None,
+            | Self::ProposalResolution { .. }
+            | Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => None,
         }
     }
 
@@ -172,7 +191,10 @@ impl StoredIdentityOpAction {
             | Self::AssertDistinct { .. }
             | Self::Undo { .. }
             | Self::ProposalCancellation { .. }
-            | Self::ProposalResolution { .. } => None,
+            | Self::ProposalResolution { .. }
+            | Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => None,
         }
     }
 
@@ -236,6 +258,9 @@ impl StoredIdentityOpAction {
             Self::ProposalCancellation { proposal, .. } => IdentityTopologyAction::CancelProposal {
                 proposal: *proposal,
             },
+            Self::AdmissionDisposition(_)
+            | Self::AuthorAttribution { .. }
+            | Self::AuthorRedaction { .. } => IdentityTopologyAction::Disposition,
             Self::ProposalResolution {
                 proposal, outcome, ..
             } => IdentityTopologyAction::ResolveProposal {
@@ -282,28 +307,6 @@ pub struct StoredIdentityOpEvent {
 }
 
 impl StoredIdentityOpEvent {
-    /// ARCH-0055 §9 author-stamp rider: this record with its deciding actor
-    /// dropped, or `None` when it carries no stamp to drop.
-    ///
-    /// ONLY the stamp goes. `seq`, `at`, source, approval, confidence,
-    /// evidence and the action all ride through verbatim, so a scrubbed
-    /// record folds to exactly the lifecycle state it folded to before — an
-    /// event with no bound actor is actor-complete by definition, which is
-    /// what keeps an erasure from silently rewriting topology history while
-    /// removing an authorship it is obliged to remove.
-    ///
-    /// Choosing WHICH records this is applied to is the caller's, and is
-    /// deliberately narrow: the ARCH-0038 erase walk scrubs the events whose
-    /// payloads it touched, never the family at large.
-    #[must_use]
-    pub(crate) fn without_author_stamp(&self) -> Option<Self> {
-        self.actor?;
-        Some(Self {
-            actor: None,
-            ..self.clone()
-        })
-    }
-
     /// Encodes the record into its pinned MessagePack map value. Split
     /// reassignment entries are canonicalized (sorted by item bytes).
     #[must_use]

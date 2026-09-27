@@ -235,7 +235,8 @@ pub fn decode_identity_op_amendment(data: &[u8]) -> Result<IdentityTopologyOp> {
         // are not amendable shapes either.
         IdentityTopologyAction::Undo { .. }
         | IdentityTopologyAction::ResolveProposal { .. }
-        | IdentityTopologyAction::CancelProposal { .. } => {
+        | IdentityTopologyAction::CancelProposal { .. }
+        | IdentityTopologyAction::Disposition => {
             return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
                 "identity topology amendment is not an op",
             )));

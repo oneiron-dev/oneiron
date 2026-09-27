@@ -93,6 +93,38 @@ pub(super) fn encode_action_entries(
             entries.push((Value::from(BODY_KEY_PROPOSAL), id_value(proposal)));
             entries.push((Value::from(BODY_KEY_ENTITY), id_value(participant)));
         }
+        StoredIdentityOpAction::AdmissionDisposition(disposition) => {
+            disposition.encode_entries(entries);
+        }
+        StoredIdentityOpAction::AuthorAttribution {
+            target,
+            core_digest,
+            actor,
+        } => {
+            entries.push((super::wire_keys::BODY_KEY_TARGET.into(), id_value(target)));
+            entries.push((
+                super::wire_keys::BODY_KEY_CORE_DIGEST.into(),
+                Value::Binary(core_digest.to_vec()),
+            ));
+            entries.push((
+                super::wire_keys::BODY_KEY_ATTR_ACTOR.into(),
+                id_value(&actor.entity_ref()),
+            ));
+            entries.push((
+                super::wire_keys::BODY_KEY_ATTR_CLASS.into(),
+                actor.actor_class().gate_actor_class().into(),
+            ));
+        }
+        StoredIdentityOpAction::AuthorRedaction {
+            target,
+            core_digest,
+        } => {
+            entries.push((super::wire_keys::BODY_KEY_TARGET.into(), id_value(target)));
+            entries.push((
+                super::wire_keys::BODY_KEY_CORE_DIGEST.into(),
+                Value::Binary(core_digest.to_vec()),
+            ));
+        }
         StoredIdentityOpAction::ProposalResolution {
             proposal,
             outcome,
@@ -165,6 +197,45 @@ fn decode_applied_counts(map: &[(Value, Value)]) -> Result<(u64, u64)> {
 /// inverse, shared by the ledger event body and the amendment codec.
 pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<StoredIdentityOpAction> {
     match kind {
+        super::wire_keys::EVENT_KIND_ADMISSION_DISPOSITION => {
+            Ok(StoredIdentityOpAction::AdmissionDisposition(
+                super::admission_disposition::AdmissionDisposition::decode(map)?,
+            ))
+        }
+        super::wire_keys::EVENT_KIND_AUTHOR_ATTRIBUTION
+        | super::wire_keys::EVENT_KIND_AUTHOR_REDACTION => {
+            let target =
+                decode_id_field(map, BODY_KEY_TARGET, "identity topology attribution target")?;
+            let digest = map_field(map, super::wire_keys::BODY_KEY_CORE_DIGEST)
+                .and_then(Value::as_slice)
+                .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
+                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology attribution digest",
+                )))?;
+            if kind == super::wire_keys::EVENT_KIND_AUTHOR_REDACTION {
+                Ok(StoredIdentityOpAction::AuthorRedaction {
+                    target,
+                    core_digest: digest,
+                })
+            } else {
+                let actor_ref = decode_id_field(
+                    map,
+                    super::wire_keys::BODY_KEY_ATTR_ACTOR,
+                    "identity topology attribution actor",
+                )?;
+                let class = map_field(map, super::wire_keys::BODY_KEY_ATTR_CLASS)
+                    .and_then(Value::as_str)
+                    .and_then(parse_actor_class)
+                    .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                        "identity topology attribution actor class",
+                    )))?;
+                Ok(StoredIdentityOpAction::AuthorAttribution {
+                    target,
+                    core_digest: digest,
+                    actor: WriteActor::new(actor_ref, class),
+                })
+            }
+        }
         EVENT_KIND_MERGE => {
             let plan = decode_str_field(map, BODY_KEY_PLAN, "identity topology event plan")?;
             if plan != PLAN_READ_THROUGH {
@@ -379,6 +450,27 @@ fn validate_identity_topology_event_stateless(record: &StoredIdentityOpEvent) ->
         )));
     }
     validate_resolution_scope_stateless(record)?;
+    if matches!(
+        record.action,
+        StoredIdentityOpAction::AdmissionDisposition(_)
+            | StoredIdentityOpAction::AuthorAttribution { .. }
+            | StoredIdentityOpAction::AuthorRedaction { .. }
+    ) {
+        if record.actor.is_some()
+            || record.approval != ClaimApprovalStatus::Auto
+            || record.evidence.is_some()
+        {
+            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                "identity topology sidecar envelope",
+            )));
+        }
+        return Ok(());
+    }
+    if record.actor.is_some() {
+        return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+            "identity topology decision author belongs in a separate attribution carrier",
+        )));
+    }
     let effective = is_effective_approval(record.approval);
 
     // ONE-1745: the applied counts are an AUDIT record of what a door

@@ -12432,7 +12432,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/deletion/identity_event_stamps.rs",
-     "purpose": "Scrub author stamps on the exact topology events an erasure touches",
+     "purpose": "Erase independent author-attribution carriers without changing decisions",
      "surface": {
       "crate-vis": 2
      }
@@ -12444,7 +12444,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "re-export": 5
      }
     },
@@ -12536,6 +12536,16 @@
       "enum": 2,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/topology_delete_intent.rs",
+     "purpose": "Durable, request-bound interlock between tombstone publication and purge",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -17978,6 +17988,31 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "AdmissionDisposition",
+      "AdmissionVerdict"
+     ],
+     "path": "src/identity_topology/admission_disposition.rs",
+     "purpose": "Signed append-only admission facts, independent of a decision's erasable author",
+     "surface": {
+      "crate-vis": 11,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/attribution.rs",
+     "purpose": "Erasable authorship for immutable type-76 decisions",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/identity_topology/distinct_claim.rs",
      "purpose": "The ARCH-0055 §6 anti-merge assertion: the normalized `entity.distinct_from` pair key, its claim wire value…",
@@ -18034,8 +18069,8 @@
      "path": "src/identity_topology/mod.rs",
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
-      "crate-vis": 10,
-      "re-export": 10
+      "crate-vis": 14,
+      "re-export": 11
      }
     },
     {
@@ -18122,7 +18157,7 @@
      "path": "src/identity_topology/replicated_event_validation.rs",
      "purpose": "Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -18136,13 +18171,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/identity_topology/store_entity_helpers.rs",
      "purpose": "Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 7
      }
     },
     {
@@ -18155,7 +18190,6 @@
      "path": "src/identity_topology/stored_event.rs",
      "purpose": "The type-76 wire record types: one stored ledger event, the action payload it carries, and their pinned…",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -18205,7 +18239,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 50
+      "crate-vis": 60
      }
     },
     {
@@ -31555,7 +31589,7 @@
      "path": "src/sync/window/egress.rs",
      "purpose": "Window egress: packing policy, local-only scrub, exports, and mirror replay",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -32911,7 +32945,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/vault/open.rs",
@@ -35071,7 +35105,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35330,7 +35364,7 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 18,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35885,7 +35919,7 @@
     "vault": {
      "files": 20,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
@@ -35946,9 +35980,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 10,
+   "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2122,
+   "source_files": 2125,
    "test_files": 723
   },
   "oneiron-android": {

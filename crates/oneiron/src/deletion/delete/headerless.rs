@@ -14,6 +14,9 @@ use super::super::sweep_queue::HardEraseSweepExtras;
 use super::super::tombstone::{
     DeleteReason, TombstoneValueV2, local_hard_delete_key, window_label_from_timestamp,
 };
+use super::super::topology_delete_intent::{
+    TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
+};
 use super::DeleteEntityOutcome;
 
 impl Vault {
@@ -79,6 +82,17 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
+        if !crdt_persisted && reason.active_store_hard_purge_v1() {
+            self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
+        }
+        reserve_topology_delete_in_txn(
+            &self.store,
+            &mut wtxn,
+            id,
+            &tombstone,
+            requested_at,
+            TopologyDeletePhase::Committed,
+        )?;
         let marker_key = local_hard_delete_key(id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
@@ -108,10 +122,20 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
+            // Nothing was erased and no cfg-off pt: marker was staged.
+            // Retire only this request in the same empty-commit txn.
+            clear_own_topology_delete_in_txn(
+                &self.store,
+                &mut wtxn,
+                id,
+                &tombstone.request_id,
+                false,
+            )?;
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
-        let existed = self.purge_entity_active_store_in_txn(&mut wtxn, id)?;
+        let existed =
+            self.purge_entity_active_store_in_txn(&mut wtxn, id, Some(&tombstone.request_id))?;
         // OWNER-DECISION (cfg-off durability): marker in the SAME purge txn.
         self.put_pending_tombstone_in_txn(&mut wtxn, &window_label, id, &tombstone)?;
         self.append_deletion_gate_decision_in_purge_txn(
@@ -146,7 +170,7 @@ impl Vault {
         if !reason.writes_receipt() {
             wtxn.commit()?;
             if crdt_persisted {
-                self.clear_pending_tombstone(&window_label, id)?;
+                self.finish_published_topology_delete(&window_label, id, &tombstone)?;
             }
             return Ok(DeleteEntityOutcome {
                 existed,
@@ -179,7 +203,7 @@ impl Vault {
         )?;
         wtxn.commit()?;
         if crdt_persisted {
-            self.clear_pending_tombstone(&window_label, id)?;
+            self.finish_published_topology_delete(&window_label, id, &tombstone)?;
         }
         Ok(DeleteEntityOutcome {
             existed,
