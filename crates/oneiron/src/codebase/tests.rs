@@ -673,7 +673,12 @@ fn codebase_snapshot_delete_cleans_sidecar_indexes() -> Result<()> {
     vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(Vec::new()))?;
     assert_eq!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?, vec![id]);
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
 
     assert!(vault.get_codebase_snapshot(&id)?.is_none());
     assert!(vault.codebase_snapshots_by_repo_ref(&repo_ref)?.is_empty());
@@ -984,7 +989,8 @@ fn codebase_snapshot_custody_report_survives_one_of_two_matching_forks_deleted()
         vault.put_code_artifact(&id, &code_body(&repo), TimeRange { start: 1, end: 1 }, 1)?;
         vault.put_codebase_snapshot(&id, &snapshot, &|_| Some(content.clone()))?;
     }
-    vault.delete_entity(&first)?;
+    vault
+        .delete_entity_with_options(&first, crate::deletion::DeleteEntityOptions { purge: true })?;
     assert!(
         vault
             .get_codebase_snapshot_custody_report(&snapshot.fork_hash)?

@@ -801,7 +801,12 @@ fn audit_chain_survives_document_deletion_and_reopen() -> Result<()> {
     let audit = vault.esign_audit(id)?;
     assert_eq!(audit.len(), 3);
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert!(vault.get_blob_artifact(&id)?.is_none());
     assert_eq!(vault.esign_audit(id)?, audit);
 
@@ -952,7 +957,12 @@ fn individual_events_cannot_be_deleted_or_retyped_but_subject_erasure_retains_au
     assert_eq!(vault.get_claim(&claim_id)?, Some(body));
     assert_eq!(vault.esign_document(id)?, state);
     assert_eq!(vault.esign_audit(id)?, audit);
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     assert_eq!(vault.esign_audit(id)?, audit);
     Ok(())
 }
@@ -1018,7 +1028,10 @@ fn deleted_documents_refuse_every_capability_door_but_retain_audit() -> Result<(
         let audit = vault.esign_audit(id)?;
         match deletion {
             "hard" => {
-                assert!(vault.delete_entity(&id)?);
+                assert!(vault.delete_entity_with_options(
+                    &id,
+                    crate::deletion::DeleteEntityOptions { purge: true }
+                )?);
             }
             "batch" => {
                 vault.batch().delete(&id).commit()?;
