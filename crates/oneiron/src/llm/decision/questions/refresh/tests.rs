@@ -484,3 +484,120 @@ fn failing_question_does_not_starve_other_due_work() -> TestResult {
     assert_eq!(answer_records(&vault, owner, second)?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn relationship_message_requires_principal_grant_before_provider_and_at_settle() -> TestResult {
+    use crate::access_grant::{
+        AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+    };
+    use crate::claim::ScopedReadActorKey;
+    use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    let principal = EntityId::now();
+    let space = EntityId::now();
+    let message = EntityId::now();
+    for id in [owner, principal] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+    }
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: EntityId::now().to_hex(),
+            turn_ref: None,
+            occurred_at: 1,
+            messages: vec![WitnessMessage {
+                id: Some(message.to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".into(),
+                content: "relationship source".into(),
+                metadata: Some(serde_json::json!({"rel": space.to_hex()})),
+                is_visible: true,
+                order: 0,
+            }],
+        })?;
+    crate::test_util::authorize_readers(
+        &vault,
+        &[owner.to_hex().as_str(), principal.to_hex().as_str()],
+    );
+    let scoped = vault.scoped_read(
+        ScopedReadActorKey::with_actor_class(principal.to_hex(), "human")
+            .expect("reader")
+            .require_access_grants(Some(principal)),
+    );
+    assert!(scoped.get(&message)?.value.is_none());
+    let record = create_question(&vault, principal, definition(message), 2)?;
+    let question = record.definition.question.id;
+    let actor = WriteActor::new(principal, EdgeActorClass::Human);
+    let mut called = 0;
+    let without = refresh_question(
+        &vault,
+        actor,
+        principal,
+        question,
+        RefreshTrigger::Manual,
+        3,
+        |r, u, body| {
+            called += 1;
+            Ok(propose(r, u, body))
+        },
+    )?;
+    assert_eq!(called, 0);
+    assert!(without.is_empty());
+    assert!(answer_records(&vault, principal, question)?.is_empty());
+
+    let grant_id = EntityId::now();
+    let grant = AccessGrant {
+        principal_ref: principal,
+        scope: AccessGrantScope::Messages { space_ref: space },
+        capability: AccessGrantCapability::MessagesRead,
+        status: AccessGrantStatus::Active,
+        created_at: 1,
+        revoked_at: None,
+        expires_at: Some(u64::MAX),
+        authority_scope: crate::federation::scope_codec::read_preset(),
+    };
+    vault.create_access_grant(&grant_id, &grant)?;
+    assert!(scoped.get(&message)?.value.is_some());
+    let allowed = refresh_question(
+        &vault,
+        actor,
+        principal,
+        question,
+        RefreshTrigger::Manual,
+        4,
+        |r, u, body| {
+            called += 1;
+            Ok(propose(r, u, body))
+        },
+    )?;
+    assert_eq!(called, 1);
+    assert_eq!(allowed.len(), 1);
+    assert!(vault.get_claim(&allowed[0].claim)?.is_some());
+
+    let stale = refresh_question(
+        &vault,
+        actor,
+        principal,
+        question,
+        RefreshTrigger::Manual,
+        5,
+        |r, u, body| {
+            called += 1;
+            vault.revoke_access_grant(&grant_id, 5)?;
+            Ok(propose(r, u, body))
+        },
+    );
+    assert!(matches!(stale, Err(Error::ConcurrentWrite(_))));
+    assert_eq!(called, 2);
+    assert!(scoped.get(&message)?.value.is_none());
+    assert_eq!(answer_records(&vault, principal, question)?, allowed);
+    Ok(())
+}

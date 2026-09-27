@@ -375,8 +375,12 @@ fn source(
 ) -> Result<Option<SourceRow>> {
     // Both access checks and the live document projection share this txn.
     // Unscoped storage reads can reveal private NOTE bodies and stale birth text.
-    let principal_key = source_actor_key(vault, txn, principal, None)?;
-    let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?;
+    // The manifest permits a keyed read, but relationship membership and
+    // AccessGrants belong to the question principal, not the host caller.
+    let principal_key =
+        source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal));
+    let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
+        .require_access_grants(Some(principal));
     let Some(raw) = vault
         .scoped_read(principal_key)
         .entity_raw_live_in(txn, &unit)?
