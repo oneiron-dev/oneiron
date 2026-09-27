@@ -5219,3 +5219,35 @@ fn headerless_gate_decision_residue_still_has_an_erase_scope() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn replayed_soft_tombstone_reports_ledger_only_erasure_once() -> Result<()> {
+    use crate::deletion::{ReplayedTombstoneOutcome, TombstoneReason, TombstoneValueV2};
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let record = claim_bound_gate_decision(synthetic_gate_decision_id(0xD8, 1), 1, id.as_bytes());
+    append_gate_decisions(&vault, std::slice::from_ref(&record))?;
+    let tombstone = TombstoneValueV2 {
+        reason: TombstoneReason::UserDelete,
+        deleted_at: 42,
+        request_id: [0xD8; 16],
+    }
+    .encode();
+    assert_eq!(
+        vault.apply_replayed_tombstone(&id, &tombstone)?,
+        ReplayedTombstoneOutcome::SoftErased { changed: true },
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    let skeleton = vault
+        .store
+        .gate_decision_in_txn(&rtxn, record.decision_id)?
+        .expect("ledger-only soft replay leaves a skeleton");
+    assert!(skeleton.redacted_at.is_some());
+    assert!(skeleton.diff_handle.is_empty());
+    drop(rtxn);
+    assert_eq!(
+        vault.apply_replayed_tombstone(&id, &tombstone)?,
+        ReplayedTombstoneOutcome::SoftErased { changed: false },
+    );
+    Ok(())
+}

@@ -561,12 +561,15 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
-                let (_existed, had_vector, deleted_graph_state, neighbors) =
-                    deindex_entity(store, wtxn, &id)?;
-                claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
+                // Preserve the batch door's let-go receipt, then shred its
+                // claim binding and the pending tray in the shared tear below.
+                // A resolution appended AFTER the tear would resurrect it.
                 if persist_gate_pending_consent {
                     store.let_go_pending_gate_consent_in_txn(wtxn, &id, mutation_recorded_at)?;
                 }
+                let (_existed, had_vector, deleted_graph_state, neighbors) =
+                    deindex_entity(store, wtxn, &id)?;
+                claim_materialization::invalidate_authored_claim(store, wtxn, &id)?;
                 pending_embedding_tokens_written.remove(&id);
                 #[cfg(feature = "sync")]
                 pending_embedding_enqueue_priorities.remove(&id);

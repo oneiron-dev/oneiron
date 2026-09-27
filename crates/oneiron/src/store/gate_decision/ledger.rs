@@ -291,9 +291,13 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &[u8; 16],
         redacted_at: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let id = crate::entity_id::EntityId::from_bytes(*claim_id)
+            .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
+        let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
         let mut records = self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?;
         records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
+        let mut changed = pending;
         for mut record in records {
             if record.redacted_at.is_some() {
                 if !self
@@ -306,6 +310,7 @@ impl Store {
                 }
                 continue;
             }
+            changed = true;
             self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
             self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
             record.version = super::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
@@ -329,13 +334,17 @@ impl Store {
                 &encode_gate_decision(&record)?,
             )?;
         }
+        // The tray carries the original content binding and can mint a fresh
+        // live v0 resolution from a v1 skeleton. Remove it and every index
+        // inside this same destructive transaction, before verification.
+        self.delete_pending_gate_consent_in_txn(wtxn, &id)?;
         if !self
             .verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)?
             .is_empty()
         {
             return Err(Error::CorruptedIndex("gate decision claim erasure"));
         }
-        Ok(())
+        Ok(changed)
     }
 
     /// Returns every gate decision carrying this grant reference, newest

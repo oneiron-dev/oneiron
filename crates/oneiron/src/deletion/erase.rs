@@ -289,7 +289,8 @@ impl Vault {
             // EdgeRef is only readable while the body is.
             let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
             crate::note::erase_citations_in_txn(self, wtxn, shell)?;
-            let (existed, shell_had_vector) = self.soft_erase_active_store_in_txn(wtxn, shell)?;
+            let (existed, shell_had_vector, _ledger_changed) =
+                self.soft_erase_active_store_in_txn(wtxn, shell)?;
             had_vector |= shell_had_vector;
             // D16 in the SAME transaction as the scrub, exactly as the local
             // and replayed SoftErase arms do it.
@@ -371,13 +372,8 @@ impl Vault {
         id: &EntityId,
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
-        // The claim's decision payloads leave in the SAME transaction as the
-        // active-store tear, including replay and headerless-residue routes.
-        self.store.redact_gate_decisions_for_claim_in_txn(
-            wtxn,
-            id.as_bytes(),
-            self.store.clock.now_recorded_at(),
-        )?;
+        // The physical tear below owns Gate-decision redaction, including
+        // nested lexical-hint claims, through the shared deindex seam.
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -408,13 +404,13 @@ impl Vault {
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
-    ) -> Result<(bool, bool)> {
+    ) -> Result<(bool, bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
-        self.store.redact_gate_decisions_for_claim_in_txn(
+        let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,
             id.as_bytes(),
             self.store.clock.now_recorded_at(),
@@ -466,7 +462,7 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
-            return Ok((false, had_vector));
+            return Ok((false, had_vector, ledger_changed));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
@@ -519,7 +515,7 @@ impl Vault {
                 },
             )?;
         }
-        Ok((true, had_vector))
+        Ok((true, had_vector, ledger_changed))
     }
 
     /// Reason-aware replay of a CRDT tombstone into the LOCAL active store —
@@ -623,7 +619,8 @@ impl Vault {
                 .entities
                 .get(&*wtxn, id.as_bytes())?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-            let (existed, had_vector) = self.soft_erase_active_store_in_txn(wtxn, id)?;
+            let (existed, had_vector, ledger_changed) =
+                self.soft_erase_active_store_in_txn(wtxn, id)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
@@ -633,7 +630,8 @@ impl Vault {
                 self.refresh_subject_edge_after_claim_delete_in_txn(wtxn, id, &captured.subject)?;
             }
             return Ok(ReplayedTombstoneOutcome::SoftErased {
-                changed: had_body
+                changed: ledger_changed
+                    || had_body
                     || had_vector
                     || had_birth_sources
                     || had_sources
