@@ -16,6 +16,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::gate::{self, PolicyManifestResolution};
 use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
+use crate::store::GateSystemNoticeRecord;
 
 use super::binding::{PolicyContentBinding, content_binding};
 use super::contract::PolicyOutputContract;
@@ -505,6 +506,35 @@ impl Vault {
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
         policy_model_context_for_policy(request, config, &policy)
     }
+}
+
+/// Evaluate the owner policy for a traceless chat turn. Only the policy manifest
+/// is read. In particular, the ordinary classify/enforce doors are NOT used:
+/// they append durable gate receipts even when a turn is withheld.
+/// A moving policy is retried once, then refused without releasing content.
+pub(crate) async fn stateless_owner_classification(
+    vault: &Vault,
+    content: &str,
+    config: &PolicyModelConfig,
+    backend: &dyn LlmBackend,
+    lease: &BudgetLease,
+) -> Result<(PolicyClassifyDecision, Vec<GateSystemNoticeRecord>)> {
+    let request = PolicyClassifyRequest::outbound_content(content);
+    for _ in 0..2 {
+        let pass = vault
+            .owner_plane_pass(&request, config, Some((backend, lease)))
+            .await?;
+        if !vault.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+            let verdict = pass.verdict;
+            let notices = policy_notice(verdict.decision, &verdict.category, None, config)
+                .into_iter()
+                .collect();
+            return Ok((verdict.decision, notices));
+        }
+    }
+    Err(Error::ConcurrentWrite(
+        "anonymous chat policy changed during classification",
+    ))
 }
 
 /// What the owner plane concluded, plus whether its model got to speak.

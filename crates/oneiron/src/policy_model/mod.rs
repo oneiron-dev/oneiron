@@ -80,6 +80,8 @@
 
 mod binding;
 mod classify;
+
+pub(crate) use classify::stateless_owner_classification;
 mod concurrent;
 mod contract;
 mod enforce;
