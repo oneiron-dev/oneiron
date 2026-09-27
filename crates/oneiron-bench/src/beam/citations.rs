@@ -2,7 +2,7 @@
 use super::{BeamError, BeamResult, comparability::CitationDisposition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
@@ -122,12 +122,19 @@ pub(super) struct CitationNumber {
 }
 #[derive(Debug, Serialize)]
 pub(super) struct CitationCorpus {
+    /// Published floors are references, not same-tier measurements.
+    pub published_baseline_cards: Vec<BaselineCardReference>,
     pub comparison_basis: &'static str,
     pub main_table: Vec<CitationNumber>,
     pub appendix: Vec<CitationNumber>,
     pub dropped: Vec<CitationNumber>,
     pub infra_status: String,
     pub infra_cost_framing: Vec<super::infra::InfraRow>,
+}
+#[derive(Debug, Serialize)]
+pub(super) struct BaselineCardReference {
+    pub card_id: String,
+    pub disposition: CitationDisposition,
 }
 pub(super) fn corpus() -> BeamResult<CitationCorpus> {
     let source: Value =
@@ -139,6 +146,7 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
     validate_pairings(source)?;
     let mut result = CitationCorpus {
         comparison_basis: "aggregate-tier; D9 dual-column",
+        published_baseline_cards: Vec::new(),
         main_table: Vec::new(),
         appendix: Vec::new(),
         dropped: Vec::new(),
@@ -148,6 +156,7 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
             .to_owned(),
         infra_cost_framing: super::infra::carded_rows()?,
     };
+    let mut baseline_ids = BTreeSet::new();
     for group in [
         "beam_paper_baselines",
         "honcho",
@@ -159,6 +168,18 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
             .expect("citation groups validated as arrays")
             .clone();
         for row in rows {
+            let baseline = group == "beam_paper_baselines" || group == "honcho";
+            let card_id = row["card_id"].as_str().unwrap_or_default();
+            if baseline
+                && (card_id.trim().is_empty()
+                    || !baseline_ids.insert(card_id.to_owned())
+                    || row["evidence"]["ref"].as_str().is_none_or(str::is_empty)
+                    || row["evidence"]["quote"].as_str().is_none_or(str::is_empty))
+            {
+                return Err(BeamError::Comparability {
+                    reason: "published baselines require unique card ids and cited evidence".into(),
+                });
+            }
             let named = row["disposition"].as_str().unwrap_or("walled appendix");
             let unpaired = group != "dropped_or_unverifiable"
                 && matches!(
@@ -193,6 +214,12 @@ fn corpus_from_source(source: &Value) -> BeamResult<CitationCorpus> {
             } else {
                 CitationDisposition::Cite
             };
+            if baseline {
+                result.published_baseline_cards.push(BaselineCardReference {
+                    card_id: card_id.to_owned(),
+                    disposition,
+                });
+            }
             let number = CitationNumber {
                 disposition,
                 evidence: row,
@@ -384,5 +411,189 @@ mod tests {
                 && number.evidence["tier"] == "1M"
                 && number.evidence["retrieval_k"] == 15
         }));
+    }
+    #[test]
+    fn companion_pairing_rejects_scale_mismatch_and_duplicate_solo_ids() {
+        let mut changed = fixture();
+        let solo = &mut changed["beam_paper_baselines"][2];
+        solo["scale"] = serde_json::json!("percent");
+        solo["value"] = serde_json::json!(10.4);
+        assert!(matches!(
+            corpus_from_source(&changed),
+            Err(BeamError::Comparability { .. })
+        ));
+
+        let mut changed = fixture();
+        let existing = changed["beam_paper_baselines"][2]["citation_id"].clone();
+        changed["beam_paper_baselines"][10]["citation_id"] = existing;
+        assert_ne!(
+            changed["beam_paper_baselines"][2]["card_id"],
+            changed["beam_paper_baselines"][10]["card_id"]
+        );
+        assert!(matches!(
+            corpus_from_source(&changed),
+            Err(BeamError::Comparability { .. })
+        ));
+    }
+
+    #[test]
+    fn published_floor_has_stable_cited_cards_and_walls_unknown_axes() {
+        let report = corpus().unwrap();
+        let ids: BTreeSet<_> = report
+            .published_baseline_cards
+            .iter()
+            .map(|r| r.card_id.as_str())
+            .collect();
+        assert_eq!(ids.len(), report.published_baseline_cards.len());
+        for id in [
+            "honcho-beam-100k-nugget-mean-v1",
+            "beam-paper-10m-rag-llama4-maverick-v1",
+        ] {
+            assert!(ids.contains(id));
+            assert!(
+                report
+                    .appendix
+                    .iter()
+                    .chain(&report.main_table)
+                    .any(|row| row.evidence["card_id"] == id)
+            );
+        }
+        assert!(
+            report
+                .published_baseline_cards
+                .iter()
+                .any(|row| row.card_id == "honcho-beam-100k-nugget-mean-v1"
+                    && row.disposition == CitationDisposition::WalledAppendix)
+        );
+        assert!(!report.infra_status.is_empty());
+    }
+
+    #[test]
+    fn chroma_run_receipt_links_scored_support_and_no_evidence_control() {
+        use sha2::{Digest, Sha256};
+
+        let receipt: Value = serde_json::from_str(include_str!(
+            "../../results/beam-chroma-fixture-2026-09-27.json"
+        ))
+        .unwrap();
+        let corpus = corpus().unwrap();
+        assert!(receipt["scope"].as_str().unwrap().contains("fixture"));
+        assert_eq!(receipt["chroma_card_id"], "vanilla-rag");
+        assert_eq!(receipt["retrieval_card_ids"].as_array().unwrap().len(), 2);
+        let reports = [
+            (
+                "supported",
+                include_str!("../../results/beam-chroma-supported.raw.json"),
+                "observed_fixture_points",
+            ),
+            (
+                "no_evidence",
+                include_str!("../../results/beam-chroma-no-evidence.raw.json"),
+                "negative_control_points",
+            ),
+        ];
+        for (kind, raw, key) in reports {
+            let digest = format!("{:x}", Sha256::digest(raw.as_bytes()));
+            assert_eq!(
+                receipt["runtime"][format!("{kind}_raw_report_sha256")],
+                digest
+            );
+            let run: Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(run["chroma_card_id"], "vanilla-rag");
+            assert_eq!(run["retrieval_cards"].as_object().unwrap().len(), 2);
+            let recorded = receipt[key].as_array().unwrap();
+            for effort in ["light", "medium"] {
+                for arm in ["deterministic", "vanilla_rag", "backbone_solo"] {
+                    let point = run["points"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|point| point["effort"] == effort && point["arm"] == arm)
+                        .unwrap();
+                    let row = run["rows"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|row| row["effort"] == effort && row["arm"] == arm)
+                        .unwrap();
+                    let summary = recorded
+                        .iter()
+                        .find(|row| row["effort"] == effort && row["arm"] == arm)
+                        .unwrap();
+                    assert_eq!(point["accuracy"], summary["scorer_value"]);
+                    assert_eq!(row["answer"], summary["answer"]);
+                    assert_eq!(
+                        row["scoring"]["beam"]["aggregate"]["officialIntCast"],
+                        point["accuracy"]
+                    );
+                    let supported = kind == "supported" && arm != "backbone_solo";
+                    assert_eq!(point["accuracy"], if supported { 1.0 } else { 0.0 });
+                    assert_eq!(row["answer"], if supported { "tulip" } else { "unknown" });
+                }
+            }
+        }
+        for reference in receipt["cited_published_reference_rows"]
+            .as_array()
+            .unwrap()
+        {
+            let card_id = reference["card_id"].as_str().unwrap();
+            assert!(
+                corpus
+                    .published_baseline_cards
+                    .iter()
+                    .any(|row| row.card_id == card_id)
+            );
+            let row = corpus
+                .main_table
+                .iter()
+                .chain(&corpus.appendix)
+                .find(|row| row.evidence["card_id"] == card_id)
+                .unwrap();
+            assert_eq!(row.evidence["value"], reference["value"]);
+            assert_eq!(row.evidence["tier"], reference["tier"]);
+            assert_eq!(row.evidence["evidence"]["ref"], reference["source"]);
+            assert_eq!(
+                serde_json::to_value(row.disposition).unwrap(),
+                reference["disposition"]
+            );
+        }
+        for card in receipt["infra_cost_framing_cards"].as_array().unwrap() {
+            assert!(
+                corpus
+                    .infra_cost_framing
+                    .iter()
+                    .any(|row| row.card_id == card["card_id"]
+                        && row.source == card["source"]
+                        && serde_json::to_value(&row.measurement).unwrap() == card["measurement"])
+            );
+        }
+        assert_eq!(
+            receipt["infra_cost_framing_cards"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+    }
+
+    #[test]
+    fn missing_or_duplicate_published_evidence_fails_closed() {
+        let source: Value =
+            serde_json::from_str(include_str!("../../fixtures/beam_citation_corpus.v1.json"))
+                .unwrap();
+        for field in ["card_id", "evidence"] {
+            let mut invalid = source.clone();
+            invalid["honcho"][0].as_object_mut().unwrap().remove(field);
+            assert!(matches!(
+                corpus_from_source(&invalid),
+                Err(BeamError::Comparability { .. })
+            ));
+        }
+        let mut duplicate = source;
+        duplicate["honcho"][1]["card_id"] = duplicate["honcho"][0]["card_id"].clone();
+        assert!(matches!(
+            corpus_from_source(&duplicate),
+            Err(BeamError::Comparability { .. })
+        ));
     }
 }

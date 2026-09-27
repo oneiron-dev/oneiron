@@ -143,12 +143,13 @@ mod tests {
         let citations = crate::beam::citations::corpus().unwrap();
         assert_eq!(citations.infra_cost_framing.len(), 3);
         assert!(citations.infra_status.contains("Cost-framing-only"));
-        assert!(
-            citations
-                .main_table
+        // Accuracy may cite a published BEAM card, but never an infra card.
+        assert!(citations.main_table.iter().all(|row| {
+            report
+                .comparators
                 .iter()
-                .all(|row| row.evidence["card_id"].is_null())
-        );
+                .all(|infra| row.evidence["card_id"] != infra.card_id)
+        }));
     }
     #[test]
     fn accuracy_scoring_is_independent_of_infra_rows() {
