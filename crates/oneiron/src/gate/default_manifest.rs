@@ -406,6 +406,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             PackInstallPolicy::shipped().encode(),
         ),
         (
+            Value::from(crate::federation::grant_policy::ROWS_KEY),
+            federation_grant_default_rows(),
+        ),
+        (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
@@ -435,4 +439,53 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode default policy manifest");
     data
+}
+
+/// Engine-authored vault policy DATA for grant creation. The grant codec and
+/// write gate do not consult this list; they resolve the stored manifest rows
+/// in the same writer that mints each membership grant.
+fn federation_grant_default_rows() -> Value {
+    use crate::federation::grant_policy::{GrantPolicyRow as Row, encode_row};
+    use crate::federation::{FederationGrantRole as Role, Scope, ScopeAxis};
+    let scope = |verbs: &[&str]| {
+        let mut scope = Scope::top();
+        scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
+        scope
+    };
+    Value::Array(
+        [
+            Row::PrecedenceNestedNarrowing,
+            Row::RoleDefault {
+                role: Role::Owner,
+                scope: Scope::top(),
+            },
+            Row::RoleDefault {
+                role: Role::Admin,
+                scope: scope(&[
+                    "read",
+                    "write",
+                    "admin",
+                    "org:add-member",
+                    "org:remove-member",
+                    "org:assign-role",
+                    "org:reset-shared-project-access",
+                ]),
+            },
+            Row::RoleDefault {
+                role: Role::Member,
+                scope: scope(&["read", "write"]),
+            },
+            Row::RoleDefault {
+                role: Role::Viewer,
+                scope: scope(&["read"]),
+            },
+            Row::RoleDefault {
+                role: Role::Delegate,
+                scope: scope(&["read"]),
+            },
+        ]
+        .iter()
+        .map(|row| encode_row(row).expect("default grant policy row"))
+        .collect(),
+    )
 }

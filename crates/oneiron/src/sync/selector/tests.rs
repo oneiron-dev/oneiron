@@ -4519,9 +4519,14 @@ fn put_delegate_grant(
         FederationGrantRole::Admin,
         FederationGrantPreset::Admin,
     );
-    let delegate =
+    let mut delegate =
         FederationGrant::attenuated_delegate(&parent, member_ref, now_secs, expires_at_secs)
             .expect("an admin parent mints a delegate");
+    // Clock/selector fixture: select an explicit read capability. The bare
+    // constructor is inert; production mints from vault-resident policy.
+    delegate.authority_scope = parent
+        .authority_scope
+        .meet(&crate::federation::scope_codec::read_preset());
     let grant_id = EntityId::now();
     vault
         .batch()
