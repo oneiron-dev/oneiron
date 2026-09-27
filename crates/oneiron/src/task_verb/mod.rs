@@ -124,6 +124,8 @@ mod owner_index_tests;
 pub use symbol_lease::{SymbolLease, SymbolLeaseOutcome};
 pub(crate) use symbol_lease::{acquire_symbols, symbols_ready};
 
+#[cfg(test)]
+pub(crate) use scheduling::terminal_success_from_body;
 pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
 
 #[cfg(test)]
