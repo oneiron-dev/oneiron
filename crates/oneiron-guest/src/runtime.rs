@@ -127,7 +127,16 @@ fn run<T: Read + Write + 'static>(
     // Wasmtime performs canonical post-return inside call; either trap refuses proposals.
     let (output,) = run
         .call(&mut *store, (input.source.clone(),))
-        .map_err(|_| Error::Runtime("component trapped"))?;
+        .map_err(|error| {
+            if matches!(
+                error.downcast_ref::<wasmtime::Trap>(),
+                Some(wasmtime::Trap::OutOfFuel)
+            ) {
+                Error::Runtime("component fuel exhausted")
+            } else {
+                Error::Runtime("component trapped")
+            }
+        })?;
     if store.data().poisoned {
         return Err(Error::Protocol("credential transport failed"));
     }

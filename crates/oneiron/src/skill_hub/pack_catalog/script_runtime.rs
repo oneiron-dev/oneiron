@@ -5,6 +5,8 @@ use serde::Deserialize;
 use std::{collections::BTreeMap, fs, io::Read};
 use std::{collections::BTreeSet, sync::Arc};
 
+#[cfg(any(test, feature = "microvm-firecracker"))]
+use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackSource, invalid};
 use crate::{
     EntityId, Result, Vault,
@@ -25,16 +27,11 @@ use crate::{
     code_sandbox::microvm::{
         CredentialAllowlist, CredentialResolver, MicroVmBackend, MicroVmSandboxAdapter,
     },
-    code_sandbox::{SandboxGuestTier, SandboxMountTable, SandboxProposalWrite},
+    code_sandbox::{SandboxGuestTier, SandboxMountTable},
     connector_key::events::ConnectorEvent,
     outbound::{OutboundIntentDraft, OutboundIntentTrigger},
     surface_event::InboundSurfaceEventInput,
 };
-
-#[cfg(any(test, feature = "microvm-firecracker"))]
-const OUTPUT_PATH: &str = "/mnt/workspace/adapter-output.json";
-#[cfg(any(test, feature = "microvm-firecracker"))]
-const MAX_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// One owner-approved connector-key grant. The guest sees only the key's opaque
 /// custody handle; resolution and destination checks remain on the host side.
@@ -193,7 +190,7 @@ impl Vault {
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
-        (source, path, receipt): (PackSource, String, PackInstallReceipt),
+        (source, _path, receipt): (PackSource, String, PackInstallReceipt),
     ) -> Result<PackScriptOutcome> {
         let PackScriptRun {
             name,
@@ -239,29 +236,19 @@ impl Vault {
             vault: Arc::clone(self),
             grants: bindings,
         });
-        let script = source
-            .files()
-            .iter()
-            .find(|file| file.path == path)
-            .ok_or_else(|| invalid("script source absent"))?;
-        let script =
-            std::str::from_utf8(&script.content).map_err(|_| invalid("script is not UTF-8"))?;
         let runtime = receipt
             .runtime
             .as_ref()
             .ok_or_else(|| invalid("script runtime absent"))?;
-        if runtime.runtime_id != crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME {
-            return Err(invalid(
-                "script runtime is not the code-mode QuickJS component",
-            ));
-        }
+        let plan = ScriptExecutionPlan::from_source(&source, runtime)?;
+        let injected = plan.assemble_program(&guest_grants)?;
         let mut component = Vec::new();
         fs::File::open(&image.component)
             .map_err(|_| invalid("guest component unavailable"))?
-            .take(64 * 1024 * 1024 + 1)
+            .take((oneiron_sandbox_contract::MAX_COMPONENT_BYTES + 1) as u64)
             .read_to_end(&mut component)
             .map_err(|_| invalid("guest component read failed"))?;
-        if component.len() > 64 * 1024 * 1024 {
+        if component.is_empty() || component.len() > oneiron_sandbox_contract::MAX_COMPONENT_BYTES {
             return Err(invalid("script component too large"));
         }
         if blake3::hash(&component).to_hex().as_str() != runtime.runtime_hash {
@@ -270,7 +257,7 @@ impl Vault {
         // This temporary tree is the entire guest source view. A pack can ask
         // for a path outside it, but the guest read import will refuse it.
         let workspace = tempfile::tempdir()?;
-        for file in source.files() {
+        for file in plan.files() {
             let target = workspace.path().join(&file.path);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent)?;
@@ -290,15 +277,7 @@ impl Vault {
             resolver,
             allowlist,
         )?;
-        let grant_json = serde_json::to_string(&guest_grants)
-            .map_err(|_| invalid("script grant mapping encoding failed"))?;
-        let prelude = format!("const packGrants = Object.freeze({grant_json});\n");
-        if prelude.len() > super::admission::MAX_PACK_GRANT_PRELUDE_BYTES
-            || prelude.len() + script.len() > super::admission::MAX_GUEST_SCRIPT_SOURCE_BYTES
-        {
-            return Err(invalid("injected script exceeds guest source budget"));
-        }
-        let guest = image.clone().with_source(format!("{prelude}{script}"));
+        let guest = image.clone().with_source(injected);
         let exit = adapter.run(&guest, budget)?;
         if exit.status != 0 {
             return Err(invalid("pack script failed in sandbox"));
@@ -307,7 +286,7 @@ impl Vault {
         if deltas.len() != 1 {
             return Err(invalid("pack script must emit one typed output"));
         }
-        let bytes = script_output_bytes(deltas[0].write())?;
+        let bytes = plan.output_bytes(deltas[0].write())?;
         let output: ScriptOutput = serde_json::from_slice(&bytes)
             .map_err(|_| invalid("invalid typed pack script output"))?;
         if output.inbound.len() > 16 || output.verbs.len() > 16 || output.events.len() > 16 {
@@ -405,28 +384,6 @@ impl Vault {
             wakes,
         })
     }
-}
-
-/// Parse the exact Firecracker protocol's reviewable empty-base file edit.
-/// The guest never commits a whole-file write or bypasses the proposal lane.
-#[cfg(any(test, feature = "microvm-firecracker"))]
-pub(crate) fn script_output_bytes(write: &SandboxProposalWrite) -> Result<Vec<u8>> {
-    let SandboxProposalWrite::FileEdit(file) = write else {
-        return Err(invalid("pack script emitted non-output proposal"));
-    };
-    let edit = &file.edit;
-    if file.path.as_str() != OUTPUT_PATH
-        || file.base_content_hash != *blake3::hash(b"").as_bytes()
-        || edit.path != file.path.relative_path()
-        || edit.start != 0
-        || edit.end != 0
-        || !edit.expected.is_empty()
-        || edit.new_path.is_some()
-        || edit.replacement.len() > MAX_OUTPUT_BYTES
-    {
-        return Err(invalid("pack script output outside manifest"));
-    }
-    Ok(edit.replacement.as_bytes().to_vec())
 }
 
 fn validate_grants(

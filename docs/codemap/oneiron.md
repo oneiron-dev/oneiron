@@ -707,7 +707,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/firecracker/launch.rs` | src | s | 1 crate-vis | — | Jailer launch, resource ceilings and process custody for one microVM |
 | `src/code_sandbox/firecracker/launch/tests.rs` | test | s | — | — | — |
 | `src/code_sandbox/firecracker/protocol.rs` | src | s | 2 crate-vis | — | Bounded guest-agent framing; no host filesystem or credential capabilities |
-| `src/code_sandbox/firecracker/protocol/tests.rs` | test | s | — | — | — |
+| `src/code_sandbox/firecracker/protocol/tests.rs` | test | m | — | — | — |
 | `src/code_sandbox/firecracker/snapshot.rs` | src | s | 1 crate-vis | — | Descriptor-relative, no-symlink source snapshot for a foreign VM |
 | `src/code_sandbox/firecracker/tests.rs` | test | s | — | — | — |
 | `src/code_sandbox/microvm/adapter.rs` | src | s | 1 struct · 8 fn | MicroVmSandboxAdapter | The SandboxBoundaryAdapter implementation that binds a backend to the boundary contract |
@@ -2271,7 +2271,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/mod.rs` | src | s | 2 mod · 15 re-export · 13 crate-vis | — | Skill-hub records, provenance aliases, adapter contracts, and update gates |
 | `src/skill_hub/osv.rs` | src | m | 3 struct · 1 enum · 1 trait · 2 fn · 1 const · 2 crate-vis | DependencyCoordinate, DependencyScanStatus, OsvDevClient, OsvQuery, SkillInstallAdvisories | Dependency-only OSV queries on dynamic installs, using the existing scan ledger |
 | `src/skill_hub/osv/tests.rs` | test | s | — | — | — |
-| `src/skill_hub/pack_catalog/admission.rs` | src | m | 6 fn · 3 crate-vis | — | Human-gated installation of exact pack source; requested powers stay inert |
+| `src/skill_hub/pack_catalog/admission.rs` | src | s | 6 fn · 1 crate-vis | — | Human-gated installation of exact pack source; requested powers stay inert |
 | `src/skill_hub/pack_catalog/admission_tests.rs` | test | m | — | — | Caller-visible pack admission, re-consent, runtime and transaction laws |
 | `src/skill_hub/pack_catalog/admission_types.rs` | src | s | 4 struct · 2 enum · 1 trait · 5 fn | PackCodeAutoInstall, PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier, PackRuntimeRecipe | Source-bound qualification, owner asks, and inert installation receipts |
 | `src/skill_hub/pack_catalog/bundled_skills.rs` | src | s | 1 crate-vis | — | Pack skills pass the existing archive scanner/Candidate door in the install transaction |
@@ -2280,7 +2280,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/manifest.rs` | src | s | 1 struct · 2 enum · 1 crate-vis | PackAdapter, PackKind, PackManifest | Closed PACK.md manifest parser |
 | `src/skill_hub/pack_catalog/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | Exact, inert PACK.md source catalogs |
 | `src/skill_hub/pack_catalog/schema.rs` | src | s | 1 crate-vis | — | Runtime kind descriptors are exact source files, never caller-supplied hashes |
-| `src/skill_hub/pack_catalog/script_runtime.rs` | src | m | 3 struct · 2 fn · 1 crate-vis | PackScriptGrant, PackScriptOutcome, PackScriptRun | Foreign pack scripts run only through the existing propose-only code-mode VM |
+| `src/skill_hub/pack_catalog/script_plan.rs` | src | s | 7 crate-vis | — | One qualified execution shape for both pack admission and foreign launch |
+| `src/skill_hub/pack_catalog/script_runtime.rs` | src | m | 3 struct · 2 fn | PackScriptGrant, PackScriptOutcome, PackScriptRun | Foreign pack scripts run only through the existing propose-only code-mode VM |
 | `src/skill_hub/pack_catalog/script_runtime/tests.rs` | test | L | — | — | — |
 | `src/skill_hub/pack_catalog/source.rs` | src | s | 1 struct · 5 fn | PackSource | Validated exact source trees |
 | `src/skill_hub/pack_catalog/tests.rs` | test | s | — | — | Source custody tests: exact bytes, inert imports, generic/replay parity and rollback |

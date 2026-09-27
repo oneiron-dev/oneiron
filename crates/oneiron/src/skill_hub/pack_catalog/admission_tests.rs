@@ -63,7 +63,9 @@ fn fixture(
 )> {
     let mut config = VaultConfig::device();
     config.dimensions = 4;
-    config.map_size = 16 * 1024 * 1024;
+    // The catalog carries exact source bytes plus indexes; the boundary test
+    // stages a 16 MiB source before asking qualification to refuse it.
+    config.map_size = 128 * 1024 * 1024;
     let (dir, vault) = crate::test_util::open_test_vault_with(config);
     let owner = EntityId::now();
     let at = TimeRange { start: 1, end: 1 };
@@ -371,7 +373,7 @@ fn script_snapshot_reserves_space_for_injected_grants_at_exact_source_limit() ->
         .unwrap();
     script
         .content
-        .resize(super::admission::MAX_GUEST_SCRIPT_SOURCE_BYTES, b' ');
+        .resize(oneiron_sandbox_contract::MAX_PROGRAM_BYTES, b' ');
     assert_eq!(script.content.len(), 1024 * 1024);
     assert_unrunnable_script_refused(files)
 }
@@ -411,5 +413,37 @@ fn script_snapshot_refuses_256_byte_filename_components() -> Result<()> {
         ));
         assert_unrunnable_script_refused(files)?;
     }
+    Ok(())
+}
+
+fn padded_echo_files(total: usize) -> Vec<HubFile> {
+    let mut files = echo_script_files();
+    let used: usize = files.iter().map(|file| file.content.len()).sum();
+    let mut left = total - used;
+    let mut index = 0;
+    while left > 0 {
+        let bytes = left.min(oneiron_sandbox_contract::MAX_FILE_BYTES);
+        files.push(HubFile::new(
+            format!("knowledge/padding-{index}.txt"),
+            vec![b'x'; bytes],
+        ));
+        left -= bytes;
+        index += 1;
+    }
+    files
+}
+
+#[test]
+fn script_snapshot_reserves_the_full_output_from_merged_workspace_budget() -> Result<()> {
+    let full = oneiron_sandbox_contract::MAX_WORKSPACE_BYTES;
+    assert_unrunnable_script_refused(padded_echo_files(full))?;
+    let source = PackSource::from_files(padded_echo_files(full - 64 * 1024))?;
+    let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    assert!(
+        vault
+            .prepare_pack_install(id, &hub, &publisher, &QualifiedScript)
+            .is_ok()
+    );
     Ok(())
 }
