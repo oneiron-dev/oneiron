@@ -1762,9 +1762,22 @@ fn malformed_channel_identity_carriers_are_scrubbed_before_export() -> Result<()
             )?;
         }
         doc.commit();
-        let vv = doc.oplog_vv().encode();
-        let exported = export_window_updates_since(&vault, &window, &doc, &vv)?;
-        assert!(!exported.is_empty());
+        // Even a peer at the initial frontier receives only a history-free
+        // snapshot. Import it to prove the damaged carrier and incident edge
+        // cannot be reconstructed from the exported bytes.
+        let exported =
+            export_window_updates_since(&vault, &window, &doc, &VersionVector::default().encode())?;
+        let peer = LoroDoc::new();
+        import_doc(&peer, &exported)?;
+        assert!(
+            peer.is_shallow(),
+            "scrubbed history never goes out as raw deltas"
+        );
+        assert!(map_get_bytes(&peer.get_map("entities"), &key).is_none());
+        assert!(map_get_bytes(&peer.get_map("entities"), &healthy_id.to_hex()).is_some());
+        if label == "canonical" {
+            assert!(map_get_bytes(&peer.get_map("edges"), &edge_key).is_none());
+        }
         assert!(history_free_window_required(&vault, &window)?);
         assert!(
             map_get_bytes(&entities, &key).is_none(),
