@@ -39,16 +39,6 @@ impl Store {
         token
     }
 
-    fn legacy_pending_embedding_marker_token(
-        claim_body: &[u8],
-    ) -> [u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN] {
-        let digest = Sha256::digest(claim_body);
-        let mut token = [0_u8; PENDING_EMBEDDING_MARKER_TOKEN_LEN];
-        token[0] = 1;
-        token[1..].copy_from_slice(&digest);
-        token
-    }
-
     fn scoped_embedding_token(
         epoch: u64,
         body: &[u8],
@@ -74,11 +64,9 @@ impl Store {
         claim_body: &[u8],
         owner: Option<crate::federation::derivation::DerivationOwner>,
     ) -> bool {
+        // A v1 body-only marker cannot prove which embedding-model epoch
+        // produced its vector, even when the vault has no derivation owner.
         marker == Self::scoped_embedding_token(epoch, claim_body, owner)
-            || (owner.is_none()
-                && marker.len() == PENDING_EMBEDDING_MARKER_TOKEN_LEN
-                && marker[0] == 1
-                && marker == Self::legacy_pending_embedding_marker_token(claim_body))
     }
 
     pub(crate) fn mark_pending_embedding(
