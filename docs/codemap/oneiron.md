@@ -666,7 +666,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_revision/storage.rs` | src | m | 8 fn · 6 crate-vis | — | Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes |
 | `src/code_revision/tests.rs` | test | XL | — | — | — |
 | `src/code_revision/types.rs` | src | s | 2 struct · 1 enum · 7 fn · 4 crate-vis | CodeRevision, CodeRevisionFork, CodeRevisionKind | Code-revision domain values and their constructors |
-| `src/code_run/actions.rs` | src | m | 4 struct · 2 enum · 6 fn · 1 type · 2 crate-vis | ActionArgKind, ActionArgument, ActionBuildContext, ActionRegistry, ActionVerbDefinition, AgentActionCall | One named verb registry for validated UI events and agent calls |
+| `src/code_run/actions.rs` | src | m | 4 struct · 2 enum · 7 fn · 1 type · 3 crate-vis | ActionArgKind, ActionArgument, ActionBuildContext, ActionRegistry, ActionVerbDefinition, AgentActionCall | One named verb registry for validated UI events and agent calls |
 | `src/code_run/actions/tests.rs` | test | s | — | — | — |
 | `src/code_run/blocked.rs` | src | s | 2 struct · 1 enum · 4 fn · 3 crate-vis | BlockedCategory, BlockedReceipt, SelfReportBlockedCall | Witnessed, reference-addressed self-reports |
 | `src/code_run/codec.rs` | src | m | 2 fn · 7 const · 2 crate-vis | — | — |
@@ -678,7 +678,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/envelope.rs` | src | s | 8 crate-vis | — | Write-envelope construction, gate bodies and the write-gate checks every memory verb clears |
 | `src/code_run/dispatcher/human_speech.rs` | src | s | 5 crate-vis | — | Ask-human durable waits and executor speech witnessing |
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 6 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
-| `src/code_run/dispatcher/mod.rs` | src | s | 1 struct · 7 fn · 1 type · 1 re-export · 8 crate-vis | HostSelfDispatcher | — |
+| `src/code_run/dispatcher/mod.rs` | src | m | 1 struct · 7 fn · 1 type · 1 re-export · 8 crate-vis | HostSelfDispatcher | — |
 | `src/code_run/mod.rs` | src | s | 4 mod · 5 re-export · 4 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/payload.rs` | src | m | 8 crate-vis | — | — |
 | `src/code_run/replay.rs` | src | m | 10 struct · 16 fn · 7 const · 1 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor, CodeRunReplayGeneration +2 | — |
@@ -687,7 +687,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/routing.rs` | src | m | 17 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/speech_identity.rs` | src | s | 6 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
 | `src/code_run/support.rs` | src | s | 29 crate-vis | — | — |
-| `src/code_run/tests.rs` | test | XL | — | — | — |
+| `src/code_run/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/code_run/types.rs` | src | m | 18 struct · 5 enum · 1 trait · 16 fn | SelfAgentSpawnCall, SelfAgentSpawnResult, SelfAskHumanCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome +16 | — |
 | `src/code_run/vault_read/context_pack.rs` | src | m | 16 struct · 3 enum · 1 fn | ContextPackBudgetControls, ContextPackDepthControls, ContextPackRetrievalBudgetControls, CoreContextPackAccounting, CoreContextPackAccountingReason, CoreContextPackEdgeProvenance, CoreContextPackEdgeRecord, CoreContextPackEmpty +11 | Context-pack request controls, record shapes, stats and projection types |
 | `src/code_run/vault_read/contract.rs` | src | m | 1 struct · 6 enum · 1 trait · 11 fn · 4 const · 2 crate-vis | VaultReadAdapterKind, VaultReadAvailability, VaultReadClient, VaultReadMethod, VaultReadMethodMapping, VaultReadRequest, VaultReadResponse, VaultReadWireOp | The one declarative contract table and every surface the macro generates from it |
@@ -1493,7 +1493,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/meeting_audio/tests/producer.rs` | test | m | — | — | — |
 | `src/ingest/meeting_audio/tests/recorded_evaluation.rs` | test | s | — | — | Offline harness fixtures, not native model quality or host provisioning evidence |
 | `src/ingest/meeting_audio/tests/support.rs` | test | m | 9 crate-vis | — | Synthetic callback fixtures only: no decoder or model runs in these tests |
-| `src/ingest/meeting_audio/types.rs` | src | s | 21 struct · 4 enum · 2 trait · 2 fn | AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest, BatchDefault +19 | Typed host ports for file decoding, inference, routing and explicit import consent |
+| `src/ingest/meeting_audio/types.rs` | src | s | 21 struct · 4 enum · 2 trait · 3 fn | AsrOutput, AsrPackRequest, AsrRole, AsrRoute, AsrWord, AudioFile, BatchAsrRequest, BatchDefault +19 | Typed host ports for file decoding, inference, routing and explicit import consent |
 | `src/ingest/mod.rs` | src | s | 3 mod · 13 re-export · 3 crate-vis | — | Ingest source registry and source-local normalization |
 | `src/ingest/parsed.rs` | src | s | 2 struct · 2 crate-vis | ParsedImport, ParsedMessage | Shared pre-semantic import shape |
 | `src/ingest/provider.rs` | src | s | 2 crate-vis | — | Provider conversation decoders |
@@ -1595,7 +1595,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/questions/store.rs` | src | s | 4 fn · 8 crate-vis | — | Immutable question versions and a CAS-updated scheduling head in vault_meta |
 | `src/llm/decision/questions/task_ask.rs` | src | s | 3 crate-vis | — | Transactional tasks.ask adapter to the shared versioned question substrate |
 | `src/llm/decision/types.rs` | src | s | 6 struct · 5 enum · 6 fn · 1 crate-vis | AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionReceipt, DecisionRung +3 | Closed answer contracts and engine-owned decision receipts |
-| `src/llm/defaults.rs` | src | m | 2 struct · 1 enum · 12 fn · 1 crate-vis | PurposeDefault, PurposeDefaultTable, VoiceLane | Vault-local inference defaults |
+| `src/llm/defaults.rs` | src | m | 3 struct · 1 enum · 14 fn · 2 crate-vis | PurposeDefault, PurposeDefaultTable, VoiceBackendBinding, VoiceLane | Vault-local inference defaults |
 | `src/llm/entity_refs.rs` | src | s | 5 crate-vis | — | Validated entity-reference wire encoding for model policy DTOs |
 | `src/llm/error.rs` | src | s | 1 struct · 4 enum | BudgetDenied, FatalLlmError, LlmError, RetryableLlmError, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 3 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |

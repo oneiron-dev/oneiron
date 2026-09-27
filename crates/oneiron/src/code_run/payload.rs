@@ -58,6 +58,10 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("tgt", entity_id_value(call.tgt)),
             ("weight", Value::F32(call.weight)),
         ]),
+        SelfCall::InferenceDefaultsRead => request_map(vec![]),
+        SelfCall::InferenceDefaultsReplace(json) => {
+            request_map(vec![("json", Value::from(json.as_str()))])
+        }
         SelfCall::ReportBlocked(call) => request_map(vec![
             ("category", Value::from(call.category.as_str())),
             ("detail", Value::from(call.detail.as_str())),
@@ -207,6 +211,10 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                 context_spec_json(&result.spec).map_or(Value::Nil, Value::from),
             ),
         ]),
+        SelfDispatchOutcome::InferenceDefaults(json) => request_map(vec![
+            ("kind", Value::from("inference_defaults")),
+            ("json", Value::from(json.as_str())),
+        ]),
         SelfDispatchOutcome::ReportBlocked { receipt } => request_map(vec![
             ("kind", Value::from("report_blocked")),
             ("receipt", entity_id_value(*receipt)),
@@ -225,6 +233,9 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     let entries = expect_map(value, "dispatch outcome must be a map")?;
     let kind = str_value(map_get(entries, "kind")?)?;
     match kind {
+        "inference_defaults" => Ok(SelfDispatchOutcome::InferenceDefaults(
+            str_value(map_get(entries, "json")?)?.to_owned(),
+        )),
         "report_blocked" => Ok(SelfDispatchOutcome::ReportBlocked {
             receipt: entity_value(map_get(entries, "receipt")?)?,
         }),
@@ -375,6 +386,8 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.think" => Ok(SelfEffect::Think),
         "self.express" => Ok(SelfEffect::Express),
         "self.report_blocked" => Ok(SelfEffect::ReportBlocked),
+        "self.inference_defaults.read" => Ok(SelfEffect::InferenceDefaultsRead),
+        "self.inference_defaults.replace" => Ok(SelfEffect::InferenceDefaultsReplace),
         _ => Err(invalid_code_run_replay("unknown self effect")),
     }
 }

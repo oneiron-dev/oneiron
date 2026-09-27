@@ -18,7 +18,7 @@ mod call;
 mod defaults;
 #[cfg(test)]
 mod streaming_tests;
-pub use defaults::{PurposeDefault, PurposeDefaultTable, VoiceLane};
+pub use defaults::{PurposeDefault, PurposeDefaultTable, VoiceBackendBinding, VoiceLane};
 pub mod scope;
 pub use self::scope::{Scope, ScopeResource};
 mod catalog;

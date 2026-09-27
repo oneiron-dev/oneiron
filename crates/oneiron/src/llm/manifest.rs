@@ -274,11 +274,37 @@ impl Vault {
         // Only an explicitly stored resident policy changes host-supplied
         // envelopes. The owner manifest still has higher tier precedence.
         let mut bound = request.clone();
-        if let Some(table) = super::defaults::read_stored_defaults(&self.store, &txn)? {
+        let table = super::defaults::read_stored_defaults(&self.store, &txn)?;
+        let manifest = read_manifest(&self.store, &txn)?;
+        if let Some(table) = &table {
             table.apply(&mut bound.envelope);
         }
-        if let Some(manifest) = read_manifest(&self.store, &txn)? {
+        if let Some(manifest) = manifest {
             manifest.bind_request(role, &read_routes(&self.store, &txn)?, &mut bound)?;
+        } else if let Some(row) = table
+            .as_ref()
+            .and_then(|table| table.purpose(&bound.envelope.purpose))
+        {
+            // A default locality is a route request, not evidence that the
+            // caller's already selected model/transport moved to that route.
+            if row.locality != bound.envelope.locality {
+                return Err(invalid("no model binding for inference default locality"));
+            }
+            // A local zero-reservation lease must never rely on the caller's
+            // locality label alone. Without a manifest, the registered model
+            // and transport must both be local before budget admission.
+            if row.locality == ModelLocality::OnDevice
+                && !self
+                    .model_registry_row(&bound.model)?
+                    .is_some_and(|binding| {
+                        binding.catalog.locality == ModelLocality::OnDevice
+                            && binding.wire == super::registry::ModelWireFormat::Local
+                    })
+            {
+                return Err(invalid(
+                    "local inference default has no local model binding",
+                ));
+            }
         }
         *request = bound;
         Ok(())

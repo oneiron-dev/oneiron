@@ -60,6 +60,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemoryPutEdge
             | SelfEffect::MemoryWriteFixture
             | SelfEffect::ReportBlocked
+            | SelfEffect::InferenceDefaultsRead
+            | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::AgentsSpawn
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait

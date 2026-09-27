@@ -1,5 +1,5 @@
 //! Vault-local inference defaults. The shipped rows are data, not model bindings.
-use super::{CallEnvelope, CallPurpose, ModelLocality, ModelTierRef, TierPrecedence};
+use super::{CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, TierPrecedence};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -25,6 +25,15 @@ pub enum VoiceLane {
     AsrBatch,
     TtsLive,
     TtsBatch,
+}
+
+/// A host-advertised backend candidate. The selector never relabels a model:
+/// its tier and locality travel with its concrete backend identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceBackendBinding {
+    pub model: ModelId,
+    pub tier: ModelTierRef,
+    pub locality: ModelLocality,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +103,28 @@ impl PurposeDefaultTable {
         &self.voice[&lane]
     }
 
+    /// Choose a concrete speech backend before starting work. Authenticated
+    /// per-call/manifest policy, when present, wins over the resident default.
+    /// Missing or ambiguous bindings refuse instead of mislabeling a provider.
+    pub fn select_voice_backend(
+        &self,
+        lane: VoiceLane,
+        explicit: Option<&PurposeDefault>,
+        available: &[VoiceBackendBinding],
+    ) -> Result<VoiceBackendBinding> {
+        let policy = explicit.unwrap_or_else(|| self.voice(lane));
+        let mut matching = available
+            .iter()
+            .filter(|backend| backend.locality == policy.locality && backend.tier == policy.tier);
+        let selected = matching
+            .next()
+            .ok_or_else(|| Error::InvalidConfig("voice route has no matching backend".into()))?;
+        if matching.next().is_some() {
+            return Err(Error::InvalidConfig("ambiguous voice backend route".into()));
+        }
+        Ok(selected.clone())
+    }
+
     pub fn precedence(
         &self,
         purpose: &CallPurpose,
@@ -110,7 +141,6 @@ impl PurposeDefaultTable {
     pub fn apply(&self, envelope: &mut CallEnvelope) {
         if let Some(policy) = self.purpose(&envelope.purpose) {
             envelope.tier.purpose_default = Some(policy.tier.clone());
-            envelope.locality = policy.locality;
         }
     }
 }
@@ -138,9 +168,54 @@ impl Vault {
         Ok(())
     }
 
+    /// The delegated agent door is narrower than the host's owner-authored
+    /// setter. Compare and replace inside one write transaction.
+    pub(crate) fn set_resident_purpose_default_table(
+        &self,
+        next: &PurposeDefaultTable,
+    ) -> Result<()> {
+        next.validate()?;
+        let mut txn = self.store.env.write_txn()?;
+        let prior = read_stored_defaults(&self.store, &txn)?.unwrap_or_default();
+        let rank = |locality: ModelLocality| match locality {
+            ModelLocality::OnDevice => 0,
+            ModelLocality::OwnServer => 1,
+            ModelLocality::ThirdParty => 2,
+        };
+        if next
+            .purposes
+            .iter()
+            .any(|(key, row)| rank(row.locality) > rank(prior.purposes[key].locality))
+            || next
+                .voice
+                .iter()
+                .any(|(key, row)| rank(row.locality) > rank(prior.voice[key].locality))
+        {
+            return Err(Error::InvalidConfig(
+                "resident inference locality cannot widen".into(),
+            ));
+        }
+        let bytes = serde_json::to_vec(next).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+        self.store.vault_meta.put(&mut txn, POLICY_KEY, &bytes)?;
+        txn.commit()?;
+        Ok(())
+    }
+
     pub fn purpose_default_table(&self) -> Result<PurposeDefaultTable> {
         let txn = self.store.env.read_txn()?;
         read_stored_defaults(&self.store, &txn).map(Option::unwrap_or_default)
+    }
+
+    /// Host speech-route door: read the live vault rows before constructing
+    /// ASR/TTS transports. Selection returns a backend identity, not a label.
+    pub fn select_voice_backend(
+        &self,
+        lane: VoiceLane,
+        explicit: Option<&PurposeDefault>,
+        available: &[VoiceBackendBinding],
+    ) -> Result<VoiceBackendBinding> {
+        self.purpose_default_table()?
+            .select_voice_backend(lane, explicit, available)
     }
 
     pub fn apply_purpose_defaults(&self, envelope: &mut CallEnvelope) -> Result<()> {
@@ -170,6 +245,10 @@ impl TierPrecedence {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{
+        LlmCatalogCost, LlmCatalogEntry,
+        registry::{ModelRegistryRow, ModelWireFormat},
+    };
     use super::*;
     #[test]
     fn every_builtin_resolves_to_its_policy_without_overriding_the_vault() {
@@ -212,7 +291,8 @@ mod tests {
                 locality: ModelLocality::ThirdParty,
             };
             table.apply(&mut envelope);
-            assert_eq!(envelope.locality, locality);
+            // A default cannot relabel an already selected host/model route.
+            assert_eq!(envelope.locality, ModelLocality::ThirdParty);
             assert_eq!(envelope.tier.resolved().as_str(), "vault");
         }
         assert!(
@@ -275,11 +355,19 @@ mod tests {
         };
         vault.apply_purpose_defaults(&mut envelope).unwrap();
         assert_eq!(envelope.tier.resolved().as_str(), "resident-answer");
+        table
+            .purposes
+            .get_mut(&CallPurpose::Consolidation)
+            .unwrap()
+            .tier = ModelTierRef("resident-consolidation".into());
+        vault.set_purpose_default_table(&table).unwrap();
         let mut request = super::super::LlmRequest {
             model: super::super::ModelId::new("test/model@r1").unwrap(),
             envelope: CallEnvelope {
+                purpose: CallPurpose::Consolidation,
+                locality: ModelLocality::OwnServer,
                 tier: TierPrecedence::for_purpose(
-                    &CallPurpose::AnswerGen,
+                    &CallPurpose::Consolidation,
                     ModelTierRef("global".into()),
                 ),
                 ..envelope
@@ -295,7 +383,10 @@ mod tests {
                 &mut request,
             )
             .unwrap();
-        assert_eq!(request.envelope.tier.resolved().as_str(), "resident-answer");
+        assert_eq!(
+            request.envelope.tier.resolved().as_str(),
+            "resident-consolidation"
+        );
         let mut incomplete = table.clone();
         incomplete.purposes.remove(&CallPurpose::Eval);
         assert!(vault.set_purpose_default_table(&incomplete).is_err());
@@ -307,5 +398,159 @@ mod tests {
             .unwrap()
             .locality = ModelLocality::ThirdParty;
         assert!(vault.set_purpose_default_table(&unsafe_extraction).is_err());
+    }
+
+    #[test]
+    fn four_voice_lanes_select_concrete_backends_and_resident_edits_take_effect() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let lanes = [
+            VoiceLane::AsrLive,
+            VoiceLane::AsrBatch,
+            VoiceLane::TtsLive,
+            VoiceLane::TtsBatch,
+        ];
+        let table = vault.purpose_default_table().unwrap();
+        let mut candidates = vec![];
+        for (index, lane) in lanes.iter().enumerate() {
+            let row = table.voice(*lane);
+            candidates.push(VoiceBackendBinding {
+                model: ModelId::new(format!("test/voice-{index}@r1")).unwrap(),
+                tier: row.tier.clone(),
+                locality: row.locality,
+            });
+        }
+        let mut delivered = vec![];
+        for (lane, expected) in lanes.iter().zip(&candidates) {
+            let selected = vault
+                .select_voice_backend(*lane, None, &candidates)
+                .unwrap();
+            delivered.push(selected.model.clone());
+            assert_eq!(&selected, expected);
+        }
+        assert_eq!(
+            delivered,
+            candidates
+                .iter()
+                .map(|candidate| candidate.model.clone())
+                .collect::<Vec<_>>()
+        );
+        let mut edited = table;
+        edited.voice.get_mut(&VoiceLane::AsrLive).unwrap().tier =
+            ModelTierRef("resident-live".into());
+        vault.set_purpose_default_table(&edited).unwrap();
+        assert!(
+            vault
+                .select_voice_backend(VoiceLane::AsrLive, None, &candidates)
+                .is_err()
+        );
+        let custom = VoiceBackendBinding {
+            model: ModelId::new("test/resident-asr@r1").unwrap(),
+            tier: ModelTierRef("resident-live".into()),
+            locality: ModelLocality::ThirdParty,
+        };
+        candidates.push(custom.clone());
+        assert_eq!(
+            vault
+                .select_voice_backend(VoiceLane::AsrLive, None, &candidates)
+                .unwrap(),
+            custom
+        );
+        // An authenticated per-call/manifest policy has higher precedence.
+        let explicit = PurposeDefault {
+            tier: ModelTierRef("asr-live".into()),
+            locality: ModelLocality::ThirdParty,
+        };
+        assert_eq!(
+            vault
+                .select_voice_backend(VoiceLane::AsrLive, Some(&explicit), &candidates)
+                .unwrap(),
+            candidates[0]
+        );
+    }
+
+    #[test]
+    fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
+        use super::super::{BudgetExhaustionPolicy, BudgetGuard, LlmRequest, ModelId};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let mut table = vault.purpose_default_table().unwrap();
+        table
+            .purposes
+            .get_mut(&CallPurpose::Consolidation)
+            .unwrap()
+            .locality = ModelLocality::OnDevice;
+        vault.set_purpose_default_table(&table).unwrap();
+        let mut request = LlmRequest {
+            model: ModelId::new("remote/consolidation@r1").unwrap(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::Consolidation,
+                class: super::super::CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Consolidation,
+                    ModelTierRef("global".into()),
+                ),
+                response_format: super::super::ResponseFormat::Text,
+                locality: ModelLocality::OwnServer,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        let original = request.clone();
+        assert!(
+            vault
+                .bind_model_role(
+                    super::super::manifest::ModelRole::GenerativeReasoner,
+                    &mut request
+                )
+                .is_err()
+        );
+        assert_eq!(request, original);
+        let guard =
+            BudgetGuard::with_reserve_units("spent", 0, 1, BudgetExhaustionPolicy::ContinueOnLocal);
+        assert!(guard.admit_for_request(&request).is_err());
+        request.envelope.locality = ModelLocality::OnDevice;
+        assert!(
+            vault
+                .bind_model_role(
+                    super::super::manifest::ModelRole::GenerativeReasoner,
+                    &mut request
+                )
+                .is_err()
+        );
+        vault
+            .put_model_registry_row(&ModelRegistryRow {
+                version: 1,
+                wire: ModelWireFormat::OpenaiCompat,
+                catalog: LlmCatalogEntry {
+                    model: request.model.clone(),
+                    display_name: "remote".into(),
+                    locality: ModelLocality::ThirdParty,
+                    context_window_tokens: 4096,
+                    max_output_tokens: None,
+                    cost: Some(LlmCatalogCost {
+                        input_per_million: "1".into(),
+                        output_per_million: "1".into(),
+                        cache_read_per_million: None,
+                        cache_write_per_million: None,
+                    }),
+                    capabilities: vec![],
+                    metadata: Default::default(),
+                },
+                scores: Default::default(),
+                fetched_at: Default::default(),
+            })
+            .unwrap();
+        assert!(
+            vault
+                .bind_model_role(
+                    super::super::manifest::ModelRole::GenerativeReasoner,
+                    &mut request
+                )
+                .is_err()
+        );
     }
 }

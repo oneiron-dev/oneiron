@@ -8052,9 +8052,9 @@
      "path": "src/code_run/actions.rs",
      "purpose": "One named verb registry for validated UI events and agent calls",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 4,
       "type": 1
      }
@@ -8196,7 +8196,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostSelfDispatcher"
@@ -8318,7 +8318,9 @@
      "notable": [],
      "path": "src/code_run/tests.rs",
      "purpose": "—",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "m",
@@ -18523,7 +18525,7 @@
      "purpose": "Typed host ports for file decoding, inference, routing and explicit import consent",
      "surface": {
       "enum": 4,
-      "fn": 2,
+      "fn": 3,
       "struct": 21,
       "trait": 2
      }
@@ -19946,15 +19948,16 @@
      "notable": [
       "PurposeDefault",
       "PurposeDefaultTable",
+      "VoiceBackendBinding",
       "VoiceLane"
      ],
      "path": "src/llm/defaults.rs",
      "purpose": "Vault-local inference defaults",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 12,
-      "struct": 2
+      "fn": 14,
+      "struct": 3
      }
     },
     {
@@ -41979,6 +41982,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/inference_defaults.rs",
+     "purpose": "Owner-grade HTTP edit/read proof for resident inference policy rows",
+     "surface": {}
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42262,7 +42273,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 230,
-   "test_files": 96
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [

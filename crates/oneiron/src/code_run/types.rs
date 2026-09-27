@@ -54,6 +54,10 @@ pub enum SelfCall {
     /// Public first-party `self.express(text)` (ONE-1686, RT-04).
     Express(SelfSpeechCall),
     ReportBlocked(super::blocked::SelfReportBlockedCall),
+    /// Read the active inference rows through the host-bound resident action.
+    InferenceDefaultsRead,
+    /// Replace validated inference rows under the host's delegated policy gate.
+    InferenceDefaultsReplace(String),
 }
 
 impl SelfCall {
@@ -77,6 +81,8 @@ impl SelfCall {
             Self::Think(_) => SelfEffect::Think,
             Self::Express(_) => SelfEffect::Express,
             Self::ReportBlocked(_) => SelfEffect::ReportBlocked,
+            Self::InferenceDefaultsRead => SelfEffect::InferenceDefaultsRead,
+            Self::InferenceDefaultsReplace(_) => SelfEffect::InferenceDefaultsReplace,
         }
     }
 
@@ -133,6 +139,8 @@ pub enum SelfEffect {
     /// `self.express(text)` (ONE-1686) — non-verbal expression.
     Express,
     ReportBlocked,
+    InferenceDefaultsRead,
+    InferenceDefaultsReplace,
 }
 
 impl SelfEffect {
@@ -157,6 +165,8 @@ impl SelfEffect {
             Self::Think => "self.think",
             Self::Express => "self.express",
             Self::ReportBlocked => "self.report_blocked",
+            Self::InferenceDefaultsRead => "self.inference_defaults.read",
+            Self::InferenceDefaultsReplace => "self.inference_defaults.replace",
         }
     }
 
@@ -185,7 +195,9 @@ impl SelfEffect {
             | Self::OutboundFixture
             | Self::TaskDelegate
             | Self::Context
-            | Self::ReportBlocked => None,
+            | Self::ReportBlocked
+            | Self::InferenceDefaultsRead
+            | Self::InferenceDefaultsReplace => None,
         }
     }
 
@@ -406,6 +418,8 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
+    /// JSON of the effective rows after a read or atomic replacement.
+    InferenceDefaults(String),
 }
 
 /// Result of one `self.speak`/`self.think`/`self.express` call.

@@ -259,6 +259,7 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::ReportBlocked { receipt } => {
             json!({"receipt":receipt.to_hex()})
         }
+        SelfDispatchOutcome::InferenceDefaults(json) => json!({"json": json}),
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }

@@ -325,6 +325,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wire_telemetry.rs` | src | m | 4 struct · 1 enum · 8 fn · 5 crate-vis | WireQuestion, WireQuestionKind, WireTelemetry, WireThresholds, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `tests/gpu_distribution.rs` | test | s | — | — | — |
+| `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
 | `tests/it/booking_agent_api.rs` | test | XL | — | — | ONE-1819 [BK-08] HTTP-side gates for the agent-readable booking surface |
 | `tests/it/campaign_surface_oracle.rs` | test | L | — | — | ONE-1778 (CA-07) surface oracle |
 | `tests/it/core_discover.rs` | test | L | — | — | — |

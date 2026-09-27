@@ -238,6 +238,22 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "what formats does the server support?"
 - safety: Read-only, unauthenticated by design.
 
+#### inference-defaults-read - `GET /v1/llm/defaults`
+
+- when-to-use: Read the vault's current seven purpose defaults and four live/batch ASR/TTS routing rows before changing inference policy.
+- trigger phrases:
+  - "show inference defaults"
+  - "read speech routing defaults"
+- safety: Read-only; requires an owner-grade bearer. Scoped credentials are refused.
+
+#### inference-defaults-replace - `PUT /v1/llm/defaults`
+
+- when-to-use: Replace the validated vault-local inference defaults after the owner asks an authorized agent to edit them. Read the current table first and preserve every row not changed.
+- trigger phrases:
+  - "change inference default tier"
+  - "edit ASR or TTS route"
+- safety: Mutating; requires an owner-grade bearer. The seven purpose rows and four speech lanes must all be present; extraction stays on-device. The owner manifest and explicit model pins still govern actual routes.
+
 #### mcp-gateway - `POST /mcp`
 
 - when-to-use: Call Oneiron MCP JSON-RPC methods when a connector needs the executable MCP tool layer for initialized tools, tool listings, or tool calls.
@@ -533,6 +549,16 @@ Example response:
   }
 }
 ```
+
+### Inference Defaults
+
+Methods: `GET` and `PUT` on the two Tier-1 inference-defaults routes.
+
+Authentication: `Authorization: Bearer <owner-grade credential>`; a scoped core token is not enough.
+
+`GET` returns `{ "purposes": { ... }, "voice": { ... } }`. Purpose keys are `extraction`, `consolidation`, `answer_gen`, `auto_check`, `tool_routing`, `voice`, and `eval`. Voice keys are `asr_live`, `asr_batch`, `tts_live`, and `tts_batch`. Each row contains a `tier` string and `locality` (`on_device`, `own_server`, or `third_party`).
+
+`PUT` sends the whole table as JSON, capped at 16 KiB. It validates all eleven rows and returns the stored table; invalid rows return `400 invalid_defaults`, and non-owner credentials return `403 owner_required`. Read-modify-write from an agent so other rows are not dropped. A row is a preference, not permission to relabel an already bound remote model as local; the model-role binding door refuses an unbound locality change.
 
 ### OpenAPI Schema
 

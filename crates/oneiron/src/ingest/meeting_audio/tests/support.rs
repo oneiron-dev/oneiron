@@ -64,6 +64,7 @@ pub(super) fn options() -> ProducerOptions {
             model_id: "fixture-asr".into(),
         },
         local_only: false,
+        batch_asr_policy: None,
     }
 }
 

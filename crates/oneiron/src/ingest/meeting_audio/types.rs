@@ -116,6 +116,22 @@ pub struct ProducerOptions {
     pub glossary: Vec<String>,
     pub batch_default: BatchDefault,
     pub local_only: bool,
+    /// Resolved from the current vault table at route time; explicit local_only
+    /// and the batch model pin still have higher priority.
+    pub batch_asr_policy: Option<crate::llm::PurposeDefault>,
+}
+
+impl ProducerOptions {
+    /// Snapshot the resident-editable batch ASR row before routing this file.
+    pub fn with_vault_policy(mut self, vault: &crate::Vault) -> crate::Result<Self> {
+        self.batch_asr_policy = Some(
+            vault
+                .purpose_default_table()?
+                .voice(crate::llm::VoiceLane::AsrBatch)
+                .clone(),
+        );
+        Ok(self)
+    }
 }
 
 pub struct BatchAsrRequest<'a> {

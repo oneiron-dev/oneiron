@@ -109,6 +109,26 @@ impl ActionRegistry {
         );
         Ok(())
     }
+    /// Install the resident's two governed inference-policy actions. Hosts opt
+    /// in by registering them for an agent whose Auto ceiling was approved.
+    pub fn register_inference_defaults(&mut self) -> Result<()> {
+        self.register(
+            ActionVerbDefinition {
+                id: SelfUiActionId::new("inference.defaults.read")?,
+                args_schema: vec![],
+                required_ceiling: AgentCeiling::Auto,
+            },
+            build_inference_defaults_read,
+        )?;
+        self.register(
+            ActionVerbDefinition {
+                id: SelfUiActionId::new("inference.defaults.replace")?,
+                args_schema: vec![ActionArgKind::Text],
+                required_ceiling: AgentCeiling::Auto,
+            },
+            build_inference_defaults_replace,
+        )
+    }
     pub fn definitions(&self) -> impl Iterator<Item = &ActionVerbDefinition> {
         self.verbs.values().map(|v| &v.definition)
     }
@@ -267,10 +287,35 @@ impl ActionRegistry {
         result
     }
 }
+fn build_inference_defaults_read(
+    _: ActionBuildContext,
+    args: &[ActionArgument],
+) -> Result<SelfCall> {
+    if !args.is_empty() {
+        return Err(invalid("inference defaults read takes no arguments"));
+    }
+    Ok(SelfCall::InferenceDefaultsRead)
+}
+fn build_inference_defaults_replace(
+    _: ActionBuildContext,
+    args: &[ActionArgument],
+) -> Result<SelfCall> {
+    let [ActionArgument::Text(value)] = args else {
+        return Err(invalid("inference defaults replace requires JSON text"));
+    };
+    crate::llm::PurposeDefaultTable::from_json(value.as_str().as_bytes())?;
+    Ok(SelfCall::InferenceDefaultsReplace(
+        value.as_str().to_owned(),
+    ))
+}
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
 }
-fn check_ceiling(vault: &Vault, actor: WriteActor, required: AgentCeiling) -> Result<()> {
+pub(super) fn check_ceiling(
+    vault: &Vault,
+    actor: WriteActor,
+    required: AgentCeiling,
+) -> Result<()> {
     if required == AgentCeiling::Proposed {
         return Ok(());
     }

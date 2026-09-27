@@ -6,7 +6,7 @@ use axum::{
     extract::{DefaultBodyLimit, State},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use futures_util::StreamExt;
 use oneiron::{BudgetGuard, BudgetLease, LlmError, LlmRequest, LlmStreamEvent};
@@ -16,6 +16,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/generate", post(generate))
         .route("/stream", post(stream))
+        // Owner-grade credentials can hand an agent a real read/replace tool;
+        // scoped core tokens cannot edit vault policy.
+        .route(
+            "/defaults",
+            get(read_defaults)
+                .put(replace_defaults)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 fn refusal(status: StatusCode, code: &str) -> Response {
@@ -39,6 +47,33 @@ fn failure(error: LlmError) -> Response {
     )
         .into_response()
 }
+async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Response {
+    if !auth.is_owner_grade() {
+        return refusal(StatusCode::FORBIDDEN, "owner_required");
+    }
+    match server.vault.purpose_default_table() {
+        Ok(table) => Json(table).into_response(),
+        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
+    }
+}
+
+async fn replace_defaults(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Json(table): Json<oneiron::llm::PurposeDefaultTable>,
+) -> Response {
+    if !auth.is_owner_grade() {
+        return refusal(StatusCode::FORBIDDEN, "owner_required");
+    }
+    match server.vault.set_purpose_default_table(&table) {
+        Ok(()) => Json(table).into_response(),
+        Err(oneiron::Error::InvalidConfig(_)) => {
+            refusal(StatusCode::BAD_REQUEST, "invalid_defaults")
+        }
+        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
+    }
+}
+
 struct Reservation {
     guard: BudgetGuard,
     lease: BudgetLease,
