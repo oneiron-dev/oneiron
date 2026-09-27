@@ -9648,7 +9648,18 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/driver/integration.rs",
+     "purpose": "Transactional epoch integration, output-marker mint, and swap plans",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CompactionBackend",
@@ -9664,13 +9675,12 @@
       "MarginLaw",
       "SwapPlan"
      ],
-     "path": "src/compaction/driver.rs",
+     "path": "src/compaction/driver/mod.rs",
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
       "enum": 3,
-      "fn": 24,
+      "fn": 22,
       "struct": 8,
       "trait": 1
      }
@@ -34413,9 +34423,9 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
@@ -35407,9 +35417,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 10,
+   "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2088,
+   "source_files": 2089,
    "test_files": 718
   },
   "oneiron-android": {
