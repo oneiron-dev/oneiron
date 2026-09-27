@@ -17,6 +17,7 @@ impl ConsolidationExecutor<'_> {
         LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: scope.clone(),
                 purpose: CallPurpose::Extraction,
                 class: CallClass::Durable {

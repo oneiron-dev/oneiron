@@ -484,6 +484,7 @@ fn semantic_mutations(request: &LlmRequest) -> Vec<(&'static str, LlmRequest)> {
 
 fn sample_envelope() -> CallEnvelope {
     CallEnvelope {
+        seat_effort: None,
         scope: crate::llm::Scope::default(),
         purpose: CallPurpose::AutoCheck,
         class: CallClass::Durable {

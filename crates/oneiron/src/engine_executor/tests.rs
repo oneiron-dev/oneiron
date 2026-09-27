@@ -18,6 +18,7 @@ use crate::{
 
 use super::*;
 
+mod seat_routing;
 mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -101,6 +102,7 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
         prompt_package_root: prompt_package_root(),
         model: model(),
         model_locality: ModelLocality::OwnServer,
+        seat_effort: None,
         global_tier: ModelTierRef("executor-tier".to_owned()),
         determinism: determinism(),
         limits,

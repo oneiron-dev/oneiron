@@ -96,6 +96,40 @@ fn provider_options_parse_typed_fields_and_preserve_raw_escape_hatch() {
 }
 
 #[test]
+fn pinned_seat_effort_wins_over_raw_provider_controls_on_wire() {
+    let config = OpenAiCompatConfig::new(catalog_with([
+        LlmCapability::JsonResponse,
+        LlmCapability::Reasoning,
+    ]));
+    let mut request = sample_request();
+    request
+        .params
+        .insert("reasoning_effort".into(), json!("high"));
+    request
+        .params
+        .insert("reasoning".into(), json!({"effort":"high"}));
+    request.provider_options.insert(
+        "openai".into(),
+        json!({
+            "reasoning_effort": "xhigh", "reasoning": {"effort":"high", "summary":"auto"},
+            "parallel_tool_calls": false
+        }),
+    );
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Low);
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert_eq!(wire.body["reasoning_effort"], json!("low"));
+    assert_eq!(wire.body["reasoning"], json!({"summary":"auto"}));
+    assert_eq!(wire.body["parallel_tool_calls"], json!(false));
+
+    // None is a PIN too: stale raw controls must not turn reasoning back on.
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::None);
+    let config = OpenAiCompatConfig::new(catalog_with([LlmCapability::JsonResponse]));
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert!(wire.body.get("reasoning_effort").is_none());
+    assert!(wire.body.get("reasoning").is_none());
+}
+
+#[test]
 fn abort_retains_partial_text_and_settles_usage() {
     let mut accumulator = OpenAiCompatStreamAccumulator::new();
     let events = accumulator
@@ -151,6 +185,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {

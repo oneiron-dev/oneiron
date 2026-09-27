@@ -264,6 +264,7 @@ impl ModelSession {
         let request = LlmRequest {
             model: pin.model_id.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: Default::default(),
                 purpose,
                 class: CallClass::BestEffort,

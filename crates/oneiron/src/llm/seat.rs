@@ -124,7 +124,8 @@ impl Vault {
 }
 
 /// Kind is part of warm-seat eligibility; a follower never borrows a child seat.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SeatKind {
     Attempt,
     Child,
@@ -133,7 +134,8 @@ pub enum SeatKind {
 
 /// A host-scoped seat birth. `warm_scope` identifies a compatible prefix and
 /// access scope; distinct scopes must not share a cached prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SeatTask {
     pub kind: SeatKind,
     pub warm_scope: String,
@@ -166,12 +168,13 @@ pub struct SeatJudgment {
     pub why: String,
 }
 
-pub trait SeatJudge {
+pub trait SeatJudge: Send + Sync {
     fn judge(&self, task: &SeatTask, candidates: &[SeatCandidate]) -> Result<SeatJudgment>;
 }
 
 /// Plain-language choice receipt; retained on the seat even if policies change.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SeatChoiceReceipt {
     pub model: ModelId,
     pub effort: ReasoningEffort,
@@ -213,6 +216,7 @@ impl ModelSeat {
     pub fn bind(&self, request: &mut super::LlmRequest) {
         request.model = self.model.clone();
         request.envelope.locality = self.locality;
+        request.envelope.seat_effort = Some(self.effort);
         request.params.remove("reasoning_effort");
         if self.effort != ReasoningEffort::None {
             request
@@ -243,7 +247,7 @@ impl SeatPool {
         &mut self,
         vault: &Vault,
         task: &SeatTask,
-        judge: &impl SeatJudge,
+        judge: &dyn SeatJudge,
     ) -> Result<ModelSeat> {
         if task.task.trim().is_empty()
             || task.facet.trim().is_empty()
@@ -371,13 +375,16 @@ impl SeatPool {
         vault: &Vault,
         old_id: u64,
         task: &SeatTask,
-        judge: &impl SeatJudge,
+        judge: &dyn SeatJudge,
     ) -> Result<ModelSeat> {
         let old = self
             .seats
             .iter()
             .position(|seat| seat.id == old_id)
             .ok_or_else(|| invalid("unknown seat"))?;
+        if !self.seats[old].warm {
+            return Err(invalid("cannot fold a retired seat"));
+        }
         if self.seats[old].warm_scope != task.warm_scope || self.seats[old].kind != task.kind {
             return Err(invalid("epoch fold changes seat scope"));
         }
@@ -389,6 +396,169 @@ impl SeatPool {
                 Err(error)
             }
         }
+    }
+}
+
+const RUN_SEAT_PREFIX: &[u8] = b"llm:run_seat:v1:";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRunSeat {
+    version: u8,
+    task_hash: String,
+    kind: SeatKind,
+    warm_scope: String,
+    facet: String,
+    locality: ModelLocality,
+    receipt: SeatChoiceReceipt,
+}
+
+fn run_seat_key(run_id: crate::EntityId) -> Vec<u8> {
+    [RUN_SEAT_PREFIX, run_id.as_bytes()].concat()
+}
+
+impl StoredRunSeat {
+    fn from_seat(task: &SeatTask, seat: &ModelSeat) -> Result<Self> {
+        Ok(Self {
+            version: 1,
+            task_hash: task_hash(task)?,
+            kind: task.kind,
+            warm_scope: task.warm_scope.clone(),
+            facet: task.facet.clone(),
+            locality: seat.locality,
+            receipt: seat.receipt.clone(),
+        })
+    }
+
+    fn validate_for(&self, task: &SeatTask) -> Result<()> {
+        if self.version != 1
+            || self.task_hash != task_hash(task)?
+            || self.kind != task.kind
+            || self.warm_scope != task.warm_scope
+            || self.facet != task.facet
+            || self.locality != task.locality
+            || self.receipt.why.trim().is_empty()
+        {
+            return Err(invalid("stored run seat disagrees with task identity"));
+        }
+        Ok(())
+    }
+}
+
+fn task_hash(task: &SeatTask) -> Result<String> {
+    let bytes = serde_json::to_vec(task).map_err(|error| invalid(error.to_string()))?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+impl SeatPool {
+    fn resume(&mut self, task: &SeatTask, row: &StoredRunSeat) -> Result<ModelSeat> {
+        row.validate_for(task)?;
+        if let Some(seat) = self
+            .seats
+            .iter()
+            .find(|seat| seat.kind == task.kind && seat.warm_scope == task.warm_scope)
+        {
+            if !seat.warm
+                || seat.model != row.receipt.model
+                || seat.effort != row.receipt.effort
+                || seat.locality != row.locality
+                || seat.facet != task.facet
+            {
+                return Err(invalid("stored run seat conflicts with live seat"));
+            }
+            let mut reused = seat.clone();
+            reused.receipt.reused = true;
+            return Ok(reused);
+        }
+        let id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| invalid("seat id exhausted"))?;
+        self.next_id = id;
+        let mut receipt = row.receipt.clone();
+        receipt.reused = true;
+        let seat = ModelSeat {
+            id,
+            kind: task.kind,
+            warm_scope: task.warm_scope.clone(),
+            facet: task.facet.clone(),
+            model: row.receipt.model.clone(),
+            locality: row.locality,
+            effort: row.receipt.effort,
+            receipt,
+            warm: true,
+        };
+        self.seats.push(seat.clone());
+        Ok(seat)
+    }
+}
+
+impl Vault {
+    /// Resolve a run's seat at birth or load its immutable pin on resume. The
+    /// row is committed before the first provider call and survives a restart.
+    /// Child/follower owners use the same door with their own `SeatKind` and
+    /// access-scoped warm prefix; raw LLM calls do not enter it.
+    pub fn birth_model_seat(
+        &self,
+        run_id: crate::EntityId,
+        task: &SeatTask,
+        judge: &dyn SeatJudge,
+    ) -> Result<ModelSeat> {
+        let mut pool = self
+            .model_seats
+            .lock()
+            .map_err(|_| invalid("seat pool poisoned"))?;
+        let key = run_seat_key(run_id);
+        let txn = self.store.env.read_txn()?;
+        let prior = self
+            .store
+            .vault_meta
+            .get(&txn, &key)?
+            .map(|bytes| bytes.to_vec());
+        drop(txn);
+        if let Some(bytes) = prior {
+            let row: StoredRunSeat =
+                serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+            return pool.resume(task, &row);
+        }
+        let seat = pool.birth(self, task, judge)?;
+        let row = StoredRunSeat::from_seat(task, &seat)?;
+        let bytes = serde_json::to_vec(&row).map_err(|error| invalid(error.to_string()))?;
+        let result = (|| {
+            let mut txn = self.store.env.write_txn()?;
+            // Single-vault writer serialization keeps a second birth from
+            // overwriting a run pin if another handle reached this key first.
+            if self.store.vault_meta.get(&txn, &key)?.is_some() {
+                return Err(invalid("run seat was concurrently bound"));
+            }
+            self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            txn.commit()?;
+            Ok(())
+        })();
+        if result.is_err()
+            && !seat.receipt.reused
+            && let Some(saved) = pool.seats.iter_mut().find(|saved| saved.id == seat.id)
+        {
+            saved.warm = false;
+        }
+        result?;
+        Ok(seat)
+    }
+
+    /// Durable choice receipt for one run, independent of the current model catalog.
+    pub fn model_seat_receipt(&self, run_id: crate::EntityId) -> Result<Option<SeatChoiceReceipt>> {
+        self.store
+            .vault_meta
+            .get(&self.store.env.read_txn()?, &run_seat_key(run_id))?
+            .map(|bytes| {
+                let row: StoredRunSeat =
+                    serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
+                if row.version != 1 || row.receipt.why.trim().is_empty() {
+                    return Err(invalid("invalid stored run seat"));
+                }
+                Ok(row.receipt)
+            })
+            .transpose()
     }
 }
 

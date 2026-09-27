@@ -3,6 +3,7 @@
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
 use crate::entity_id::EntityId;
+use crate::llm::seat::ModelSeat;
 use crate::memory::WitnessReceipt;
 use crate::off_record::{ExecutorUtterance, OffRecordSession};
 use crate::{BudgetLease, Error, LlmBackend, Vault};
@@ -12,6 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct EngineNativeExecutor<'a> {
     pub(super) storage: ExecutorStorage<'a>,
     pub(super) backend: &'a dyn LlmBackend,
+    pub(super) seat: Option<&'a ModelSeat>,
     pub(super) lease: &'a BudgetLease,
     pub(super) runtime: &'a mut dyn JsCodeModeRuntime,
     pub(super) gated_write: &'a GatedActorWrite<'a>,
@@ -39,6 +41,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Self {
             storage: ExecutorStorage::Canonical(vault),
             backend,
+            seat: None,
             lease,
             runtime,
             gated_write,
@@ -72,6 +75,7 @@ impl<'a> EngineNativeExecutor<'a> {
         Ok(Self {
             storage: ExecutorStorage::for_session(session)?,
             backend,
+            seat: None,
             lease,
             runtime,
             gated_write,
@@ -80,6 +84,14 @@ impl<'a> EngineNativeExecutor<'a> {
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
         })
+    }
+
+    /// Bind the already-resolved run seat. The executor applies the pin to
+    /// every provider request BEFORE canonical hashing and backend admission.
+    #[must_use]
+    pub fn with_model_seat(mut self, seat: &'a ModelSeat) -> Self {
+        self.seat = Some(seat);
+        self
     }
 
     /// Configures the wake-pass legibility context: every subsequent

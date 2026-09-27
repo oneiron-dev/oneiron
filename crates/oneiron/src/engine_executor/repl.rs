@@ -40,6 +40,41 @@ impl EngineNativeExecutor<'_> {
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
         self.verify_storage_dispatcher_binding()?;
         config.validate()?;
+        if let Some(seat) = self.seat {
+            if &config.model != seat.model()
+                || config.model_locality != seat.locality()
+                || config.seat_effort != Some(seat.effort())
+            {
+                return Err(
+                    Error::InvalidConfig("executor seat and run config disagree".into()).into(),
+                );
+            }
+            if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage {
+                let recorded = vault.model_seat_receipt(config.run_id)?;
+                if !recorded.is_some_and(|receipt| {
+                    receipt.model == *seat.model()
+                        && receipt.effort == seat.effort()
+                        && receipt.why == seat.receipt().why
+                }) {
+                    return Err(Error::InvalidConfig(
+                        "executor seat is not durably bound to run".into(),
+                    )
+                    .into());
+                }
+            }
+        } else {
+            if config.seat_effort.is_some() {
+                return Err(Error::InvalidConfig("executor seat pin missing".into()).into());
+            }
+            if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage
+                && vault.model_manifest()?.is_some()
+            {
+                return Err(Error::InvalidConfig(
+                    "manifest-backed executor requires a seat".into(),
+                )
+                .into());
+            }
+        }
         // Resolve exactly once per run attempt. Both teaching sites use these
         // bytes, and the fingerprint joins the durable replay identity below.
         let wire_prompt = resolve_engine_executor_wire_prompt(&config.prompt_package_root)
@@ -52,6 +87,7 @@ impl EngineNativeExecutor<'_> {
                 status,
                 steps_run: 0,
                 replay_record: loaded.record,
+                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
             });
         }
         let mut record = loaded.record;
@@ -65,6 +101,7 @@ impl EngineNativeExecutor<'_> {
                     status: EngineExecutorStatus::HardStepLimitReached,
                     steps_run,
                     replay_record: record,
+                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                 });
             }
             if steps_run >= config.limits.soft_steps {
@@ -74,6 +111,7 @@ impl EngineNativeExecutor<'_> {
                     },
                     steps_run,
                     replay_record: record,
+                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                 });
             }
 
@@ -142,6 +180,7 @@ impl EngineNativeExecutor<'_> {
                             status,
                             steps_run: steps_run + 1,
                             replay_record: record,
+                            seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                         });
                     }
                     return Err(err.into());
@@ -170,6 +209,7 @@ impl EngineNativeExecutor<'_> {
                         status,
                         steps_run: steps_run + 1,
                         replay_record: record,
+                        seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                     });
                 }
                 return Err(failure.into());
@@ -201,6 +241,7 @@ impl EngineNativeExecutor<'_> {
                                 status,
                                 steps_run: steps_run + 1,
                                 replay_record: record,
+                                seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                             });
                         }
                         return Err(err);
@@ -296,6 +337,7 @@ impl EngineNativeExecutor<'_> {
                     status,
                     steps_run,
                     replay_record: record,
+                    seat_receipt: self.seat.map(|seat| seat.receipt().clone()),
                 });
             }
             expected_generation = Some(next_generation);
@@ -610,9 +652,10 @@ impl EngineNativeExecutor<'_> {
             }],
         });
 
-        Ok(LlmRequest {
+        let mut request = LlmRequest {
             model: config.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: crate::llm::Scope::default(),
                 purpose: CallPurpose::Other {
                     name: ENGINE_EXECUTOR_PURPOSE_NAME.to_owned(),
@@ -639,6 +682,10 @@ impl EngineNativeExecutor<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
-        })
+        };
+        if let Some(seat) = self.seat {
+            seat.bind(&mut request);
+        }
+        Ok(request)
     }
 }

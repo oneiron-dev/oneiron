@@ -5,6 +5,7 @@ use oneiron::code_run::GatedActorWrite;
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
 };
+use oneiron::llm::seat::{SeatJudge, SeatKind, SeatTask};
 use oneiron::{BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
@@ -166,6 +167,14 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn runtime(&self) -> Box<dyn JsCodeModeRuntime + Send>;
     /// The executor configuration for this run.
     fn executor_config(&self, run_id: EntityId, task: &str) -> EngineExecutorConfig;
+    /// Injected typed judgment, above the raw backend; absent for legacy vaults.
+    fn seat_judge(&self) -> Option<&dyn SeatJudge> {
+        None
+    }
+    /// Host-owned capability profile, never taken from execute_code arguments.
+    fn seat_facet(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// The PRODUCTION adapter: the injected provider, entered through the engine's
@@ -273,6 +282,43 @@ fn run_engine_native_code_mode(
         .enable_all()
         .build()
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))?;
+    let has_seat = vault
+        .model_manifest()
+        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+        .is_some()
+        || vault
+            .model_seat_receipt(config.run_id)
+            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+            .is_some();
+    let seat = if has_seat {
+        let judge = provider.seat_judge().ok_or_else(|| {
+            McpCodeExecutionError::RunBinding("manifest-backed run requires a seat judge".into())
+        })?;
+        let facet = provider.seat_facet().ok_or_else(|| {
+            McpCodeExecutionError::RunBinding(
+                "manifest-backed run requires a capability profile".into(),
+            )
+        })?;
+        let task = SeatTask {
+            kind: SeatKind::Attempt,
+            warm_scope: format!("mcp-execute-code:{}", config.run_id.to_hex()),
+            task: config.task.clone(),
+            facet: facet.to_owned(),
+            required: Vec::new(),
+            min_context_tokens: 1,
+            locality: config.model_locality,
+            override_model: None,
+            override_effort: None,
+        };
+        Some(
+            vault
+                .birth_model_seat(config.run_id, &task, judge)
+                .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let mut routed_config = config.clone();
     let mut executor = EngineNativeExecutor::new(
         vault,
         provider.backend(),
@@ -280,8 +326,14 @@ fn run_engine_native_code_mode(
         runtime,
         &gated_write,
     );
+    if let Some(seat) = &seat {
+        routed_config.model = seat.model().clone();
+        routed_config.model_locality = seat.locality();
+        routed_config.seat_effort = Some(seat.effort());
+        executor = executor.with_model_seat(seat);
+    }
     reactor
-        .block_on(executor.run(config))
+        .block_on(executor.run(&routed_config))
         .map_err(|error| McpCodeExecutionError::Run(error.to_string()))
 }
 

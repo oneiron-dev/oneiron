@@ -185,6 +185,46 @@ fn provider_options_parse_typed_fields_and_preserve_raw_escape_hatch() {
 }
 
 #[test]
+fn pinned_seat_effort_wins_over_thinking_and_output_config_on_wire() {
+    let config = AnthropicMessagesConfig::new(catalog_with([
+        LlmCapability::JsonResponse,
+        LlmCapability::Reasoning,
+    ]));
+    let mut request = sample_request();
+    request
+        .params
+        .insert("reasoning_effort".into(), json!("high"));
+    request.params.insert(
+        "thinking".into(),
+        json!({"type":"enabled","budget_tokens":4096}),
+    );
+    request.params.insert(
+        "output_config".into(),
+        json!({"effort":"high", "style":"compact"}),
+    );
+    request.provider_options.insert(
+        "anthropic".into(),
+        json!({
+            "thinking": {"type":"enabled","budget_tokens":8192},
+            "output_config": {"effort":"max", "style":"brief"}
+        }),
+    );
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::Low);
+    let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+    assert_eq!(wire.body["output_config"]["effort"], json!("low"));
+    assert_eq!(wire.body["output_config"]["style"], json!("brief"));
+    assert!(wire.body["output_config"].get("format").is_some());
+    assert!(wire.body.get("thinking").is_none());
+    assert!(wire.body.get("reasoning_effort").is_none());
+
+    request.envelope.seat_effort = Some(oneiron::llm::ReasoningEffort::None);
+    let config = AnthropicMessagesConfig::new(catalog_with([LlmCapability::JsonResponse]));
+    let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+    assert!(wire.body["output_config"].get("effort").is_none());
+    assert!(wire.body.get("thinking").is_none());
+}
+
+#[test]
 fn abort_retains_partial_text_and_settles_usage() {
     let mut accumulator = AnthropicMessagesStreamAccumulator::new();
     accumulator
@@ -234,6 +274,7 @@ fn sample_request() -> LlmRequest {
     LlmRequest {
         model: ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: oneiron::llm::Scope::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::Durable {

@@ -444,6 +444,7 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
                 .expect("workspace prompt package"),
             model: oneiron::ModelId::new("fixture/executor@v1").expect("fixture model id"),
             model_locality: oneiron::ModelLocality::OnDevice,
+            seat_effort: None,
             global_tier: oneiron::ModelTierRef("fixture-tier".to_owned()),
             determinism: oneiron::code_run::CodeRunDeterminism::new(
                 1_000,

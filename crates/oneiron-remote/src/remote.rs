@@ -768,6 +768,7 @@ mod tests {
         let request = LlmRequest {
             model: ModelId::new("own/model@1").unwrap(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: Default::default(),
                 purpose: CallPurpose::AnswerGen,
                 class: CallClass::BestEffort,

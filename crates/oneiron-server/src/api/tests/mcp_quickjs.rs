@@ -3,20 +3,53 @@ use super::*;
 use oneiron::code_run::CodeRunDeterminism;
 use oneiron::code_sandbox::{quickjs::QuickJsRuntimeFactory, wasmtime_runtime::ComponentBudget};
 use oneiron::engine_executor::{EngineExecutorConfig, EngineExecutorLimits};
+use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
+use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
+use oneiron::llm::seat::{ModelDescription, SeatCandidate, SeatJudge, SeatJudgment, SeatTask};
+use oneiron::llm::{
+    LlmCapability, LlmCatalogCost, LlmCatalogEntry, ModelTierRef as Tier, ReasoningEffort,
+};
 use oneiron::{
     BudgetLease, ContentPart, FinishReason, LlmBackend, LlmGenerateFuture, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality,
     ModelTierRef,
 };
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct Backend {
     scripts: Mutex<VecDeque<String>>,
+    requests: Mutex<Vec<LlmRequest>>,
+}
+struct Judge {
+    model: ModelId,
+    calls: AtomicUsize,
+}
+impl SeatJudge for Judge {
+    fn judge(
+        &self,
+        task: &SeatTask,
+        candidates: &[SeatCandidate],
+    ) -> oneiron::Result<SeatJudgment> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        assert!(!task.task.is_empty());
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.model == self.model)
+        );
+        Ok(SeatJudgment {
+            model: self.model.clone(),
+            effort: Some(ReasoningEffort::Low),
+            why: "The owner's code-task description fits this run".into(),
+        })
+    }
 }
 impl LlmBackend for Backend {
-    fn generate<'a>(&'a self, _: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
+        self.requests.lock().unwrap().push(request);
         let text = self
             .scripts
             .lock()
@@ -77,6 +110,68 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             b"quickjs subject",
         )
         .unwrap();
+    let seat_model = ModelId::new("fixture/code-seat@v2").unwrap();
+    vault
+        .set_model_manifest(&ModelManifest {
+            version: 2,
+            roles: MODEL_ROLES
+                .into_iter()
+                .map(|role| {
+                    (
+                        role,
+                        ModelBinding {
+                            model: seat_model.clone(),
+                            slot: ModelSlot::Llm,
+                            tier: Tier("legacy".into()),
+                            route_models: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+                .into_iter()
+                .map(|slot| (slot, ModelLocality::OnDevice))
+                .collect(),
+            verdict: None,
+        })
+        .unwrap();
+    vault
+        .put_model_registry_row(&ModelRegistryRow {
+            version: 1,
+            wire: ModelWireFormat::Local,
+            catalog: LlmCatalogEntry {
+                model: seat_model.clone(),
+                display_name: "Fixture seat".into(),
+                locality: ModelLocality::OnDevice,
+                context_window_tokens: 8192,
+                max_output_tokens: Some(1024),
+                cost: Some(LlmCatalogCost {
+                    input_per_million: "1".into(),
+                    output_per_million: "1".into(),
+                    cache_read_per_million: None,
+                    cache_write_per_million: None,
+                }),
+                capabilities: vec![LlmCapability::Reasoning],
+                metadata: BTreeMap::new(),
+            },
+            scores: BTreeMap::new(),
+            fetched_at: BTreeMap::new(),
+        })
+        .unwrap();
+    vault
+        .set_model_description(&ModelDescription {
+            model: seat_model.clone(),
+            facet: "code-task".into(),
+            owner: Some("Code-mode task execution".into()),
+            measured: None,
+            benchmarks: None,
+            vendor: None,
+        })
+        .unwrap();
+    let judge = Arc::new(Judge {
+        model: seat_model.clone(),
+        calls: AtomicUsize::new(0),
+    });
     let scripts = [
         format!(
             "const receipt = await self.memory.put_claim({{id:'{}', predicate:'profile.favorite_drink', subject:'{}', value:'sencha'}}); console.log(receipt.id);",
@@ -85,11 +180,13 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         ),
         "finish('recorded');".into(),
     ];
+    let backend = Arc::new(Backend {
+        scripts: Mutex::new(scripts.into()),
+        requests: Mutex::new(Vec::new()),
+    });
     let provider = crate::mcp::McpQuickJsProvider::new(
         Arc::new(factory()),
-        Arc::new(Backend {
-            scripts: Mutex::new(scripts.into()),
-        }),
+        backend.clone(),
         BudgetLease::for_test("quickjs-wire"),
         EngineExecutorConfig {
             run_id: seeded_test_entity_id(0x0024_6504),
@@ -97,6 +194,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             prompt_package_root: oneiron::prompt::workspace_prompt_package_root().unwrap(),
             model: ModelId::new("fixture/quickjs@v1").unwrap(),
             model_locality: ModelLocality::OnDevice,
+            seat_effort: None,
             global_tier: ModelTierRef("fixture".into()),
             determinism: CodeRunDeterminism::new(1700000000000, [7; 32]),
             limits: EngineExecutorLimits {
@@ -105,7 +203,8 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             },
         },
     )
-    .unwrap();
+    .unwrap()
+    .with_model_seat_router(judge.clone(), "code-task");
     let server = Arc::new(
         SyncServer::new(
             vault.clone(),
@@ -172,6 +271,19 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     assert_eq!(results[2]["steps_run"], 0);
     assert_eq!(results[0]["run_id"], results[1]["run_id"]);
     assert_eq!(results[1]["run_id"], results[2]["run_id"]);
+    assert_eq!(judge.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(results[0]["model_choice"]["model"], seat_model.as_str());
+    assert_eq!(results[0]["model_choice"]["effort"], "low");
+    assert_eq!(results[0]["model_choice"]["reused"], false);
+    assert_eq!(results[1]["model_choice"]["reused"], true);
+    {
+        let seen = backend.requests.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        for request in seen.iter() {
+            assert_eq!(request.model, seat_model);
+            assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::Low));
+        }
+    }
     for result in &results {
         assert_eq!(result["bridge_calls"], 1);
     }
@@ -194,5 +306,5 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         mcp_endpoint_call_request("/mcp", credential, "changed", "execute_code", changed),
     )
     .await;
-    assert_mcp_structured_error(&body, "code_run_failed");
+    assert_mcp_structured_error(&body, "code_run_binding_failed");
 }

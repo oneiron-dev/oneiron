@@ -318,6 +318,7 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
     let mut request = LlmRequest {
         model: model("host/unbound@r1"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,
@@ -334,5 +335,99 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
     assert_eq!(request.model, a);
     assert_eq!(request.envelope.locality, ModelLocality::ThirdParty);
     assert_eq!(request.params["reasoning_effort"], serde_json::json!("low"));
+    assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::Low));
+    Ok(())
+}
+
+#[test]
+fn stale_fold_cannot_reactivate_a_retired_seat() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    vault.set_model_manifest(&manifest())?;
+    let a = register(
+        &vault,
+        "provider/a@r1",
+        ModelLocality::ThirdParty,
+        "long-context reasoning",
+    )?;
+    let b = register(
+        &vault,
+        "provider/b@r2",
+        ModelLocality::ThirdParty,
+        "long-context reasoning",
+    )?;
+    let mut pool = SeatPool::new();
+    let first = pool.birth(&vault, &task(), &Judge { choice: a })?;
+    let mut next = task();
+    next.override_model = Some(b.clone());
+    let second = pool.fold_epoch(&vault, first.id(), &next, &Judge { choice: b.clone() })?;
+    let mut bad = task();
+    bad.override_model = Some(model("unknown/c@r3"));
+    assert!(
+        pool.fold_epoch(&vault, first.id(), &bad, &Judge { choice: b.clone() })
+            .is_err()
+    );
+    let reused = pool.birth(
+        &vault,
+        &task(),
+        &Judge {
+            choice: model("unknown/d@r4"),
+        },
+    )?;
+    assert_eq!(reused.id(), second.id());
+    assert_eq!(reused.model(), &b);
+    Ok(())
+}
+
+#[test]
+fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Result<()> {
+    let dir = tempfile::tempdir().unwrap();
+    let run_id = crate::test_util::entity(0xb7);
+    let first = {
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+        vault.set_model_manifest(&manifest())?;
+        let a = register(
+            &vault,
+            "provider/a@r1",
+            ModelLocality::ThirdParty,
+            "long-context reasoning",
+        )?;
+        register(
+            &vault,
+            "provider/b@r2",
+            ModelLocality::ThirdParty,
+            "long-context reasoning",
+        )?;
+        let seat = vault.birth_model_seat(run_id, &task(), &Judge { choice: a })?;
+        assert_eq!(
+            vault.model_seat_receipt(run_id)?.unwrap().model,
+            *seat.model()
+        );
+        seat
+    };
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
+    let resumed = vault.birth_model_seat(
+        run_id,
+        &task(),
+        &Judge {
+            choice: model("provider/b@r2"),
+        },
+    )?;
+    assert_eq!(resumed.model(), first.model());
+    assert_eq!(resumed.effort(), first.effort());
+    assert_eq!(resumed.receipt().why, first.receipt().why);
+    assert!(resumed.receipt().reused);
+    let mut changed = task();
+    changed.task = "different task".into();
+    assert!(
+        vault
+            .birth_model_seat(
+                run_id,
+                &changed,
+                &Judge {
+                    choice: model("provider/b@r2")
+                }
+            )
+            .is_err()
+    );
     Ok(())
 }

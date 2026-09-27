@@ -420,6 +420,7 @@ impl ConsolidationExecutor<'_> {
         Ok(LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
+                seat_effort: None,
                 scope: scope.clone(),
                 purpose: CallPurpose::Consolidation,
                 class: CallClass::Durable {

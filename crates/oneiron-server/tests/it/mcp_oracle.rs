@@ -595,6 +595,7 @@ impl McpCodeModeProvider for OracleCodeProvider {
                 .expect("workspace prompt package"),
             model: ModelId::new("fixture/executor@v1").expect("fixture model id"),
             model_locality: ModelLocality::OnDevice,
+            seat_effort: None,
             global_tier: ModelTierRef("fixture-tier".to_owned()),
             determinism: CodeRunDeterminism::new(1_000, [7; CODE_RUN_RNG_SEED_LEN]),
             limits: EngineExecutorLimits::default(),
