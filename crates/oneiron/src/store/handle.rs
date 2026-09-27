@@ -183,6 +183,11 @@ pub struct StoreOwner {
     pub(in crate::store) core: Weak<StoreCore>,
     /// Sole owner of the environment's close-on-last-clone semantics
     /// (ONE-1142).
+    /// Unix's LFS staging reads this descriptor; on non-Unix it is Drop-only.
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "held for OwnedEnv Drop without Unix LFS staging")
+    )]
     pub(in crate::store) env: OwnedEnv,
     // DROP-ORDER: keep this field after `env`. Fields drop in declaration
     // order, so the path registry releases the path only after [`OwnedEnv`]
