@@ -132,8 +132,17 @@ impl Store {
                 clock.observe_floor(floor)?;
             }
         }
+        let gate_custody_root = {
+            let txn = env.read_txn()?;
+            vault_meta_view
+                .get(&txn, crate::store::CUSTODY_ROOT_KEY)?
+                .map(|raw| crate::store::decode_custody_root(&raw))
+                .transpose()?
+                .unwrap_or_else(|| registered_path.path.clone())
+        };
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
+            gate_custody_root,
             env: shared_env,
             raw,
             kind_registry,
@@ -142,6 +151,7 @@ impl Store {
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            authority_fold_cache: Mutex::new(None),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),

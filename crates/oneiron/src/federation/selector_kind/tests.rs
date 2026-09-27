@@ -1,7 +1,8 @@
 use super::*;
 use crate::federation::{
-    FederationDirectionScope, FederationPactScope, FederationScopeBands, FederationScopeFacets,
-    FederationScopeWorlds, decode_federation_pact_scope, encode_federation_pact_scope,
+    Ceiling, FederationDirectionScope, FederationPactScope, FederationScopeBands,
+    FederationScopeFacets, FederationScopeWorlds, Position, decode_federation_pact_scope,
+    encode_federation_pact_scope,
 };
 use crate::registry::ENTITY_TYPE_REGISTRY;
 
@@ -65,7 +66,7 @@ fn family_scopes_roundtrip_and_obey_classification_ceiling() {
             ..direction.clone()
         };
         assert_eq!(
-            direction.is_narrowing_of(&core),
+            Position::new(direction.clone()).is_narrowing_of(&Ceiling::new(core.clone())),
             family.family.classification() == EntityClassification::Core
         );
         assert_eq!(
