@@ -29,6 +29,7 @@ mod repair;
 mod resolution;
 mod retrieval_filter;
 pub(crate) mod retrieval_retention;
+pub(crate) mod retry_source_policy;
 mod share;
 mod weave_correction_policy;
 mod witness_message;
