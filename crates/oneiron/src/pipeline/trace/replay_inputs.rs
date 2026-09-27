@@ -38,9 +38,9 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     let corpus_scope = match &builder.corpus_scope {
         CorpusScope::All => json!({"kind": "all"}),
         CorpusScope::Unscoped => json!({"kind": "unscoped"}),
-        CorpusScope::Corpus(id) => json!({"kind": "corpus", "ids": [id.entity_id().to_hex()]}),
+        CorpusScope::Corpus(id) => json!({"kind": "corpus", "ids": [id.to_hex()]}),
         CorpusScope::AnyOf(ids) => {
-            json!({"kind": "any_of", "ids": ids.iter().map(|id| id.entity_id().to_hex()).collect::<Vec<_>>() })
+            json!({"kind": "any_of", "ids": ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>() })
         }
     };
     let formula = match bm25.formula {

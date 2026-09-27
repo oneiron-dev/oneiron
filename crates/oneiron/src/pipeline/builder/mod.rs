@@ -621,23 +621,12 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
-    /// Sets the corpus scope for this query (ONE-1914). The default is
-    /// [`CorpusScope::All`] (span every corpus), under which this stage is a
-    /// no-op and results are identical to never calling the method.
-    /// [`CorpusScope::Unscoped`] keeps only core claims;
-    /// [`CorpusScope::Corpus`] and [`CorpusScope::AnyOf`] keep the named
-    /// corpora's claims PLUS unscoped/core claims, because a claim with no
-    /// corpus stamp belongs to every audience.
-    ///
-    /// The filter runs post-fusion / post-boosts, before the `result_limit`
-    /// truncation and under the same read transaction — immediately after
-    /// the world filter — so claims excluded by corpus never consume result
-    /// slots. Scoring and fusion are untouched. A corpus is an AUDIENCE
-    /// scope on CLAIM records: it is orthogonal to [`Self::world`], which
-    /// stays the epistemic axis, and non-CLAIM entities pass unfiltered.
-    ///
-    /// An empty [`CorpusScope::AnyOf`] names no corpus and fails the run
-    /// closed with [`Error::InvalidConfig`].
+    /// Selects claims by their `scopeProjectId` stamp. A corpus is a PROJECT
+    /// entity with role corpus; this is not a second axis in the opaque scope
+    /// map. `All` does not restrict projects; `Unscoped` selects the default
+    /// project; `Corpus` and `AnyOf` select exactly the named project ids.
+    /// Callers build scope-set unions explicitly with `AnyOf`. Non-CLAIM
+    /// entities are unaffected. An empty `AnyOf` fails closed at execution.
     pub fn corpus(mut self, scope: CorpusScope) -> Self {
         self.corpus_scope = scope;
         self

@@ -184,6 +184,105 @@ fn legacy_claim_scope_sweep_stamps_explicit_base_once() -> Result<()> {
     Ok(())
 }
 #[test]
+fn legacy_corpus_entry_restamps_onto_project_axis() -> Result<()> {
+    let project = entity(79);
+    let bytes = encode_claim_body(&body())?;
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture")
+    else {
+        panic!("map")
+    };
+    entries.retain(|(k, _)| {
+        ![
+            "worldId",
+            "scopeFacetId",
+            "scopeRelationshipId",
+            "scopeProjectId",
+            "scopeVersion",
+        ]
+        .contains(&k.as_str().expect("fixture"))
+    });
+    entries.push((
+        Value::from("scope"),
+        Value::Map(vec![(
+            Value::from("corpus_id"),
+            Value::Binary(project.as_bytes().to_vec()),
+        )]),
+    ));
+    let upgraded = upgrade_pre_scope_body(&encode(&Value::Map(entries))?)?;
+    let decoded = decode_claim_body(&upgraded, true)?;
+    assert_eq!(decoded.scope_project, project);
+    assert_eq!(
+        decoded.scope,
+        Some(Value::Map(vec![(
+            Value::from("corpus_id"),
+            Value::Binary(project.as_bytes().to_vec()),
+        )]))
+    );
+    Ok(())
+}
+
+#[test]
+fn duplicate_legacy_corpus_entries_refuse_both_orders_and_persist_nothing() -> Result<()> {
+    let a = entity(80);
+    let b = entity(81);
+    let bytes = encode_claim_body(&body())?;
+    let Value::Map(original) = rmpv::decode::read_value(&mut bytes.as_slice()).expect("fixture")
+    else {
+        panic!("map")
+    };
+    for (first, second) in [(a, b), (b, a)] {
+        let (_dir, vault) = vault()?;
+        let id = entity(82);
+        let mut entries = original.clone();
+        entries.retain(|(key, _)| {
+            ![
+                "worldId",
+                "scopeFacetId",
+                "scopeRelationshipId",
+                "scopeProjectId",
+                "scopeVersion",
+            ]
+            .contains(&key.as_str().expect("fixture"))
+        });
+        entries.push((
+            Value::from("scope"),
+            Value::Map(vec![
+                (Value::from("corpus_id"), id_value(first)),
+                (Value::from("corpus_id"), id_value(second)),
+            ]),
+        ));
+        let legacy = encode(&Value::Map(entries))?;
+        assert!(matches!(
+            upgrade_pre_scope_body(&legacy),
+            Err(Error::InvalidClaimBody(_))
+        ));
+        let mut raw = vec![ENTITY_TYPE_CLAIM];
+        raw.extend_from_slice(&10u64.to_be_bytes());
+        raw.extend_from_slice(&10u64.to_be_bytes());
+        raw.extend_from_slice(&10u64.to_be_bytes());
+        raw.extend_from_slice(&legacy);
+        vault.with_write_txn(|txn| {
+            vault.store.entities.put(txn, id.as_bytes(), &raw)?;
+            vault
+                .store
+                .vault_meta
+                .delete(txn, b"scope:claim-codec:v2")?;
+            Ok(())
+        })?;
+        assert!(matches!(
+            crate::batch::sweep_scope_stamps(&vault.store),
+            Err(Error::InvalidClaimBody(_))
+        ));
+        let txn = vault.store.env.read_txn()?;
+        assert_eq!(
+            vault.store.entities.get(&txn, id.as_bytes())?,
+            Some(std::borrow::Cow::Borrowed(raw.as_slice()))
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn unstamped_records_are_excluded_from_read_export_delete_and_debug_is_explicit() -> Result<()> {
     let (_dir, vault) = vault()?;
     let local = entity(35);

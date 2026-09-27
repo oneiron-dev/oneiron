@@ -264,7 +264,22 @@ pub(crate) fn upgrade_pre_scope_body(data: &[u8]) -> Result<Vec<u8>> {
             _ => v.as_str().and_then(|s| EntityId::from_hex(s).ok()),
         })
         .unwrap_or(facet);
-    let project = match field(&["corpus_id"]) {
+    // Only the legacy restamp reads the retired nested entry. Ambiguous
+    // legacy audiences must not be assigned by MessagePack map order.
+    let legacy_corpus = match legacy_scope {
+        Some(Value::Map(map)) => {
+            let mut matches = map
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("corpus_id"));
+            let value = matches.next().map(|(_, value)| value.clone());
+            if matches.next().is_some() {
+                return Err(Error::InvalidClaimBody("duplicate legacy corpus id"));
+            }
+            value
+        }
+        _ => None,
+    };
+    let project = match legacy_corpus {
         None => id_value(default_project_id()),
         Some(Value::String(text)) => id_value(
             EntityId::from_hex(

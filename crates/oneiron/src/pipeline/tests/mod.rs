@@ -5,7 +5,7 @@ use super::*;
 use crate::claim::ClaimSource;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::codebase::CODEBASE_SCOPE_KEY_LEN;
-use crate::corpus::{CorpusId, CorpusScope, scope_with_corpus_id};
+use crate::corpus::CorpusScope;
 use crate::federation::FederationStaleReason;
 use crate::query_expansion::HydeExpansion;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};

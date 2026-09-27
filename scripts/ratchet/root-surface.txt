@@ -50,7 +50,6 @@ BuildInputRoot
 BuildPlatform
 CALENDAR_INVITE_CHANNEL
 CALENDAR_INVITE_VERB
-CLAIM_SCOPE_CORPUS_ID_KEY
 CODEBASE_CONTENT_HASH_LEN
 CODEBASE_FORK_HASH_LEN
 CODEBASE_SCOPE_KEY_LEN
@@ -181,7 +180,6 @@ ContextEntity
 ContextPack
 ContextPackBuilder
 ContextPackRetrievalBudget
-CorpusId
 CorpusScope
 CrawlCompletion
 CrawlPageBudget
@@ -624,7 +622,6 @@ commitment_wake_proposal_claim_id
 companion_value_from_json
 companion_value_to_json
 compare_campaign
-corpus_id_from_scope
 count_context_pack_tokens
 decode_commitment_wake_event
 decode_diagnostic_event_body
@@ -680,7 +677,6 @@ run_vault_cleanup
 scan_cleanup_candidates
 scan_dirty_turns
 schedule_approved_commitment_wake
-scope_with_corpus_id
 screen_turn_inputs
 send_feedback
 send_override_for_send

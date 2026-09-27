@@ -57,8 +57,7 @@ pub(crate) enum MapValue<'a> {
 }
 
 /// The single duplicate-aware scope-map lookup. Shared with
-/// [`crate::corpus`] so the corpus entry reads the surrounding map exactly
-/// like the provenance/taint/sensitivity stamps beside it.
+/// the recognized provenance/taint/sensitivity entries of the opaque map.
 pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
     let mut found = None;
     for (key, value) in entries {
