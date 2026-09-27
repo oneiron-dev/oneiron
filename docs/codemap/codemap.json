@@ -37822,6 +37822,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer_shadow.rs",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/perf/acceptance.rs",
      "purpose": "ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact…",
      "surface": {
@@ -38278,6 +38288,13 @@
      "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
+    "oneironer_shadow": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
+    },
     "perf": {
      "files": 37,
      "impl_vault": false,
@@ -38316,7 +38333,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 99,
+   "source_files": 100,
    "test_files": 18
   },
   "oneiron-driver": {
