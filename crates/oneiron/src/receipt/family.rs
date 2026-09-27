@@ -9,9 +9,7 @@ use super::grant::{
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
     scan_entities_by_type, standing_outbound_grants_lens,
 };
-use super::identity_kind::{
-    channel_identity_lifecycle_receipts, companion_lifecycle_receipts, identity_topology_receipts,
-};
+use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
 use super::kernel::{
     FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
     ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
@@ -309,9 +307,6 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
     }
 
     let rtxn = vault.store.env.read_txn()?;
-    if query.includes_kind(ReceiptKind::IdentityLifecycle) {
-        records.extend(companion_lifecycle_receipts(vault, &rtxn, query)?);
-    }
     // ONE type-76 scan serves both kinds it projects; the projector-level
     // kind gate keeps a single-kind query from returning the other's rows.
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
