@@ -20,6 +20,33 @@ pub(crate) fn erasure_key(room: EntityId, person: EntityId) -> Vec<u8> {
     .concat()
 }
 
+/// The in-flight fence is unconditional. A completed erasure consults the
+/// current trusted manifest for *new* IDs; the old IDs stay hard-once-seen.
+/// A policy update can narrow this answer without rewriting the marker.
+pub(crate) fn room_person_write_allowed(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    let Some(marker) = store.vault_meta().get(txn, &erasure_key(room, person))? else {
+        return Ok(true);
+    };
+    match marker.as_ref() {
+        [1] => Ok(false),
+        [2] => {
+            let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+            Ok(crate::gate::room_policy_allows(
+                &policy,
+                room,
+                crate::gate::RoomAction::PostErasureAppend,
+                RoomRole::Member,
+            ))
+        }
+        _ => Err(Error::CorruptedIndex("room erasure phase")),
+    }
+}
+
 fn record_author(body: &[u8]) -> Result<Option<EntityId>> {
     let mut bytes = body;
     let Value::Map(fields) =
@@ -155,9 +182,10 @@ pub(crate) fn pin_room_message_edge(
         }
         if let Some(person) = authors.first()
             && store
-                .vault_meta
-                .get(txn, &erasure_key(room, *person))?
-                .is_some()
+                .entities
+                .get(txn, person.as_bytes())?
+                .is_some_and(|raw| raw.first() == Some(&ENTITY_TYPE_PERSON))
+            && !room_person_write_allowed(store, txn, room, *person)?
         {
             return Err(denied());
         }
@@ -208,7 +236,24 @@ fn message_room_author(
     let pin = room_message_owner_in(&vault.store, txn, message)?;
     let author = one(EdgeKind::AuthoredBy)?;
     if let Some(author) = author {
-        require_kind(vault, txn, author, ENTITY_TYPE_PERSON)?;
+        let raw = vault
+            .store
+            .entities
+            .get(txn, author.as_bytes())?
+            .ok_or(denied())?;
+        // Witness admits PERSON, AGENT_DEF and MACHINE actors. A non-PERSON
+        // author is known, not a match for a PERSON's GDPR sweep. A forged
+        // arbitrary entity is still an invalid author binding.
+        if !matches!(
+            raw.first().copied(),
+            Some(
+                ENTITY_TYPE_PERSON
+                    | crate::registry::ENTITY_TYPE_AGENT_DEF
+                    | crate::registry::ENTITY_TYPE_MACHINE
+            )
+        ) {
+            return Err(denied());
+        }
     }
     let from_part = match part {
         Some(turn) => match crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)? {
@@ -278,8 +323,35 @@ pub(crate) fn replay_room_message_tombstone(
     let reason = crate::deletion::decode_tombstone_value(raw_value).reason;
     let author = if reason == Some(crate::deletion::TombstoneReason::PolicyDelete) {
         None
+    } else if let Some(person) =
+        crate::conversation_dag::redacted_record_pin(&vault.store, txn, &turn)?
+            .and_then(|pin| pin.author)
+    {
+        Some(person)
     } else {
-        author_in(vault, txn, turn)?
+        // Observer B may already hold the durable tombstone when it starts
+        // replay. The ordinary live-row door reports DeletedShell *before*
+        // active scrub, so read the still-present original bytes under this
+        // writer snapshot and validate its PERSON author before any child edge
+        // is removed. Never infer an author from the caller's asserted role.
+        match raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .map(record_author)
+            .transpose()?
+            .flatten()
+        {
+            Some(person)
+                if vault
+                    .store
+                    .entities
+                    .get(txn, person.as_bytes())?
+                    .is_some_and(|row| row.first() == Some(&ENTITY_TYPE_PERSON)) =>
+            {
+                Some(person)
+            }
+            Some(_) => return Err(denied()),
+            None => None,
+        }
     };
     let mut cursor = None;
     loop {
@@ -298,6 +370,23 @@ pub(crate) fn replay_room_message_tombstone(
             }
         }
         for message in selected {
+            if reason == Some(crate::deletion::TombstoneReason::UserDelete) {
+                // The host did not know this receiver-only MESSAGE, so the
+                // parent's window tombstone names no child. Persist local
+                // deletion visibility with the scrub: a header-only MESSAGE
+                // must never read as a live empty row on this replica.
+                let decoded = crate::deletion::decode_tombstone_value(raw_value);
+                crate::ports::TombstoneStore::port_tombstone_create(
+                    vault,
+                    txn,
+                    &message,
+                    crate::deletion::TombstoneValueV2 {
+                        reason: crate::deletion::TombstoneReason::UserDelete,
+                        deleted_at: decoded.deleted_at,
+                        request_id: decoded.request_id.unwrap_or([0; 16]),
+                    },
+                )?;
+            }
             vault.apply_replayed_tombstone_in_txn(txn, &message, raw_value)?;
         }
         if ids.len() < ERASE_PAGE {
@@ -306,6 +395,21 @@ pub(crate) fn replay_room_message_tombstone(
         cursor = ids.last().copied();
     }
     Ok(())
+}
+
+fn require_room_policy(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    action: crate::gate::RoomAction,
+    role: RoomRole,
+) -> Result<()> {
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    if crate::gate::room_policy_allows(&policy, room, action, role) {
+        Ok(())
+    } else {
+        Err(denied())
+    }
 }
 
 fn check_delete(
@@ -334,27 +438,45 @@ fn check_delete(
             if author == Some(actor.entity_ref()) =>
         {
             authorize(vault, txn, actor)?;
+            require_room_policy(
+                vault,
+                txn,
+                room,
+                crate::gate::RoomAction::AuthorDelete,
+                RoomRole::Member,
+            )?;
             Ok(RoomRole::Member)
         }
         DeleteReason::PolicyDelete => {
             let role = roles::role_in(vault, txn, room, actor)?;
-            if matches!(role, RoomRole::Owner | RoomRole::Admin) {
-                Ok(role)
-            } else {
-                Err(denied())
-            }
+            require_room_policy(
+                vault,
+                txn,
+                room,
+                crate::gate::RoomAction::PolicyDelete,
+                role,
+            )?;
+            Ok(role)
         }
         DeleteReason::GdprDelete if subject.is_some() && subject == author => {
-            let role = if Some(actor.entity_ref()) == author {
+            let personal = Some(actor.entity_ref()) == author;
+            let role = if personal {
                 authorize(vault, txn, actor)?;
                 RoomRole::Member
             } else {
-                let role = roles::role_in(vault, txn, room, actor)?;
-                if !matches!(role, RoomRole::Owner | RoomRole::Admin) {
-                    return Err(denied());
-                }
-                role
+                roles::role_in(vault, txn, room, actor)?
             };
+            require_room_policy(
+                vault,
+                txn,
+                room,
+                if personal {
+                    crate::gate::RoomAction::GdprSelf
+                } else {
+                    crate::gate::RoomAction::GdprManage
+                },
+                role,
+            )?;
             Ok(role)
         }
         _ => Err(denied()),
@@ -557,6 +679,16 @@ impl Vault {
             }
             cursor = ids.last().copied();
         }
+        // The single writer closes the in-flight fence only after every
+        // selected active row has completed its reason-aware deletion. A
+        // failure above leaves phase 1 for a bounded retry, never free append.
+        self.with_write_txn(|txn| {
+            authorize_room_erasure(self, txn, room, person, actor)?;
+            self.store
+                .vault_meta
+                .put(txn, &erasure_key(room, person), &[2])?;
+            Ok(())
+        })?;
         Ok(outcomes)
     }
 }
@@ -574,14 +706,23 @@ fn authorize_room_erasure(
     actor: WriteActor,
 ) -> Result<()> {
     require_kind(vault, txn, person, ENTITY_TYPE_PERSON)?;
-    if person != actor.entity_ref() {
-        let role = roles::role_in(vault, txn, room, actor)?;
-        if !matches!(role, RoomRole::Owner | RoomRole::Admin) {
-            return Err(denied());
-        }
-    } else {
+    let personal = person == actor.entity_ref();
+    let role = if personal {
         authorize(vault, txn, actor)?;
-    }
+        RoomRole::Member
+    } else {
+        roles::role_in(vault, txn, room, actor)?
+    };
     body::body_in(vault, txn, room)?;
-    Ok(())
+    require_room_policy(
+        vault,
+        txn,
+        room,
+        if personal {
+            crate::gate::RoomAction::GdprSelf
+        } else {
+            crate::gate::RoomAction::GdprManage
+        },
+        role,
+    )
 }

@@ -955,14 +955,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract_oracle/tests.rs` | test | s | 1 fn | — | — |
 | `src/contract_oracle/types.rs` | src | s | 5 struct · 1 enum · 1 fn | CommandOutput, ContractBaseline, ContractDiff, ContractSnapshot, ContractSpec, ContractVerdict | Contract input, snapshot and persisted verdict types |
 | `src/conversation/body.rs` | src | m | 1 struct · 2 enum · 8 fn · 3 crate-vis | ConversationBody, ConversationKind, RoomRole | Forward-compatible room body codec and the all-writer membership guard |
-| `src/conversation/deletion.rs` | src | m | 2 fn · 5 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
+| `src/conversation/deletion.rs` | src | m | 2 fn · 6 crate-vis | — | Actor-bound room deletion and per-person erasure over the existing delete door |
 | `src/conversation/membership.rs` | src | m | 2 struct · 2 enum · 8 fn · 5 crate-vis | HistoryChoice, MembershipAction, MembershipRow, MembershipWindow | Append-only membership ledger |
-| `src/conversation/mod.rs` | src | s | 3 re-export · 3 crate-vis | — | Room bodies, membership windows, session presence and audience visibility |
+| `src/conversation/mod.rs` | src | s | 3 re-export · 4 crate-vis | — | Room bodies, membership windows, session presence and audience visibility |
 | `src/conversation/roles.rs` | src | s | 1 fn · 2 crate-vis | — | Host-local room role grants |
 | `src/conversation/session.rs` | src | s | 1 struct · 1 enum · 3 fn | SessionMode, SessionPresence | Session mode persists; active participant presence belongs only to this process |
 | `src/conversation/tests.rs` | test | L | — | — | — |
 | `src/conversation/tests/audience_boundaries.rs` | test | m | — | — | — |
-| `src/conversation/tests/deletion.rs` | test | m | — | — | — |
+| `src/conversation/tests/deletion.rs` | test | L | — | — | — |
 | `src/conversation/visibility.rs` | src | s | 1 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation_dag/admission.rs` | src | m | 15 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/fixtures.rs` | src | s | 6 crate-vis | — | — |
@@ -1361,7 +1361,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/grants.rs` | src | m | 8 crate-vis | — | — |
 | `src/gate/input.rs` | src | m | 15 crate-vis | — | — |
 | `src/gate/manifest_authenticity.rs` | src | s | 1 struct · 3 fn · 6 crate-vis | ManifestContribution | Local write-door authentication for manifest contributions |
-| `src/gate/mod.rs` | src | s | 3 re-export · 26 crate-vis | — | DEC-0005 Gate policy manifest resolver |
+| `src/gate/mod.rs` | src | s | 3 re-export · 27 crate-vis | — | DEC-0005 Gate policy manifest resolver |
 | `src/gate/proposal_observation.rs` | src | s | 2 struct · 3 fn · 1 const · 2 crate-vis | ProposalSubmissionCheck, ProposalSubmissionReceipt | Actor-scoped, receipt-backed proposal observation; crossing only asks a question |
 | `src/gate/repair.rs` | src | s | 3 crate-vis | — | Pure, per-proposal consent recomputation |
 | `src/gate/repair_tests.rs` | test | m | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
@@ -1373,6 +1373,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/resolution/mod.rs` | src | s | 5 crate-vis | — | — |
 | `src/gate/retrieval_filter.rs` | src | m | 1 struct · 5 crate-vis | RetrievalFilter | Retrieval authority projection and narrowing, independent of result filtering |
 | `src/gate/retrieval_filter/tests.rs` | test | m | — | — | — |
+| `src/gate/room_policy.rs` | src | s | 6 crate-vis | — | Typed room authority policy rows |
 | `src/gate/share.rs` | src | s | 2 crate-vis | — | Narrow adapter for the audience-crossing creation of a brief read grant |
 | `src/gate/tests/actor_fork.rs` | test | L | — | — | Actor identity and fork clamp: resolver mapping, herald fork, and effect-actor binding |
 | `src/gate/tests/auto_checker.rs` | test | L | — | — | ONE-1296 auto_checker knob: decode and fold, checker routing, and lineage |

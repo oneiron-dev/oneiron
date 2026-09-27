@@ -216,6 +216,12 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
     }
     assert!(vault.get(&root).unwrap().is_some());
     assert_eq!(vault.membership_ledger(room).unwrap(), ledger);
+    assert!(
+        vault
+            .erase_room_person(room, bob.entity_ref(), owner)
+            .unwrap()
+            .is_empty()
+    );
     let append = AppendRecord {
         conversation: room,
         parent: Some(root),
@@ -229,10 +235,8 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         learned_at: 11,
         actor: bob,
     };
-    assert_eq!(
-        vault.append_dag_record(&append).unwrap_err().kind(),
-        ErrorKind::InvalidConversationDag
-    );
+    let fresh = vault.append_dag_record(&append).unwrap().id;
+    assert!(vault.get(&fresh).unwrap().is_some());
     let strip = vault.reply_strip(&pointer).unwrap().unwrap();
     assert!(strip.redacted && strip.stale && strip.text.is_none());
     for outcome in outcomes {
@@ -246,12 +250,6 @@ fn erasure_covers_trunk_thread_and_sub_session_without_rewriting_ledger() {
         assert_eq!(body.reason, "gdpr_delete");
         assert_eq!(body.room_role, Some(RoomRole::Owner));
     }
-    assert!(
-        vault
-            .erase_room_person(room, bob.entity_ref(), owner)
-            .unwrap()
-            .is_empty()
-    );
 }
 
 fn independent_root(seed: u8) -> crate::authority::AuthorityLogEntry {
@@ -702,4 +700,184 @@ fn erasure_pages_over_mixed_authors_and_soft_shells_without_skipping() {
             .unwrap()
             .is_empty()
     );
+}
+
+fn room_rule(
+    action: &str,
+    roles: &[&str],
+    allow: bool,
+    room: Option<EntityId>,
+    precedence: &str,
+) -> rmpv::Value {
+    let mut fields = vec![
+        ("action".into(), action.into()),
+        (
+            "roles".into(),
+            rmpv::Value::Array(roles.iter().map(|role| (*role).into()).collect()),
+        ),
+        ("allow".into(), allow.into()),
+        ("precedence".into(), precedence.into()),
+    ];
+    if let Some(room) = room {
+        fields.push(("room_ref".into(), room.to_hex().into()));
+    }
+    rmpv::Value::Map(fields)
+}
+
+fn install_room_rules(vault: &Vault, rows: Vec<rmpv::Value>) {
+    let manifest = rmpv::Value::Map(vec![
+        ("schema_version".into(), "1.2".into()),
+        ("pack_id".into(), "room-policy-test".into()),
+        ("pack_version".into(), "1".into()),
+        ("min_engine_version".into(), "0.0.0".into()),
+        ("defaults".into(), rmpv::Value::Map(vec![])),
+        ("rules".into(), rmpv::Value::Array(vec![])),
+        ("actor_ceilings".into(), rmpv::Value::Array(vec![])),
+        ("room_policy_rows".into(), rmpv::Value::Array(rows)),
+    ]);
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        EntityId::now(),
+        &encode(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn vault_room_policy_narrows_admin_delete_and_owner_role_delegation() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    vault
+        .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
+        .unwrap();
+    let root = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    install_room_rules(
+        &vault,
+        vec![
+            room_rule("policy_delete", &["owner"], true, None, "nested_narrowing"),
+            room_rule("delegate", &["owner"], false, None, "nested_narrowing"),
+        ],
+    );
+    assert_eq!(
+        vault
+            .delete_room_record(room, root, bob, crate::DeleteReason::PolicyDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert_eq!(
+        vault
+            .set_room_role(room, bob.entity_ref(), RoomRole::Owner, owner)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert!(vault.get(&root).unwrap().is_some());
+    assert!(
+        vault
+            .delete_room_record(room, root, owner, crate::DeleteReason::PolicyDelete)
+            .unwrap()
+            .existed
+    );
+}
+
+#[test]
+fn completed_room_erasure_uses_current_vault_policy_for_fresh_ids() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    let root = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    let prior = vault
+        .append_dag_record(&record(&vault, room, bob, 4))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault
+            .erase_room_person(room, bob.entity_ref(), owner)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(vault.get(&prior).unwrap().is_none());
+    let mut fresh = record(&vault, room, bob, 5);
+    fresh.parent = Some(root);
+    fresh.advance = false;
+    assert!(
+        vault.append_dag_record(&fresh).is_ok(),
+        "shipped policy permits fresh IDs after the completed sweep"
+    );
+    install_room_rules(
+        &vault,
+        vec![room_rule(
+            "post_erasure_append",
+            &[],
+            false,
+            None,
+            "nested_narrowing",
+        )],
+    );
+    assert_eq!(
+        vault.append_dag_record(&fresh).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(
+        vault
+            .append_dag_record(&record(&vault, room, owner, 6))
+            .is_ok()
+    );
+}
+
+#[test]
+fn room_holder_override_cannot_widen_vault_delete_ceiling() {
+    let (_dir, vault, owner, room, _) = fixture();
+    let bob = second(&vault);
+    vault
+        .join_member(room, bob.entity_ref(), owner, 2, HistoryChoice::Share)
+        .unwrap();
+    vault
+        .set_room_role(room, bob.entity_ref(), RoomRole::Admin, owner)
+        .unwrap();
+    let record = vault
+        .append_dag_record(&record(&vault, room, owner, 3))
+        .unwrap()
+        .id;
+    install_room_rules(
+        &vault,
+        vec![
+            room_rule("policy_delete", &["owner"], true, None, "nested_narrowing"),
+            room_rule(
+                "policy_delete",
+                &["admin"],
+                true,
+                Some(room),
+                "holder_override",
+            ),
+        ],
+    );
+    assert_eq!(
+        vault
+            .delete_room_record(room, record, bob, crate::DeleteReason::PolicyDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert_eq!(
+        vault
+            .delete_room_record(room, record, owner, crate::DeleteReason::PolicyDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert!(vault.get(&record).unwrap().is_some());
 }

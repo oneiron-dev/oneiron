@@ -361,6 +361,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
+        // Room behavior defaults are typed rows, not a role allow-list in
+        // the delete/append doors. Trusted vault and room rows may narrow.
+        (
+            Value::from(super::room_policy::KEY),
+            super::room_policy::default_rows(),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.

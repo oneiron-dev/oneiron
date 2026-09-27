@@ -7,7 +7,6 @@ use crate::claim::{ClaimBody, claim_sensitivity_band};
 use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::store::Store;
 use crate::vault::Vault;
 use crate::write_envelope::{SourceLineage, WriteActor};
 
@@ -19,7 +18,7 @@ use crate::gate::ceiling::{
 use crate::gate::decode::decode_policy_manifest;
 
 pub(crate) fn resolve_policy_manifest(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
@@ -79,6 +78,7 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.actor_ceilings.extend(decoded.actor_ceilings);
                 delegated_rows.extend(decoded.delegated_grants);
                 resolution.scoped_grants.extend(decoded.scoped_grants);
+                resolution.room_policy_rows.extend(decoded.room_policy_rows);
                 resolution
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);

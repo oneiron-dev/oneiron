@@ -83,6 +83,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) source_trust: SourceTrustCeiling,
     pub(super) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(super) scoped_grants: Vec<PolicyScopedGrant>,
+    pub(crate) room_policy_rows: Vec<crate::gate::room_policy::RoomPolicyRow>,
     pub(super) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,

@@ -11945,7 +11945,7 @@
      "path": "src/conversation/deletion.rs",
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -11974,7 +11974,7 @@
      "path": "src/conversation/mod.rs",
      "purpose": "Room bodies, membership windows, session presence and audience visibility",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 3
      }
     },
@@ -12021,7 +12021,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/conversation/tests/deletion.rs",
@@ -17013,7 +17013,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17132,6 +17132,16 @@
      "path": "src/gate/retrieval_filter/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/room_policy.rs",
+     "purpose": "Typed room authority policy rows",
+     "surface": {
+      "crate-vis": 6
+     }
     },
     {
      "bucket": "s",
@@ -35684,7 +35694,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36372,7 +36382,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2147,
+   "source_files": 2148,
    "test_files": 734
   },
   "oneiron-android": {

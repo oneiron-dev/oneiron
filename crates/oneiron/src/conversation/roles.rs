@@ -67,7 +67,14 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<()> {
         self.with_write_txn(|txn| {
-            if role_in(self, txn, room, actor)? != RoomRole::Owner {
+            let actor_role = role_in(self, txn, room, actor)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+            if !crate::gate::room_policy_allows(
+                &policy,
+                room,
+                crate::gate::RoomAction::Delegate,
+                actor_role,
+            ) {
                 return Err(denied());
             }
             require_kind(self, txn, person, ENTITY_TYPE_PERSON)?;

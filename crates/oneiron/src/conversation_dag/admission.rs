@@ -273,11 +273,7 @@ fn guard_erased_author_body(
         {
             return Err(invalid("room TURN author must be a PERSON"));
         }
-        if store
-            .vault_meta()
-            .get(txn, &crate::conversation::erasure_key(room, person))?
-            .is_some()
-        {
+        if !crate::conversation::room_person_write_allowed(store, txn, room, person)? {
             return Err(invalid("erased person cannot append to this room"));
         }
     }

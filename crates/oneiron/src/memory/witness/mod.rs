@@ -47,11 +47,7 @@ fn reject_erased_person_in_txn(
 ) -> super::MemoryResult<()> {
     // Check in this writer snapshot; a failed lookup must not allow admission.
     if let Some(person) = person
-        && vault
-            .store
-            .vault_meta
-            .get(txn, &crate::conversation::erasure_key(room, person))?
-            .is_some()
+        && !crate::conversation::room_person_write_allowed(&vault.store, txn, room, person)?
     {
         return Err(super::MemoryError::bad_request(
             "erased person cannot witness a turn in this room",

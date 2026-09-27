@@ -230,6 +230,15 @@ impl Vault {
                 {
                     return Err(denied());
                 }
+                let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+                if !crate::gate::room_policy_allows(
+                    &policy,
+                    id,
+                    crate::gate::RoomAction::Delegate,
+                    RoomRole::Owner,
+                ) {
+                    return Err(denied());
+                }
             }
             if !fresh_id_in_txn(&self.store, txn, id)? {
                 return Err(state("conversation already exists"));

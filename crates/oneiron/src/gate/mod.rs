@@ -26,6 +26,7 @@ pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
 mod retrieval_filter;
+mod room_policy;
 mod share;
 mod witness_message;
 
@@ -98,6 +99,7 @@ pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{
     ResolvedRetrievalFilter, RetrievalPolicyFloor, narrow_retrieval_filter,
 };
+pub(crate) use self::room_policy::{RoomAction, allows as room_policy_allows};
 pub(crate) use self::share::check_share_create_policy;
 #[cfg(test)]
 pub(crate) use self::share::share_create_effect;
