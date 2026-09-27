@@ -23,6 +23,15 @@ use crate::gate::policy_values::{
 
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
+    /// Fully resolved, trusted install policy. Missing or malformed policy
+    /// never becomes a permissive empty rule set.
+    pub(crate) fn pack_install_policy(&self) -> Option<&crate::gate::PackInstallPolicy> {
+        if self.diagnostics.is_fail_closed() {
+            return None;
+        }
+        self.pack_install_policy.as_ref()
+    }
+
     pub(crate) fn is_single_valued_predicate(&self, predicate: &str) -> bool {
         !self.is_fail_closed() && self.single_valued_predicates.contains(predicate)
     }
