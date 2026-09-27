@@ -10757,7 +10757,7 @@
      "path": "src/context_board/hydration.rs",
      "purpose": "The assembled context one hydration call returns: session prefix material (counts, last activity…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 5
      }
     },
@@ -10822,7 +10822,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 6,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -11052,6 +11052,35 @@
      "surface": {
       "fn": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BriefPlacement",
+      "BriefSkillRow",
+      "ClassLimit",
+      "ClassVerdict",
+      "CommunicationLimits",
+      "PlacedSelfBrief",
+      "SelfBrief",
+      "SelfBriefInput"
+     ],
+     "path": "src/context_board/self_brief.rs",
+     "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/context_board/self_brief/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34579,7 +34608,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35526,8 +35555,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2097,
-   "test_files": 718
+   "source_files": 2098,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [

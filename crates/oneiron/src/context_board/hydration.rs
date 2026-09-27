@@ -62,6 +62,9 @@ pub struct AssembledContext {
     /// This turn's MEMORIES section; absent when retrieval was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memories: Option<MemoriesSection>,
+    /// Turn-one/fold prefix replacement or an append-only mid-run tail card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub self_brief: Option<super::self_brief::PlacedSelfBrief>,
 }
 
 impl AssembledContext {
@@ -81,6 +84,20 @@ impl AssembledContext {
             budget,
             cursor,
             memories,
+            self_brief: None,
         }
+    }
+
+    /// Attach the same typed describe(self) card to the correct context surface.
+    #[must_use]
+    pub fn with_self_brief(
+        mut self,
+        brief: &super::self_brief::SelfBrief,
+        placement: super::self_brief::BriefPlacement,
+    ) -> Self {
+        self.self_brief = Some(super::self_brief::PlacedSelfBrief::assemble(
+            brief, placement,
+        ));
+        self
     }
 }
