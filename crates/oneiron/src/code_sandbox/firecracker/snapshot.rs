@@ -5,6 +5,7 @@ use crate::{
     Result,
     code_sandbox::{SandboxFileWriteProposal, SandboxVirtualPath},
 };
+use oneiron_sandbox_contract::{MAX_FILE_BYTES, WorkspacePath, WorkspaceShape};
 use std::{
     ffi::CString,
     fs::{self, File},
@@ -22,11 +23,10 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(root)
         .map_err(|_| refused("source snapshot root unavailable"))?;
-    let mut stack = vec![(root, String::new(), 0_usize)];
+    let mut stack = vec![(root, String::new())];
     let mut files = Vec::new();
-    let mut directories = 0;
-    let mut total = 0;
-    while let Some((directory, prefix, depth)) = stack.pop() {
+    let mut shape = WorkspaceShape::new();
+    while let Some((directory, prefix)) = stack.pop() {
         // /proc/self/fd names the directory descriptor, not a mutable pathname.
         let entries = fs::read_dir(format!("/proc/self/fd/{}", directory.as_raw_fd()))
             .map_err(|_| refused("source snapshot directory unavailable"))?;
@@ -36,14 +36,13 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
             let leaf = name
                 .to_str()
                 .ok_or_else(|| refused("source filename is not UTF-8"))?;
-            let path = if prefix.is_empty() {
+            let relative = if prefix.is_empty() {
                 leaf.to_owned()
             } else {
                 format!("{prefix}/{leaf}")
             };
-            if path.len() > 4096 {
-                return Err(refused("source snapshot path limit"));
-            }
+            let path =
+                WorkspacePath::from_relative(&relative).map_err(|error| refused(error.reason()))?;
             let name =
                 CString::new(name.as_bytes()).map_err(|_| refused("invalid source filename"))?;
             // SAFETY: directory is a live descriptor; name is NUL-terminated.
@@ -64,25 +63,23 @@ pub(super) fn files(root: &Path) -> Result<Vec<SandboxFileWriteProposal>> {
                 .metadata()
                 .map_err(|_| refused("source snapshot metadata unavailable"))?;
             if metadata.is_dir() {
-                directories += 1;
-                if directories > 8192 || depth >= 64 {
-                    return Err(refused("source snapshot directory limit"));
-                }
-                stack.push((file, path, depth + 1));
+                shape
+                    .add_directory(&path)
+                    .map_err(|error| refused(error.reason()))?;
+                stack.push((file, relative));
             } else if metadata.is_file() {
-                if metadata.len() > 1024 * 1024 || files.len() >= 8192 {
+                if metadata.len() > MAX_FILE_BYTES as u64 {
                     return Err(refused("source snapshot file limit"));
                 }
                 let mut bytes = Vec::new();
-                file.take(1024 * 1024 + 1)
+                file.take((MAX_FILE_BYTES + 1) as u64)
                     .read_to_end(&mut bytes)
                     .map_err(|_| refused("source snapshot read failed"))?;
-                total += bytes.len();
-                if bytes.len() > 1024 * 1024 || total > 16 * 1024 * 1024 {
-                    return Err(refused("source snapshot byte limit"));
-                }
+                shape
+                    .add_file(&path, bytes.len())
+                    .map_err(|error| refused(error.reason()))?;
                 files.push(SandboxFileWriteProposal::new(
-                    SandboxVirtualPath::try_new(format!("/mnt/workspace/{path}"))?,
+                    SandboxVirtualPath::try_new(path.as_str())?,
                     bytes,
                 ));
             } else {
