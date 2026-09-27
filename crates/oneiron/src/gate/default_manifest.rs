@@ -372,6 +372,21 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
         ),
+        // Delivery is policy DATA, not a baked-in routing rule. Owners may
+        // replace either row without changing the engine.
+        (
+            Value::from(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY),
+            Value::Array(vec![
+                Value::Map(vec![
+                    (Value::from("scope"), Value::from("vault")),
+                    (Value::from("delivery"), Value::from("push_other_holders")),
+                ]),
+                Value::Map(vec![
+                    (Value::from("scope"), Value::from("override")),
+                    (Value::from("delivery"), Value::from("log_only")),
+                ]),
+            ]),
+        ),
         (
             Value::from(POLICY_SIGNATURES_KEY),
             Value::Array(vec![Value::Map(vec![

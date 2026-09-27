@@ -16651,7 +16651,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16924,7 +16924,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 4
      }
     },
@@ -16993,7 +16993,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -24888,7 +24888,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 1,
-      "re-export": 10
+      "re-export": 12
      }
     },
     {
@@ -24900,6 +24900,70 @@
      "surface": {
       "crate-vis": 16
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/authority.rs",
+     "purpose": "Live policy-power holders from shared membership and owner-stamped action grants",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyChangedEvent",
+      "PolicyProposalStatus",
+      "PolicyRowProposal",
+      "PolicyRowReceipt"
+     ],
+     "path": "src/policy_model/owner_rows/ledger.rs",
+     "purpose": "Append-only row change history and proposal inbox",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/mod.rs",
+     "purpose": "Holder-governed owner-policy row edits, proposals, events and change log",
+     "surface": {
+      "fn": 3,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PolicyNotificationMode",
+      "PolicyNotificationRule",
+      "PolicyQueuedNotification"
+     ],
+     "path": "src/policy_model/owner_rows/notifications.rs",
+     "purpose": "Manifest-authored notification rules and recipient-owned delivery preferences",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/policy_model/owner_rows/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -25066,7 +25130,7 @@
      "purpose": "What the caller asks about, and how the classifier is configured",
      "surface": {
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -32311,7 +32375,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 16
      }
@@ -32334,6 +32398,16 @@
      "path": "src/task_verb/owner_index_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/policy_change_followup.rs",
+     "purpose": "Atomic, idempotent human TASK notification for one landed policy change",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -34855,6 +34929,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/policy_row_verbs.rs",
+     "purpose": "Public-door policy-row proof independent of unrelated lib-test compilation",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs",
      "purpose": "(a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor…",
      "surface": {}
@@ -35825,7 +35907,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 34,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36147,7 +36229,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -36268,8 +36350,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2141,
-   "test_files": 730
+   "source_files": 2146,
+   "test_files": 732
   },
   "oneiron-android": {
    "files": [

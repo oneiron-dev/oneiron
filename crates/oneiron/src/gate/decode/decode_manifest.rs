@@ -88,6 +88,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
+                | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
                 | POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY
@@ -106,6 +107,51 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         ) {
             return None;
         }
+    }
+
+    // A malformed notification row must not silently suppress a promised
+    // holder push. Validation shares the manifest's closed-key admission.
+    match single_map_value(
+        &entries,
+        super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY,
+    ) {
+        MapValue::Missing => {}
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut scopes = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Map(fields) = row else { return None };
+                if fields.len() != 2
+                    || fields
+                        .iter()
+                        .any(|(k, _)| !matches!(k.as_str(), Some("scope" | "delivery")))
+                {
+                    return None;
+                }
+                let scope = single_map_value(fields, "scope");
+                let delivery = single_map_value(fields, "delivery");
+                let (
+                    MapValue::Present(Value::String(scope)),
+                    MapValue::Present(Value::String(delivery)),
+                ) = (scope, delivery)
+                else {
+                    return None;
+                };
+                let (Some(scope), Some(delivery)) = (scope.as_str(), delivery.as_str()) else {
+                    return None;
+                };
+                if !matches!(scope, "vault" | "override")
+                    || !matches!(delivery, "push_other_holders" | "log_only")
+                    || !scopes.insert(scope)
+                {
+                    return None;
+                }
+            }
+            if scopes.len() != 2 {
+                return None;
+            }
+        }
+        MapValue::Present(_) => return None,
     }
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
