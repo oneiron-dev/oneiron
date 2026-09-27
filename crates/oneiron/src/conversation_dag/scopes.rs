@@ -109,8 +109,35 @@ pub(crate) fn resolve_in_txn(
         ScopePath::Branch(id) => chain(&vault.store, txn, &scope.conversation, id)?,
         ScopePath::SubSession(_) => unreachable!("handled above"),
     };
-    // Branch paths must use the dedicated SubSession selector rather than
-    // pulling a retained worker's records into the parent conversation.
+    // A branch explicitly anchored in a worker session can project that
+    // session's chain. The parent walk still validates the full ancestry;
+    // enclosing worker sessions are not covered by this inner projection.
+    let worker_branch = match (scope.path, scope.session) {
+        (ScopePath::Branch(anchor), Some(session))
+            if graph::is_sub_session_record(&vault.store, txn, &anchor)? =>
+        {
+            if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &anchor)?
+                != Some(session)
+            {
+                return Err(invalid("branch anchor belongs to another session"));
+            }
+            Some(session)
+        }
+        _ => None,
+    };
+    if let Some(session) = worker_branch {
+        let mut selected = Vec::new();
+        for id in records {
+            if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &id)?
+                == Some(session)
+            {
+                selected.push(id);
+            }
+        }
+        records = selected;
+    }
+    // Plain branches must use the dedicated SubSession selector rather than
+    // pulling retained worker records into the parent conversation.
     for id in &records {
         if graph::is_sub_session_record(&vault.store, txn, id)?
             && !(matches!(scope.path, ScopePath::Branch(_))

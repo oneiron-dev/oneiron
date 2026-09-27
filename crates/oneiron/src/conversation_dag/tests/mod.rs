@@ -1071,3 +1071,70 @@ fn worker_root_summary_uses_its_session_without_changing_head() {
     );
     assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
 }
+
+#[test]
+fn soft_delete_of_interior_and_last_reply_repairs_thread_meta() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let first = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let interior = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    let descendant = vault
+        .reply_in_thread(trunk, &input(conv, None, false, actor))
+        .unwrap()
+        .id;
+    assert_eq!(
+        vault.thread(trunk).unwrap().replies,
+        [first, interior, descendant]
+    );
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 3);
+    vault
+        .delete_entity_with_reason(&interior, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert_eq!(vault.thread(trunk).unwrap().replies, [first]);
+    assert_eq!(vault.thread_meta(trunk).unwrap().unwrap().count, 1);
+    assert_eq!(vault.thread_meta(first).unwrap(), None);
+    vault
+        .delete_entity_with_reason(&first, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.thread(trunk).unwrap().replies.is_empty());
+    assert_eq!(vault.thread_meta(trunk).unwrap(), None);
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
+
+#[test]
+fn inner_worker_thread_summary_excludes_outer_session_ancestry() {
+    let (_dir, vault, conv, actor) = fixture();
+    let trunk = vault
+        .append_dag_record(&input(conv, None, true, actor))
+        .unwrap()
+        .id;
+    let outer = vault.spawn_dag_sub_session(&trunk, actor).unwrap();
+    let mut outer_input = input(conv, Some(trunk), false, actor);
+    outer_input.session = Some(outer);
+    let worker = vault.append_dag_record(&outer_input).unwrap().id;
+    let inner = vault.spawn_dag_sub_session(&worker, actor).unwrap();
+    let mut inner_input = input(conv, None, false, actor);
+    inner_input.session = Some(inner);
+    let root = vault.reply_in_thread(worker, &inner_input).unwrap().id;
+    let next = vault.reply_in_thread(worker, &inner_input).unwrap().id;
+    assert_eq!(vault.thread(worker).unwrap().replies, [root, next]);
+    let (summary, header) = vault
+        .mint_and_land_thread_summary(worker, "inner worker", actor)
+        .unwrap();
+    assert_eq!(vault.scope_summary_covers(&summary).unwrap(), [root, next]);
+    assert_eq!(vault.drill(&header.claim).unwrap(), [root, next]);
+    assert_eq!(
+        vault.get_claim(&header.claim).unwrap().unwrap().subject,
+        crate::claim::ClaimSubject::Entity(worker)
+    );
+    assert_eq!(vault.head(&conv).unwrap(), Some(trunk));
+}
