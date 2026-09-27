@@ -458,7 +458,7 @@
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -2300,14 +2300,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
      "purpose": "`impl Vault` — the AUTHORITY_LOG read/write door",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -12407,7 +12407,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/counterparty_contact/storage.rs",
@@ -16379,6 +16379,47 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AgentKind",
+      "AgentSurface",
+      "ExportVersionedComponent",
+      "FailureClassV1",
+      "FailureSignalDimensions",
+      "FailureSignalInput",
+      "FailureTaxonomy",
+      "Tier1FailureCount",
+      "VersionedComponent"
+     ],
+     "path": "src/failure_signals.rs",
+     "purpose": "Content-free, versioned tier-1 agent failure counts",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 9,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/policy.rs",
+     "purpose": "Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_signals/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AppliedFanoutEscalationRuling",
       "FanoutAskClassifier",
       "FanoutAskContext",
@@ -17771,7 +17812,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -17781,7 +17822,7 @@
      "path": "src/git_wire/bridge.rs",
      "purpose": "`repo_mutation` migration bridge: validated arbitrary-argv entry plus failure redaction",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -17825,9 +17866,29 @@
      "path": "src/git_wire/env.rs",
      "purpose": "Pinned process baseline: executable resolution, bounds, and the test-only binary override",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_context.rs",
+     "purpose": "Typed Git invocation context: repository selector and operation policy travel together",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/execution_scope.rs",
+     "purpose": "Private Git execution view, derived only from an admitted repository profile",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -17936,13 +17997,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/git_wire/process.rs",
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -17977,6 +18038,16 @@
       "crate-vis": 4,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/repository_profile.rs",
+     "purpose": "Admission of immutable Git layout and worktree semantics before an attribute-consuming effect",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -19936,7 +20007,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 18,
-      "mod": 168,
+      "mod": 169,
       "re-export": 72
      }
     },
@@ -20941,7 +21012,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "mod": 8,
       "re-export": 18
      }
@@ -21210,7 +21281,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -22631,7 +22702,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -22713,7 +22784,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -22726,8 +22797,8 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 5,
-      "fn": 7
+      "crate-vis": 7,
+      "fn": 8
      }
     },
     {
@@ -22868,7 +22939,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/note/program_tests.rs",
@@ -22938,6 +23009,16 @@
      "path": "src/note/tests.rs",
      "purpose": "NOTE body ABI: the pinned four keys, the closed kind, and the negative set the decoder must fail closed on",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/title_index.rs",
+     "purpose": "Atomic title-reservation replacement for authoritative NOTE document sets",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "m",
@@ -23966,6 +24047,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/connector_qualification.rs",
+     "purpose": "Per-rail outbound SOW contract and local qualification probes",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -26855,7 +26944,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CanonicalDocument",
@@ -28192,7 +28281,7 @@
      "path": "src/self_heal/admission.rs",
      "purpose": "Content-address and occurrence binding shared by local and replicated puts",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -28347,7 +28436,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 5,
       "re-export": 8
      }
@@ -28454,6 +28543,16 @@
      "path": "src/self_heal/text_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/tier1_source.rs",
+     "purpose": "Verify tier-1 source provenance against the actual base ledgers, never a caller-supplied reference's mere…",
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "s",
@@ -30897,7 +30996,7 @@
      "path": "src/store/retrieval_telemetry/run_store.rs",
      "purpose": "Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 3
      }
     },
@@ -34505,7 +34604,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)",
      "surface": {
       "const": 4,
-      "fn": 10,
+      "fn": 16,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -36153,6 +36252,13 @@
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
+    "failure_signals": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
+     "purpose": "Content-free, versioned tier-1 agent failure counts"
+    },
     "fanout_auto": {
      "files": 2,
      "impl_vault": false,
@@ -36196,7 +36302,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 22,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36350,7 +36456,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36371,7 +36477,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36602,7 +36708,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36870,8 +36976,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2186,
-   "test_files": 742
+   "source_files": 2193,
+   "test_files": 744
   },
   "oneiron-android": {
    "files": [
@@ -42980,7 +43086,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/handler/note_socket_tests.rs",
