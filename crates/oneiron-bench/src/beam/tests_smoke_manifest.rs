@@ -128,6 +128,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn manifest_rejects_each_missing_comparability_axis() {
+        for axis in [
+            "tier",
+            "regime",
+            "nativeScale",
+            "backbone",
+            "judge",
+            "retrievalK",
+            "provenance",
+        ] {
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+            manifest["competitors"][0]["card"]["axes"]
+                .as_object_mut()
+                .expect("axes object")
+                .remove(axis);
+            let error = parse_manifest_json(&manifest.to_string())
+                .expect_err("missing comparability axis must be rejected");
+            assert!(error.to_string().contains(axis), "{axis}: {error}");
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_missing_nested_comparability_details() {
+        for (axis, field) in [
+            ("tier", "reference"),
+            ("backbone", "soloRow"),
+            ("judge", "inFamily"),
+            ("provenance", "source"),
+        ] {
+            let mut manifest: serde_json::Value =
+                serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+            manifest["competitors"][0]["card"]["axes"][axis]
+                .as_object_mut()
+                .expect("nested axis object")
+                .remove(field);
+            let error = parse_manifest_json(&manifest.to_string())
+                .expect_err("missing axis detail must be rejected");
+            assert!(error.to_string().contains(field), "{axis}.{field}: {error}");
+        }
+    }
+
+    #[test]
     fn manifest_validation_requires_competitor_rows_to_match_arms() {
         let mut manifest_json: serde_json::Value =
             serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
@@ -175,6 +218,27 @@ pub(crate) mod tests {
                 actual: 1
             }
         ));
+    }
+
+    #[test]
+    fn oracle_and_in_family_competitors_stay_out_of_the_main_report() {
+        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).expect("fixture parses");
+        let mut manifest_json: serde_json::Value =
+            serde_json::from_str(BUILTIN_MANIFEST_JSON).expect("manifest JSON");
+        manifest_json["competitors"][0]["card"]["axes"]["regime"] = serde_json::json!("oracle");
+        manifest_json["competitors"][1]["card"]["axes"]["judge"]["inFamily"] =
+            serde_json::json!(true);
+        let manifest = parse_manifest_json(&manifest_json.to_string()).expect("manifest parses");
+        let report = run_fixture_manifest(&manifest, &fixture).expect("fixture runs");
+        for case in &report.cases {
+            assert!(
+                case.competitors.iter().all(|row| {
+                    !matches!(row.arm, ArmKind::Deterministic | ArmKind::VanillaRag)
+                })
+            );
+            assert_eq!(case.appendix[0].competitor_id, "deterministic-context-pack");
+            assert_eq!(case.appendix[1].competitor_id, "vanilla-rag");
+        }
     }
 
     #[test]
