@@ -528,6 +528,12 @@ fn already_delivered_completion_caller_abort_rolls_back_every_index() -> crate::
         source.id,
         ManifestEntry::new(ManifestKind::Skill, "skill:atomic-audit", "v1", 101),
     )?;
+    let source = queue.set_executor_model(
+        source.id,
+        "connector-task-executor",
+        source.attempt_count,
+        "fixture/model@1",
+    )?;
     let pack_receipt_id = crate::receipt::attempt_pack_receipt_id(&source.id);
     assert!(persist_send_receipt(
         &vault,

@@ -74,6 +74,12 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Result<Str
         panic!("the enqueued attempt is claimable");
     };
     assert_eq!(leased.id, attempt.id, "one attempt in flight per fixture");
+    queue.set_executor_model(
+        attempt.id,
+        "fixture-worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "fixture-worker".to_owned(),

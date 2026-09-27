@@ -127,6 +127,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             "corpus_scope": corpus_scope,
             "world_scope": format!("{:?}", builder.world_scope),
             "result_limit": builder.result_limit,
+            "skill_executor": builder.skill_executor.as_deref(),
             "context_pack_budget": builder.context_pack_budget.map(|b| json!({
                 "claims": b.claims, "turns": b.turns, "summaries": b.summaries,
                 "facets": b.facets, "other": b.other, "selected_edges": b.selected_edges,

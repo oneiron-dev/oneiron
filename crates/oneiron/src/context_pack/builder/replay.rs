@@ -10,6 +10,7 @@ impl ContextPackBuilder<'_> {
         json!({
             "assembly": {
                 "hydrate": self.hydrate,
+                "skill_executor": self.pipeline.skill_executor_id(),
                 "read_mode": self.read_mode,
                 "include_edges": self.include_edges,
                 "edge_hop": self.edge_hop,

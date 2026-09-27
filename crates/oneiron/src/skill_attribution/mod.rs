@@ -31,6 +31,10 @@
 mod audit;
 mod codec;
 mod judge;
+mod judge_supersession;
+#[cfg(test)]
+pub(crate) use judge_supersession::set_pre_writer_hook;
+pub(crate) use judge_supersession::{judgment_displaced, judgment_displaced_in_txn};
 mod projector;
 mod types;
 
@@ -71,4 +75,8 @@ mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,
     run_task_attribution_sweep, run_task_attribution_sweep_with_judge,
+};
+
+pub use self::judge_supersession::{
+    DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
 };

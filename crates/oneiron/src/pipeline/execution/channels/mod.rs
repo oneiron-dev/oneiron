@@ -730,7 +730,13 @@ impl PipelineBuilder<'_> {
         skip_ret01_abstain: bool,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
         let mut capabilities = if self.context_pack_budget.is_some() {
-            partition_capabilities(scores, self.vault, rtxn, signal_components)?
+            partition_capabilities(
+                scores,
+                self.vault,
+                rtxn,
+                signal_components,
+                self.skill_executor.as_deref(),
+            )?
         } else {
             Vec::new()
         };

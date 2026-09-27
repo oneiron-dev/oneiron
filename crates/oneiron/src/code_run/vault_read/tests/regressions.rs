@@ -601,6 +601,7 @@ fn in_process_context_pack_keeps_ranked_owner_claim_when_l2_is_implicit() {
     );
     let response = adapter
         .context_pack(CoreContextPackRequest {
+            executor_model: None,
             query: Some("owner-adapter-needle".to_owned()),
             limit: 10,
             ..context_pack_request()

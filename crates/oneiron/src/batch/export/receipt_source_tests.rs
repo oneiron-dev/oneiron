@@ -47,6 +47,7 @@ fn fixture(vault: &Vault) -> Result<(EntityId, ReceiptRecord)> {
     else {
         panic!("leased")
     };
+    queue.set_executor_model(row.id, "host", leased.attempt_count, "fixture/model@1")?;
     queue.complete(CompleteAttempt {
         id: row.id,
         lease_owner: "host".into(),

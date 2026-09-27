@@ -96,12 +96,32 @@ pub fn run_attribution_projector_with_judge(
 
     vault.with_write_txn(|wtxn| {
         for judgment in &judgments {
-            let encoded = encode_value(&encode_judgment(judgment));
-            vault.store.vault_meta.put(
-                wtxn,
-                &sequenced_key(JUDGMENT_PREFIX, judgment.sequence),
-                &encoded?,
-            )?;
+            if let Some(revision) = judge.judge_revision() {
+                super::judge_supersession::ensure_current_attribution_judge_in_txn(
+                    vault, &*wtxn, revision,
+                )?;
+            }
+            let judgment_key = sequenced_key(JUDGMENT_PREFIX, judgment.sequence);
+            if let Some(existing) = vault.store.vault_meta.get(wtxn, &judgment_key)? {
+                if decode_judgment(&existing)? != *judgment {
+                    return Err(crate::error::Error::InvalidClaimBody(
+                        "an attribution judgment cannot be rescored",
+                    ));
+                }
+                // Unknown is immutable too: a retry under a newly installed
+                // judge must never claim the old verdict as its own.
+                continue;
+            }
+            if let Some(revision) = judge.judge_revision() {
+                super::judge_supersession::stamp_judge_revision(
+                    vault,
+                    wtxn,
+                    judgment.sequence,
+                    revision,
+                )?;
+            }
+            let encoded = encode_value(&encode_judgment(judgment))?;
+            vault.store.vault_meta.put(wtxn, &judgment_key, &encoded)?;
             if let Some(proposal) = edit_proposal_for(judgment) {
                 let encoded = encode_value(&encode_edit_proposal(&proposal))?;
                 vault.store.vault_meta.put(
@@ -127,8 +147,15 @@ pub fn run_attribution_projector_with_judge(
 /// this: it is the stack seam.
 pub fn attribution_judgments(vault: &Vault) -> Result<Vec<AttributionJudgment>> {
     let rtxn = vault.store.env.read_txn()?;
+    attribution_judgments_in_txn(vault, &rtxn)
+}
+
+pub(super) fn attribution_judgments_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttributionJudgment>> {
     let mut out = Vec::new();
-    for row in vault.store.vault_meta.prefix_iter(&rtxn, JUDGMENT_PREFIX)? {
+    for row in vault.store.vault_meta.prefix_iter(txn, JUDGMENT_PREFIX)? {
         let (_, raw) = row?;
         out.push(decode_judgment(&raw)?);
     }

@@ -144,7 +144,30 @@ pub fn run_task_attribution_sweep_with_judge(
                     evidence.at,
                 )?;
             }
-            crate::skill_reliability::project_skill_reliability_for(vault, &skill, evidence.at)?;
+            let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
+                .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
+            match receipt
+                .fields
+                .get("model")
+                .filter(|model| !model.is_empty())
+            {
+                Some(model) => {
+                    crate::skill_reliability::project_skill_reliability_for_executor(
+                        vault,
+                        &skill,
+                        model,
+                        evidence.at,
+                    )?;
+                }
+                None => {
+                    crate::skill_reliability::project_skill_reliability_for(
+                        vault,
+                        &skill,
+                        evidence.at,
+                    )?;
+                }
+            }
+
             if !report.skills.contains(&skill) {
                 report.skills.push(skill);
             }

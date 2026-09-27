@@ -80,6 +80,8 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
             after: None,
             held_out_digest: "reserve".into(),
             accepted: false,
+            judge_revision: None,
+            displaced_by_revision: None,
             at: 2,
         })
     }

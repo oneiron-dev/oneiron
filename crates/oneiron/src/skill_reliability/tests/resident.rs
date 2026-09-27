@@ -17,7 +17,7 @@ fn stamped_resident_receipt(
     else {
         panic!("new attempt")
     };
-    vault.load_resident_skill_pack(row.id, resident, skill, 11)?;
+
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
         "resident.rank",
         ClaimAttempt {
@@ -28,6 +28,15 @@ fn stamped_resident_receipt(
     else {
         panic!("claim")
     };
+    vault.load_resident_skill_pack(
+        row.id,
+        resident,
+        skill,
+        "resident-rank",
+        leased.attempt_count,
+        "fixture/model@1",
+        11,
+    )?;
     queue.fail(crate::attempt_queue::FailAttempt {
         id: row.id,
         lease_owner: "resident-rank".into(),
@@ -74,16 +83,49 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     };
     assert!(
         vault
-            .load_attempt_skill_pack(attempt.id, &a_old, 26)
+            .load_attempt_skill_pack(
+                attempt.id,
+                &a_old,
+                "resident-pack",
+                1,
+                "fixture/model@1",
+                26
+            )
             .is_err()
     );
     assert!(
         vault
-            .load_resident_skill_pack(attempt.id, &b, &a_old, 26)
+            .load_resident_skill_pack(
+                attempt.id,
+                &b,
+                &a_old,
+                "resident-pack",
+                1,
+                "fixture/model@1",
+                26
+            )
             .is_err()
     );
     assert!(queue.get(attempt.id)?.expect("attempt").manifest.is_empty());
-    let loaded = vault.load_resident_skill_pack(attempt.id, &a, &a_old, 27)?;
+    let ClaimOutcome::Claimed(pack_lease) = queue.claim_kind(
+        "resident.pack",
+        ClaimAttempt {
+            lease_owner: "resident-pack".into(),
+            now: 27,
+        },
+    )?
+    else {
+        panic!("claim pack")
+    };
+    let loaded = vault.load_resident_skill_pack(
+        attempt.id,
+        &a,
+        &a_old,
+        "resident-pack",
+        pack_lease.attempt_count,
+        "fixture/model@1",
+        27,
+    )?;
     assert_eq!(loaded.record.version, "1");
     for at in 30..38 {
         let receipt = stamped_resident_receipt(&vault, &a, &a_old)?;
@@ -106,11 +148,13 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     }
     let rows = run_attribution_projector(&vault, 0)?;
     project_skill_reliability(&vault, &rows)?;
-    let ranked = rank_resident_skill_versions(&vault, &a, &[a_old, a_new])?;
+    let ranked = rank_resident_skill_versions(&vault, &a, &[a_old, a_new], "fixture/model@1")?;
     assert_eq!(ranked[0].0, a_new);
     assert!(ranked[0].1 > ranked[1].1);
-    assert!(rank_resident_skill_versions(&vault, &a, &[a_old, b_version]).is_err());
-    assert!(rank_resident_skill_versions(&vault, &a, &[a_old, base]).is_err());
+    assert!(
+        rank_resident_skill_versions(&vault, &a, &[a_old, b_version], "fixture/model@1").is_err()
+    );
+    assert!(rank_resident_skill_versions(&vault, &a, &[a_old, base], "fixture/model@1").is_err());
     let EnqueueOutcome::Enqueued(selection) = queue.enqueue(EnqueueAttempt {
         kind: "resident.selected".into(),
         payload: Vec::new(),
@@ -121,10 +165,6 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     else {
         panic!("new selection attempt")
     };
-    let (selected, _) = vault
-        .select_and_load_resident_skill_pack(selection.id, &a, &[a_old, a_new], 40)?
-        .expect("candidate");
-    assert_eq!(selected, a_new);
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
         "resident.selected",
         ClaimAttempt {
@@ -135,6 +175,18 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     else {
         panic!("claim selected attempt")
     };
+    let (selected, _) = vault
+        .select_and_load_resident_skill_pack(
+            selection.id,
+            &a,
+            &[a_old, a_new],
+            "resident-selected",
+            leased.attempt_count,
+            "fixture/model@1",
+            40,
+        )?
+        .expect("candidate");
+    assert_eq!(selected, a_new);
     queue.fail(crate::attempt_queue::FailAttempt {
         id: selection.id,
         lease_owner: "resident-selected".into(),

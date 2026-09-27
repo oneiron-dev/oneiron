@@ -68,6 +68,7 @@ pub(super) fn partition_capabilities(
     vault: &Vault,
     txn: &RoTxn<'_>,
     signal_components: &HashMap<EntityId, Vec<RetrievalScoreComponent>>,
+    executor: Option<&str>,
 ) -> Result<Vec<ScoredEntity>> {
     let store = &vault.store;
     let mut memory = Vec::with_capacity(scores.len());
@@ -98,7 +99,8 @@ pub(super) fn partition_capabilities(
     let mut total_pulls = 0_u32;
     let mut posteriors = HashMap::with_capacity(skill_ids.len());
     for id in &skill_ids {
-        let posterior = crate::skill_reliability::selection_posterior_in_txn(vault, txn, id)?;
+        let posterior =
+            crate::skill_reliability::selection_posterior_in_txn(vault, txn, id, executor)?;
         // Observations are positive integer-valued Beta weights. Saturation
         // keeps an extremely large candidate set from wrapping the horizon.
         #[expect(

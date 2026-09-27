@@ -120,6 +120,9 @@ pub(crate) fn admit_installed(vault: &Vault, id: &EntityId, source: &HubRef) -> 
 }
 struct FixtureReplay;
 impl HeldOutReplayScorer for FixtureReplay {
+    fn judge_revision(&self) -> &str {
+        "fixture-judge@1"
+    }
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
         assert!(!case.held_out_receipts.is_empty());
         Ok(if case.instructions.contains("Check the fixture result.") {
@@ -184,6 +187,14 @@ pub(crate) fn reserve(vault: &Vault, skill: &EntityId, skill_id: &str) {
         else {
             panic!("claimable attempt");
         };
+        queue
+            .set_executor_model(
+                attempt.id,
+                "fixture",
+                leased.attempt_count,
+                "fixture/model@1",
+            )
+            .expect("stamp model");
         assert!(matches!(
             queue
                 .complete(CompleteAttempt {

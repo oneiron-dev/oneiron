@@ -182,6 +182,12 @@ pub(super) fn run_packed_attempt(
         attempt.id,
         ManifestEntry::new(ManifestKind::ActorClaim, "claim-a", "2", 13),
     )?;
+    queue.set_executor_model(
+        attempt.id,
+        "worker",
+        leased.attempt_count,
+        "fixture/model@1",
+    )?;
     terminal(&queue, attempt.id, leased.attempt_count)?;
 
     let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt.id);

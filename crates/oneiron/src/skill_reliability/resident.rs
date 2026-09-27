@@ -6,7 +6,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill::{SkillLifecycle, resident_of};
 
-use super::{SkillReliabilityPosterior, skill_reliability_posterior, skill_reliability_prior};
+use super::{
+    SkillReliabilityPosterior, skill_reliability_posterior_for_executor, skill_reliability_prior,
+};
 
 /// Rank active versions owned by ONE resident. Every candidate must be from
 /// the same skill family; a foreign/unowned candidate is a refusal rather
@@ -22,6 +24,7 @@ pub fn rank_resident_skill_versions(
     vault: &Vault,
     resident: &EntityId,
     versions: &[EntityId],
+    executor_model: &str,
 ) -> Result<Vec<(EntityId, f32)>> {
     let mut family = None;
     let mut seen = std::collections::HashSet::new();
@@ -48,7 +51,7 @@ pub fn rank_resident_skill_versions(
             ));
         }
         family = Some(record.skill_id);
-        let posterior = skill_reliability_posterior(vault, skill)?
+        let posterior = skill_reliability_posterior_for_executor(vault, skill, executor_model)?
             .unwrap_or(skill_reliability_prior(vault, skill)?);
         arms.push((*skill, posterior));
     }

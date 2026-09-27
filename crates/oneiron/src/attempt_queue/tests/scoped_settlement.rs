@@ -88,6 +88,7 @@ fn result_and_settlement_atomically_retire_only_the_owning_actor_index() -> Resu
         let (_dir, vault) = open_queue();
         let queue = AttemptQueue::new(&vault);
         let (claim, other, legacy) = claim_with_neighbors(&vault, &queue)?;
+        queue.set_executor_model(claim.id, "worker-a", claim.attempt_count, "fixture/model@1")?;
         let before = queue.append_manifest_entry(claim.id, skill_entry("index", "1", 12))?;
         let output = result_ref("blob-artifact:aa@1");
         let receipt_id = crate::receipt::attempt_pack_receipt_id(&claim.id);
@@ -180,6 +181,7 @@ fn landing_handoff_atomically_moves_actor_scope_but_not_the_result() -> Result<(
     let (_dir, vault) = open_queue();
     let queue = AttemptQueue::new(&vault);
     let (claim, other, legacy) = claim_with_neighbors(&vault, &queue)?;
+    queue.set_executor_model(claim.id, "worker-a", claim.attempt_count, "fixture/model@1")?;
     queue.append_manifest_entry(claim.id, skill_entry("index", "1", 12))?;
     queue.request_cancel(soft_request(claim.id, "peer-1", CancelStanding::PeerAgent))?;
     let landing = accept_landing_at(&queue, &claim, LandingTrigger::CancelRequest, 13)?;

@@ -38,9 +38,21 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<SkillRecord> {
-        Ok(self.load_attempt_skill_pack(attempt, skill, at)?.record)
+        Ok(self
+            .load_attempt_skill_pack(
+                attempt,
+                skill,
+                lease_owner,
+                attempt_count,
+                executor_model,
+                at,
+            )?
+            .record)
     }
 
     /// Loads the exact stored SKILL.md/scripts when present and stamps one row
@@ -49,28 +61,61 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.load_skill_pack_bound(attempt, skill, None, at)
+        self.load_skill_pack_bound(
+            attempt,
+            skill,
+            None,
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )
     }
 
     /// Loads a resident fork only for its named owner. The check and manifest
     /// stamp share a transaction; an unscoped load cannot use a bound fork.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn load_resident_skill_pack(
         &self,
         attempt: AttemptId,
         resident: &EntityId,
         skill: &EntityId,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
-        self.load_skill_pack_bound(attempt, skill, Some(*resident), at)
+        self.load_skill_pack_bound(
+            attempt,
+            skill,
+            Some(*resident),
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     fn load_skill_pack_bound(
         &self,
         attempt: AttemptId,
         skill: &EntityId,
         resident: Option<EntityId>,
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<LoadedSkillPack> {
         self.with_write_txn(|txn| {
@@ -96,12 +141,21 @@ impl Vault {
             let source_files = self
                 .runtime_skill_package_in_txn(txn, skill, &record)?
                 .map(|package| package.files);
+            let queue = AttemptQueue::new(self);
+            queue.require_skill_load_lease_in_txn(txn, attempt, lease_owner, attempt_count)?;
+            queue.set_executor_model_in_txn(
+                txn,
+                attempt,
+                lease_owner,
+                attempt_count,
+                executor_model,
+            )?;
             if let Some(resident) = resident {
                 let receipt = crate::receipt::attempt_pack_receipt_id(&attempt);
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
                 super::resident::bind_skill_in_txn(self, txn, &receipt, skill)?;
             }
-            AttemptQueue::new(self).append_manifest_entry_in_txn(
+            queue.append_manifest_entry_in_txn(
                 txn,
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
@@ -117,21 +171,39 @@ impl Vault {
     /// exactly that entity's manifest/evidence binding in one pack-load call.
     /// A winner that is no longer active refuses at the load door rather than
     /// silently loading a runner-up under an out-of-date candidate ranking.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the load door binds the resident, skill, lease generation, executor revision and timestamp atomically"
+    )]
     pub fn select_and_load_resident_skill_pack(
         &self,
         attempt: AttemptId,
         resident: &EntityId,
         versions: &[EntityId],
+        lease_owner: &str,
+        attempt_count: u32,
+        executor_model: &str,
         at: u64,
     ) -> Result<Option<(EntityId, LoadedSkillPack)>> {
-        let Some((winner, _)) =
-            crate::skill_reliability::rank_resident_skill_versions(self, resident, versions)?
-                .into_iter()
-                .next()
-        else {
+        let Some((winner, _)) = crate::skill_reliability::rank_resident_skill_versions(
+            self,
+            resident,
+            versions,
+            executor_model,
+        )?
+        .into_iter()
+        .next() else {
             return Ok(None);
         };
-        let pack = self.load_resident_skill_pack(attempt, resident, &winner, at)?;
+        let pack = self.load_resident_skill_pack(
+            attempt,
+            resident,
+            &winner,
+            lease_owner,
+            attempt_count,
+            executor_model,
+            at,
+        )?;
         Ok(Some((winner, pack)))
     }
 
