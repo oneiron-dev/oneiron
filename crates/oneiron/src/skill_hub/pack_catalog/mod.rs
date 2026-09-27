@@ -32,6 +32,7 @@ mod admission_types;
 mod bundled_skills;
 mod schema;
 mod screening;
+mod script_screen;
 pub use admission_types::{
     PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackObservedTool,
     PackQualification, PackQualifier, PackRuntimeRecipe,

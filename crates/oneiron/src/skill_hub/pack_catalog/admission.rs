@@ -63,11 +63,10 @@ impl Vault {
     ) -> Result<ConsentReceipt> {
         self.with_write_txn(|txn| {
             let source = self.check_pack_install_ask(txn, ask)?;
-            if self
-                .screen_pack_in_txn(txn, &source, &ask.qualification)?
-                .is_some()
-            {
-                return Err(invalid("install rule blocks owner approval"));
+            if let Some(reason) = self.screen_pack_in_txn(txn, &source, &ask.qualification)? {
+                return Err(Error::Registry(RegistryError::PackInstallRuleBlocked {
+                    reason,
+                }));
             }
             self.approve_once_in_txn(txn, owner, ask.effect)
         })

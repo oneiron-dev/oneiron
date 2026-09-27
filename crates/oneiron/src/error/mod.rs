@@ -297,6 +297,7 @@ pub enum ErrorKind {
     PackKindNotInstalled,
     InvalidPackByteMap,
     PackPredicateNameCollision,
+    PackInstallRuleBlocked,
 }
 
 /// Crate error type.

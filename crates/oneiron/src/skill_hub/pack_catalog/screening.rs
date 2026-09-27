@@ -4,6 +4,7 @@ use crate::{Vault, consent::AuthenticatedOwner, error::Result, skill::SkillConte
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use unicode_script::{Script, UnicodeScript};
 
 const RULES_KEY: &[u8] = b"pack.install.rules.v1";
 const MAX_NODES: usize = 8192;
@@ -98,24 +99,22 @@ impl Vault {
                 return Ok(Some(format!("secret-shaped string in {}", file.path)));
             }
             if file.path.starts_with("scripts/")
-                && [
-                    "curl ",
-                    "wget ",
-                    "child_process",
-                    "subprocess.",
-                    "os.system(",
-                    "std::process::command",
-                    "fetch(",
-                    "requests.",
-                ]
-                .iter()
-                .any(|call| lower.contains(call))
+                && let Some(reason) = super::script_screen::screen_script(&file.path, text)
             {
-                return Ok(Some(format!("call outside the sandbox in {}", file.path)));
+                return Ok(Some(format!("{reason} in {}", file.path)));
             }
         }
         if source.manifest().kind != PackKind::Connector {
             return Ok(None);
+        }
+        for (field, text) in [
+            ("name", source.manifest().name.as_str()),
+            ("description", source.manifest().description.as_str()),
+            ("version", source.manifest().version.as_str()),
+        ] {
+            if let Some(reason) = screen_text(text).or_else(|| known_bad(text, &rules)) {
+                return Ok(Some(format!("PACK.md {field}: {reason}")));
+            }
         }
         if let Some(pack) = source.files().iter().find(|file| file.path == "PACK.md") {
             let text =
@@ -160,6 +159,9 @@ impl Vault {
             if let Some(reason) = screen_text(name)
                 .or_else(|| screen_text(description))
                 .or_else(|| screen_schema(&resolved, false))
+                .or_else(|| known_bad_value(&resolved, &rules))
+                .or_else(|| known_bad(name, &rules))
+                .or_else(|| known_bad(description, &rules))
             {
                 return Ok(Some(format!("tool {name}: {reason}")));
             }
@@ -200,8 +202,10 @@ impl Vault {
                 Ok(resolved) => resolved,
                 Err(reason) => return Ok(Some(format!("observed tool {name}: {reason}"))),
             };
-            if let Some(reason) =
-                screen_text(description).or_else(|| screen_schema(&observed, false))
+            if let Some(reason) = screen_text(description)
+                .or_else(|| screen_schema(&observed, false))
+                .or_else(|| known_bad_value(&observed, &rules))
+                .or_else(|| known_bad(description, &rules))
             {
                 return Ok(Some(format!("observed tool {name}: {reason}")));
             }
@@ -249,40 +253,36 @@ fn resolve(
                         .as_array()
                         .filter(|b| !b.is_empty())
                         .ok_or("empty composition")?;
+                    let mut combined = Vec::new();
+                    // Never union constraints from distinct branches: branch-local
+                    // additionalProperties/unevaluatedProperties would change meaning.
                     for branch in branches {
-                        let Value::Object(properties) = resolve(branch, root, depth + 1, budget)?
-                        else {
+                        let resolved = resolve(branch, root, depth + 1, budget)?;
+                        if !resolved.is_object() {
                             return Err("composition must contain objects");
-                        };
-                        for (k, v) in properties {
-                            if let Some(old) = result.get_mut(&k) {
-                                if k == "properties" {
-                                    let (Some(a), Some(b)) = (old.as_object_mut(), v.as_object())
-                                    else {
-                                        return Err("composition properties invalid");
-                                    };
-                                    for (name, value) in b {
-                                        if a.insert(name.clone(), value.clone()).is_some() {
-                                            return Err("ambiguous composed property");
-                                        }
-                                    }
-                                } else if k == "required" {
-                                    let (Some(a), Some(b)) = (old.as_array_mut(), v.as_array())
-                                    else {
-                                        return Err("composition required invalid");
-                                    };
-                                    for item in b {
-                                        if !a.contains(item) {
-                                            a.push(item.clone());
-                                        }
-                                    }
-                                } else if *old != v {
-                                    return Err("conflicting composed schema");
-                                }
-                            } else {
-                                result.insert(k, v);
-                            }
                         }
+                        if !combined.contains(&resolved) {
+                            combined.push(resolved);
+                        }
+                    }
+                    if result.insert(key.clone(), Value::Array(combined)).is_some() {
+                        return Err("conflicting composition");
+                    }
+                } else if key == "anyOf" || key == "oneOf" {
+                    let branches = child
+                        .as_array()
+                        .filter(|b| !b.is_empty())
+                        .ok_or("empty composition")?;
+                    let mut resolved = Vec::new();
+                    for branch in branches {
+                        let value = resolve(branch, root, depth + 1, budget)?;
+                        if !value.is_object() {
+                            return Err("composition must contain objects");
+                        }
+                        resolved.push(value);
+                    }
+                    if result.insert(key.clone(), Value::Array(resolved)).is_some() {
+                        return Err("conflicting composition");
                     }
                 } else {
                     let resolved = resolve(child, root, depth + 1, budget)?;
@@ -292,6 +292,20 @@ fn resolve(
                     {
                         return Err("conflicting ref sibling");
                     }
+                }
+            }
+            if let Some(Value::Array(branches)) = result.remove("allOf") {
+                if branches.len() == 1 {
+                    let Value::Object(branch) = &branches[0] else {
+                        return Err("composition must contain objects");
+                    };
+                    if branch.keys().all(|key| !result.contains_key(key)) {
+                        result.extend(branch.clone());
+                    } else {
+                        result.insert("allOf".into(), Value::Array(branches));
+                    }
+                } else {
+                    result.insert("allOf".into(), Value::Array(branches));
                 }
             }
             Ok(Value::Object(result))
@@ -306,20 +320,38 @@ fn resolve(
 fn screen_schema(value: &Value, parameter: bool) -> Option<&'static str> {
     match value {
         Value::Object(fields) => fields.iter().find_map(|(key, value)| {
-            screen_text(key).or_else(|| {
-                if key == "description" {
-                    value.as_str().and_then(|s| {
-                        screen_text(s).or_else(|| parameter.then(|| screen_parameter(s)).flatten())
+            screen_text(key).or_else(|| match (key.as_str(), value) {
+                // A property called "description" is a schema, not an annotation.
+                ("description", Value::String(text)) => screen_text(text)
+                    .or_else(|| parameter.then(|| screen_parameter(text)).flatten()),
+                ("properties" | "patternProperties", Value::Object(properties)) => {
+                    properties.iter().find_map(|(name, schema)| {
+                        screen_text(name).or_else(|| screen_schema(schema, true))
                     })
-                } else {
-                    screen_schema(value, parameter || key == "properties" || key == "items")
                 }
+                (_, child) => screen_schema(child, parameter),
             })
         }),
         Value::Array(values) => values.iter().find_map(|v| screen_schema(v, parameter)),
-        Value::String(s) => {
-            screen_text(s).or_else(|| parameter.then(|| screen_parameter(s)).flatten())
-        }
+        Value::String(s) => screen_text(s),
+        _ => None,
+    }
+}
+fn known_bad(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    rules
+        .known_bad_patterns
+        .iter()
+        .any(|pattern| lower.contains(&pattern.to_lowercase()))
+        .then_some("known-bad pattern")
+}
+fn known_bad_value(value: &Value, rules: &PackInstallRules) -> Option<&'static str> {
+    match value {
+        Value::Object(fields) => fields.iter().find_map(|(key, value)| {
+            known_bad(key, rules).or_else(|| known_bad_value(value, rules))
+        }),
+        Value::Array(items) => items.iter().find_map(|item| known_bad_value(item, rules)),
+        Value::String(text) => known_bad(text, rules),
         _ => None,
     }
 }
@@ -344,30 +376,16 @@ fn screen_text(text: &str) -> Option<&'static str> {
     if text.chars().any(|c| matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{180e}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}')) {
         return Some("zero-width or RTL deception");
     }
-    if text.chars().any(|c| {
-        matches!(
-            c,
-            '\u{0410}'
-                | '\u{0415}'
-                | '\u{041e}'
-                | '\u{0420}'
-                | '\u{0421}'
-                | '\u{0425}'
-                | '\u{0391}'
-                | '\u{039f}'
-                | '\u{0430}'
-                | '\u{0435}'
-                | '\u{043e}'
-                | '\u{0440}'
-                | '\u{0441}'
-                | '\u{0445}'
-                | '\u{0456}'
-                | '\u{03b1}'
-                | '\u{03bf}'
-        )
-    }) && text.chars().any(|c| c.is_ascii_alphabetic())
-    {
-        return Some("mixed-script homoglyph deception");
+    // Mixed Latin/Cyrillic or Latin/Greek text admits the whole confusable
+    // repertoire, not a manually maintained set of code points.
+    for word in text.split(|c: char| !c.is_alphabetic()) {
+        if word.chars().any(|c| c.script() == Script::Latin)
+            && word
+                .chars()
+                .any(|c| matches!(c.script(), Script::Cyrillic | Script::Greek))
+        {
+            return Some("mixed-script homoglyph deception");
+        }
     }
     let lower = text.to_lowercase();
     [
