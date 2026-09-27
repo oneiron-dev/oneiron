@@ -33975,7 +33975,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 7,
+      "fn": 6,
       "struct": 3,
       "trait": 1
      }

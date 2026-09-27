@@ -63,7 +63,7 @@ fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Resu
         adapter.submit(TtsCommand::Start { generation })?;
         adapter.submit(text(generation, "test sentence"))?;
         adapter.submit(TtsCommand::Flush { generation })?;
-        let HostedWork::Render(request) = &adapter.transport().work[0] else {
+        let HostedWork::Render(request) = &adapter.transport.work[0] else {
             panic!("render")
         };
         assert_eq!(request.generation, generation);
@@ -104,7 +104,7 @@ fn both_hosted_targets_render_from_bank_with_only_provisioned_locators() -> Resu
         adapter.submit(text(generation, "more"))?;
         adapter.submit(TtsCommand::Flush { generation })?;
         adapter.submit(TtsCommand::End { generation })?;
-        assert_eq!(adapter.transport().work.len(), 2);
+        assert_eq!(adapter.transport.work.len(), 2);
         assert!(adapter.receive_pcm(generation, 1, 0, &[1, 0]).is_err());
         adapter.finish_response(generation, 0)?;
         assert_eq!(adapter.receive_pcm(generation, 1, 0, &[1, 0])?.samples, [1]);
@@ -131,7 +131,7 @@ fn rejection_is_retryable_but_failed_cancellation_closes_output() -> Result<()> 
         adapter.submit(text(generation, "one"))?;
         adapter.transport.reject = true;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
-        assert!(adapter.transport().work.is_empty());
+        assert!(adapter.transport.work.is_empty());
         adapter.submit(TtsCommand::Flush { generation })?;
         adapter.transport.reject = true;
         assert!(adapter.submit(TtsCommand::Cancel { generation }).is_err());
@@ -139,7 +139,7 @@ fn rejection_is_retryable_but_failed_cancellation_closes_output() -> Result<()> 
         assert!(adapter.submit(text(generation, "late")).is_err());
         adapter.submit(TtsCommand::Cancel { generation })?;
         adapter.submit(TtsCommand::Cancel { generation })?;
-        assert_eq!(adapter.transport().work.len(), 2);
+        assert_eq!(adapter.transport.work.len(), 2);
         assert!(
             HostedTtsAdapter::bind(&vault, &pack.id, provider, "../key", Capture::default())
                 .is_err()
@@ -177,10 +177,7 @@ fn withdrawal_before_first_flush_revokes_both_hosted_targets() -> Result<()> {
         adapter.submit(text(generation, "never send"))?;
         withdraw(&vault, pack.owner, "withdraw-before-flush")?;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
-        assert_eq!(
-            adapter.transport().work,
-            [HostedWork::Cancel { generation }]
-        );
+        assert_eq!(adapter.transport.work, [HostedWork::Cancel { generation }]);
         assert!(adapter.submit(text(generation, "late")).is_err());
         assert!(
             HostedTtsAdapter::bind(&vault, &pack.id, provider, "voice", Capture::default())
@@ -208,11 +205,11 @@ fn withdrawal_between_responses_cancels_all_pending_and_never_revives_a_binding(
         withdraw(&vault, pack.owner, "withdraw-between-responses")?;
         assert!(adapter.receive_pcm(generation, 1, 0, &[1, 0]).is_err());
         assert!(
-            matches!(adapter.transport().work.last(), Some(HostedWork::Cancel { generation: g }) if *g == generation)
+            matches!(adapter.transport.work.last(), Some(HostedWork::Cancel { generation: g }) if *g == generation)
         );
         assert!(adapter.finish_response(generation, 1).is_err());
         assert!(adapter.submit(text(generation, "third")).is_err());
-        assert_eq!(adapter.transport().work.len(), 3);
+        assert_eq!(adapter.transport.work.len(), 3);
         // Reusing an ID (even with identical bytes) cannot resurrect the old incarnation.
         vault.store_owner_voice_refs(&pack)?;
         assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
@@ -235,7 +232,7 @@ fn many_small_drained_requests_exceed_old_cumulative_limit_without_cancellation(
             adapter.finish_response(generation, n)?;
         }
         adapter.submit(TtsCommand::End { generation })?;
-        assert_eq!(adapter.transport().work.len(), 20);
+        assert_eq!(adapter.transport.work.len(), 20);
         assert!(
             adapter
                 .transport()
@@ -333,10 +330,7 @@ fn withdrawal_and_same_id_recreation_cannot_revive_unobserved_old_binding() -> R
     withdraw(&vault, pack.owner, "withdraw-replace")?;
     vault.store_owner_voice_refs(&pack)?;
     assert!(adapter.submit(TtsCommand::Flush { generation }).is_err());
-    assert_eq!(
-        adapter.transport().work,
-        [HostedWork::Cancel { generation }]
-    );
+    assert_eq!(adapter.transport.work, [HostedWork::Cancel { generation }]);
     let fresh = HostedTtsAdapter::bind(
         &vault,
         &pack.id,

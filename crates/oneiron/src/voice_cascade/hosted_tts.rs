@@ -144,9 +144,6 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
     pub fn binding(&self) -> &HostedBinding {
         &self.binding
     }
-    pub fn transport(&self) -> &T {
-        &self.transport
-    }
 
     fn request(&self, generation: GenerationEpoch, submission: u64) -> HostedRender {
         let (url, api_version, body) = match self.binding.provider {
