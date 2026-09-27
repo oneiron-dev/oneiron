@@ -1144,3 +1144,53 @@ fn leader_signed_spawn_verifies_from_a_copied_vault_without_the_issuer() -> Resu
     assert_eq!(replica.project(child_id)?.unwrap().depth_remaining, 9);
     Ok(())
 }
+
+#[test]
+fn signed_slip_scope_cannot_hide_an_off_record_reference() -> Result<()> {
+    use crate::off_record::OffRecordBackendClass;
+    use crate::session_overlay::OverlayKeyspace;
+    use ed25519_dalek::Signer;
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let id = vault.root_project()?;
+    let before = vault.project(id)?.unwrap();
+    let room = EntityId::from_hex(&before.home_room)?;
+    let prior_room = vault.project_room(room)?;
+    let overlay_id = EntityId::now();
+    let session = vault
+        .off_record_session_vault()
+        .enter("project-slip-taint", OffRecordBackendClass::Local)?;
+    let overlay = session.overlay();
+    let segment = overlay.install_txn_segment()?;
+    overlay.put(OverlayKeyspace::Entities, overlay_id.as_bytes(), b"overlay")?;
+    segment.commit()?;
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"project slip taint fixture")?;
+    let root = vault.ensure_host_root_slip(&issuer)?;
+    let actor = EntityId::from_hex(&before.leader)?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(blake3::hash(actor.as_bytes()).as_bytes());
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+    claims.holder_ref = actor.to_hex();
+    claims.binding_key = signing.verifying_key().to_bytes();
+    claims.scope.worlds = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        crate::federation::ScopeId(overlay_id),
+    ]));
+    let slip = vault.mint_capability_slip(&issuer, claims)?;
+    let mut changed = before.clone();
+    let challenge = changed.write_challenge(id)?;
+    changed.write_proof = Some(ProjectWriteProof {
+        slip_wire: slip.to_token()?,
+        holder_signature: signing
+            .sign(&slip.binding_transcript(&challenge)?)
+            .to_bytes()
+            .to_vec(),
+    });
+    assert_eq!(
+        vault.put_project(id, &changed, 1).unwrap_err().kind(),
+        crate::error::ErrorKind::OffRecordTaintedBaseWrite
+    );
+    assert_eq!(vault.project(id)?, Some(before));
+    assert_eq!(vault.project_room(room)?, prior_room);
+    session.close()?;
+    Ok(())
+}

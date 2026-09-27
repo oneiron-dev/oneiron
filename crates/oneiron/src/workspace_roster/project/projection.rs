@@ -98,7 +98,31 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
             ids.push(*document);
         }
     }
+    if let Some(proof) = &body.write_proof {
+        let slip = crate::authority::CapabilitySlip::from_token(&proof.slip_wire)
+            .map_err(|_| invalid())?;
+        if let Some(org) = &slip.claims.org_ref {
+            ids.push(EntityId::from_hex(org).map_err(|_| invalid())?);
+        }
+        slip_scope_refs(&slip.claims.scope, &mut ids);
+        for block in &slip.caveats {
+            if let Some(scope) = &block.caveat.scope {
+                slip_scope_refs(scope, &mut ids);
+            }
+            if let Some((grant, _)) = &block.caveat.pact {
+                ids.push(*grant);
+            }
+        }
+    }
     Ok(ids)
+}
+
+fn slip_scope_refs(scope: &crate::federation::Scope, ids: &mut Vec<EntityId>) {
+    for axis in [&scope.worlds, &scope.facets, &scope.audience] {
+        if let crate::federation::ScopeAxis::Some(values) = axis {
+            ids.extend(values.iter().map(|id| id.0));
+        }
+    }
 }
 
 pub(crate) fn reconcile_project_rooms(

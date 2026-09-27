@@ -198,6 +198,9 @@ class Oneiron:
         ``"json"``, ``"yaml"``, ``"toon"``, ``"md"``, ``"txt"``.
         """
         return json.loads(_translate(lambda: self._client.recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format)))
+    def export(self, format: str | None = None) -> dict[str, Any]:
+        """Exports the live vault through the five-format serializer."""
+        return json.loads(_translate(lambda: self._client.export(json.dumps({"format": format}))))
     def receipts(self, limit: int = 100) -> list[dict[str, Any]]:
         """Governance receipts, newest first."""
         return json.loads(_translate(lambda: self._client.receipts(limit)))
