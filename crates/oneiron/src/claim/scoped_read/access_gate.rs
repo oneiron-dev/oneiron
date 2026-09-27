@@ -24,6 +24,19 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
 }
 
 impl ScopedRead<'_> {
+    /// Persist grant time before the read snapshot, never inside it.
+    pub(crate) fn persist_grant_clock(&self) -> Result<()> {
+        if self.actor_key.enforce_access_grants {
+            self.vault.store.authorization_now()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn grant_read_txn(&self) -> Result<heed::RoTxn<'_>> {
+        self.persist_grant_clock()?;
+        Ok(self.vault.store.env.read_txn()?)
+    }
+
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -33,22 +46,28 @@ impl ScopedRead<'_> {
             return Ok(true);
         }
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows(
+        Ok(context.allows_at_snapshot(
             ENTITY_TYPE_CLAIM,
             body.rel,
             private_scope(body.scope.as_ref()),
+            &body.record_scope("read"),
         ))
     }
 
     pub(super) fn relationship_raw_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        kind: u8,
-        bytes: &[u8],
+        id: &EntityId,
+        raw: &[u8],
     ) -> Result<bool> {
         if !self.actor_key.enforce_access_grants {
             return Ok(true);
         }
+        let header = crate::batch::EntityMetadataHeader::parse(raw).ok_or(
+            crate::error::Error::CorruptedIndex("relationship record header"),
+        )?;
+        let kind = header.entity_type;
+        let bytes = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
         if kind == ENTITY_TYPE_CLAIM {
             if bytes.is_empty() {
                 return Ok(false);
@@ -116,7 +135,12 @@ impl ScopedRead<'_> {
                 private |= private_scope(Some(value));
             }
         }
+        let Some(record) =
+            crate::federation::record_scope::scope_for_blob(&self.vault.store, txn, *id, raw)?
+        else {
+            return Ok(false);
+        };
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
-        Ok(context.allows(kind, space, private))
+        Ok(context.allows_at_snapshot(kind, space, private, &record))
     }
 }

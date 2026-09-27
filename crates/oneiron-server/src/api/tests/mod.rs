@@ -69,6 +69,9 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
     ("/v1/core/run-tree", "get"),
     ("/v1/core/run-tree/observe", "get"),
     ("/v1/core/run-tree/intervene", "post"),
+    ("/v1/core/memory/{id}/watch", "get"),
+    ("/v1/core/memory/{id}/watch", "put"),
+    ("/v1/core/memory/{id}/watch", "delete"),
     ("/v1/core/conversations", "get"),
     ("/v1/core/conversations", "post"),
     ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -146,6 +149,8 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreHydrateResponse",
     "CoreHydrateStatus",
     "CoreListQuery",
+    "CoreMemoryChange",
+    "CoreMemoryWatchResponse",
     "CoreMemoryOperationKind",
     "CoreMemoryTimelineRecord",
     "CoreMemoryTimelineRecordState",
@@ -220,7 +225,9 @@ pub(super) fn test_server_with_config(
     config: SyncServerConfig,
 ) -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.retrieval_telemetry_capture = true;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
     assert_default_policy_manifest_fixture(vault.as_ref());
     let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
     (dir, server)
