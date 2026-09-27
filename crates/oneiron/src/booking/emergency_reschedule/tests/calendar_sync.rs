@@ -40,7 +40,12 @@ impl CalendarRemoteTransport for PullOne {
 
 #[test]
 fn normal_connector_upsert_rewrites_event_without_erasing_confirmation_context() {
-    let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
+    let clock = crate::ports::ManualClock::new(NOW);
+    let mut config = crate::VaultConfig::default();
+    config.store_clock = clock.bundle();
+    let (_dir, vault, receipt, plan) =
+        executable_with_invite_config(EmergencyActionPolicy::Cancel, true, config);
+    crate::calendar::test_support::provision_test_calendar_importer(&vault, &clock);
     let context = crate::booking::lifecycle::booking_confirmation_context(
         &vault,
         &receipt.calendar.event_ref,

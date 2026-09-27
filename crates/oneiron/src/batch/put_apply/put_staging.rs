@@ -240,6 +240,7 @@ pub(super) fn stage_claim_projection(
 ) -> Result<()> {
     if let Some(body) = body {
         crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
+        crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }
     Ok(())
 }

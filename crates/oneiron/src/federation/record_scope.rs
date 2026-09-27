@@ -4,6 +4,7 @@
 //! a wildcard selector. Replication does not invent a stamp for opaque peer bytes.
 use super::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{ClaimBody, ClaimSubject};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -190,9 +191,13 @@ pub(crate) fn scope_for_blob(
     let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
     let data = &raw[ENTITY_METADATA_HEADER_LEN..];
     if h.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-        return Ok(crate::claim::decode_claim_body(data, true)
-            .ok()
-            .map(|body| body.record_scope("read")));
+        let Ok(body) = crate::claim::decode_claim_body(data, true) else {
+            return Ok(None);
+        };
+        if let Some(effective) = machine_history_disclosure_scope(store, txn, &body)? {
+            return Ok(effective);
+        }
+        return Ok(Some(body.record_scope("read")));
     }
     if carries_birth_stamp(h.entity_type) {
         return Ok(birth_facet(store, txn, id)?.map(|facet| {
@@ -207,6 +212,57 @@ pub(crate) fn scope_for_blob(
     }
     Ok(scope)
 }
+/// Control bytes inherit the CURRENT projected claim's effective audience,
+/// including signed sensitivity demotion. Immutable birth scope can never be
+/// used to disclose an older, less restricted copy after narrowing.
+fn machine_history_disclosure_scope(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<Option<Option<Scope>>> {
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_none() {
+        return Ok(None);
+    }
+    let ClaimSubject::Entity(target) = body.subject else {
+        return Ok(Some(None));
+    };
+    let fold = crate::authority::authority_fold_readonly_for_store_in_txn(
+        store,
+        store.privacy_posture,
+        txn,
+    )?;
+    match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, target) {
+        Ok(projection) => {
+            let mut effective =
+                crate::claim::history_projection::project_machine_claim(&projection)
+                    .record_scope("read");
+            if projection.stale {
+                effective.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Restricted);
+            }
+            Ok(Some(Some(effective)))
+        }
+        Err(Error::Claim(crate::error::ClaimError::MachineClaimHistoryIncomplete))
+        | Err(Error::Claim(crate::error::ClaimError::InvalidMachineClaimProof)) => Ok(Some(None)),
+        Err(other) => Err(other),
+    }
+}
+
+fn disclosure_scope_for_stored_row(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<Scope>> {
+    if kind == crate::registry::ENTITY_TYPE_CLAIM {
+        let body = crate::claim::decode_claim_body(data, true)?;
+        if let Some(scope) = machine_history_disclosure_scope(store, txn, &body)? {
+            return Ok(scope);
+        }
+    }
+    stored_scope(store, txn, id, kind, data)
+}
+
 fn admits(scope: &Scope, selector: &Scope, slip: &Scope, channel: &Scope, verb: &str) -> bool {
     let mut record = scope.clone();
     record.verbs = singleton(verb.to_owned());
@@ -220,7 +276,7 @@ impl Vault {
             return Ok(None);
         };
         let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-        stored_scope(
+        disclosure_scope_for_stored_row(
             &self.store,
             &txn,
             *id,
@@ -257,7 +313,7 @@ impl Vault {
             )?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            let scope = stored_scope(
+            let scope = disclosure_scope_for_stored_row(
                 &self.store,
                 &txn,
                 id,
@@ -267,7 +323,7 @@ impl Vault {
             let allowed = scope
                 .as_ref()
                 .is_some_and(|scope| admits(scope, selector, slip, channel, "read"))
-                && crate::authority::row_causal_admitted(self, &txn, &raw)?;
+                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?;
             if allowed || view == ScopeView::Debug {
                 out.push(ScopedRecord {
                     id,
@@ -297,14 +353,14 @@ impl Vault {
             )?;
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if let Some(scope) = stored_scope(
+            if let Some(scope) = disclosure_scope_for_stored_row(
                 &self.store,
                 &txn,
                 id,
                 h.entity_type,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
             )? && admits(&scope, selector, slip, channel, "export")
-                && crate::authority::row_causal_admitted(self, &txn, &raw)?
+                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
             {
                 out.push(ScopedRecord {
                     id,

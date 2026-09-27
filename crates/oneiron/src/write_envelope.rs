@@ -250,6 +250,11 @@ impl WriteEnvelope {
         self
     }
 
+    /// Host-only access to the machine's proof for staging immutable birth.
+    pub(crate) const fn machine_signature(&self) -> Option<MachineWriteSignature> {
+        self.machine_signature
+    }
+
     /// Actor stamped into candidate writes.
     #[must_use]
     pub const fn actor(&self) -> WriteActor {

@@ -632,6 +632,11 @@ impl<'a> ScopedRead<'a> {
         body: &ClaimBody,
         filter: &ResolvedRetrievalFilter,
     ) -> Result<bool> {
+        // History controls travel through scoped sync/export, never ordinary
+        // claim recall. Their binary value contains signed birth payloads.
+        if super::history_store::machine_history_kind(&body.predicate).is_some() {
+            return Ok(false);
+        }
         let principal = claim_principal_id(body)?;
         let reader = EntityId::from_hex(self.actor_key.actor_ref()).ok();
         if principal.is_some() && principal != reader {
@@ -656,6 +661,7 @@ impl<'a> ScopedRead<'a> {
             &self.vault.store,
             rtxn,
             &self.vault.authority_fold_readonly_in_txn(rtxn)?,
+            id,
             body,
         )? {
             return Ok(false);

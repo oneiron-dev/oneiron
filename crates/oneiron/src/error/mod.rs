@@ -297,6 +297,9 @@ pub enum ErrorKind {
     PackKindNotInstalled,
     InvalidPackByteMap,
     PackPredicateNameCollision,
+    InvalidMachineClaimProof,
+    MachineClaimHistoryIncomplete,
+    RemoteMachineHistoryPending,
 }
 
 /// Crate error type.

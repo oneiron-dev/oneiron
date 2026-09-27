@@ -457,6 +457,7 @@ pub(super) fn apply_ops_with_origin(
                 let applied = apply_claim_candidate(
                     store,
                     config,
+                    (analyzer, text_index_trusted),
                     wtxn,
                     id,
                     *candidate,

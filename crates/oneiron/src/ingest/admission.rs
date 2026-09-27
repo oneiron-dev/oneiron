@@ -121,6 +121,27 @@ pub fn admit_imported_evidence_claim_typed(
         source_record_id,
         admission,
         None,
+        false,
+    )
+}
+
+/// The calendar adapter's already-typed import door requires a retained
+/// MACHINE signing capability; transport credentials never supply authority.
+pub(crate) fn admit_imported_evidence_claim_typed_for_machine(
+    vault: &crate::Vault,
+    predicate: &str,
+    value: MsgpackValue,
+    source_record_id: &str,
+    admission: &ImportedEvidenceAdmission,
+) -> crate::Result<()> {
+    admit_imported_evidence_claim_typed_guarded(
+        vault,
+        predicate,
+        value,
+        source_record_id,
+        admission,
+        None,
+        true,
     )
 }
 
@@ -137,6 +158,7 @@ pub(crate) fn admit_imported_evidence_claim_for_memory(
         &claim.source_record_id,
         &admission,
         Some(crate::memory::guard_existing_claim_in_txn),
+        false,
     )
 }
 
@@ -150,6 +172,7 @@ fn admit_imported_evidence_claim_typed_guarded(
     source_record_id: &str,
     admission: &ImportedEvidenceAdmission,
     guard: Option<ClaimAuthorGuard>,
+    sign_machine: bool,
 ) -> crate::Result<()> {
     // `companion.expression.*` has typed doors that own its supersession
     // chain: writing a head means closing the one the family's own precedence
@@ -174,7 +197,11 @@ fn admit_imported_evidence_claim_typed_guarded(
         ));
     }
 
-    let (candidate, envelope) = imported_candidate(predicate, value, source_record_id, admission)?;
+    let (candidate, mut envelope) =
+        imported_candidate(predicate, value, source_record_id, admission)?;
+    if sign_machine {
+        vault.sign_registered_machine_claim(&admission.claim_id, &candidate, &mut envelope)?;
+    }
 
     if let Some(guard) = guard {
         return vault.with_write_txn(|txn| {

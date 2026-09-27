@@ -210,8 +210,9 @@ impl ClaimMaterialization {
     pub(crate) fn apply_approval(
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
-        op: BatchOp,
+        mut op: BatchOp,
         persist_pending: bool,
+        approver: Option<crate::WriteActor>,
     ) -> Result<()> {
         let BatchOp::Put {
             id,
@@ -222,7 +223,7 @@ impl ClaimMaterialization {
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
-        } = &op
+        } = &mut op
         else {
             return Err(binding_error());
         };
@@ -230,7 +231,8 @@ impl ClaimMaterialization {
             .store
             .entities
             .get(txn, id.as_bytes())?
-            .ok_or(Error::EntityNotFound)?;
+            .ok_or(Error::EntityNotFound)?
+            .to_vec();
         let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || occurred.start != header.occurred_start
@@ -244,6 +246,29 @@ impl ClaimMaterialization {
         expected.approval = ClaimApprovalStatus::Approved;
         if encode_claim_body(&expected)? != *data {
             return Err(binding_error());
+        }
+        if crate::authority::machine_claim_needs_history(&vault.store, txn, &prior)? {
+            let now = vault.store.clock.now_recorded_at();
+            let approved = match approver {
+                Some(actor) => crate::claim::transition::stage_machine_transition_as(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    actor,
+                    now,
+                )?,
+                None => crate::claim::transition::stage_owner_machine_transition(
+                    vault,
+                    txn,
+                    *id,
+                    crate::claim::transition::ClaimTransitionKind::Approve,
+                    crate::claim::transition::TransitionDelta::None,
+                    now,
+                )?,
+            };
+            *data = encode_claim_body(&approved)?;
         }
         let mut bindings = Vec::new();
         if let Some(envelope) = lifecycle_envelope(&vault.store, txn, id, &prior)? {

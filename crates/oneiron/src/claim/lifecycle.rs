@@ -387,6 +387,28 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
     ) -> Result<()> {
+        self.supersede_claim_in_txn_with_actor(wtxn, new_id, old_id, now, None)
+    }
+
+    pub(crate) fn supersede_claim_in_txn_as(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        actor: crate::WriteActor,
+    ) -> Result<()> {
+        self.supersede_claim_in_txn_with_actor(wtxn, new_id, old_id, now, Some(actor))
+    }
+
+    fn supersede_claim_in_txn_with_actor(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+    ) -> Result<()> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
@@ -408,6 +430,27 @@ impl Vault {
         let revisions = super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
+        if crate::authority::machine_claim_needs_history(&self.store, wtxn, &old_body)? {
+            old_body = match actor {
+                Some(writer) => super::transition::stage_machine_transition_as(
+                    self,
+                    wtxn,
+                    *old_id,
+                    super::transition::ClaimTransitionKind::SupersedeClose,
+                    super::transition::TransitionDelta::ValidTo(now),
+                    writer,
+                    now,
+                )?,
+                None => super::transition::stage_owner_machine_transition(
+                    self,
+                    wtxn,
+                    *old_id,
+                    super::transition::ClaimTransitionKind::SupersedeClose,
+                    super::transition::TransitionDelta::ValidTo(now),
+                    now,
+                )?,
+            };
+        }
         let data = encode_claim_body(&old_body)?;
 
         let ops = vec![
@@ -554,6 +597,26 @@ impl Vault {
         id: &EntityId,
         now: u64,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.retract_claim_in_txn_with_actor(wtxn, id, now, None)
+    }
+
+    pub(crate) fn retract_claim_in_txn_as(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+        actor: crate::WriteActor,
+    ) -> Result<Option<GateDecisionRecord>> {
+        self.retract_claim_in_txn_with_actor(wtxn, id, now, Some(actor))
+    }
+
+    fn retract_claim_in_txn_with_actor(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+    ) -> Result<Option<GateDecisionRecord>> {
         // The NAMED target, guarded before the pending-consent closure and the
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
@@ -574,6 +637,27 @@ impl Vault {
         )?;
         body.lifecycle = ClaimLifecycleStatus::Retracted;
         body.valid_to = Some(now);
+        if crate::authority::machine_claim_needs_history(&self.store, wtxn, &body)? {
+            body = match actor {
+                Some(writer) => super::transition::stage_machine_transition_as(
+                    self,
+                    wtxn,
+                    *id,
+                    super::transition::ClaimTransitionKind::Retract,
+                    super::transition::TransitionDelta::ValidTo(now),
+                    writer,
+                    now,
+                )?,
+                None => super::transition::stage_owner_machine_transition(
+                    self,
+                    wtxn,
+                    *id,
+                    super::transition::ClaimTransitionKind::Retract,
+                    super::transition::TransitionDelta::ValidTo(now),
+                    now,
+                )?,
+            };
+        }
         let data = encode_claim_body(&body)?;
 
         let ops = vec![BatchOp::Put {

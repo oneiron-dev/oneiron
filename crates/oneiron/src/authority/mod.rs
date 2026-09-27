@@ -117,7 +117,10 @@ pub(crate) use sequence_observation::record_authority_sequence_observation_in_tx
 // Module-internal only: nothing here leaves `authority`.
 use entry_transition::*;
 use fork_resolution::*;
-pub(crate) use machine_write::{machine_claim_read_admitted, verify_machine_claim_in_txn};
+pub(crate) use machine_write::{
+    machine_claim_needs_history, machine_claim_read_admitted, machine_history_authority_descends,
+    machine_history_host_context, verify_machine_claim_in_txn,
+};
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
 use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};

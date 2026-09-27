@@ -79,8 +79,9 @@ impl Memory<'_> {
                 .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
-            let envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
+            let mut envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
                 WriteProvenance::new(facade_provenance("key_value_put"))?, ClaimApprovalStatus::Auto);
+            self.sign_machine_claim_in_txn(txn, id, &candidate, &mut envelope)?;
             apply_ops_with_gate_mode(&self.vault.store, &self.vault.config, &self.vault.analyzer, txn,
                 vec![BatchOp::ClaimCandidate { id, candidate: Box::new(candidate), envelope,
                     occurred: TimeRange { start: now, end: now }, learned_at: now, internal_lexical_query_hint: false }],
@@ -100,7 +101,8 @@ impl Memory<'_> {
                         format!("source-trust rules forbid replacing keyed address {:?}/{:?}", address.namespace, address.key),
                         &["Keep the true source. Store generated output under a separate key. Only a genuine new user statement may be submitted as user_stated; never relabel generated output."],
                     ))?;
-                self.vault.supersede_claim_in_txn(txn, &id, &prior_id, now)?;
+                self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
+                    WriteActor::new(self.actor, self.actor_class))?;
             }
             Ok((self.key_value_item(txn, id, stored)?, false))
         })?;
@@ -129,9 +131,12 @@ impl Memory<'_> {
             };
             // key_value_rows checked exact subject/scope/envelope authorship
             // in THIS writer snapshot, even for a human-class owner.
-            let receipt = self
-                .vault
-                .retract_claim_in_txn(txn, &id, crate::unix_seconds_now())?;
+            let receipt = self.vault.retract_claim_in_txn_as(
+                txn,
+                &id,
+                crate::unix_seconds_now(),
+                WriteActor::new(self.actor, self.actor_class),
+            )?;
             Ok(KeyValueDeleteReceipt {
                 existed: true,
                 receipt_refs: vec![receipt.map_or_else(

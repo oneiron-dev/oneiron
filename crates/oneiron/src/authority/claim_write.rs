@@ -23,7 +23,7 @@ impl Vault {
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         let view = self.authority_view_readonly_in_txn(&txn)?;
         Ok(Some(
-            if claim_causal_admitted(&self.store, &txn, &view, &body)? {
+            if claim_causal_admitted(&self.store, &txn, &view, id, &body)? {
                 CausalWriteDisposition::Admitted
             } else {
                 CausalWriteDisposition::Quarantined
@@ -36,10 +36,14 @@ pub(crate) fn claim_causal_admitted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
+    id: &EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
-    Ok(super::machine_claim_read_admitted(store, txn, fold, body)?
-        && claim_revocation_causal_admitted(fold, body))
+    let machine_admitted = super::machine_claim_read_admitted(store, txn, fold, id, body)?;
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+        return Ok(machine_admitted);
+    }
+    Ok(machine_admitted && claim_revocation_causal_admitted(fold, body))
 }
 
 fn claim_revocation_causal_admitted(fold: &AuthorityFold, body: &ClaimBody) -> bool {
@@ -113,10 +117,10 @@ pub(crate) fn check_materialized_claim_causality(
     // Replay may see a machine's signed claim before its enrollment or
     // binding. Origin verification happens at admission; machine authority is
     // evaluated at read/fold time, not used to reject an out-of-order replay.
-    if claims
-        .iter()
-        .any(|body| !claim_revocation_causal_admitted(&fold, body))
-    {
+    if claims.iter().any(|body| {
+        crate::claim::history_store::machine_history_kind(&body.predicate).is_none()
+            && !claim_revocation_causal_admitted(&fold, body)
+    }) {
         return Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation));
     }
     Ok(())
@@ -125,6 +129,7 @@ pub(crate) fn check_materialized_claim_causality(
 pub(crate) fn row_causal_admitted(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
     let header =
@@ -134,5 +139,5 @@ pub(crate) fn row_causal_admitted(
     }
     let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
     let view = vault.authority_view_readonly_in_txn(txn)?;
-    claim_causal_admitted(&vault.store, txn, &view, &body)
+    claim_causal_admitted(&vault.store, txn, &view, id, &body)
 }

@@ -19,9 +19,14 @@ impl Memory<'_> {
         let vault_id = fold.vault_id.ok_or(Error::InvalidClaimBody(
             "machine signing requires a rooted vault",
         ))?;
-        let body = candidate
-            .clone()
-            .into_claim_body(envelope, self.vault.default_facet_in_txn(wtxn)?);
+        let body = candidate.clone().into_claim_body(
+            envelope,
+            crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+                &self.vault.store,
+                wtxn,
+                &id,
+            )?,
+        );
         let transcript = crate::authority::machine_claim_transcript(&vault_id, &id, &body)?;
         *envelope = envelope
             .clone()

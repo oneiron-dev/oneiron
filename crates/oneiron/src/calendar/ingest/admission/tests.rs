@@ -1,5 +1,5 @@
 use super::*;
-use crate::calendar::test_support::open_calendar_vault;
+use crate::calendar::test_support::open_calendar_vault_with_machine_identity as open_calendar_vault;
 
 /// A one-body fetcher: every fetch returns a complete feed.
 struct BodyFetcher {

@@ -11,6 +11,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::ClaimBody;
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_MACHINE;
 use crate::store::Store;
 use crate::write_envelope::ClaimCandidate;
@@ -31,6 +32,14 @@ fn denied() -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority {
         reason: "machine write requires a signed enrolled software identity",
     })
+}
+
+fn invalid_origin(replicated: bool) -> Error {
+    if replicated {
+        Error::Claim(ClaimError::InvalidMachineClaimProof)
+    } else {
+        denied()
+    }
 }
 
 /// Bind an existing MACHINE row to a fresh per-vault Ed25519 authority key.
@@ -121,6 +130,25 @@ impl Vault {
         // Software enrollment may remain pending under the vault's existing
         // observed-time delay; the write door refuses it until the fold activates.
         txn.commit()?;
+        self.retain_machine_history_issuer(issuer)?;
+        Ok(())
+    }
+
+    /// Retain a verified host root for this vault handle's scoped history
+    /// issuance. A reopen requires the host to supply it again; relay cannot.
+    pub fn retain_machine_history_issuer(&self, issuer: &HostSlipIssuer) -> Result<()> {
+        if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
+            return Err(denied());
+        }
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        super::slip_vault::require_host(&fold, issuer)?;
+        *self
+            .store
+            .machine_history_issuer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(HostSlipIssuer::from_secret(issuer.secret())?);
         Ok(())
     }
 
@@ -136,9 +164,78 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(denied)?;
-        let facet = crate::claim::default_facet_in(&self.store, &txn)?;
+        let facet = crate::batch::claim_candidate_apply::claim_candidate_birth_facet(
+            &self.store,
+            &txn,
+            id,
+        )?;
         let body = candidate.clone().into_claim_body(envelope, facet);
         machine_claim_transcript(&vault_id, id, &body)
+    }
+
+    /// Install a host-owned software signing callback for one MACHINE in this
+    /// vault handle. Enrollment remains a separate, host-rooted authority-log
+    /// action; retaining a callback cannot grant the actor standing. A reopen
+    /// requires the host to provide the callback again.
+    pub fn retain_machine_write_signer(
+        &self,
+        machine: EntityId,
+        public_key: [u8; 32],
+        sign: impl Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync + 'static,
+    ) -> Result<()> {
+        VerifyingKey::from_bytes(&public_key).map_err(|_| denied())?;
+        let txn = self.store.env.read_txn()?;
+        let raw = self
+            .store
+            .entities
+            .get(&txn, machine.as_bytes())?
+            .ok_or_else(denied)?;
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != ENTITY_TYPE_MACHINE)
+            || self
+                .authority_fold_readonly_in_txn(&txn)?
+                .vault_id
+                .is_none()
+        {
+            return Err(denied());
+        }
+        drop(txn);
+        self.store
+            .machine_write_signers
+            .lock()
+            .map_err(|_| Error::InvariantViolation("machine signer lock poisoned"))?
+            .insert(machine, (public_key, std::sync::Arc::new(sign)));
+        Ok(())
+    }
+
+    /// The calendar importer holds no actor key: it uses only the explicitly
+    /// retained host callback. Commit still re-verifies the exact stored body,
+    /// so a facet change between this transcript and admission fails closed.
+    pub(crate) fn sign_registered_machine_claim(
+        &self,
+        id: &EntityId,
+        candidate: &ClaimCandidate,
+        envelope: &mut WriteEnvelope,
+    ) -> Result<()> {
+        if envelope.actor().actor_class() != EdgeActorClass::System {
+            return Err(denied());
+        }
+        let (public_key, sign) = self
+            .store
+            .machine_write_signers
+            .lock()
+            .map_err(|_| Error::InvariantViolation("machine signer lock poisoned"))?
+            .get(&envelope.actor().entity_ref())
+            .cloned()
+            .ok_or_else(denied)?;
+        let transcript = self.machine_claim_transcript(id, candidate, envelope)?;
+        *envelope = envelope
+            .clone()
+            .with_machine_signature(MachineWriteSignature {
+                public_key,
+                signature: sign(&transcript)?,
+            });
+        Ok(())
     }
 }
 
@@ -227,6 +324,26 @@ fn names_machine(store: &Store, txn: &heed::RoTxn<'_>, entries: &[(Value, Value)
     Ok(false)
 }
 
+pub(crate) fn machine_claim_needs_history(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    body: &ClaimBody,
+) -> Result<bool> {
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
+        return Ok(false);
+    }
+    let Some(Value::Map(entries)) = &body.evidence else {
+        return Ok(false);
+    };
+    if entries
+        .iter()
+        .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY))
+    {
+        return Ok(true);
+    }
+    names_machine(store, txn, entries)
+}
+
 /// Read-time machine identity is derived from the CURRENT entity kind and
 /// folded authority, not from a peer-supplied class or cached roster. A claim
 /// that arrived before its MACHINE row cannot become visible unsigned later.
@@ -234,8 +351,85 @@ pub(crate) fn machine_claim_read_admitted(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &super::AuthorityFold,
+    id: &EntityId,
     body: &ClaimBody,
 ) -> Result<bool> {
+    if let Some(kind) = crate::claim::history_store::machine_history_kind(&body.predicate) {
+        let crate::claim::ClaimSubject::Entity(target) = body.subject else {
+            return Ok(false);
+        };
+        // Selector/guest export operates on RAW CRDT bytes. A control row
+        // travels only if these exact bytes match a locally verified row and
+        // its id belongs to the authenticated target closure.
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Ok(false);
+        };
+        if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            != Some(crate::claim::encode_claim_body(body)?.as_slice())
+        {
+            return Ok(false);
+        }
+        let Ok(rows) = crate::claim::history_projection::machine_history_rows(store, txn, target)
+        else {
+            return Ok(false);
+        };
+        let Ok(packet) =
+            crate::claim::history_projection::trusted_machine_handoff(store, txn, target)
+        else {
+            return Ok(false);
+        };
+        if packet.births.len() != 1
+            || packet.births[0].digest != rows.birth.digest
+            || fold.vault_id != Some(rows.birth.vault_id)
+            || crate::claim::history_projection::resolved_machine_history(store, txn, fold, target)
+                .is_err()
+        {
+            return Ok(false);
+        }
+        return Ok(match kind {
+            crate::claim::history_store::MachineHistoryKind::Birth => {
+                rows.birth.event_id().is_ok_and(|birth_id| birth_id == *id)
+            }
+            crate::claim::history_store::MachineHistoryKind::Transition => {
+                packet.transitions.iter().any(|listed| {
+                    rows.events.iter().any(|event| {
+                        crate::claim::transition::machine_claim_transition_event_hash(event)
+                            .is_ok_and(|hash| hash == listed.hash)
+                            && crate::claim::transition::machine_claim_transition_event_id(event)
+                                .is_ok_and(|event_id| event_id == *id)
+                    })
+                })
+            }
+            crate::claim::history_store::MachineHistoryKind::Handoff => {
+                crate::claim::history_projection::verified_handoff_chain(store, txn, &packet, fold)
+                    .is_ok_and(|chain| {
+                        chain.iter().any(|packet| {
+                            packet.content_hash().ok().and_then(|hash| {
+                                EntityId::from_bytes(hash[..16].try_into().ok()?).ok()
+                            }) == Some(*id)
+                        })
+                    })
+            }
+        });
+    }
+    // An id that already has machine history stays machine-owned even if an
+    // attacker replaces its LWW row with ordinary/no actor evidence.
+    if !crate::claim::history_store::machine_history_ids_for_target(store, txn, *id)?.is_empty()
+        || store
+            .vault_meta
+            .get(txn, &crate::claim::history_projection::pin_key(*id))?
+            .is_some()
+    {
+        match crate::claim::history_projection::resolved_machine_history(store, txn, fold, *id) {
+            Ok(projection)
+                if crate::claim::history_projection::project_machine_claim(&projection)
+                    == *body => {}
+            Ok(_)
+            | Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete))
+            | Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => return Ok(false),
+            Err(other) => return Err(other),
+        }
+    }
     let Some(Value::Map(entries)) = body.evidence.as_ref() else {
         return Ok(true);
     };
@@ -244,36 +438,24 @@ pub(crate) fn machine_claim_read_admitted(
         .any(|(key, _)| key.as_str() == Some(SIGNATURE_KEY));
     let machine_ref = names_machine(store, txn, entries)?;
     if !carries_proof {
-        if fold.vault_id.is_none() && !fold.vault_root_is_conflicted() {
-            return Ok(true);
-        }
         if machine_ref {
             return Ok(false);
         }
-        // A SYSTEM author whose entity has not arrived is not proof of being
-        // a different kind: deny until the row resolves, then classify it.
-        let claimed_system = entries.iter().any(|(key, value)| {
-            key.as_str() == Some("actor_class")
-                && value.as_u64() == Some(EdgeActorClass::System as u64)
-        });
-        if claimed_system
-            && entries.iter().any(|(key, value)| {
-                key.as_str() == Some("actor_entity_ref") && matches!(value, Value::Binary(_))
-            })
+        // Unknown peer actor kind never makes an unsigned SYSTEM claim visible.
+        for (_, value) in entries
+            .iter()
+            .filter(|(key, _)| key.as_str() == Some("actor_entity_ref"))
         {
-            let resolved = entries
-                .iter()
-                .filter(|(key, _)| key.as_str() == Some("actor_entity_ref"))
-                .filter_map(|(_, value)| match value {
-                    Value::Binary(bytes) => {
-                        EntityId::from_bytes(bytes.as_slice().try_into().ok()?).ok()
-                    }
-                    _ => None,
-                });
-            for actor in resolved {
-                if store.entities.get(txn, actor.as_bytes())?.is_none() {
-                    return Ok(false);
-                }
+            if let Value::Binary(bytes) = value
+                && let Ok(raw_id) = bytes.as_slice().try_into()
+                && let Ok(actor) = EntityId::from_bytes(raw_id)
+                && store.entities.get(txn, actor.as_bytes())?.is_none()
+                && entries.iter().any(|(key, value)| {
+                    key.as_str() == Some("actor_class")
+                        && value.as_u64() == Some(EdgeActorClass::System as u64)
+                })
+            {
+                return Ok(false);
             }
         }
         return Ok(true);
@@ -284,14 +466,146 @@ pub(crate) fn machine_claim_read_admitted(
     if class != EdgeActorClass::System as u64 || !machine_ref {
         return Ok(false);
     }
-    let key = AuthorityKey::Ed25519(proof.public_key);
-    Ok(fold.actor_bindings.get(&key).is_some_and(|binding| {
-        binding.status == ActorBindingStatus::Active
-            && binding.actor_ref == actor
-            && binding.actor_class == "system"
-    }) && fold.roster.get(&key).is_some_and(|device| {
-        !device.revoked && device.tier == AuthorityTier::Software && device.roles & ROLE_AGENT != 0
-    }))
+    let Some(vault_id) = fold.vault_id else {
+        return Ok(false);
+    };
+    let key = VerifyingKey::from_bytes(&proof.public_key);
+    let Ok(key_bytes) = key else { return Ok(false) };
+    // The immutable signed origin is verified against the exact stored birth
+    // bytes. Current approval/lifecycle comes from the signed operation fold.
+    let Ok(projection) =
+        crate::claim::history_projection::resolved_machine_history(store, txn, fold, *id)
+    else {
+        return Ok(false);
+    };
+    let original = &projection.birth;
+    let Ok(transcript) = machine_claim_transcript(&vault_id, id, original) else {
+        return Ok(false);
+    };
+    if key_bytes
+        .verify(&transcript, &Signature::from_bytes(&proof.signature))
+        .is_err()
+        || crate::claim::history_projection::project_machine_claim(&projection) != *body
+    {
+        return Ok(false);
+    }
+    let authority_key = AuthorityKey::Ed25519(proof.public_key);
+    Ok(fold
+        .actor_bindings
+        .get(&authority_key)
+        .is_some_and(|binding| {
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_ref == actor
+                && binding.actor_class == "system"
+        })
+        && fold.roster.get(&authority_key).is_some_and(|device| {
+            !device.revoked
+                && device.tier == AuthorityTier::Software
+                && device.roles & ROLE_AGENT != 0
+        }))
+}
+
+/// Exact signed-log causal descent; an advisory timestamp or a claimed head
+/// cannot backdate an event past re-root/revocation. Both hashes must fold
+/// valid in the same vault snapshot. No process-local watermark is trusted.
+pub(crate) fn machine_history_authority_descends(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    old: &[u8; 32],
+    successor: &[u8; 32],
+) -> Result<bool> {
+    let mut by_hash = std::collections::BTreeMap::new();
+    for id in
+        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
+    {
+        let id = id?;
+        let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("authority history row"));
+        };
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("authority history header"))?;
+        let entry = super::decode_authority_log_entry_body(body)?;
+        let hash = super::authority_entry_hash(&entry)?;
+        if super::authority_log_entity_id_from_hash(&hash)? != id {
+            return Err(Error::CorruptedIndex("authority history key"));
+        }
+        by_hash.insert(hash, entry);
+    }
+    if !by_hash.contains_key(old) || !by_hash.contains_key(successor) {
+        return Ok(false);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut stack = by_hash[successor].parent_hashes.clone();
+    while let Some(hash) = stack.pop() {
+        if hash == *old {
+            return Ok(true);
+        }
+        if seen.insert(hash) {
+            let Some(entry) = by_hash.get(&hash) else {
+                return Ok(false);
+            };
+            stack.extend(entry.parent_hashes.iter().copied());
+        }
+    }
+    Ok(false)
+}
+
+/// One current, fold-verified authority head for scoped history signatures.
+/// Fail closed if the root is absent, conflicted or its signer is revoked.
+pub(crate) fn machine_history_host_context(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    signer: &AuthorityKey,
+) -> Result<([u8; 32], [u8; 32])> {
+    let fold = super::authority_view_readonly_for_store_in_txn(store, posture, txn)?;
+    let vault_id = fold.vault_id.ok_or_else(denied)?;
+    if fold.vault_root_is_conflicted()
+        || !fold
+            .roster
+            .get(signer)
+            .is_some_and(|root| !root.revoked && root.roles & super::ROLE_OWNER != 0)
+    {
+        return Err(denied());
+    }
+    // A successor root has no authored sequence yet: its trust event is the
+    // predecessor-signed ReRoot, not an arbitrary lexicographically maximal
+    // concurrent head. Pin that exact causal ancestor for history handoff.
+    let mut re_roots = Vec::new();
+    let mut authored_heads = Vec::new();
+    for id in
+        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
+    {
+        let id = id?;
+        let raw = store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("authority head row"))?;
+        let entry = super::decode_authority_log_entry_body(
+            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                .ok_or(Error::CorruptedIndex("authority head header"))?,
+        )?;
+        let hash = super::authority_entry_hash(&entry)?;
+        if !fold.valid_entries.contains(&hash) {
+            continue;
+        }
+        if matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *signer) {
+            re_roots.push(hash);
+        }
+        if fold.append_heads.contains(&hash) && entry.signer_key() == signer {
+            authored_heads.push(hash);
+        }
+    }
+    let head = match re_roots.as_slice() {
+        [head] => *head,
+        [] => match authored_heads.as_slice() {
+            [head] => *head,
+            _ => return Err(denied()),
+        },
+        _ => return Err(denied()),
+    };
+    Ok((vault_id, head))
 }
 
 /// Replay checks origin only, while the local writer must also have an active
@@ -304,6 +618,7 @@ pub(crate) fn verify_machine_claim_in_txn(
     id: &EntityId,
     body: &ClaimBody,
     replicated: bool,
+    writer_envelope: Option<&WriteEnvelope>,
 ) -> Result<()> {
     let Some(Value::Map(entries)) = body.evidence.as_ref() else {
         return Ok(());
@@ -316,7 +631,12 @@ pub(crate) fn verify_machine_claim_in_txn(
     if !machine_ref && !carries_proof {
         return Ok(());
     }
-    let (actor, class, proof) = proof(body)?.ok_or_else(denied)?;
+    let (actor, class, proof) = proof(body)
+        .map_err(|err| match err {
+            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => invalid_origin(replicated),
+            other => other,
+        })?
+        .ok_or_else(|| invalid_origin(replicated))?;
     let actor_type = store
         .entities
         .get(txn, actor.as_bytes())?
@@ -325,22 +645,54 @@ pub(crate) fn verify_machine_claim_in_txn(
         || !replicated && actor_type != Some(ENTITY_TYPE_MACHINE)
         || actor_type.is_some_and(|kind| kind != ENTITY_TYPE_MACHINE)
     {
-        return Err(denied());
+        return Err(invalid_origin(replicated));
     }
     let fold = super::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     if fold.vault_root_is_conflicted() {
         return Err(denied());
     }
-    let Some(vault_id) = fold.vault_id else {
-        // Pre-bootstrap vaults retain their existing unsigned local authoring.
-        // Once rooted, no MACHINE claim may use that transitional path.
-        return if replicated { Err(denied()) } else { Ok(()) };
-    };
-    let proof = proof.ok_or_else(denied)?;
-    let transcript = machine_claim_transcript(&vault_id, id, body)?;
-    let key = VerifyingKey::from_bytes(&proof.public_key).map_err(|_| denied())?;
-    key.verify(&transcript, &Signature::from_bytes(&proof.signature))
-        .map_err(|_| denied())?;
+    let proof = proof.ok_or_else(|| invalid_origin(replicated))?;
+    let key =
+        VerifyingKey::from_bytes(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
+    if let Some(vault_id) = fold.vault_id {
+        match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, *id) {
+            Ok(projection) => {
+                if crate::claim::history_projection::project_machine_claim(&projection) != *body
+                    || projection.birth.evidence.as_ref().is_none_or(|value| {
+                        !matches!(value, Value::Map(entries) if entries.iter().any(|(key, _)|
+                            key.as_str() == Some(SIGNATURE_KEY)))
+                    })
+                {
+                    return Err(invalid_origin(replicated));
+                }
+            }
+            Err(Error::Claim(ClaimError::MachineClaimHistoryIncomplete)) => {
+                if !replicated
+                    && !writer_envelope.is_some_and(|envelope| {
+                        envelope.actor().entity_ref() == actor
+                            && envelope.actor().actor_class() == EdgeActorClass::System
+                            && envelope.machine_signature() == Some(proof)
+                    })
+                {
+                    return Err(denied());
+                }
+                // A first birth may reach replay before its scoped controls.
+                // Origin-verifiable rows are provisional; malformed proofs
+                // quarantine without requiring enrollment arrival order.
+                let transcript = machine_claim_transcript(&vault_id, id, body)?;
+                key.verify(&transcript, &Signature::from_bytes(&proof.signature))
+                    .map_err(|_| invalid_origin(replicated))?;
+            }
+            Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => {
+                return Err(invalid_origin(replicated));
+            }
+            Err(other) => return Err(other),
+        }
+    } else if !replicated {
+        return Err(denied());
+    }
+    // A relay may see the signed row before genesis/birth. Store its canonical
+    // bytes provisionally; read/export withhold until verified history arrives.
     if !replicated {
         let authority_key = AuthorityKey::Ed25519(proof.public_key);
         if !fold

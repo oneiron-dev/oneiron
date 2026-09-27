@@ -371,6 +371,24 @@ impl DisclosureContext {
         if self.mode == DisclosureMode::OwnerAlone {
             return Ok(true);
         }
+        // Signed claim-history controls are transport/audit bytes, never
+        // agent-visible content even under the supervised disclosure posture.
+        // Scoped sync has its own authenticated closure and effective-scope door.
+        if entity_type == ENTITY_TYPE_CLAIM {
+            let stored;
+            let candidate = match claim_body {
+                Some(body) => Some(body),
+                None => {
+                    stored = read_stored_claim_body(store, rtxn, id)?;
+                    stored.as_ref()
+                }
+            };
+            if candidate.is_some_and(|body| {
+                crate::claim::history_store::machine_history_kind(&body.predicate).is_some()
+            }) {
+                return Ok(false);
+            }
+        }
         let decoded;
         let body = if entity_type == ENTITY_TYPE_CLAIM {
             match claim_body {

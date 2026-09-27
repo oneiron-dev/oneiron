@@ -42,6 +42,9 @@ impl HostSlipIssuer {
     pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
         self.signing.sign(transcript).to_bytes()
     }
+    pub(crate) fn sign_claim_handoff(&self, transcript: &[u8]) -> [u8; 64] {
+        self.signing.sign(transcript).to_bytes()
+    }
     pub(super) fn sign_slip(&self, transcript: &[u8]) -> Vec<u8> {
         self.signing.sign(transcript).to_bytes().to_vec()
     }

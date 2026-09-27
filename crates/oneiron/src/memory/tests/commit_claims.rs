@@ -1138,124 +1138,13 @@ fn agent_retracts_parked_proposal_without_dismissing_unrelated_stale_consent() {
 
 #[test]
 fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
-    use crate::authority::{
-        AuthorityAttestation, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-        AuthorityTier, DeviceAuthority, ROLE_AGENT, authority_entry_hash, authority_transcript,
-    };
-    use ed25519_dalek::Signer;
-
+    use crate::{ClaimCandidate, ClaimSource, ClaimSubject};
     let (_dir, vault) = open_vault();
     let first_agent = put_person(&vault, 0x19);
-    let replacement_agent = put_machine(&vault, 0x1A);
-    let machine_key = ed25519_dalek::SigningKey::from_bytes(&[0x2A; 32]);
+    let replacement_agent = put_person(&vault, 0x1A);
     let subject = put_person(&vault, 0x1B);
     let first_facade = vault.memory(first_agent, EdgeActorClass::Agent);
     let claim_id = EntityId::from_bytes([0x1C; 16]).expect("claim id");
-    let owner = put_person(&vault, 0x1D);
-    root_vault_binding(&vault, 0x1E, owner, "human");
-    let proof = vault
-        .authenticate_owner(
-            owner,
-            &owner.to_hex(),
-            true,
-            crate::store::GateDecisionId::now(),
-        )
-        .expect("owner");
-    facade_for(&vault, owner)
-        .delegate_memory_authoring(
-            &proof,
-            crate::write_envelope::WriteActor::new(replacement_agent, EdgeActorClass::System),
-            MemoryAuthoringAction::EditClaim,
-            claim_id,
-        )
-        .expect("exact delegated edit slice");
-
-    // Owner-enrolled software MACHINE key. The binding needs the new key's
-    // proof of possession once enrollment makes this a two-key roster.
-    let owner_key = ed25519_dalek::SigningKey::from_bytes(&[0x1E; 32]);
-    let owner_pk = AuthorityKey::Ed25519(owner_key.verifying_key().to_bytes());
-    let machine_pk = AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes());
-    let fold = vault.authority_fold().expect("owner fold");
-    let vault_id = fold.vault_id.expect("rooted vault");
-    let owner_bind = vault
-        .entities_by_type(crate::registry::ENTITY_TYPE_AUTHORITY_LOG)
-        .unwrap()
-        .into_iter()
-        .filter_map(|id| vault.get_authority_log_entry(&id).unwrap())
-        .find(|entry| entry.seq == 1)
-        .expect("owner bind entry");
-    let enroll = sign_authority(
-        AuthorityLogEntry {
-            schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-            vault_id: Some(vault_id),
-            seq: 2,
-            parent_hashes: vec![authority_entry_hash(&owner_bind).unwrap()],
-            op: AuthorityOp::EnrollDevice {
-                device: DeviceAuthority {
-                    key: machine_pk.clone(),
-                    transport_key_binding: machine_key.verifying_key().to_bytes(),
-                    attestation: AuthorityAttestation {
-                        kind: "SoftwareArgon2id".into(),
-                        evidence: Vec::new(),
-                    },
-                    tier: AuthorityTier::Software,
-                    roles: ROLE_AGENT,
-                },
-            },
-            signer: AuthoritySignature {
-                suite: owner_pk.suite(),
-                public_key: owner_pk.clone(),
-                signature: vec![0; 64],
-            },
-            cosigns: Vec::new(),
-            ts: 102,
-        },
-        &owner_key,
-    );
-    let mut bind = AuthorityLogEntry {
-        schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id: Some(vault_id),
-        seq: 3,
-        parent_hashes: vec![authority_entry_hash(&enroll).unwrap()],
-        op: AuthorityOp::BindActor {
-            authority_key: machine_pk.clone(),
-            actor_ref: replacement_agent,
-            actor_class: "system".into(),
-            epoch: 1,
-        },
-        signer: AuthoritySignature {
-            suite: owner_pk.suite(),
-            public_key: owner_pk,
-            signature: vec![0; 64],
-        },
-        cosigns: vec![AuthoritySignature {
-            suite: machine_pk.suite(),
-            public_key: machine_pk.clone(),
-            signature: vec![0; 64],
-        }],
-        ts: 103,
-    };
-    bind.cosigns[0].signature = machine_key
-        .sign(&authority_transcript(&bind).unwrap())
-        .to_bytes()
-        .to_vec();
-    let bind = sign_authority(bind, &owner_key);
-    vault
-        .put_authority_log_entries(&[(enroll, test_time(102), 102), (bind, test_time(103), 103)])
-        .unwrap();
-    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
-    crate::authority::authority_observation_secs(&vault.store, matured, 0);
-    assert_eq!(
-        vault.authority_fold().unwrap().actor_bindings[&machine_pk].status,
-        crate::authority::ActorBindingStatus::Active
-    );
-    let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
-    let replacement_facade = vault.memory_signed_machine(
-        replacement_agent,
-        machine_key.verifying_key().to_bytes(),
-        &machine_sign,
-    );
-
     let mut first = claim_input(
         "profile.mood",
         &subject,
@@ -1266,25 +1155,36 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
     first_facade
         .claim_upsert(&first)
         .expect("first agent parks proposal");
-
-    let mut replacement = claim_input(
-        "profile.color",
-        &subject,
-        "observed",
-        serde_json::json!("teal"),
+    let replacement_envelope = crate::write_envelope::WriteEnvelope::new(
+        crate::WriteActor::new(replacement_agent, EdgeActorClass::Agent),
+        ClaimSource::Observed,
+        crate::WriteProvenance::new(rmpv::Value::from("replacement actor")).unwrap(),
+        ClaimApprovalStatus::Proposed,
     );
-    replacement.id = Some(claim_id.to_hex());
-    // Reproduce the former split-transaction race deterministically: the
-    // replacement lands after call setup but immediately before the retraction
-    // write transaction begins. The fixed path authorizes only after acquiring
-    // that transaction, so it observes and rejects the replacement author.
+    let replacement = ClaimCandidate::new(
+        "profile.color",
+        ClaimSubject::Entity(subject),
+        rmpv::Value::from("teal"),
+        1.0,
+    );
+    // Reproduce a different, authenticated PERSON author replacing the same
+    // id between preflight and the retraction transaction. MACHINE births
+    // are immutable and instead use distinct claim ids + signed transitions.
     let err = first_facade
         .claim_retract_with_pre_txn_hook(&claim_id.to_hex(), || {
-            replacement_facade
-                .claim_upsert(&replacement)
-                .expect("delegated daemon replaces same id in former race window");
+            vault
+                .batch()
+                .claim_candidate(
+                    &claim_id,
+                    replacement.clone(),
+                    &replacement_envelope,
+                    test_time(1),
+                    1,
+                )
+                .commit()
+                .expect("second actor replaces the same id");
         })
-        .expect_err("prior author has no authority over same-id replacement");
+        .expect_err("prior author has no authority over replacement");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
     let current = vault
         .get_claim(&claim_id)
@@ -1292,13 +1192,90 @@ fn same_id_replacement_cannot_be_retracted_by_the_prior_agent() {
         .expect("replacement remains");
     assert_eq!(current.predicate, "profile.color");
     assert_eq!(current.lifecycle, ClaimLifecycleStatus::Active);
-    assert!(
+    assert_eq!(
+        crate::claim::session_claim_producer(&current),
+        Some(replacement_agent)
+    );
+}
+
+#[test]
+fn signed_machine_keyed_create_replace_and_delete() {
+    use ed25519_dalek::Signer;
+    let (_dir, vault) = open_vault();
+    let machine = put_machine(&vault, 0x1A);
+    let issuer =
+        crate::authority::HostSlipIssuer::from_secret(b"keyed-machine-history-root").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let machine_key = ed25519_dalek::SigningKey::from_bytes(&[0x2A; 32]);
+    vault
+        .enroll_machine_identity(
+            &issuer,
+            machine,
+            machine_key.verifying_key().to_bytes(),
+            [17; 32],
+            |transcript| Ok(machine_key.sign(transcript).to_bytes()),
+        )
+        .unwrap();
+    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    crate::authority::authority_observation_secs(&vault.store, matured, 0);
+    assert_eq!(
+        vault.authority_fold().unwrap().actor_bindings
+            [&crate::authority::AuthorityKey::Ed25519(machine_key.verifying_key().to_bytes())]
+            .status,
+        crate::authority::ActorBindingStatus::Active
+    );
+    append_actor_ceiling_rows(
+        &vault,
+        vec![("system".into(), machine.to_hex(), "auto".into())],
+    );
+    let machine_sign = |transcript: &[u8]| Ok(machine_key.sign(transcript).to_bytes());
+    let facade = vault.memory_signed_machine(
+        machine,
+        machine_key.verifying_key().to_bytes(),
+        &machine_sign,
+    );
+    let key = crate::memory::KeyValuePut {
+        namespace: vec!["machine".into()],
+        key: "signed".into(),
+        value: serde_json::json!({"fact": 1}),
+        request_id: "signed-key-1".into(),
+        source: "user_stated".into(),
+    };
+    let first = facade
+        .key_value_put(&key)
+        .expect("machine-signed keyed create");
+    let mut next = key;
+    next.value = serde_json::json!({"fact": 2});
+    next.request_id = "signed-key-2".into();
+    let second = facade
+        .key_value_put(&next)
+        .expect("signed keyed replacement");
+    assert_ne!(first.item.revision, second.item.revision);
+    assert_eq!(
         vault
-            .pending_gate_consents(10)
-            .expect("pending consent")
-            .iter()
-            .any(|record| record.claim_id == *claim_id.as_bytes()),
-        "replacement agent's consent row remains actionable"
+            .get_claim(&EntityId::from_hex(&first.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Superseded
+    );
+    let address = crate::memory::KeyValueAddress {
+        namespace: next.namespace,
+        key: next.key,
+    };
+    assert!(
+        facade
+            .key_value_delete(&address)
+            .expect("signed keyed deletion")
+            .existed
+    );
+    assert_eq!(
+        vault
+            .get_claim(&EntityId::from_hex(&second.item.revision).unwrap())
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        ClaimLifecycleStatus::Retracted
     );
 }
 

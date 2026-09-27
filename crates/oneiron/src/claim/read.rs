@@ -59,7 +59,25 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<ClaimBody>> {
-        crate::ports::ClaimStore::port_claim_get(self, rtxn, id)
+        let body = crate::ports::ClaimStore::port_claim_get(self, rtxn, id)?;
+        let Some(body) = body else { return Ok(None) };
+        if crate::authority::machine_claim_needs_history(&self.store, rtxn, &body)?
+            || !super::history_store::machine_history_ids_for_target(&self.store, rtxn, *id)?
+                .is_empty()
+            || self
+                .store
+                .vault_meta
+                .get(rtxn, &super::history_projection::pin_key(*id))?
+                .is_some()
+        {
+            let fold = self.authority_fold_readonly_in_txn(rtxn)?;
+            let projection =
+                super::history_projection::resolved_machine_history(&self.store, rtxn, &fold, *id)?;
+            return Ok(Some(super::history_projection::project_machine_claim(
+                &projection,
+            )));
+        }
+        Ok(Some(body))
     }
 
     pub(crate) fn session_claim_bundle_members_in_txn(

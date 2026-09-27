@@ -319,7 +319,8 @@ impl Memory<'_> {
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
             }
-            let consent_receipt = self.vault.retract_claim_in_txn(wtxn, &id, now)?;
+            let consent_receipt = self.vault.retract_claim_in_txn_as(wtxn, &id, now,
+                WriteActor::new(self.actor, self.actor_class))?;
             super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
             let approval = self.vault.get_claim_in_txn(wtxn, &id)?.map_or_else(
                 || "retracted".to_owned(),

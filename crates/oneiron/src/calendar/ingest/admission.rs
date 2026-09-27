@@ -613,7 +613,7 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
         },
         recorded_at,
     );
-    crate::ingest::admit_imported_evidence_claim_typed(
+    crate::ingest::admit_imported_evidence_claim_typed_for_machine(
         vault,
         predicate,
         value,

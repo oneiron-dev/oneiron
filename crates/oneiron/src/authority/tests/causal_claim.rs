@@ -105,10 +105,10 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
     let reference = super::readonly_fold::uncached_reference_fold(&vault, &txn);
     let early_body = crate::claim::decode_claim_body(&body(bind_hash), true).unwrap();
     assert_eq!(
-        claim_causal_admitted(&vault.store, &txn, &cached, &early_body).unwrap(),
-        claim_causal_admitted(&vault.store, &txn, &reference, &early_body).unwrap()
+        claim_causal_admitted(&vault.store, &txn, &cached, &early, &early_body).unwrap(),
+        claim_causal_admitted(&vault.store, &txn, &reference, &early, &early_body).unwrap()
     );
-    assert!(!claim_causal_admitted(&vault.store, &txn, &cached, &early_body).unwrap());
+    assert!(!claim_causal_admitted(&vault.store, &txn, &cached, &early, &early_body).unwrap());
     drop(txn);
     let concurrent = EntityId::now();
     assert!(matches!(

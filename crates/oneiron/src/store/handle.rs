@@ -26,6 +26,8 @@ thread_local! {
     static PANIC_ON_ACTIVE_WRITE_TXN: Cell<bool> = const { Cell::new(false) };
 }
 
+pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
+
 pub(crate) struct ActiveWriteTxnGuard;
 
 impl Drop for ActiveWriteTxnGuard {
@@ -129,12 +131,20 @@ pub struct StoreCore {
     /// this vault handle. No process-global state or cross-vault kill switch.
     pub(in crate::store) retrieval_writes_disabled: std::sync::atomic::AtomicBool,
     pub(in crate::store) retrieval_telemetry_capture: bool,
+    /// Open-time posture for exact authority scope checks without a Vault handle.
+    pub(crate) privacy_posture: crate::HostingPrivacyPosture,
     /// This vault's monotonic authority first-seen observation clock. It dies
     /// with the handle: a reopen re-anchors from the persisted floor, so there
     /// is no registry to release from and no cross-vault anchor to share.
     pub(crate) authority_local_clock: Mutex<AuthorityLocalClock>,
     /// Exact fold of one committed authority generation and observation context.
     pub(crate) authority_fold_cache: Mutex<Option<crate::authority::AuthorityCachedFold>>,
+    /// Opt-in host root for signing scoped MACHINE history. Never populated
+    /// from a transport key, peer assertion, or relay-mode vault.
+    pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
+    /// Host-provided software signers are scoped to this vault handle and never
+    /// persisted, inferred from transport credentials, or shared across vaults.
+    pub(crate) machine_write_signers: Mutex<HashMap<EntityId, ([u8; 32], MachineWriteSigner)>>,
     pub(crate) clock: crate::ports::StoreClock,
     /// This vault's content-free diagnostic counters. Per-vault, not
     /// per-process: see [`Diagnostics`] for why the three families moved here.

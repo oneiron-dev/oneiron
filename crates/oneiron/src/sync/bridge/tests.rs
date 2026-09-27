@@ -4012,3 +4012,86 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+/// A bad MACHINE origin proof must be rejected per row, not abort the sibling.
+/// The valid peer proof has no local enrollment: replay checks the signature's
+/// origin, not local authority ancestry.
+#[test]
+fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Result<()> {
+    use crate::authority::HostSlipIssuer;
+    use crate::claim::ClaimSubject;
+    use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+
+    let vault = test_vault();
+    let machine = EntityId::from_bytes([0x30; 16])?;
+    let bad_id = EntityId::from_bytes([0x31; 16])?;
+    let good_id = EntityId::from_bytes([0x32; 16])?;
+    vault.put_entity(
+        &machine,
+        ENTITY_TYPE_MACHINE,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"stored machine",
+    )?;
+    vault.ensure_host_root_slip(&HostSlipIssuer::from_secret(b"observer machine root")?)?;
+    let signing = SigningKey::from_bytes(&[0x35; 32]);
+    let candidate = ClaimCandidate::new(
+        "test.machine.replay",
+        ClaimSubject::Entity(machine),
+        Value::from("signed fact"),
+        1.0,
+    );
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("peer observation"))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    let transcript = vault.machine_claim_transcript(&good_id, &candidate, &envelope)?;
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    let facet = crate::claim::default_facet_in(&vault.store, &vault.store.env.read_txn()?)?;
+    let body = crate::claim::encode_claim_body(&candidate.into_claim_body(&signed, facet))?;
+    let at = 1_772_400_000;
+    let blob = entity_blob(
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: at, end: at },
+        at,
+        &body,
+    );
+
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let entities = doc.get_map("entities");
+    // Same body under two keys: the signature binds good_id, not bad_id.
+    map_insert_bytes(&entities, &bad_id.to_hex(), &blob)?;
+    map_insert_bytes(&entities, &good_id.to_hex(), &blob)?;
+    doc.commit();
+
+    assert!(vault.get_raw(&bad_id)?.is_none());
+    assert_eq!(vault.get_raw(&good_id)?.as_deref(), Some(blob.as_slice()));
+    let records = crate::sync::quarantine::quarantined_records(&vault)?;
+    assert_eq!(
+        records.len(),
+        1,
+        "one invalid proof must not reject its sibling"
+    );
+    let rejected = &records[0].1;
+    assert_eq!(rejected.container, QuarantineContainer::Entities);
+    assert_eq!(rejected.reason_code, "InvalidMachineClaimProof");
+    assert_eq!(
+        (rejected.crdt_key_hash, rejected.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&bad_id.to_hex())
+    );
+    assert_eq!(
+        rejected.payload_hash,
+        crate::sync::quarantine::payload_hash(&blob)
+    );
+    Ok(())
+}

@@ -493,7 +493,13 @@ fn accept_member_with_amendment_in_txn(
             hub_sync_imported: false,
         };
         if unamended {
-            crate::batch::ClaimMaterialization::apply_approval(vault, wtxn, put, true)?;
+            crate::batch::ClaimMaterialization::apply_approval(
+                vault,
+                wtxn,
+                put,
+                true,
+                learning.map(|(actor, _)| actor),
+            )?;
         } else {
             // The approver rewrote the text: the landed body has no single author.
             apply_ops(

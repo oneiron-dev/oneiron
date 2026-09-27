@@ -5203,6 +5203,161 @@ fn an_undecodable_coreference_claim_is_withheld_not_passed_through() {
 }
 
 #[test]
+fn selector_export_verifies_machine_origin_against_actual_crdt_id_and_body() {
+    use crate::write_envelope::{
+        ClaimCandidate, MachineWriteSignature, WriteActor, WriteEnvelope, WriteProvenance,
+    };
+    let member = entity_id(0xB8);
+    let (_dir, vault, grant_id) = test_vault_with_grant(member);
+    let machine = entity_id(0xB9);
+    let facet = entity_id(0xBA);
+    let signed_id = entity_id(0xBB);
+    let changed_id = entity_id(0xBC);
+    let stamp = TimeRange { start: 1, end: 1 };
+    vault
+        .put_entity(
+            &machine,
+            crate::registry::ENTITY_TYPE_MACHINE,
+            stamp,
+            1,
+            b"machine",
+        )
+        .unwrap();
+    vault
+        .put_entity(&facet, ENTITY_TYPE_FACET, stamp, 1, b"facet")
+        .unwrap();
+    let issuer = crate::authority::HostSlipIssuer::from_secret(b"selector machine root").unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    let signing = SigningKey::from_bytes(&[0xB9; 32]);
+    vault
+        .enroll_machine_identity(
+            &issuer,
+            machine,
+            signing.verifying_key().to_bytes(),
+            [8; 32],
+            |transcript| Ok(signing.sign(transcript).to_bytes()),
+        )
+        .unwrap();
+    let matured = vault.now_recorded_at() + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1;
+    crate::authority::authority_observation_secs(&vault.store, matured, 0);
+    let envelope = WriteEnvelope::new(
+        WriteActor::new(machine, EdgeActorClass::System),
+        ClaimSource::Observed,
+        WriteProvenance::new(Value::from("machine")).unwrap(),
+        ClaimApprovalStatus::Proposed,
+    );
+    let candidate = ClaimCandidate::new(
+        "selector.machine",
+        ClaimSubject::Entity(machine),
+        Value::from("safe"),
+        1.0,
+    );
+    let transcript = vault
+        .machine_claim_transcript(&signed_id, &candidate, &envelope)
+        .unwrap();
+    let signed = envelope.with_machine_signature(MachineWriteSignature {
+        public_key: signing.verifying_key().to_bytes(),
+        signature: signing.sign(&transcript).to_bytes(),
+    });
+    vault
+        .batch()
+        .claim_candidate(&signed_id, candidate.clone(), &signed, stamp, 1)
+        .commit()
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = candidate.into_claim_body(
+        &signed,
+        crate::claim::default_facet_in(&vault.store, &txn).unwrap(),
+    );
+    drop(txn);
+    let window = WindowKey::new("2026-03");
+    let selector = SyncSelector::new(
+        grant_id,
+        member,
+        SyncSelectorWorld::All,
+        vec![facet],
+        vec![SelectorRange::Semantic, SelectorRange::Core],
+    );
+    let selected = |id: EntityId, claim: &ClaimBody| {
+        let doc = create_window_doc("source", &window);
+        insert_entity(&doc, facet, ENTITY_TYPE_FACET, b"facet");
+        insert_blob(
+            &doc,
+            id,
+            &entity_blob(
+                crate::registry::ENTITY_TYPE_CLAIM,
+                &encode_claim_body(claim).unwrap(),
+            ),
+        );
+        insert_edge(&doc, id, EdgeKind::FacetOf, facet);
+        let history = crate::claim::history_store::machine_history_ids_for_target(
+            &vault.store,
+            &vault.store.env.read_txn().unwrap(),
+            signed_id,
+        )
+        .unwrap();
+        for control_id in history {
+            let raw = vault.get_raw(&control_id).unwrap().unwrap();
+            insert_blob(&doc, control_id, &raw);
+            insert_edge(&doc, control_id, EdgeKind::FacetOf, facet);
+        }
+        doc.commit();
+        let filtered =
+            filtered_window_doc(&vault, &doc, &window, test_selector_scope(), &selector).unwrap();
+        let selected =
+            import_ids(&filtered.export(ExportMode::all_updates()).unwrap()).contains(&id);
+        let guest =
+            guest_share_envelope_body(&vault, &doc, &window, test_selector_scope(), &selector)
+                .unwrap();
+        let guest_selected = import_ids(&guest.update).contains(&id);
+        (selected, guest_selected)
+    };
+    assert_eq!(
+        selected(signed_id, &body),
+        (true, true),
+        "valid signed row must cross both selector and guest share"
+    );
+    assert!(
+        selected(changed_id, &body) == (false, false),
+        "transplanted id must be withheld"
+    );
+    let mut tampered = body.clone();
+    tampered.value = Value::from("attacker");
+    assert!(
+        selected(signed_id, &tampered) == (false, false),
+        "changed payload must be withheld"
+    );
+    let mut bogus = body.clone();
+    if let Some(Value::Map(entries)) = &mut bogus.evidence {
+        for (key, value) in entries {
+            if key.as_str() == Some("machine_signature") {
+                *value = Value::Array(vec![
+                    Value::Binary(signing.verifying_key().to_bytes().to_vec()),
+                    Value::Binary(vec![0; 64]),
+                ]);
+            }
+        }
+    }
+    assert!(
+        selected(signed_id, &bogus) == (false, false),
+        "bogus enrolled-key proof must be withheld"
+    );
+    vault.retract_claim(&signed_id, 20).unwrap();
+    let current = vault.get_claim(&signed_id).unwrap().unwrap();
+    assert_eq!(current.lifecycle, ClaimLifecycleStatus::Retracted);
+    assert_eq!(
+        selected(signed_id, &current),
+        (true, true),
+        "the full scoped handoff chain must travel after retraction"
+    );
+    assert_eq!(
+        selected(signed_id, &body),
+        (false, false),
+        "the old signed birth cannot be exported as current state"
+    );
+}
+
+#[test]
 fn selector_roundtrips_every_classification_family_and_rejects_retired_schema() {
     for family in crate::registry::TYPE_BYTE_FAMILIES {
         let selector = SyncSelector::new(

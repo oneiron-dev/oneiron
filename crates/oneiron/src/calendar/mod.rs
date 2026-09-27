@@ -273,6 +273,62 @@ pub(crate) mod test_support {
         crate::test_util::open_test_vault_with(VaultConfig::default())
     }
 
+    /// An enrolled calendar MACHINE fixture: a fresh per-vault key, host-rooted
+    /// binding, and a retained signing callback. The import actor cannot gain
+    /// claim authority from its transport/connector secret.
+    pub(crate) fn provision_test_calendar_importer(
+        vault: &Vault,
+        clock: &std::sync::Arc<crate::ports::ManualClock>,
+    ) {
+        use ed25519_dalek::Signer;
+        use rand_core::RngCore;
+
+        let now = vault.now_recorded_at();
+        let mut root_seed = [0; 32];
+        let mut machine_seed = [0; 32];
+        let mut transport_binding = [0; 32];
+        rand_core::OsRng.fill_bytes(&mut root_seed);
+        rand_core::OsRng.fill_bytes(&mut machine_seed);
+        rand_core::OsRng.fill_bytes(&mut transport_binding);
+        let issuer = crate::authority::HostSlipIssuer::from_secret(&root_seed).unwrap();
+        vault.ensure_host_root_slip(&issuer).unwrap();
+        let actor = super::ingest::ics_import_actor_id().unwrap();
+        vault
+            .put_entity(
+                &actor,
+                crate::registry::ENTITY_TYPE_MACHINE,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                b"calendar import machine",
+            )
+            .unwrap();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&machine_seed);
+        let public_key = signer.verifying_key().to_bytes();
+        vault
+            .enroll_machine_identity(&issuer, actor, public_key, transport_binding, |bytes| {
+                Ok(signer.sign(bytes).to_bytes())
+            })
+            .unwrap();
+        vault
+            .retain_machine_write_signer(actor, public_key, move |bytes| {
+                Ok(signer.sign(bytes).to_bytes())
+            })
+            .unwrap();
+        clock.set(now + crate::authority::DEFAULT_PENDING_WIDEN_DELAY_SECS + 1);
+    }
+
+    pub(super) fn open_calendar_vault_with_machine_identity() -> (tempfile::TempDir, Vault) {
+        let clock = crate::ports::ManualClock::new(1_800_000_000);
+        let mut config = VaultConfig::default();
+        config.store_clock = clock.bundle();
+        let (dir, vault) = crate::test_util::open_test_vault_with(config);
+        provision_test_calendar_importer(&vault, &clock);
+        (dir, vault)
+    }
+
     /// Encodes an EVENT body carrying the `name` field the EVENT profile pins.
     pub(super) fn event_name_body(name: &str) -> Vec<u8> {
         let mut out = Vec::new();

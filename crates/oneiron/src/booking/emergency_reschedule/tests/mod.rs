@@ -299,10 +299,18 @@ fn executable_with_invite(
     action_policy: EmergencyActionPolicy,
     send_initial: bool,
 ) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
+    executable_with_invite_config(action_policy, send_initial, VaultConfig::default())
+}
+
+fn executable_with_invite_config(
+    action_policy: EmergencyActionPolicy,
+    send_initial: bool,
+    config: VaultConfig,
+) -> (tempfile::TempDir, Vault, ConfirmReceipt, EmergencyPlan) {
     use crate::channel_identity::{
         ChannelIdentity, ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape,
     };
-    let (dir, vault) = open_test_vault_with(VaultConfig::default());
+    let (dir, vault) = open_test_vault_with(config);
     page(&vault, PAGE, OWNER);
     let receipt = book(&vault, PAGE, NOW + 3_600);
     let mut identity = ChannelIdentity::requested(
