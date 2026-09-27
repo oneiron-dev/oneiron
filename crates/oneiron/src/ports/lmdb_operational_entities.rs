@@ -132,7 +132,7 @@ impl EntityStoreMaintenance for Store {
         }
         self.entities.put(txn, id.as_bytes(), header)
     }
-    #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
+    #[cfg(all(feature = "sync", any(test, feature = "test-hooks")))]
     fn port_raw_record_seed(&self, txn: &mut RwTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<()> {
         self.entities.put(txn, id.as_bytes(), raw)
     }

@@ -54,7 +54,7 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     ) -> Result<()>;
     /// Plants record bytes as given, with no index row: for fixtures that race a divergent local
     /// row against a replayed one, or build a store shape no write door builds at their scale.
-    #[cfg(any(test, all(feature = "sync", feature = "test-hooks")))]
+    #[cfg(all(feature = "sync", any(test, feature = "test-hooks")))]
     fn port_raw_record_seed(
         &self,
         txn: &mut Self::Write<'_>,
