@@ -7695,7 +7695,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WeaveLinkCorrection"
@@ -16658,7 +16658,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16931,7 +16931,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -16976,7 +16976,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17316,6 +17316,16 @@
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/weave_correction_policy.rs",
+     "purpose": "Vault-resident per-link correction quota",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -30450,13 +30460,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -35582,7 +35592,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36270,7 +36280,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
+   "source_files": 2141,
    "test_files": 731
   },
   "oneiron-android": {

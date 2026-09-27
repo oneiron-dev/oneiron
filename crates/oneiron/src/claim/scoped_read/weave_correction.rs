@@ -7,7 +7,6 @@ use crate::provenance::EdgeRef;
 use serde::{Deserialize, Serialize};
 
 const PREFIX: &[u8] = b"weave:wrong-link:v1:";
-const MAX_LABELS: usize = 10_000;
 
 /// An immutable negative training label for one weave link. The edge reference
 /// is the link's stable id; the receipt id distinguishes independent taps.
@@ -51,9 +50,19 @@ impl ScopedRead<'_> {
                 "weave correction actor mismatch".into(),
             ));
         }
+        #[cfg(test)]
+        self.vault
+            .test_hooks()
+            .signal_before_weave_correction_writer();
         let mut txn = self.vault.store.env.write_txn()?;
         auth.revalidate_in_txn(self.vault, &txn)?;
         self.require_visible_weave_link_in(&txn, reader, link)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &txn)?;
+        let limit = policy
+            .weave_correction_limit(&auth.actor().to_hex())
+            .ok_or(Error::InvalidConfig(
+                "weave correction policy unavailable".into(),
+            ))?;
         // Writers enforce the reader's bound in this SAME serialized txn.
         // Refuse a tap before it can make all prior labels unreadable.
         let key_prefix = prefix(link);
@@ -61,7 +70,7 @@ impl ScopedRead<'_> {
         for row in self.vault.store.vault_meta.prefix_iter(&txn, &key_prefix)? {
             row?;
             count += 1;
-            if count >= MAX_LABELS {
+            if count >= limit {
                 return Err(Error::IndexOverflow("weave correction labels"));
             }
         }
@@ -133,9 +142,6 @@ impl crate::Vault {
         let prefix = prefix(link);
         for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
             let (key, raw) = row?;
-            if labels.len() >= MAX_LABELS {
-                return Err(Error::IndexOverflow("weave correction labels"));
-            }
             let stored: StoredCorrection = rmp_serde::from_slice(&raw)
                 .map_err(|_| Error::CorruptedIndex("weave correction label"))?;
             if stored.link != link.encode()
@@ -229,8 +235,44 @@ mod tests {
         Ok(())
     }
 
+    fn set_quota(
+        vault: &crate::Vault,
+        vault_max: u32,
+        default: u32,
+        holder: Option<(EntityId, u32)>,
+    ) -> Result<()> {
+        use crate::ports::EntityStoreRead;
+        let id = crate::gate::default_policy_manifest_id()?;
+        let txn = vault.store.env.read_txn()?;
+        let raw = vault
+            .store
+            .port_entity_record(&txn, &id)?
+            .expect("seeded manifest");
+        let rmpv::Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut raw.body.as_slice()).expect("manifest decodes")
+        else {
+            panic!("manifest map")
+        };
+        drop(txn);
+        entries.retain(|(key, _)| key.as_str() != Some("weave_correction_policy"));
+        let holders = holder.map_or_else(Vec::new, |(id, limit)| {
+            vec![(rmpv::Value::from(id.to_hex()), rmpv::Value::from(limit))]
+        });
+        entries.push((
+            rmpv::Value::from("weave_correction_policy"),
+            rmpv::Value::Map(vec![
+                (rmpv::Value::from("vault_max"), rmpv::Value::from(vault_max)),
+                (rmpv::Value::from("default"), rmpv::Value::from(default)),
+                (rmpv::Value::from("holders"), rmpv::Value::Map(holders)),
+            ]),
+        ));
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries)).expect("encodes");
+        crate::test_util::put_policy_manifest_bytes(vault, id, &bytes)
+    }
+
     #[test]
-    fn last_allowed_label_is_readable_and_next_tap_does_not_write() -> Result<()> {
+    fn revocation_between_report_preflight_and_writer_admission_refuses_label() -> Result<()> {
         let (_tmp, vault, person, link) = fixture()?;
         let auth = vault.authenticate_owner(
             person,
@@ -238,31 +280,79 @@ mod tests {
             true,
             crate::store::GateDecisionId::now(),
         )?;
-        // Seed the first 9,999 valid encoded receipts in one transaction to
-        // reach the production bound without 9,999 independent report scans.
-        let mut txn = vault.store.env.write_txn()?;
-        for i in 1..MAX_LABELS {
-            let id = EntityId::from_bytes((i as u128).to_be_bytes())?;
-            let key = [prefix(link), id.as_bytes().to_vec()].concat();
-            let bytes = rmp_serde::to_vec_named(&StoredCorrection {
-                id,
-                link: link.encode().to_vec(),
-                actor: person,
-                recorded_at: 1,
-            })
-            .expect("fixture encodes");
-            vault.store.vault_meta.put(&mut txn, &key, &bytes)?;
-        }
-        txn.commit()?;
+        let (arrived_tx, arrived_rx) = std::sync::mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+        vault
+            .test_hooks()
+            .install_before_weave_correction_writer(move || {
+                arrived_tx
+                    .send(())
+                    .expect("test receives pre-writer arrival");
+                resume_rx.recv().expect("test resumes correction");
+            });
+        std::thread::scope(|scope| {
+            let attempt = scope.spawn(|| {
+                vault
+                    .scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap())
+                    .report_wrong_link(&auth, WeaveReader::Person(person), link)
+            });
+            arrived_rx
+                .recv()
+                .expect("correction reaches writer boundary");
+            crate::test_util::authorize_readers(&vault, &[]);
+            resume_tx.send(()).expect("correction still waiting");
+            assert!(attempt.join().expect("correction thread").is_err());
+        });
+        assert!(
+            vault
+                .weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn policy_quota_override_is_capped_at_vault_and_changes_never_hide_old_labels() -> Result<()> {
+        let (_tmp, vault, person, link) = fixture()?;
+        let auth = vault.authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
         let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
-        let final_label = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
-        let labels = read.weave_link_corrections(WeaveReader::Person(person), link)?;
-        assert_eq!(labels.len(), MAX_LABELS);
-        assert!(labels.contains(&final_label));
+        // Holder overrides the default of 1, but cannot exceed vault cap 3.
+        set_quota(&vault, 3, 1, Some((person, 9)))?;
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            labels.push(read.report_wrong_link(&auth, WeaveReader::Person(person), link)?);
+        }
+        assert_eq!(
+            read.weave_link_corrections(WeaveReader::Person(person), link)?,
+            labels
+        );
         assert!(matches!(
             read.report_wrong_link(&auth, WeaveReader::Person(person), link),
             Err(Error::IndexOverflow("weave correction labels"))
         ));
+        // Narrow the admission policy below the historic count, without
+        // changing what the sieve and the scoped reader can still read.
+        set_quota(&vault, 1, 1, None)?;
+        assert_eq!(
+            read.weave_link_corrections(WeaveReader::Person(person), link)?,
+            labels
+        );
+        assert!(
+            read.report_wrong_link(&auth, WeaveReader::Person(person), link)
+                .is_err()
+        );
+        // A later vault edit can raise the limit: 10,000 is not a lifetime cap.
+        set_quota(&vault, 4, 4, None)?;
+        labels.push(read.report_wrong_link(&auth, WeaveReader::Person(person), link)?);
+        assert_eq!(
+            read.weave_link_corrections(WeaveReader::Person(person), link)?,
+            labels
+        );
         assert_eq!(
             vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
             labels

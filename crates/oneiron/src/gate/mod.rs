@@ -27,7 +27,9 @@ mod repair;
 mod resolution;
 mod retrieval_filter;
 mod share;
+mod weave_correction_policy;
 mod witness_message;
+pub(crate) use weave_correction_policy::WeaveCorrectionPolicy;
 
 #[cfg(test)]
 mod tests;
