@@ -3718,7 +3718,10 @@ fn durable_receipt_replay_survives_party_deletion_and_remint() -> CommResult<()>
     delivered_connector_receipt(&vault, 0x89, "email", "send", "shared-inbox", Some(party))?;
     run_comm_projector(&vault)?;
     let original = resolve_party(&vault, party)?.ok_or(CommError::InvalidRecord)?;
-    assert!(vault.delete_entity(&original)?);
+    assert!(vault.delete_entity_with_options(
+        &original,
+        crate::deletion::DeleteEntityOptions { purge: true },
+    )?);
     record_comm_inbound_stop(&vault, "independent-stop", "email", 41)?;
     run_comm_projector(&vault)?;
     assert_eq!(

@@ -2300,14 +2300,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/vault_api.rs",
      "purpose": "`impl Vault` — the AUTHORITY_LOG read/write door",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
