@@ -19933,7 +19933,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/llm/decision/local/tests.rs",

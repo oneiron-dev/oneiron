@@ -117,6 +117,9 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                         .iter()
                         .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
                 {
+                    // A valid head response is evidence of uncertainty, not an outage,
+                    // even when its winning labels tie or disagree with p(yes).
+                    reason = HumanAskReason::Uncertain;
                     let best = scores.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1));
                     if let Some((index, &confidence)) = best {
                         probability =
@@ -127,7 +130,14 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                             });
                         if scores.iter().filter(|&&score| score == confidence).count() == 1 {
                             answer = if matches!(input.question.contract, AnswerContract::Noul) {
-                                DecisionAnswer::Noul(index == 0)
+                                // The two label scores need not sum to one. The answer
+                                // follows p(yes) and the owner's (possibly asymmetric)
+                                // band, but only when the winning label agrees.
+                                match index {
+                                    0 if scores[0] > dial.band.high => DecisionAnswer::Noul(true),
+                                    1 if scores[0] < dial.band.low => DecisionAnswer::Noul(false),
+                                    _ => DecisionAnswer::Abstain,
+                                }
                             } else {
                                 DecisionAnswer::Choice(labels[index].clone())
                             };

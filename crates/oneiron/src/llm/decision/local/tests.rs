@@ -237,6 +237,85 @@ fn band_endpoints_and_accept_type_negative_fail_closed() {
 }
 
 #[test]
+fn binary_head_must_agree_with_yes_probability_and_owner_band() {
+    let q = question();
+    let default_band = DecisionBand::default();
+    let asymmetric_band = DecisionBand {
+        low: 0.70,
+        high: 0.80,
+    };
+    for (scores, band, expected) in [
+        (vec![0.20, 0.10], default_band, DecisionAnswer::Abstain),
+        (vec![0.80, 0.90], default_band, DecisionAnswer::Abstain),
+        (vec![0.60, 0.40], asymmetric_band, DecisionAnswer::Abstain),
+        (vec![0.20, 0.90], default_band, DecisionAnswer::Noul(false)),
+        (vec![0.90, 0.20], default_band, DecisionAnswer::Noul(true)),
+    ] {
+        let expected_probability = scores[0];
+        let seat = LocalDecisionSeat {
+            head: Some(FixedHead { scores }),
+            rules: vec![],
+        };
+        let mut request = input(
+            &q,
+            "bounded fixture",
+            dial(DecisionRung::Local, DecisionRung::Local),
+        );
+        request.owner.band = band;
+        request.resident.band = band;
+        let result = seat.answer(request).unwrap();
+        assert_eq!(result.answer, expected);
+        assert_eq!(result.probability, Some(expected_probability));
+        assert!(!result.in_band);
+        assert_eq!(
+            result.human_ask,
+            matches!(expected, DecisionAnswer::Abstain).then_some(HumanAskReason::Uncertain)
+        );
+    }
+}
+
+struct TiedChoiceHead;
+impl LabelClassifier for TiedChoiceHead {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: "fixture/gliner".into(),
+            version: "rev-1".into(),
+        }
+    }
+    fn scores(&self, question: &str, unit: &str, labels: &[String]) -> Result<Vec<f64>> {
+        assert_eq!(question, "Does this fit the intent?");
+        assert_eq!(unit, "bounded fixture");
+        assert_eq!(labels, &["a", "b", "c", "d"]);
+        Ok(vec![0.30, 0.30, 0.30, 0.10])
+    }
+}
+
+#[test]
+fn tied_choice_outside_band_is_uncertain_not_unavailable() {
+    let mut q = question();
+    q.contract = AnswerContract::Choice {
+        options: ["a", "b", "c", "d"].map(str::to_owned).to_vec(),
+    };
+    let seat = LocalDecisionSeat {
+        head: Some(TiedChoiceHead),
+        rules: vec![],
+    };
+    let result = seat
+        .answer(input(
+            &q,
+            "bounded fixture",
+            dial(DecisionRung::Local, DecisionRung::Local),
+        ))
+        .unwrap();
+    assert_eq!(result.answer, DecisionAnswer::Abstain);
+    assert_eq!(result.probability, Some(0.30));
+    assert!(!result.in_band);
+    assert_eq!(result.human_ask, Some(HumanAskReason::Uncertain));
+    assert_eq!(result.receipt.providers, vec![seat.head.unwrap().pin()]);
+}
+
+#[test]
 fn resident_range_can_only_shrink() {
     let q = question();
     let seat: LocalDecisionSeat<FixedHead> = LocalDecisionSeat {
