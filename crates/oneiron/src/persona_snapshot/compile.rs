@@ -347,41 +347,88 @@ impl crate::Vault {
             ),
         );
 
-        // Relationship identities are ordinary RELATIONSHIP rows linking two PERSONs,
-        // never persona-shaped companion FACET records. A portable card admits
-        // only explicitly public rows with exactly two participating PERSONs.
+        // A public label is only a portable presentation clamp. The current
+        // digest-bound record position and the audience's scoped read still
+        // decide whether this RELATIONSHIP and each participating PERSON may
+        // enter the card. A replayed, unstamped relation cannot be exported.
         let mut related: BTreeMap<EntityId, (Option<String>, String)> = BTreeMap::new();
-        for edge in self.edges_out(subject_ref)? {
+        let visible_edges = if let Some(audience) = audience_read.as_ref() {
+            audience.edges_out(subject_ref)?.value.unwrap_or_default()
+        } else {
+            self.edges_out(subject_ref)?
+        };
+        for edge in visible_edges {
             if edge.kind != EdgeKind::ParticipatesIn
                 || self.get_entity_type(&edge.target)? != Some(ENTITY_TYPE_RELATIONSHIP)
             {
                 continue;
             }
             let relation = edge.target;
-            let participants: Vec<_> = self
+            if !matches!(
+                self.record_scope(&relation)?.map(|scope| scope.sensitivity),
+                Some(crate::federation::SensitivityCeiling::AtMost(
+                    crate::federation::Sensitivity::Public
+                ))
+            ) {
+                continue;
+            }
+            let body = if let Some(audience) = audience_read.as_ref() {
+                match audience
+                    .get_entity_parts_with_receipt(&relation, None)?
+                    .value
+                {
+                    Some((ENTITY_TYPE_RELATIONSHIP, _, data)) => data,
+                    _ => continue,
+                }
+            } else {
+                let Some(body) = self.get(&relation)? else {
+                    continue;
+                };
+                body
+            };
+            let Some(role) = public_relationship_role(&body) else {
+                continue;
+            };
+            let participants: BTreeSet<_> = self
                 .edges_in(&relation)?
                 .into_iter()
                 .filter(|edge| edge.kind == EdgeKind::ParticipatesIn)
                 .map(|edge| edge.target)
                 .collect();
-            if participants.len() != 2 || !participants.contains(subject_ref) {
+            if participants.len() < 2 || !participants.contains(subject_ref) {
                 continue;
             }
-            let Some(other) = participants.into_iter().find(|id| id != subject_ref) else {
-                continue;
-            };
-            if self.get_entity_type(&other)? != Some(ENTITY_TYPE_PERSON) {
-                continue;
+            // A group is disclosed as a whole or not at all: never leak a
+            // partial relationship when one member is hidden from the audience.
+            let participants_vec: Vec<_> = participants.iter().copied().collect();
+            if let Some(audience) = audience_read.as_ref() {
+                if audience
+                    .get_entities_parts_with_receipt(&participants_vec, None)?
+                    .value
+                    .iter()
+                    .any(|parts| !matches!(parts, Some((ENTITY_TYPE_PERSON, _, _))))
+                {
+                    continue;
+                }
+            } else {
+                let mut valid = true;
+                for id in &participants_vec {
+                    if self.get_entity_type(id)? != Some(ENTITY_TYPE_PERSON)
+                        || self.get(id)?.is_none()
+                    {
+                        valid = false;
+                        break;
+                    }
+                }
+                if !valid {
+                    continue;
+                }
             }
-            let Some(body) = self.get(&relation)? else {
-                continue;
-            };
-            let Some(role) = public_relationship_role(&body) else {
-                continue;
-            };
-            related
-                .entry(other)
-                .or_insert((role, format!("relationship:{}", relation.to_hex())));
+            for other in participants.into_iter().filter(|id| id != subject_ref) {
+                related.entry(other).or_insert_with(|| {
+                    (role.clone(), format!("relationship:{}", relation.to_hex()))
+                });
+            }
         }
 
         let mut third_party_rows = Vec::new();

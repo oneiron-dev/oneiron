@@ -185,7 +185,7 @@ fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
         .map_err(|_| invalid_companion("invalid persona value"))
 }
 
-fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
+pub(crate) fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -216,6 +216,18 @@ fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
         .find(|(key, _)| key.as_str() == Some(name))
         .map(|(_, value)| value)
         .ok_or_else(|| invalid_companion("persona record field is missing"))
+}
+
+/// The PERSON identity baseline accepted by both onboarding and scoped replay.
+/// Decodes the entire body (including duplicate/trailing-key checks), not just
+/// the presence of a `persona_definition` field.
+pub(crate) fn validated_persona_baseline(data: &[u8]) -> Result<JsonValue> {
+    let baseline: BaselineWire = from_value(field(&body_fields(data)?, BASELINE_KEY)?)?;
+    if baseline.schema_version != 1 {
+        return Err(invalid_companion("unsupported persona baseline version"));
+    }
+    object(&baseline.baseline)?;
+    Ok(baseline.baseline)
 }
 
 fn put_field(entries: &mut Vec<(Value, Value)>, name: &str, value: Value) {
@@ -390,12 +402,7 @@ impl ScopedRead<'_> {
         if kind != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(kind));
         }
-        let baseline: BaselineWire = from_value(field(&body_fields(&data)?, BASELINE_KEY)?)?;
-        if baseline.schema_version != 1 {
-            return Err(invalid_companion("unsupported persona baseline version"));
-        }
-        object(&baseline.baseline)?;
-        let mut value = baseline.baseline;
+        let mut value = validated_persona_baseline(&data)?;
         let mut changes = Vec::new();
         for id in self.vault().claims_for_subject(person)? {
             let crate::claim::ScopedReadResult {

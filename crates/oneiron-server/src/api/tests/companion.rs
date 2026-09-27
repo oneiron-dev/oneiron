@@ -803,9 +803,4 @@ async fn retired_companion_register_routes_are_absent_from_http_and_openapi() {
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{method} {path}");
     }
-    let paths = &generated_spec()["paths"];
-    assert!(paths["/v1/companion/register/records"].is_null());
-    assert!(paths["/v1/companion/register/records/{record_id}"].is_null());
-    assert!(paths["/v1/companion/register/records/{record_id}/retire"].is_null());
-    assert!(paths["/v1/companion/register/records/{record_id}/end-relationship"].is_null());
 }

@@ -372,16 +372,12 @@ fn structural_kind_registration_vets_zones_and_collisions_transactionally() -> R
 }
 
 #[test]
-fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()> {
-    use crate::companion::{COMPANION_REGISTER_PACK_ID, COMPANION_REGISTER_SHORT_ID_PREFIX};
-
-    // The row is written at COMPANION_REGISTER's byte with the SYSTEM zone
-    // code (2): byte-space v3 moved the kind from 64 to 78, and the re-key
-    // rewrites any surviving legacy row onto the new byte, so tolerance is
-    // owned at the new byte — nothing legitimate is left at 64. The record
-    // itself is CURRENT-version: the vault under test is a v3 vault, and the
-    // re-key is what leaves legacy registrations in the current record format.
-    fn legacy_row(prefix: &str, pack: &str) -> Vec<u8> {
+fn structural_kind_registry_refuses_retired_companion_registration_on_open() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    {
+        let vault = Vault::open(dir.path(), test_config())?;
+        let key = structural_kind_registry_key(ENTITY_TYPE_COMPANION_REGISTER);
+        let pack = b"oneiron-companion-register";
         let mut raw = vec![
             STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
             ENTITY_TYPE_COMPANION_REGISTER,
@@ -390,53 +386,21 @@ fn structural_kind_registry_handles_legacy_dynamic_companion_byte() -> Result<()
         ];
         raw.extend_from_slice(
             &u16::try_from(pack.len())
-                .expect("test pack length fits u16")
+                .expect("fixture pack length")
                 .to_le_bytes(),
         );
-        raw.extend_from_slice(prefix.as_bytes());
-        raw.extend_from_slice(pack.as_bytes());
+        raw.extend_from_slice(b"cr");
+        raw.extend_from_slice(pack);
         raw.push(0);
-        raw
-    }
-
-    let compatible_dir = tempfile::tempdir()?;
-    {
-        let vault = Vault::open(compatible_dir.path(), test_config())?;
-        let key = structural_kind_registry_key(ENTITY_TYPE_COMPANION_REGISTER);
-        let raw = legacy_row(
-            COMPANION_REGISTER_SHORT_ID_PREFIX,
-            COMPANION_REGISTER_PACK_ID,
-        );
-
         let mut wtxn = vault.store.env.write_txn()?;
         vault.store.vault_meta.put(&mut wtxn, &key, &raw)?;
         wtxn.commit()?;
     }
-    let compatible = Vault::open(compatible_dir.path(), test_config())?;
-    assert!(
-        compatible
-            .structural_kind_registration(ENTITY_TYPE_COMPANION_REGISTER)
-            .is_none(),
-        "compatible legacy row must be ignored so the static registry owns the byte"
-    );
-
-    let incompatible_dir = tempfile::tempdir()?;
-    {
-        let vault = Vault::open(incompatible_dir.path(), test_config())?;
-        let key = structural_kind_registry_key(ENTITY_TYPE_COMPANION_REGISTER);
-        let raw = legacy_row("np", "legacy-pack");
-
-        let mut wtxn = vault.store.env.write_txn()?;
-        vault.store.vault_meta.put(&mut wtxn, &key, &raw)?;
-        wtxn.commit()?;
-    }
-
-    let err = match Vault::open(incompatible_dir.path(), test_config()) {
-        Ok(_) => panic!("incompatible legacy companion-register row must fail closed"),
+    let err = match Vault::open(dir.path(), test_config()) {
+        Ok(_) => panic!("retired structural-kind registration must not reopen"),
         Err(err) => err,
     };
     assert_eq!(err.kind(), ErrorKind::CorruptedIndex);
-    assert_matches!(err, Error::CorruptedIndex(_));
     Ok(())
 }
 

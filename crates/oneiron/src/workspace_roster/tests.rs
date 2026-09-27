@@ -408,6 +408,103 @@ fn companion_birth_is_full_person() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()> {
+    for invalid_baseline in [
+        Value::Nil,
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(2)),
+            (Value::from("baseline"), Value::Map(vec![])),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("baseline"), Value::Array(vec![])),
+        ]),
+    ] {
+        let (_dir, vault, mut intent) = fixture("Antevon");
+        let birth = companion_birth();
+        intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+        intent.companion_birth = Some(birth.clone());
+        let body = encode_value(&Value::Map(vec![
+            (
+                Value::from("schema_version"),
+                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+            ),
+            (
+                Value::from("display_name"),
+                Value::from(birth.display_name.as_str()),
+            ),
+            (Value::from("persona_definition"), invalid_baseline),
+        ]))?;
+        vault.put_entity(
+            &birth.person_ref,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: AT, end: AT },
+            AT,
+            &body,
+        )?;
+        assert!(
+            vault
+                .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+                .is_err()
+        );
+        assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
+        assert_ne!(
+            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.map(|row| row.step),
+            Some(MemberOnboardingStep::Complete)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn existing_companion_person_preserves_valid_edited_baseline_on_resume() -> Result<()> {
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    let birth = companion_birth();
+    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+    intent.companion_birth = Some(birth.clone());
+    let edited = serde_json::json!({"display_name": "edited identity", "tone": "patient"});
+    let body = encode_value(&Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+        ),
+        (
+            Value::from("display_name"),
+            Value::from(birth.display_name.as_str()),
+        ),
+        (
+            Value::from("persona_definition"),
+            crate::companion::companion_value_from_json(
+                &serde_json::json!({"schema_version": 1, "baseline": edited}),
+            )?,
+        ),
+    ]))?;
+    vault.put_entity(
+        &birth.person_ref,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: AT, end: AT },
+        AT,
+        &body,
+    )?;
+    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
+    assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_some());
+    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
+    Ok(())
+}
+
 /// Done-means 5: the mailbox row carries a custody NAME and read scopes. The
 /// intent has no field a token could occupy, so the stored body cannot hold one.
 #[test]

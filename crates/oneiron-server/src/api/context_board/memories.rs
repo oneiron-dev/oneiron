@@ -331,11 +331,7 @@ pub(crate) fn resolve_companion_assembly(
         return Ok(oneiron::CompanionAssembly {
             caller: Some(session_id.to_owned()),
             scope: Some(companion_scope_wire(&oneiron::CompanionScope::neutral()).to_owned()),
-            scope_source: Some(
-                oneiron::CompanionScopeResolutionSource::NeutralDefault
-                    .as_str()
-                    .to_owned(),
-            ),
+            scope_source: Some("neutral_default".to_owned()),
             person_ref: person_ref_wire,
             persona_ref: persona_ref_wire,
             expression: Some(fallback_expression.as_str().to_owned()),

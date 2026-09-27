@@ -536,11 +536,8 @@ pub(super) fn ensure_companion_person(
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
             let stored = &raw[ENTITY_METADATA_HEADER_LEN..];
-            let existing: Value = rmpv::decode::read_value(&mut &stored[..])
-                .map_err(|_| invalid("companion PERSON body is invalid"))?;
-            let Value::Map(fields) = existing else {
-                return Err(invalid("companion PERSON body must be a map"));
-            };
+            crate::companion::validated_persona_baseline(stored)?;
+            let fields = crate::companion::persona_body_fields(stored)?;
             let field = |name: &str| {
                 fields
                     .iter()
@@ -549,7 +546,6 @@ pub(super) fn ensure_companion_person(
             };
             if field("schema_version") != Some(&Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION))
                 || field("display_name") != Some(&Value::from(companion.display_name.as_str()))
-                || field("persona_definition").is_none()
             {
                 return Err(invalid(
                     "companion person_ref is already bound to a different person",
