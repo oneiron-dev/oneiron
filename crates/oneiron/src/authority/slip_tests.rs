@@ -19,7 +19,7 @@ fn verify(
     slip: &CapabilitySlip,
 ) -> crate::Result<VerifiedSlip> {
     let proof = issuer.binding_proof(slip, b"request-1").unwrap();
-    vault.verify_capability_slip(issuer, slip, b"request-1", &proof)
+    vault.verify_capability_slip(&issuer.public_key(), slip, b"request-1", &proof)
 }
 fn rooted_log(vault: &Vault, root: &CapabilitySlip) -> (AuthorityLogEntry, AuthorityLogEntry) {
     let mint_hash = vault.authority_fold().unwrap().slips.mints[&root.claims.slip_id].entry_hash;
@@ -110,14 +110,14 @@ fn v2_roundtrip_tamper_and_missing_binding_deny() {
     assert_eq!(decoded, root);
     assert!(
         vault
-            .verify_capability_slip(&issuer, &root, b"request-1", &[])
+            .verify_capability_slip(&issuer.public_key(), &root, b"request-1", &[])
             .is_err()
     );
     let mut tampered = root.clone();
     tampered.claims.expires_at += 1;
     assert!(verify(&vault, &issuer, &tampered).is_err());
     let mut wire: serde_json::Value = serde_json::to_value(&root).unwrap();
-    wire["mac"][0] = serde_json::json!(wire["mac"][0].as_u64().unwrap() ^ 1);
+    wire["signature"][0] = serde_json::json!(wire["signature"][0].as_u64().unwrap() ^ 1);
     let forged: CapabilitySlip = serde_json::from_value(wire).unwrap();
     assert!(verify(&vault, &issuer, &forged).is_err());
     let mut unsupported = root;
@@ -181,8 +181,7 @@ fn public_host_key_verifies_logged_mint_and_rejects_forgery_and_wrong_host() {
             .is_err()
     );
     let mut forged: serde_json::Value = serde_json::to_value(&decoded).unwrap();
-    forged["host_signature"][0] =
-        serde_json::json!(forged["host_signature"][0].as_u64().unwrap() ^ 1);
+    forged["signature"][0] = serde_json::json!(forged["signature"][0].as_u64().unwrap() ^ 1);
     let forged: CapabilitySlip = serde_json::from_value(forged).unwrap();
     assert!(
         forged
@@ -196,14 +195,25 @@ fn public_host_key_verifies_logged_mint_and_rejects_forgery_and_wrong_host() {
             .is_err()
     );
     assert!(verify(&vault, &issuer, &forged).is_err());
-    // Public-only verification must not guess at the private MAC caveat chain.
+    // A delegated holder may verify a signed caveat with no host secret, but
+    // cannot remove the narrowing: it only owns the NEW binding key.
     let mut caveated = decoded;
-    caveated
-        .attenuate(SlipCaveat {
-            ttl_secs: Some(30),
-            ..Default::default()
-        })
+    let delegate = SigningKey::from_bytes(&[72; 32]);
+    issuer
+        .attenuate_to(
+            &mut caveated,
+            SlipCaveat {
+                ttl_secs: Some(30),
+                ..Default::default()
+            },
+            delegate.verifying_key().to_bytes(),
+        )
         .unwrap();
+    let delegate_proof = |slip: &CapabilitySlip| {
+        delegate
+            .sign(&slip.binding_transcript(b"public-host-check").unwrap())
+            .to_bytes()
+    };
     assert!(
         caveated
             .verify_with_host_key(
@@ -211,17 +221,12 @@ fn public_host_key_verifies_logged_mint_and_rejects_forgery_and_wrong_host() {
                 &fold,
                 now,
                 b"public-host-check",
-                &proof
+                &delegate_proof(&caveated),
             )
-            .is_err()
+            .is_ok()
     );
-    // Even a holder with the binding key cannot convert a final caveat MAC
-    // into the initial MAC committed by the host signature.
     let mut stripped = caveated;
     stripped.caveats.clear();
-    let stripped_proof = issuer
-        .binding_proof(&stripped, b"public-host-check")
-        .unwrap();
     assert!(
         stripped
             .verify_with_host_key(
@@ -229,7 +234,7 @@ fn public_host_key_verifies_logged_mint_and_rejects_forgery_and_wrong_host() {
                 &fold,
                 now,
                 b"public-host-check",
-                &stripped_proof,
+                &delegate_proof(&stripped),
             )
             .is_err()
     );
@@ -254,11 +259,11 @@ fn offline_meet_order_and_ttl_expiry_never_widen() {
         ..Default::default()
     };
     let mut ab = root.clone();
-    ab.attenuate(a.clone()).unwrap();
-    ab.attenuate(b.clone()).unwrap();
+    issuer.attenuate(&mut ab, a.clone()).unwrap();
+    issuer.attenuate(&mut ab, b.clone()).unwrap();
     let mut ba = root.clone();
-    ba.attenuate(b).unwrap();
-    ba.attenuate(a).unwrap();
+    issuer.attenuate(&mut ba, b).unwrap();
+    issuer.attenuate(&mut ba, a).unwrap();
     let first = verify(&vault, &issuer, &ab).unwrap();
     let second = verify(&vault, &issuer, &ba).unwrap();
     assert_eq!(first, second);
@@ -355,13 +360,13 @@ fn pairing_link_mints_once_and_requires_connection_private_key() {
         .to_bytes();
     assert!(
         vault
-            .verify_capability_slip(&issuer, &paired, b"holder-request", &proof)
+            .verify_capability_slip(&issuer.public_key(), &paired, b"holder-request", &proof)
             .is_ok()
     );
     assert!(
         vault
             .verify_capability_slip(
-                &issuer,
+                &issuer.public_key(),
                 &paired,
                 b"holder-request",
                 &issuer.binding_proof(&paired, b"holder-request").unwrap()
@@ -738,17 +743,17 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
         ..Default::default()
     };
     let mut named = root.clone();
-    named.attenuate(a.clone()).unwrap();
+    issuer.attenuate(&mut named, a.clone()).unwrap();
     assert_eq!(
         verify(&vault, &issuer, &named).unwrap().claims().records,
         BTreeSet::from(["record:a".into()])
     );
     let mut ab = named;
-    ab.attenuate(b.clone()).unwrap();
-    ab.attenuate(a.clone()).unwrap();
+    issuer.attenuate(&mut ab, b.clone()).unwrap();
+    issuer.attenuate(&mut ab, a.clone()).unwrap();
     let mut ba = root.clone();
-    ba.attenuate(b).unwrap();
-    ba.attenuate(a).unwrap();
+    issuer.attenuate(&mut ba, b).unwrap();
+    issuer.attenuate(&mut ba, a).unwrap();
     for slip in [&ab, &ba] {
         assert!(!verify(&vault, &issuer, slip).unwrap().allows_verb("read"));
     }
@@ -762,7 +767,7 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
     ] {
         let verify_at = |slip: &CapabilitySlip| {
             let proof = issuer.binding_proof(slip, b"request-1").unwrap();
-            slip.verify(SECRET, &fold, now, b"request-1", &proof)
+            slip.verify(&issuer.public_key(), &fold, now, b"request-1", &proof)
                 .unwrap()
         };
         let denied = verify_at(&ab);
@@ -771,11 +776,14 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
         assert!(!denied.allows_verb("read"));
     }
     let mut empty = root.clone();
-    empty
-        .attenuate(SlipCaveat {
-            records: Some(BTreeSet::new()),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut empty,
+            SlipCaveat {
+                records: Some(BTreeSet::new()),
+                ..Default::default()
+            },
+        )
         .unwrap();
     assert!(!verify(&vault, &issuer, &empty).unwrap().allows_verb("read"));
 
@@ -805,11 +813,14 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
     wider.records = BTreeSet::from(["record:a".into()]);
     assert!(vault.mint_capability_slip(&issuer, wider).is_err());
     let mut no_records = no_records;
-    no_records
-        .attenuate(SlipCaveat {
-            records: Some(BTreeSet::from(["record:a".into()])),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut no_records,
+            SlipCaveat {
+                records: Some(BTreeSet::from(["record:a".into()])),
+                ..Default::default()
+            },
+        )
         .unwrap();
     assert!(
         !verify(&vault, &issuer, &no_records)
@@ -818,11 +829,14 @@ fn named_record_meets_and_empty_channel_meets_never_restore_generic_reads() {
     );
     for channels in [BTreeSet::new(), BTreeSet::from(["provider:b".into()])] {
         let mut narrowed = channel.clone();
-        narrowed
-            .attenuate(SlipCaveat {
-                channels: Some(channels),
-                ..Default::default()
-            })
+        issuer
+            .attenuate(
+                &mut narrowed,
+                SlipCaveat {
+                    channels: Some(channels),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert!(
             !verify(&vault, &issuer, &narrowed)
@@ -1187,12 +1201,12 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         ..Default::default()
     };
     let mut slip = root.clone();
-    slip.attenuate(caveat(narrow.clone())).unwrap();
-    slip.attenuate(caveat(wide.clone())).unwrap();
+    issuer.attenuate(&mut slip, caveat(narrow.clone())).unwrap();
+    issuer.attenuate(&mut slip, caveat(wide.clone())).unwrap();
     let proof = issuer.binding_proof(&slip, b"pact").unwrap();
     let checked = slip
         .verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             root.claims.issued_at,
             b"pact",
@@ -1211,7 +1225,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
     fold.federation_pacts.get_mut(&[42; 32]).unwrap().status = FederationPactStatus::Disconnected;
     assert!(
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             root.claims.issued_at,
             b"pact",
@@ -1227,7 +1241,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         .facets = FederationScopeFacets::Bottom;
     assert!(
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             root.claims.issued_at,
             b"pact",
@@ -1245,7 +1259,7 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         .insert([45; 32]);
     assert!(
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             root.claims.issued_at,
             b"pact",
@@ -1257,15 +1271,19 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
         .get_mut(&grant)
         .unwrap()
         .remove(&[45; 32]);
-    slip.attenuate(SlipCaveat {
-        pact: Some((crate::EntityId::from_bytes([46; 16]).unwrap(), wide.clone())),
-        ..Default::default()
-    })
-    .unwrap();
+    issuer
+        .attenuate(
+            &mut slip,
+            SlipCaveat {
+                pact: Some((crate::EntityId::from_bytes([46; 16]).unwrap(), wide.clone())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
     let proof = issuer.binding_proof(&slip, b"pact").unwrap();
     assert!(
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             root.claims.issued_at,
             b"pact",
@@ -1275,19 +1293,23 @@ fn pact_caveats_meet_and_recheck_live_grant_state() {
     );
     let mut slip = root;
     for id in [47, 48] {
-        slip.attenuate(caveat(FederationDirectionScope {
-            facets: FederationScopeFacets::Some(vec![
-                crate::EntityId::from_bytes([id; 16]).unwrap(),
-            ]),
-            ..wide.clone()
-        }))
-        .unwrap();
+        issuer
+            .attenuate(
+                &mut slip,
+                caveat(FederationDirectionScope {
+                    facets: FederationScopeFacets::Some(vec![
+                        crate::EntityId::from_bytes([id; 16]).unwrap(),
+                    ]),
+                    ..wide.clone()
+                }),
+            )
+            .unwrap();
     }
-    slip.attenuate(caveat(wide)).unwrap();
+    issuer.attenuate(&mut slip, caveat(wide)).unwrap();
     let proof = issuer.binding_proof(&slip, b"pact").unwrap();
     assert!(
         slip.verify(
-            issuer.secret(),
+            &issuer.public_key(),
             &fold,
             slip.claims.issued_at,
             b"pact",
@@ -1367,19 +1389,22 @@ fn offline_one_shot_and_floor_caveats_are_checked_at_verification() {
         },
     ] {
         let mut slip = root.clone();
-        slip.attenuate(caveat).unwrap();
+        issuer.attenuate(&mut slip, caveat).unwrap();
         assert_eq!(
             verify(&vault, &issuer, &slip).unwrap_err().kind(),
             invalid_authority().kind()
         );
     }
     let mut bounded = root.clone();
-    bounded
-        .attenuate(SlipCaveat {
-            single_use: true,
-            expires_at: Some(root.claims.issued_at + 300),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut bounded,
+            SlipCaveat {
+                single_use: true,
+                expires_at: Some(root.claims.issued_at + 300),
+                ..Default::default()
+            },
+        )
         .unwrap();
     assert!(verify(&vault, &issuer, &bounded).is_ok());
 }
@@ -1475,6 +1500,193 @@ fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
     assert!(verify(&vault, &issuer, &slip).is_err());
 }
 
+#[cfg(feature = "sync")]
+#[test]
+fn generic_sync_state_mutations_cannot_change_a_warm_authority_view() {
+    let (_dir, vault, _issuer, root) = fixture();
+    let fold = vault.authority_fold().unwrap();
+    let mint_hash = fold.slips.mints[&root.claims.slip_id].entry_hash;
+    let sidecar = authority_first_seen_sync_key(&mint_hash);
+    assert!(
+        vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+    let original = vault.sync_state_get(&sidecar).unwrap();
+    assert!(original.is_some());
+    for key in [
+        sidecar.as_str(),
+        authority_first_seen_clock_sync_key(),
+        "authlog:cache_generation:v1",
+        "authlog:seq_observation:forged",
+        "peerauth:forged",
+    ] {
+        let error = vault.sync_state_put(key, &[9]).unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        let error = vault.sync_state_delete(key).unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        let mut txn = vault.store.env.write_txn().unwrap();
+        let error = vault
+            .sync_state_put_in_write_txn(&mut txn, key, &[9])
+            .unwrap_err();
+        assert!(
+            matches!(error, crate::Error::InvalidConfig(_)),
+            "{key}: {error}"
+        );
+        txn.abort();
+    }
+    assert_eq!(vault.sync_state_get(&sidecar).unwrap(), original);
+    assert!(
+        vault
+            .capability_slip_id_is_live(&root.claims.slip_id)
+            .unwrap()
+    );
+}
+
+#[test]
+fn uncommitted_slip_mint_is_visible_only_to_its_writer_and_abort_discards_it() {
+    let (_dir, vault, issuer, root) = fixture();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [88; 32];
+    claims.parent_id = Some(root.claims.slip_id);
+    claims.ttl_secs = 60;
+    claims.expires_at = claims.issued_at + 60;
+    let id = claims.slip_id;
+    vault.authority_fold().unwrap(); // warm the committed view
+    assert!(!vault.capability_slip_id_is_live(&id).unwrap());
+
+    std::thread::scope(|scope| {
+        let (ready, started) = std::sync::mpsc::sync_channel(0);
+        let (check, checked) = std::sync::mpsc::sync_channel(0);
+        let vault = &vault;
+        let reader = scope.spawn(move || {
+            let snapshot = vault.store.env.read_txn().unwrap();
+            let before = vault.authority_view_readonly_in_txn(&snapshot).unwrap();
+            assert!(!before.slip_is_live(&id));
+            ready.send(before.generation()).unwrap();
+            checked.recv().unwrap();
+            assert!(
+                !vault
+                    .authority_view_readonly_in_txn(&snapshot)
+                    .unwrap()
+                    .slip_is_live(&id)
+            );
+        });
+        let prior_generation = started.recv().unwrap();
+        let mut writer = vault.store.env.write_txn().unwrap();
+        let slip = vault
+            .mint_slip_in_txn(&mut writer, &issuer, claims)
+            .unwrap();
+        assert_eq!(slip.claims.slip_id, id);
+        let inside = vault.authority_view_readonly_in_txn(&writer).unwrap();
+        assert!(inside.generation() > prior_generation);
+        assert!(inside.slip_is_live(&id));
+        check.send(()).unwrap();
+        reader.join().unwrap();
+        writer.abort();
+    });
+    assert!(!vault.capability_slip_id_is_live(&id).unwrap());
+    assert!(
+        !vault
+            .authority_fold()
+            .unwrap()
+            .slips
+            .mints
+            .contains_key(&id)
+    );
+}
+
+#[test]
+fn slip_verifies_with_only_the_minting_host_public_key_and_refuses_wrong_key_and_tamper() {
+    let (_dir, vault, issuer, root) = fixture();
+    let proof = issuer.binding_proof(&root, b"public-key-check").unwrap();
+    assert!(
+        vault
+            .verify_capability_slip(&issuer.public_key(), &root, b"public-key-check", &proof)
+            .is_ok()
+    );
+    let wrong = HostSlipIssuer::from_secret(b"unrelated host").unwrap();
+    assert!(
+        vault
+            .verify_capability_slip(&wrong.public_key(), &root, b"public-key-check", &proof)
+            .is_err()
+    );
+    let mut changed: serde_json::Value =
+        serde_json::from_slice(&super::canonical(&root).unwrap()).unwrap();
+    changed["signature"][0] = serde_json::json!(changed["signature"][0].as_u64().unwrap() ^ 1);
+    let forged: CapabilitySlip = serde_json::from_value(changed).unwrap();
+    let proof = issuer.binding_proof(&forged, b"public-key-check").unwrap();
+    assert!(
+        vault
+            .verify_capability_slip(&issuer.public_key(), &forged, b"public-key-check", &proof)
+            .is_err()
+    );
+}
+
+#[test]
+fn transferred_caveat_cannot_be_removed_or_changed_by_its_new_holder() {
+    use ed25519_dalek::{Signer, SigningKey};
+    let (_dir, vault, issuer, mut slip) = fixture();
+    let delegate = SigningKey::from_bytes(&[71; 32]);
+    let mut read_only = crate::federation::Scope::top();
+    read_only.verbs = crate::federation::ScopeAxis::Some(BTreeSet::from(["read".into()]));
+    issuer
+        .attenuate_to(
+            &mut slip,
+            SlipCaveat {
+                scope: Some(read_only),
+                ..Default::default()
+            },
+            delegate.verifying_key().to_bytes(),
+        )
+        .unwrap();
+    let proof_for = |slip: &CapabilitySlip| {
+        delegate
+            .sign(&slip.binding_transcript(b"delegated-request").unwrap())
+            .to_bytes()
+    };
+    let verified = vault
+        .verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"delegated-request",
+            &proof_for(&slip),
+        )
+        .unwrap();
+    assert!(verified.allows_verb("read"));
+    assert!(!verified.allows_verb("write"));
+    let mut stripped = slip.clone();
+    stripped.caveats.clear();
+    assert!(
+        vault
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &stripped,
+                b"delegated-request",
+                &proof_for(&stripped),
+            )
+            .is_err()
+    );
+    let mut altered: serde_json::Value = serde_json::to_value(&slip).unwrap();
+    altered["caveats"][0]["caveat"]["single_use"] = serde_json::json!(true);
+    let altered: CapabilitySlip = serde_json::from_value(altered).unwrap();
+    assert!(
+        vault
+            .verify_capability_slip(
+                &issuer.public_key(),
+                &altered,
+                b"delegated-request",
+                &proof_for(&altered),
+            )
+            .is_err()
+    );
+}
 #[test]
 fn same_agent_logged_attenuation_verifies_but_actor_redelegation_is_rejected() {
     let (_dir, vault, issuer, root) = fixture();
