@@ -55,6 +55,7 @@
 
 mod budget;
 mod cancellation;
+pub mod hosted_tts;
 mod protocol;
 mod retrieval;
 mod safeguard;
