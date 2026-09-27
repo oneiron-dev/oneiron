@@ -12,6 +12,7 @@ pub enum AgentVerb {
     Witness,
     ClaimUpsert,
     Recall,
+    Export,
     Receipts,
     KeyValueGet,
     KeyValuePut,
@@ -46,6 +47,7 @@ impl AgentVerb {
         Self::Witness,
         Self::ClaimUpsert,
         Self::Recall,
+        Self::Export,
         Self::Receipts,
         Self::KeyValueGet,
         Self::KeyValuePut,
@@ -83,6 +85,7 @@ impl AgentVerb {
             Self::Witness => "witness",
             Self::ClaimUpsert => "claim_upsert",
             Self::Recall => "recall",
+            Self::Export => "export",
             Self::Receipts => "receipts",
             Self::KeyValueGet => "key_value_get",
             Self::KeyValuePut => "key_value_put",
@@ -115,6 +118,7 @@ impl AgentVerb {
                 | Self::Witness
                 | Self::ClaimUpsert
                 | Self::Recall
+                | Self::Export
                 | Self::Receipts
                 | Self::KeyValueGet
                 | Self::KeyValuePut

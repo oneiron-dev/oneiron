@@ -15,7 +15,7 @@ use super::watermark::{
     read_turn_facts_in_txn,
 };
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
     prefilter_partition_input, prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
 };
@@ -464,7 +464,8 @@ pub(crate) fn register_substitution_mine_in_txn(
         input: crate::edit_distance::miner::miner_attempt_input(session),
         parent_attempt: None,
     })?;
-    let outcome = AttemptQueue::new(vault).enqueue_in_txn(
+    let outcome = crate::ports::JobQueue::port_job_enqueue(
+        vault,
         wtxn,
         EnqueueAttempt {
             kind: DreamerConsolidationScope::Meso.attempt_kind().to_owned(),

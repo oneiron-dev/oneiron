@@ -64,7 +64,7 @@ def boundary_type(value, language, wire=False):
         return f'list[{item}]' if language.startswith('py') else f'({item})[]' if ' | ' in item else item + '[]'
     if language == 'napi': return RESULTS[inner][0]
     if language == 'py': return {'String': 'str', 'bool': 'bool'}.get(inner, 'dict[str, Any]')
-    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt'}.get(inner, inner)
+    if language == 'py_stub': return {'String': 'str', 'bool': 'bool', 'MemoryReceipt': 'FacadeReceipt', 'MemoryExport': 'dict[str, Any]'}.get(inner, inner)
     return {'String': 'string', 'bool': 'boolean', 'MemoryReceipt': 'FacadeReceipt', **({'KeyValueItem': 'WireItem'} if wire else {})}.get(inner, inner)
 
 def remote_boundary(row):
@@ -307,6 +307,31 @@ def outputs():
     for r in facade_rows:
         method=r['name'].replace('.','_')
         if r['name'] == 'recall': server += SERVER_RECALL_DOC
+        if r.get('admission', {}).get('owner_grade'):
+            # A full-vault result must carry verifier-produced owner proof into
+            # same-snapshot engine admission, never generic actor-only invoke.
+            server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
+                auth.require(CoreScope::{r["scope"]})?;
+                auth.require_unrestricted_record_scope()?;
+                if !auth.is_owner_grade() {{
+                    return Err(FacadeApiError::forbidden("full-vault export requires owner authority", ["Present a verified, unattenuated owner credential."]));
+                }}
+                let value = facade_json(payload)?;
+                oneiron::task_verb::sdk::validate_input({json.dumps(r["name"])}, &value)?;
+                let input: oneiron::memory::ExportOptions = facade_input(value)?;
+                let proof = auth.verified_slip().ok_or_else(|| FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]))?;
+                let output = if proof.claims().holder_ref == "host" {{
+                    server.vault.export_with_verified_host_owner(&input, proof)?
+                }} else {{
+                    let (actor, class) = facade_actor(&auth)?;
+                    server.vault.memory(actor, class).export_with_verified_owner(&input, proof)?
+                }};
+                Ok(Json(serde_json::to_value(output).map_err(|_| FacadeApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
+                    "export result encoding failed", ["Report this SDK response mismatch."]
+                ))?))
+            }}\n'''
+            continue
         # `readable` names the credential read checks: each caller-named ref is
         # refused before the engine call, and `rows` filters the typed result.
         guard, result = '', f'oneiron::task_verb::sdk::invoke(&server.vault.memory(actor,class), "{r["name"]}", value)?'
