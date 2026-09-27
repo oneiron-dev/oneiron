@@ -132,7 +132,7 @@ const VISITOR_SENTENCE: &str = "any weekday afternoon works, ideally after lunch
 
 fn cheap_tier() -> TierPrecedence {
     TierPrecedence {
-        per_call: None,
+        per_seat: None,
         vault_policy: Some(ModelTierRef("host-cheap-tier".to_owned())),
         purpose_default: None,
         global_default: ModelTierRef("host-global-tier".to_owned()),
@@ -550,7 +550,7 @@ fn booking_constraint_fake_llm_request_is_bounded() {
     // expensive or ungoverned model.
     let blank = ConstraintParseConfig {
         tier: TierPrecedence {
-            per_call: None,
+            per_seat: None,
             vault_policy: None,
             purpose_default: None,
             global_default: ModelTierRef("   ".to_owned()),
