@@ -202,6 +202,14 @@ impl Vault {
         expires_at: u64,
     ) -> Result<WidenProposal> {
         let claims = credential.claims();
+        // A read-only VerifiedSlip is reusable. This door has no atomic
+        // SlipConsume, so refuse one-shots (including offline caveats) rather
+        // than spending them outside the proposal transaction.
+        if claims.single_use {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "single-use credential cannot file a widen proposal",
+            )));
+        }
         if claims.actor_class.as_deref() != Some("agent") || !credential.allows_verb(kind.label()) {
             return Err(Error::Gate(GateError::InvalidConsentBound(
                 "agent credential lacks widen proposal authority",

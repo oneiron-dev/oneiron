@@ -1231,7 +1231,7 @@ fn concurrent_single_use_authentication_survives_reopen_and_mint_replay() {
 }
 
 #[test]
-fn verifier_rejects_nested_act_act_agent_delegation() {
+fn same_agent_logged_attenuation_verifies_but_actor_redelegation_is_rejected() {
     let (_dir, vault, issuer, root) = fixture();
     let mut direct_claims = root.claims;
     direct_claims.slip_id = [0x91; 32];
@@ -1243,20 +1243,38 @@ fn verifier_rejects_nested_act_act_agent_delegation() {
     let direct = vault.mint_capability_slip(&issuer, direct_claims).unwrap();
     assert!(verify(&vault, &issuer, &direct).is_ok());
 
-    let mut nested_claims = direct.claims.clone();
-    nested_claims.slip_id = [0x92; 32];
-    nested_claims.parent_id = Some(direct.claims.slip_id);
-    nested_claims.expires_at -= 1;
-    nested_claims.ttl_secs -= 1;
-    // Mint re-runs the slip verifier against the new log in its transaction.
-    assert!(vault.mint_capability_slip(&issuer, nested_claims).is_err());
+    let mut narrower = direct.claims.clone();
+    narrower.slip_id = [0x92; 32];
+    narrower.parent_id = Some(direct.claims.slip_id);
+    narrower.expires_at -= 1;
+    narrower.ttl_secs -= 1;
+    narrower.scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".into()]));
+    let attenuated = vault.mint_capability_slip(&issuer, narrower).unwrap();
+    let checked = verify(&vault, &issuer, &attenuated).unwrap();
+    assert_eq!(checked.claims().holder_ref, direct.claims.holder_ref);
+    assert_eq!(checked.claims().binding_key, direct.claims.binding_key);
+    assert!(checked.allows_verb("read"));
+
+    // A different actor cannot take over a parent agent's authority. The
+    // fold's parent-narrowing check refuses the child before verification can
+    // produce a usable handle, even when the host signs the attempted mint.
+    let mut redelegated = direct.claims.clone();
+    redelegated.slip_id = [0x93; 32];
+    redelegated.parent_id = Some(direct.claims.slip_id);
+    redelegated.holder_ref = crate::EntityId::from_bytes([0x63; 16]).unwrap().to_hex();
+    redelegated.binding_key = SigningKey::from_bytes(&[0x63; 32])
+        .verifying_key()
+        .to_bytes();
+    redelegated.expires_at -= 1;
+    redelegated.ttl_secs -= 1;
+    assert!(vault.mint_capability_slip(&issuer, redelegated).is_err());
     assert!(
         !vault
             .authority_fold()
             .unwrap()
             .slips
             .mints
-            .contains_key(&[0x92; 32])
+            .contains_key(&[0x93; 32])
     );
     assert!(verify(&vault, &issuer, &direct).is_ok());
 }

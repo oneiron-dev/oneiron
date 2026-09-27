@@ -2111,3 +2111,107 @@ fn credential_widen_refuses_missing_verb_and_non_agent_identity() {
             .is_none()
     );
 }
+
+#[test]
+fn credential_widen_refuses_logged_and_offline_one_shots_even_for_distinct_proposals() {
+    use crate::authority::{HostSlipIssuer, SlipCaveat};
+    use crate::federation::{Scope, ScopeAxis};
+    use std::collections::BTreeSet;
+
+    let (_dir, vault, owner) = owner_vault();
+    let agent = entity(0x62);
+    vault
+        .put_entity(&agent, ENTITY_TYPE_PERSON, at(1), 1, b"agent")
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(b"consent widen single use").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = [0x81; 32];
+    claims.parent_id = None;
+    claims.holder_ref = agent.to_hex();
+    claims.actor_class = Some("agent".into());
+    claims.expires_at = claims.issued_at + 120;
+    claims.ttl_secs = 120;
+    claims.single_use = true;
+    claims.scope = Scope::top();
+    claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["propose_action_widen".into()]));
+    let single_use = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let proof = issuer
+        .binding_proof(&single_use, b"single-use-widen")
+        .unwrap();
+    let verified = vault
+        .verify_capability_slip(&issuer, &single_use, b"single-use-widen", &proof)
+        .unwrap();
+    assert!(verified.claims().single_use);
+    let expiry = crate::unix_seconds_now() + 90;
+    for selector in ["world:first", "world:second"] {
+        let bound = action_bound(&agent.to_hex(), "claim.put", &[selector]);
+        let error = vault
+            .propose_action_widen(&verified, bound.clone(), owner.principal_ref(), expiry)
+            .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::InvalidConsentBound);
+        assert!(
+            vault
+                .consent_grant(&bound.digest().to_hex())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    // A one-shot introduced after mint by offline attenuation is just as
+    // binding. Two racing requests using a retained verified handle both
+    // refuse rather than storing competing proposals.
+    let mut repeatable_claims = single_use.claims;
+    repeatable_claims.slip_id = [0x82; 32];
+    repeatable_claims.single_use = false;
+    let mut caveated = vault
+        .mint_capability_slip(&issuer, repeatable_claims)
+        .unwrap();
+    caveated
+        .attenuate(SlipCaveat {
+            single_use: true,
+            ..Default::default()
+        })
+        .unwrap();
+    let proof = issuer
+        .binding_proof(&caveated, b"offline-one-shot-widen")
+        .unwrap();
+    let verified = vault
+        .verify_capability_slip(&issuer, &caveated, b"offline-one-shot-widen", &proof)
+        .unwrap();
+    assert!(verified.claims().single_use);
+    let owner_ref = owner.principal_ref().to_owned();
+    std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            vault.propose_action_widen(
+                &verified,
+                action_bound(&agent.to_hex(), "claim.put", &["world:third"]),
+                &owner_ref,
+                expiry,
+            )
+        });
+        let second = scope.spawn(|| {
+            vault.propose_action_widen(
+                &verified,
+                action_bound(&agent.to_hex(), "claim.put", &["world:fourth"]),
+                &owner_ref,
+                expiry,
+            )
+        });
+        for handle in [first, second] {
+            assert_eq!(
+                handle.join().unwrap().unwrap_err().kind(),
+                ErrorKind::InvalidConsentBound
+            );
+        }
+    });
+    for selector in ["world:third", "world:fourth"] {
+        let bound = action_bound(&agent.to_hex(), "claim.put", &[selector]);
+        assert!(
+            vault
+                .consent_grant(&bound.digest().to_hex())
+                .unwrap()
+                .is_none()
+        );
+    }
+}
