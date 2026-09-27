@@ -8,7 +8,7 @@ mod source;
 pub use agent_facets::AgentPackFacets;
 pub(crate) use codec::{decode as decode_source_body, validate_pack_source_put};
 pub use manifest::{PackAdapter, PackKind, PackManifest};
-pub use source::PackSource;
+pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
     source: &PackSource,
@@ -29,10 +29,12 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+#[cfg(test)]
+pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 mod schema;
 pub use admission_types::{
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackQualification, PackQualifier,
-    PackRuntimeRecipe,
+    BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
+    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackPermissions,
 };
 #[cfg(test)]
 mod admission_tests;

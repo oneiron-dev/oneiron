@@ -13,7 +13,7 @@ use super::dispatch_types::{
 use super::receipt_fields::append_connector_task_window_receipt;
 use super::retry_audit::{
     TerminalSendSettlement, persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
-    persist_terminal_send_receipt_and_fail,
+    persist_terminal_send_receipt_and_fail, settle_suppressed_send,
 };
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
@@ -357,6 +357,14 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                    if result.receipt.fields.get("suppression").map(String::as_str)
+                        == Some("dedupe")
+                    {
+                        // The common door already recorded the semantic dedupe.
+                        // Settle this TASK and queue without another send receipt.
+                        settle_suppressed_send(self, &attempt, task_ref, now)?;
+                        continue;
+                    }
                     fail_connector_task_attempt_and_project(
                         self,
                         &queue,

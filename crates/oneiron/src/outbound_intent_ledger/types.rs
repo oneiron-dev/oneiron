@@ -176,6 +176,8 @@ pub enum IntentEscalationReason {
     BindingInvalidAfterUncertainty,
     PreviouslyAbandoned,
     CorruptLedgerRow,
+    DedupeReservationReplaced,
+    DedupeSuppressed,
 }
 
 impl IntentEscalationReason {
@@ -189,6 +191,8 @@ impl IntentEscalationReason {
             Self::BindingInvalidAfterUncertainty => "binding_invalid_after_uncertainty",
             Self::PreviouslyAbandoned => "previously_abandoned",
             Self::CorruptLedgerRow => "corrupt_ledger_row",
+            Self::DedupeReservationReplaced => "dedupe_reservation_replaced",
+            Self::DedupeSuppressed => "dedupe_suppressed",
         }
     }
 
@@ -202,6 +206,8 @@ impl IntentEscalationReason {
             "binding_invalid_after_uncertainty" => Some(Self::BindingInvalidAfterUncertainty),
             "previously_abandoned" => Some(Self::PreviouslyAbandoned),
             "corrupt_ledger_row" => Some(Self::CorruptLedgerRow),
+            "dedupe_reservation_replaced" => Some(Self::DedupeReservationReplaced),
+            "dedupe_suppressed" => Some(Self::DedupeSuppressed),
             _ => None,
         }
     }

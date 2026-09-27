@@ -13,6 +13,7 @@ use crate::outbound::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionSink,
 };
 use crate::outbound_intent_ledger::{IntentDispatchResult, IntentEscalationReason, IntentState};
+use crate::receipt::ReceiptRecord;
 
 pub(super) struct EffectInput<'a, S> {
     pub(super) vault: &'a Vault,
@@ -24,6 +25,7 @@ pub(super) struct EffectInput<'a, S> {
     pub(super) attempt_id: AttemptId,
     pub(super) idempotency_supported: bool,
     pub(super) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    pub(super) suppression_receipt: Option<ReceiptRecord>,
 }
 
 pub(super) fn execute_admitted<S: OutboundExecutionSink>(
@@ -39,6 +41,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         attempt_id,
         idempotency_supported,
         verified_actor,
+        suppression_receipt,
     } = input;
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -52,6 +55,8 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         budget_class: crate::outbound_intent_ledger::BudgetClass::Send,
         authorization: crate::outbound_chokepoint::PreparedAuthorization::None,
         verified_actor,
+        dedupe_key: request.intent.dedupe_key.clone(),
+        suppression_receipt,
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);
@@ -82,11 +87,15 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
             )));
         }
     };
-    let outcome = outbound_effect_outcome(
-        &effect_result.dispatch,
-        transport.execution.as_ref(),
-        gate_outcome_kind,
-    );
+    let outcome = if effect_result.dedupe_suppressed {
+        OutboundDispatchOutcome::Suppressed
+    } else {
+        outbound_effect_outcome(
+            &effect_result.dispatch,
+            transport.execution.as_ref(),
+            gate_outcome_kind,
+        )
+    };
     // A replay has no new decision id; never invent a non-queryable gate ref.
     Ok(DispatchVerdict {
         gate_decision_ref: effect_result.gate_decision_id,
@@ -97,6 +106,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         effect_state: effect_result.dispatch.state,
         outcome,
         execution: transport.execution,
+        suppression_receipt: effect_result.suppression_receipt,
     })
 }
 

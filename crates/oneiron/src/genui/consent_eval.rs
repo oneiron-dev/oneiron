@@ -107,7 +107,7 @@ pub fn consent_action_id_offers_duration(action_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentSurface {
-    EiriConversation,
+    CompanionConversation,
     Dashboard,
     SharedSlack,
     McpUi,
@@ -118,7 +118,7 @@ impl ConsentSurface {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::EiriConversation => "eiri_conversation",
+            Self::CompanionConversation => "companion_conversation",
             Self::Dashboard => "dashboard",
             Self::SharedSlack => "shared_slack",
             Self::McpUi => "mcp_ui",
@@ -128,15 +128,10 @@ impl ConsentSurface {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "identity", rename_all = "snake_case")]
+#[serde(deny_unknown_fields, tag = "identity", rename_all = "snake_case")]
 pub enum ConsentActorIdentity {
-    SurfaceActor {
-        actor_ref: String,
-    },
-    VoicePath {
-        speaker_ref: String,
-        owner_voice_print_verified: bool,
-    },
+    SurfaceActor { actor_ref: String },
+    VoicePath { speaker_ref: String },
 }
 
 impl ConsentActorIdentity {
@@ -148,35 +143,25 @@ impl ConsentActorIdentity {
         }
     }
 
+    /// A voice label is never a principal credential, even when the engine
+    /// matched an enrolled print. Only an authenticated account/device actor
+    /// can confirm a widening grant.
     #[must_use]
     pub fn authenticates_principal(&self, principal_ref: &str) -> bool {
-        if principal_ref.trim().is_empty() || self.actor_ref().trim().is_empty() {
-            return false;
-        }
-        match self {
-            Self::SurfaceActor { actor_ref } => actor_ref == principal_ref,
-            Self::VoicePath {
-                speaker_ref,
-                owner_voice_print_verified,
-            } => *owner_voice_print_verified && speaker_ref == principal_ref,
-        }
+        !principal_ref.trim().is_empty()
+            && matches!(self, Self::SurfaceActor { actor_ref } if !actor_ref.trim().is_empty() && actor_ref == principal_ref)
     }
 
-    /// Whether this claimed actor matches a store-authenticated owner handle.
-    ///
-    /// Consent action evaluation uses this door: neither actor text nor the
-    /// caller-deserialized voice boolean is authority. The handle can only come
-    /// from [`crate::Vault::authenticate_owner`].
+    /// A store-authenticated owner handle and an account/device actor are both
+    /// necessary. A voice claim cannot borrow a handle from another channel.
     #[must_use]
     pub fn authenticates_owner(
         &self,
         principal_ref: &str,
         authenticated_owner: &AuthenticatedOwner,
     ) -> bool {
-        !principal_ref.trim().is_empty()
-            && !self.actor_ref().trim().is_empty()
-            && authenticated_owner.principal_ref() == principal_ref
-            && self.actor_ref() == principal_ref
+        authenticated_owner.principal_ref() == principal_ref
+            && self.authenticates_principal(principal_ref)
     }
 }
 
@@ -332,7 +317,7 @@ pub fn calendar_grant_mint_intent(
     })
 }
 
-pub(super) fn append_eirispec_actions(
+pub(super) fn append_care_register_actions(
     elements: &mut serde_json::Map<String, Value>,
     root_children: &mut Vec<String>,
     actions: &[Of336ActionDescriptor],
@@ -446,7 +431,7 @@ pub(super) fn noop_policy_rejection(
 pub(super) const fn widening_grant_surface_is_eligible(surface: ConsentSurface) -> bool {
     matches!(
         surface,
-        ConsentSurface::EiriConversation | ConsentSurface::Dashboard | ConsentSurface::McpUi
+        ConsentSurface::CompanionConversation | ConsentSurface::Dashboard | ConsentSurface::McpUi
     )
 }
 
