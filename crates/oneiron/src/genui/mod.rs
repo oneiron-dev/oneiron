@@ -8,8 +8,11 @@ mod consent_cards;
 mod consent_eval;
 mod failure_card;
 mod failure_card_validation;
+mod project_proposal;
+pub(crate) use failure_card_validation::require_diagnosed_route;
 mod protocol;
 mod receipt_view;
+mod voice_offer;
 
 pub use self::consent_cards::{
     BundleApprovalScope, BundleApproveCard, BundleSendItem, ConsentAskCard, ConsentScopeEscalator,
@@ -26,6 +29,10 @@ pub use self::failure_card::{
     FailureDiagnosisState, HealerQaEntryRef, HealerQaFeed, SURFACED_FAILURE_CARD_SCHEMA_VERSION,
     SurfacedFailureCard, SurfacedFailureCardInput, surfaced_failure_card,
 };
+pub use self::project_proposal::{
+    PROJECT_PROPOSAL_MINT_ACTION_ID, ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard,
+    ProjectProposalPicks,
+};
 pub use self::protocol::{
     OF336_CARD_CATALOG_VERSION, OF336_MCP_UI_MIME, OF336_PROTOCOL_VERSION, Of336ActionDescriptor,
     Of336Component, Of336ComponentKind, Of336RenderedComponent, Of336SurfaceAdapter,
@@ -34,6 +41,7 @@ pub use self::receipt_view::{
     ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution,
     resolve_commitment_receipt_link,
 };
+pub use self::voice_offer::VoiceGrantOffer;
 
 #[cfg(test)]
 mod tests;
