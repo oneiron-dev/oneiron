@@ -126,7 +126,7 @@
      "purpose": "Durable request/response lifecycle",
      "surface": {
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -10276,7 +10276,7 @@
      "path": "src/companion/vault.rs",
      "purpose": "Vault access-grant query for a companion PERSON profile",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -12248,6 +12248,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/conversation/preview.rs",
+     "purpose": "Visible text projection over a checked selected path or the current ChildOf writer",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SessionMode",
       "SessionPresence"
@@ -12294,7 +12304,7 @@
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -12355,7 +12365,7 @@
      "path": "src/conversation_dag/mod.rs",
      "purpose": "Conversation DAG topology, local HEAD state and exact scope resolution",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 1,
       "re-export": 2
      }
@@ -12390,6 +12400,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation_dag/retained_path.rs",
+     "purpose": "Read-only selected topology over retained TURN and SESSION headers",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation_dag/scopes.rs",
      "purpose": "Exact, capped scope resolution over a single transaction snapshot",
      "surface": {
@@ -12408,7 +12428,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/conversation_dag/tests/mod.rs",
@@ -12447,6 +12467,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AddressMode",
       "AppendRecord",
       "AppendedRecord",
       "DagPage",
@@ -12458,7 +12479,7 @@
      "path": "src/conversation_dag/types.rs",
      "purpose": "Door inputs and snapshot results",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "struct": 6
      }
     },
@@ -26766,7 +26787,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -27061,7 +27082,7 @@
      "purpose": "Canonical Layer-1 recovery, validated rebuilds and bounded repair",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 7,
       "mod": 1,
@@ -27255,13 +27276,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/validation.rs",
      "purpose": "Fail-closed whole-payload validation before a recovery mutation",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -36408,14 +36429,14 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37327,7 +37348,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2214,
+   "source_files": 2216,
    "test_files": 757
   },
   "oneiron-android": {
@@ -41603,10 +41624,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/companion/lists.rs",
+     "purpose": "Bounded, authorization-checked companion list projections",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/companion/mod.rs",
      "purpose": "Companion control-plane surface: access grants and psych-mirror profiles",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -41766,7 +41797,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -41786,7 +41817,7 @@
      "path": "src/api/conversations.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -41836,7 +41867,7 @@
      "path": "src/api/core/query.rs",
      "purpose": "Query/list/capability routes and their paging helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 16
      }
     },
     {
@@ -42584,7 +42615,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/conversation_dag.rs",
@@ -42600,7 +42631,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/core_memory_conversations.rs",
@@ -44799,7 +44830,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 160,
+     "files": 161,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -44976,7 +45007,7 @@
    },
    "over_bar": 0,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 235,
+   "source_files": 236,
    "test_files": 98
   },
   "oneiron-uniffi": {
