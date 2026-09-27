@@ -93,6 +93,11 @@ pub fn update_saved_query(
         let mut record =
             owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
         require_expected_version(&record, request.expected_definition_version)?;
+        if super::memory_watch::is_memory_watch_record(&record) {
+            return Err(invalid(
+                "memory watch definitions are changed only through the watch flag",
+            ));
+        }
         let definition = SavedQueryDefinition {
             schema_version: record.definition.schema_version,
             owner_actor: record.definition.owner_actor,
@@ -105,6 +110,7 @@ pub fn update_saved_query(
             // clears the pause. Archived is terminal and is not reopened here.
             lifecycle: match record.definition.lifecycle {
                 SavedQueryLifecycle::Archived => SavedQueryLifecycle::Archived,
+                SavedQueryLifecycle::Disabled => SavedQueryLifecycle::Disabled,
                 SavedQueryLifecycle::Active | SavedQueryLifecycle::Paused { .. } => {
                     SavedQueryLifecycle::Active
                 }
@@ -139,6 +145,11 @@ pub fn archive_saved_query(
         let mut record =
             owned_record_in_txn(vault, wtxn, authenticated_principal, query_ref, kind)?;
         require_expected_version(&record, expected_definition_version)?;
+        if super::memory_watch::is_memory_watch_record(&record) {
+            return Err(invalid(
+                "memory watch definitions are changed only through the watch flag",
+            ));
+        }
         record.definition.definition_version = next_version(record.definition.definition_version)?;
         record.definition.lifecycle = SavedQueryLifecycle::Archived;
         record.updated_at = now;
