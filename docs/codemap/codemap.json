@@ -1083,7 +1083,7 @@
       "AnnotationConversationNode"
      ],
      "path": "src/anchored_annotation/conversation.rs",
-     "purpose": "Composition with existing conversation MESSAGE nodes",
+     "purpose": "Composition with existing conversation DAG TURN nodes",
      "surface": {
       "enum": 1,
       "fn": 3,
@@ -2051,7 +2051,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_tests.rs",
@@ -10392,7 +10392,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WidenKind",
@@ -10402,7 +10402,7 @@
      "purpose": "Propose-only authority widening",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -20607,7 +20607,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/m8_forward_oracle/r1689_threads.rs",
-     "purpose": "ONE-1689 RT-08: annotation-thread/DAG-wiring and per-thread state-machine oracles plus arming seams",
+     "purpose": "ONE-1689 RT-08: admitted per-thread replies and anchored room-DAG wiring",
      "surface": {}
     },
     {
@@ -22802,6 +22802,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/admission.rs",
+     "purpose": "Pure execute-time admission: one decision consumed by freeze and gate paths",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/effect.rs",
+     "purpose": "Admitted effect: only this lane enters the replay-first chokepoint",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/frozen_payload.rs",
      "purpose": "Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes",
      "surface": {
@@ -22812,15 +22832,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/govern.rs",
+     "purpose": "The governance-only parked lane: one durable gate transaction, no budget debit",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "re-export": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "OutboundDispatchPipeline"
@@ -22857,6 +22887,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/seat_policy.rs",
+     "purpose": "Connector-neutral seat wall and its host-supplied LinkedIn policy adapter",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/sender_identity.rs",
      "purpose": "—",
      "surface": {
@@ -22882,6 +22922,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/verdict.rs",
+     "purpose": "Typed verdict from either the effect lane or the govern-only parked lane",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -22964,13 +23014,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -23104,7 +23154,7 @@
      "path": "src/outbound/window_door.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -27628,12 +27678,22 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/session_overlay/hygiene_tests.rs",
+     "purpose": "Allocation-boundary teardown observer for session-owned buffers",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/session_overlay/journal.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -27653,7 +27713,7 @@
      "path": "src/session_overlay/mod.rs",
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -28780,9 +28840,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "RejectedSkillEdit",
+      "RejectedSkillEditReason",
       "SkillEditDraft",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
@@ -28792,9 +28854,9 @@
      "surface": {
       "const": 3,
       "crate-vis": 2,
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -28917,7 +28979,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -34908,7 +34970,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 33,
+     "files": 38,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35160,7 +35222,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35407,8 +35469,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2089,
-   "test_files": 717
+   "source_files": 2094,
+   "test_files": 718
   },
   "oneiron-android": {
    "files": [
@@ -35741,6 +35803,16 @@
      "purpose": "Shared measured answerer scaffold",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/model_scaffold/offline.rs",
+     "purpose": "Stage-aware offline accounting for the measured scaffold",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -36554,7 +36626,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36619,7 +36691,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 97,
+   "source_files": 98,
    "test_files": 18
   },
   "oneiron-driver": {
