@@ -50,7 +50,7 @@ fn configure_seat_vault(vault: &Vault) -> Result<ModelId> {
         verdict: None,
         seat_policy: None,
     };
-    crate::test_util::pin_model_manifest(&vault, &manifest)?;
+    crate::test_util::pin_model_manifest(vault, &manifest)?;
     vault.put_model_registry_row(&ModelRegistryRow {
         version: 1,
         wire: ModelWireFormat::OwnServer,
