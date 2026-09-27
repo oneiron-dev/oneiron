@@ -332,6 +332,13 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Binds capture to a host-owned query packet or session message without
+    /// persisting its query text in telemetry.
+    pub fn replay_query_ref(mut self, query_ref: impl Into<String>) -> Self {
+        self.pipeline = self.pipeline.replay_query_ref(query_ref);
+        self
+    }
+
     /// Binds captured retrieval inputs to an immutable host-owned corpus snapshot.
     pub fn corpus_snapshot_ref(mut self, snapshot_ref: impl Into<String>) -> Self {
         self.pipeline = self.pipeline.corpus_snapshot_ref(snapshot_ref);

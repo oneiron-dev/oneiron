@@ -11269,8 +11269,18 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 2,
-      "fn": 57,
+      "fn": 58,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/replay.rs",
+     "purpose": "Opt-in pack-assembly and terminal-projection settings for offline replay",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -23436,7 +23446,7 @@
      "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
      "surface": {
       "crate-vis": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -34122,7 +34132,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35062,7 +35072,7 @@
    },
    "over_bar": 8,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2071,
+   "source_files": 2072,
    "test_files": 710
   },
   "oneiron-android": {

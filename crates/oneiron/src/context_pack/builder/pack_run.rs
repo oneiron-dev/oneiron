@@ -104,6 +104,7 @@ pub(in crate::context_pack) struct ContextPackRun<'a> {
     pub(in crate::context_pack) total_in_scope: usize,
     pub(in crate::context_pack) clamped_out: u64,
     pub(in crate::context_pack) capture_replay: bool,
+    pub(in crate::context_pack) replay_config: Option<serde_json::Value>,
 }
 
 pub struct UnfinalizedContextPack<'a> {
@@ -113,6 +114,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) total_in_scope: usize,
     pub(super) clamped_out: u64,
     pub(super) capture_replay: bool,
+    pub(super) replay_config: Option<serde_json::Value>,
 }
 
 impl UnfinalizedContextPack<'_> {
@@ -162,6 +164,11 @@ impl UnfinalizedContextPack<'_> {
                 };
             }
         };
+        let mut replay_config = self.replay_config.take();
+        if let Some(value) = replay_config.as_mut() {
+            value["projection"] = super::replay::projection_config(config);
+            value["terminal_kind"] = "projected_json".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             self.telemetry,
             self.telemetry_run_id.take(),
@@ -176,6 +183,7 @@ impl UnfinalizedContextPack<'_> {
                 &surfaced_result_ids,
             ),
             pack_output,
+            replay_config,
         )
         .ok()
         .flatten();
@@ -227,6 +235,10 @@ impl UnfinalizedContextPack<'_> {
                 return Err(error);
             }
         };
+        let mut replay_config = self.replay_config.take();
+        if let Some(value) = replay_config.as_mut() {
+            value["terminal_kind"] = "structured".into();
+        }
         if let Some(run_id) = telemetry_run_id
             && let Err(error) = self.telemetry.finalize(RetrievalRunFinalize {
                 run_id,
@@ -236,6 +248,7 @@ impl UnfinalizedContextPack<'_> {
                 surfaced_result_ids: &surfaced_result_ids,
                 empty_reason: context_pack_empty_reason(&self.value, &surfaced_result_ids),
                 pack_output,
+                pack_config: replay_config,
             })
         {
             discard_failed_context_pack_telemetry(self.telemetry, Some(run_id));

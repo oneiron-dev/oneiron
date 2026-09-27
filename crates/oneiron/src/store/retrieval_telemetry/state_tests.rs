@@ -80,6 +80,7 @@ fn provisional_turn_runs_publish_only_on_finalize() -> crate::Result<()> {
             surfaced_result_ids: &[],
             empty_reason: None,
             pack_output: None,
+            pack_config: None,
         })?;
     assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, [run.run_id]);
     Ok(())
@@ -319,6 +320,7 @@ fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> cr
         .context_pack()
         .search_text("replay marker", 5)
         .corpus_snapshot_ref("eval://corpus/fixture-v1")
+        .replay_query_ref("eval://query/turn-3")
         .retrieval_turn(turn)
         .capture_retrieval_trace(true)
         .run_serialized_with_telemetry()?;
@@ -326,12 +328,17 @@ fn opt_in_turn_round_trips_replay_inputs_and_exact_pack_with_fork_lookup() -> cr
     let row = vault.retrieval_run(run_id)?.expect("stored turn");
     assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, vec![run_id]);
     let inputs = row.replay_inputs.expect("complete query inputs");
-    assert_eq!(
-        inputs.query["text"],
-        serde_json::json!(["replay marker", 5])
+    assert_eq!(inputs.query_ref.as_deref(), Some("eval://query/turn-3"));
+    assert_eq!(inputs.config["channels"]["text_limit"], 5);
+    assert!(
+        !serde_json::to_string(&inputs)
+            .unwrap()
+            .contains("replay marker")
     );
     assert!(inputs.config["bm25"]["fields"].is_array());
     assert_eq!(inputs.config["corpus_scope"]["kind"], "all");
+    assert_eq!(inputs.config["pack"]["assembly"]["edge_hop"], 0);
+    assert_eq!(inputs.config["pack"]["projection"]["format"], "Json");
     assert_eq!(
         inputs.corpus_snapshot_ref.as_deref(),
         Some("eval://corpus/fixture-v1")
@@ -406,5 +413,60 @@ fn raw_pack_snapshot_preserves_unprojected_fields_and_resolved_config() -> crate
         restored["stats"]["candidates_considered"],
         raw.value.stats.candidates_considered
     );
+    Ok(())
+}
+
+#[test]
+fn opted_in_no_channel_and_expired_deadline_publish_empty_turns() -> crate::Result<()> {
+    let (_dir, vault) = open_test_vault_with(VaultConfig::default());
+    let deadline = crate::retrieval_depth::RetrievalDeadline::at(
+        std::time::Instant::now() - std::time::Duration::from_secs(1),
+    );
+    for (index, skip_text) in [false, true].into_iter().enumerate() {
+        let turn = RetrievalTurn {
+            turn_id: [index as u8 + 30; 16],
+            episode_id: [42; 16],
+            turn_idx: index as u64,
+        };
+        let mut builder = vault
+            .context_pack()
+            .retrieval_turn(turn)
+            .replay_query_ref(format!("eval://queries/empty-{index}"))
+            .corpus_snapshot_ref("eval://corpus/empty")
+            .capture_retrieval_trace(true);
+        if skip_text {
+            builder = builder
+                .search_text("private unexecuted query", 5)
+                .deadline(&deadline);
+        }
+        let result = builder.run_with_telemetry()?;
+        assert!(result.value.results.is_empty());
+        let run_id = result.run_id.expect("opted-in empty run has a row");
+        assert_eq!(vault.retrieval_runs_by_turn(&turn.turn_id)?, vec![run_id]);
+        let row = vault.retrieval_run(run_id)?.unwrap();
+        let inputs = row.replay_inputs.expect("query-free input reference");
+        assert_eq!(
+            inputs.query_ref,
+            Some(format!("eval://queries/empty-{index}"))
+        );
+        assert_eq!(
+            inputs.config["channels"]["text_limit"],
+            if skip_text {
+                serde_json::json!(5)
+            } else {
+                serde_json::Value::Null
+            }
+        );
+        assert!(
+            !serde_json::to_string(&inputs)
+                .unwrap()
+                .contains("private unexecuted query")
+        );
+        assert!(row.result_ids.is_empty());
+        assert!(row.pack_output.is_some());
+    }
+    assert!(deadline.was_cut_short());
+    let uncaptured = vault.context_pack().run_with_telemetry()?;
+    assert!(uncaptured.run_id.is_none());
     Ok(())
 }

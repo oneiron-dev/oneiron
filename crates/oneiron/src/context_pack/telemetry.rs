@@ -22,6 +22,7 @@ pub(super) fn finalize_context_pack_telemetry(
     surfaced_result_ids: &[[u8; 16]],
     empty_reason: Option<String>,
     pack_output: Option<RetrievalPackOutput>,
+    pack_config: Option<serde_json::Value>,
 ) -> Result<Option<RetrievalRunId>> {
     let Some(run_id) = telemetry_run_id else {
         return Ok(None);
@@ -34,6 +35,7 @@ pub(super) fn finalize_context_pack_telemetry(
         surfaced_result_ids,
         empty_reason,
         pack_output,
+        pack_config,
     }) {
         Ok(()) => Ok(Some(run_id)),
         Err(error) => {

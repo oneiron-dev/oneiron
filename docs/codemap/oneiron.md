@@ -902,7 +902,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/builder/assembly.rs` | src | m | 8 fn · 2 crate-vis | — | Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal |
 | `src/context_pack/builder/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | The fluent [`ContextPackBuilder`] query API and its assembly pipeline |
 | `src/context_pack/builder/pack_run.rs` | src | s | 2 struct · 4 fn · 6 crate-vis | SerializedContextPack, UnfinalizedContextPack | What a pack run produces and how its telemetry row is finalized or discarded |
-| `src/context_pack/builder/query.rs` | src | m | 1 struct · 57 fn · 2 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
+| `src/context_pack/builder/query.rs` | src | m | 1 struct · 58 fn · 2 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
+| `src/context_pack/builder/replay.rs` | src | s | 2 crate-vis | — | Opt-in pack-assembly and terminal-projection settings for offline replay |
 | `src/context_pack/builder/scoped.rs` | src | s | 1 crate-vis | — | Candidate narrowing passthrough to the existing retrieval pipeline |
 | `src/context_pack/capability_tests.rs` | test | s | — | — | Actual retrieval split: turn discoveries cannot displace memory rows |
 | `src/context_pack/edge_walk.rs` | src | s | 8 crate-vis | — | Edge loading and multi-hop neighbor expansion during pack assembly |
@@ -1886,7 +1887,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | s | 2 crate-vis | — | — |
 | `src/pipeline/builder.rs` | src | m | 1 struct · 43 fn · 7 crate-vis | PipelineBuilder | — |
-| `src/pipeline/builder_capture.rs` | src | s | 4 fn · 3 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
+| `src/pipeline/builder_capture.rs` | src | s | 5 fn · 3 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 1 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | s | 8 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | m | 11 crate-vis | — | — |

@@ -2718,6 +2718,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         None,
+        None,
     )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
@@ -2884,6 +2885,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
         None,
+        None,
     )?;
 
     assert_eq!(
@@ -2959,6 +2961,7 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
         None,
     )
     .expect_err("a room's failed finalize fails the retrieval");
@@ -4544,5 +4547,101 @@ fn live_memories_keep_foreign_world_fences_without_edges() -> Result<()> {
         assert!(guest_text.contains("tier=index-only"));
         assert!(!guest_text.contains("\"v\""));
     }
+    Ok(())
+}
+
+#[test]
+fn non_default_pack_replay_config_matches_neighbors_vectors_and_serialized_bytes() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let (root, child, leaf) = (EntityId::now(), EntityId::now(), EntityId::now());
+    let body = msgpack_entity(serde_json::json!({
+        "txt": "replay-root-marker", "spkr": "user", "at": 1_u64,
+    }));
+    vault
+        .batch()
+        .put(
+            &root,
+            ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &body,
+        )
+        .text(&root, &[("body", "replay-root-marker")])
+        .vector(&root, &[1.0, 0.0, 0.0, 0.0])
+        .commit()?;
+    put_text_entity(
+        &vault,
+        &child,
+        ENTITY_TYPE_TURN,
+        "child",
+        serde_json::json!({"txt": "child"}),
+    )?;
+    put_text_entity(
+        &vault,
+        &leaf,
+        ENTITY_TYPE_TURN,
+        "leaf",
+        serde_json::json!({"txt": "leaf"}),
+    )?;
+    vault.put_edge(&root, crate::edge::EdgeKind::Supports, &child, 1.0)?;
+    vault.put_edge(&child, crate::edge::EdgeKind::Supports, &leaf, 1.0)?;
+    let source = super::source_ranking::SourceRankingPolicy {
+        pack: "replay-test".into(),
+        ..Default::default()
+    };
+    let build = || {
+        vault
+            .context_pack()
+            .search_text("replay-root-marker", 10)
+            .edge_hop(2)
+            .include_vectors(true)
+            .field_profile(FieldProfile::Full)
+            .format(PackFormat::Plaintext)
+            .merge_neighbors(false)
+            .include_stats(true)
+            .token_budget(512)
+            .max_field_chars(120)
+            .source_ranking(source.clone())
+            .replay_query_ref("eval://queries/pack-2182")
+            .corpus_snapshot_ref("eval://corpus/pack-2182")
+            .capture_retrieval_trace(true)
+    };
+    let raw = build().run_with_telemetry()?;
+    let ids: Vec<_> = raw.value.neighbors.iter().map(|row| row.id).collect();
+    assert!(ids.contains(&child) && ids.contains(&leaf));
+    assert!(
+        raw.value
+            .results
+            .iter()
+            .any(|row| row.id == root && row.vector.is_some())
+    );
+    let row = vault
+        .retrieval_run(raw.run_id.expect("stored raw run"))?
+        .unwrap();
+    let inputs = row.replay_inputs.expect("resolved pack config");
+    let config = &inputs.config["pack"];
+    assert_eq!(config["assembly"]["edge_hop"], 2);
+    assert_eq!(config["assembly"]["hydrate"], true);
+    assert_eq!(config["assembly"]["include_vectors"], true);
+    assert_eq!(config["assembly"]["source_ranking"]["pack"], "replay-test");
+    assert_eq!(config["projection"]["format"], "Plaintext");
+    assert_eq!(config["projection"]["token_budget"], 512);
+    assert_eq!(config["terminal_kind"], "structured");
+    let output = row.pack_output.unwrap();
+    let restored: serde_json::Value = rmp_serde::from_slice(&output.bytes).unwrap();
+    assert_eq!(
+        restored["results"][0]["vector"],
+        serde_json::json!([1.0, 0.0, 0.0, 0.0])
+    );
+    assert_eq!(restored["neighbors"].as_array().unwrap().len(), ids.len());
+    let serialized = build().run_serialized_with_telemetry()?;
+    let row = vault
+        .retrieval_run(serialized.run_id.expect("stored serialized run"))?
+        .unwrap();
+    assert_eq!(
+        row.replay_inputs.unwrap().config["pack"]["terminal_kind"],
+        "serialized"
+    );
+    assert_eq!(row.pack_output.unwrap().bytes, serialized.value);
     Ok(())
 }

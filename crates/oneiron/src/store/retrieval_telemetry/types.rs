@@ -379,6 +379,7 @@ pub(crate) struct RetrievalRunFinalize<'a> {
     pub(crate) surfaced_result_ids: &'a [[u8; 16]],
     pub(crate) empty_reason: Option<String>,
     pub(crate) pack_output: Option<super::state::RetrievalPackOutput>,
+    pub(crate) pack_config: Option<serde_json::Value>,
 }
 
 impl RetrievalRunRecord {

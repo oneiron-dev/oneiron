@@ -74,6 +74,10 @@ impl<'a> ContextPackBuilder<'a> {
                 return Err(error);
             }
         };
+        let mut replay_config = run.replay_config;
+        if let Some(config) = replay_config.as_mut() {
+            config["terminal_kind"] = "structured".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -83,6 +87,7 @@ impl<'a> ContextPackBuilder<'a> {
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
             pack_output,
+            replay_config,
         )?;
         Ok((
             RetrievalWithTelemetry {
@@ -128,6 +133,7 @@ impl<'a> ContextPackBuilder<'a> {
             total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
             capture_replay: run.capture_replay,
+            replay_config: run.replay_config,
         })
     }
 
@@ -148,6 +154,12 @@ impl<'a> ContextPackBuilder<'a> {
         // suppressing capture is the fail-closed form of scrubbing every
         // stage. OwnerAlone (and no-context) assemblies keep the caller's
         // trace setting unchanged.
+        let replay_config = (self.pipeline.captures_replay()
+            && self
+                .disclosure
+                .as_ref()
+                .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
+        .then(|| self.pack_replay_config());
         let mut pipeline = self.pipeline;
         if self
             .disclosure
@@ -506,6 +518,7 @@ impl<'a> ContextPackBuilder<'a> {
                 total_in_scope,
                 clamped_out,
                 capture_replay,
+                replay_config,
             })
         })();
 
@@ -543,6 +556,10 @@ impl<'a> ContextPackBuilder<'a> {
         };
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
+        let mut replay_config = run.replay_config;
+        if let Some(value) = replay_config.as_mut() {
+            value["terminal_kind"] = "serialized".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -556,6 +573,7 @@ impl<'a> ContextPackBuilder<'a> {
                     format: format!("{:?}", config.format),
                     bytes: bytes.clone(),
                 }),
+            replay_config,
         )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: run.pack.retrieval_quality,

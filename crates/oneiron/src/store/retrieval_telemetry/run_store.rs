@@ -454,6 +454,7 @@ fn stage_context_pack_retrieval_run_finalize(
         surfaced_result_ids,
         empty_reason,
         pack_output,
+        pack_config,
     } = finalize;
     let key = retrieval_run_key(run_id);
     let provisional_key = retrieval_run_provisional_key(run_id);
@@ -498,6 +499,11 @@ fn stage_context_pack_retrieval_run_finalize(
     }
     record.empty_reason = empty_reason;
     record.pack_output = pack_output;
+    if let Some(pack_config) = pack_config
+        && let Some(inputs) = record.replay_inputs.as_mut()
+    {
+        inputs.config["pack"] = pack_config;
+    }
     super::turn_index::put(target, wtxn, &record)?;
     let value = encode_retrieval_run(&record)?;
     target.vault_meta().put(wtxn, &key, &value)?;

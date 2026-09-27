@@ -37,6 +37,14 @@ impl PipelineBuilder<'_> {
         self
     }
 
+    /// Names a host-owned, access-controlled query packet or session message.
+    /// It must contain any generated queries and vectors needed for exact replay.
+    /// The telemetry row stores this reference, never the query or its hash.
+    pub fn replay_query_ref(mut self, query_ref: impl Into<String>) -> Self {
+        self.replay_query_ref = Some(query_ref.into());
+        self
+    }
+
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.capture_retrieval_trace = enabled;
         self

@@ -379,9 +379,24 @@ impl PipelineBuilder<'_> {
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
                     retrieval_trace: None,
-                    replay_inputs: None,
+                    replay_inputs: capture_retrieval_trace.then(|| {
+                        capture_replay_inputs(
+                            self,
+                            bm25_config,
+                            blend_weights,
+                            authority_filter,
+                            world_authority.as_ref(),
+                            hyde_expansion,
+                            overrides.extra_text_queries,
+                            overrides.widen_channel_limits,
+                            overrides.skip_ret01_abstain,
+                            occurred_range,
+                            temporal_now,
+                            rerank_query,
+                        )
+                    }),
                     ppr_expand_executed: false,
-                    early_empty_no_telemetry: true,
+                    early_empty_no_telemetry: !capture_retrieval_trace,
                 });
             }
 

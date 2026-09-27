@@ -29,11 +29,11 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     temporal_now: u64,
     rerank_query: Option<&str>,
 ) -> RetrievalReplayInputs {
-    let ids = |seed: &Option<(Vec<crate::EntityId>, u32)>| {
-        seed.as_ref().map(|(ids, steps)| {
-            json!({"ids": ids.iter().map(crate::EntityId::to_hex).collect::<Vec<_>>(),
-                   "steps": steps})
-        })
+    // Seed identities and channel payloads belong in the authorized query
+    // packet, not in the local telemetry ledger.
+    let seed_shape = |seed: &Option<(Vec<crate::EntityId>, u32)>| {
+        seed.as_ref()
+            .map(|(ids, steps)| json!({"count": ids.len(), "steps": steps}))
     };
     let corpus_scope = match &builder.corpus_scope {
         CorpusScope::All => json!({"kind": "all"}),
@@ -65,24 +65,37 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         })
     });
     RetrievalReplayInputs {
-        query: json!({
-            "vector": builder.vector_search,
-            "text": builder.text_search,
-            "phonetic_codes": builder.phonetic_search,
-            "temporal": temporal,
-            "ppr_search": ids(&builder.ppr_search),
-            "ppr_expand": ids(&builder.ppr_expand),
-            "rerank_query": rerank_query,
-            "hyde_expansion": hyde_expansion.map(|expansion| json!({
-                "grounded_query": expansion.grounded_query,
-                "hypothetical_answer": expansion.hypothetical_answer,
-                "embedding": expansion.embedding,
-                "subqueries": expansion.subqueries,
-            })),
-            "retry_queries": extra_text_queries,
-        }),
+        query_ref: builder.replay_query_ref.clone(),
         config: json!({
+            "channels": {
+                "vector_limit": builder.vector_search.as_ref().map(|(_, limit)| limit),
+                "text_limit": builder.text_search.as_ref().map(|(_, limit)| limit),
+                "phonetic_code_count": builder.phonetic_search.as_ref().map(Vec::len),
+                "temporal": temporal,
+                "ppr_search": seed_shape(&builder.ppr_search),
+                "ppr_expand": seed_shape(&builder.ppr_expand),
+                "rerank_query_present": rerank_query.is_some(),
+                "hyde_expansion_present": hyde_expansion.is_some(),
+                "hyde_subquery_count": hyde_expansion.map(|expansion| expansion.subqueries.len()),
+                "retry_query_count": extra_text_queries.len(),
+            },
             "bm25": {"k1": bm25.k1, "formula": formula, "fields": fields},
+            "ppr_vad_alpha": crate::ppr::canonical_vad_alpha(builder.vault.config.ppr_vad_alpha),
+            "ppr_community": {
+                "beta": builder.vault.config.ppr_community.beta,
+                "gamma": builder.vault.config.ppr_community.gamma,
+                "multiplier_cap": builder.vault.config.ppr_community.multiplier_cap,
+                "max_graph_fraction": builder.vault.config.ppr_community.max_graph_fraction,
+                "max_top_k_fraction": builder.vault.config.ppr_community.max_top_k_fraction,
+                "session_usage": builder.community_session_usage.map(|usage| {
+                    let mut entries: Vec<_> = usage.iter().map(|(id, count)| (id.to_hex(), count)).collect();
+                    entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                    entries
+                }),
+            },
+            "recency_half_lives": super::super::types::RETRIEVAL_RECENCY_HALF_LIFE_DAYS_BY_TYPE,
+            "default_recency_half_life": super::super::types::DEFAULT_RECENCY_HALF_LIFE_DAYS,
+            "fast_dims": builder.vault.config.fast_dims,
             "blend_weights": blend_weights,
             "authority": {
                 "entity_types": authority.entity_types,
@@ -100,7 +113,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             })),
             "rerank": builder.rerank.as_ref().map(|(reranker, options)| json!({
                 "scorer": reranker.id(), "top_n": options.top_n,
-                "query_override": options.query,
+                "query_override_present": options.query.is_some(),
             })),
             "hyde": builder.hyde.as_ref().map(|(expander, _, options)| json!({
                 "expander": expander.id(), "channel_limit": options.channel_limit,
@@ -108,6 +121,8 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             })),
             "retry_widen_limits": widen_channel_limits,
             "skip_ret01_abstain": skip_ret01_abstain,
+            "deadline_present": builder.deadline.is_some(),
+            "deadline_cut_short": builder.deadline.is_some_and(crate::retrieval_depth::RetrievalDeadline::was_cut_short),
             "candidate_filter_present": builder.candidate_filter.is_some(),
             "corpus_scope": corpus_scope,
             "world_scope": format!("{:?}", builder.world_scope),
