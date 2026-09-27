@@ -73,11 +73,30 @@ impl CommOptOutPosture {
     }
 }
 
+/// Restrict-only typed sheet answer count for a vault, artifact, or sheet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SheetAnswerLimitRow {
+    pub(crate) artifact_ref: Option<String>,
+    pub(crate) sheet: Option<String>,
+    pub(crate) max_count: u64,
+}
+
+/// The manifest's explicit scope-composition rule. Other tokens fail decode
+/// until their admission semantics are specified and tested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SheetAnswerPrecedence {
+    NestedNarrowingHolderCappedAtVault,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
+    pub(crate) sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) untrusted_sheet_answer_limits: Vec<SheetAnswerLimitRow>,
+    pub(crate) sheet_answer_default_max_count: Option<u64>,
+    pub(crate) sheet_answer_precedence: Option<SheetAnswerPrecedence>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
