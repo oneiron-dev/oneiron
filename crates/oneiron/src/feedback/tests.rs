@@ -1017,7 +1017,7 @@ fn feedback_approval_rides_the_landed_consent_surface() {
         ConsentActorIdentity::SurfaceActor {
             actor_ref: "owner".to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         1_200,
     )
     .expect("consent action request");

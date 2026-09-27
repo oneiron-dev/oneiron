@@ -11,8 +11,8 @@ pub const PREDICATE_NAMESPACE_CORE: &str = "core";
 /// Predicate namespace for relationship-aware companion extensions.
 pub const PREDICATE_NAMESPACE_COMPANION: &str = "companion";
 
-/// Predicate namespace for Eiri persona-specific extensions.
-pub const PREDICATE_NAMESPACE_EIRI: &str = "eiri";
+/// Predicate namespace for host-defined persona extensions.
+pub const PREDICATE_NAMESPACE_PERSONA: &str = "persona";
 
 /// Predicate namespace for commitment claim records.
 pub const PREDICATE_NAMESPACE_COMMITMENT: &str = "commitment";
@@ -21,7 +21,7 @@ pub const PREDICATE_NAMESPACE_COMMITMENT: &str = "commitment";
 pub const PREDICATE_LAYER_NAMESPACES: [&str; 4] = [
     PREDICATE_NAMESPACE_CORE,
     PREDICATE_NAMESPACE_COMPANION,
-    PREDICATE_NAMESPACE_EIRI,
+    PREDICATE_NAMESPACE_PERSONA,
     PREDICATE_NAMESPACE_COMMITMENT,
 ];
 
@@ -79,7 +79,7 @@ const RESERVED_ACTOR_PREDICATE_NAMESPACE: &str = "actor";
 /// `put_reserved_claim_in_txn` — is the only author. That is what lets op
 /// replay treat a binding as evidence of who a peer is rather than as a
 /// caller's assertion. Deliberately NOT in [`CLAIM_PREDICATE_REGISTRY`]: the
-/// registry admits only public `core.*`/`companion.*`/`eiri.*` predicates.
+/// registry admits only public `core.*`/`companion.*`/`persona.*` predicates.
 pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 
 /// Per-`(actor, scope)` amendment cost: how much a decider had to edit this
@@ -89,7 +89,7 @@ pub const PREDICATE_ACTOR_PEER_BINDING: &str = "actor.peer_binding";
 /// [`PREDICATE_ACTOR_PEER_BINDING`], and written only through
 /// [`crate::actor_claims::write_actor_claim`]'s chokepoint. Never in
 /// [`CLAIM_PREDICATE_REGISTRY`]: the registry admits only public
-/// `core.*`/`companion.*`/`eiri.*` predicates, and its landed test rejects a
+/// `core.*`/`companion.*`/`persona.*` predicates, and its landed test rejects a
 /// reserved namespace outright.
 pub const PREDICATE_ACTOR_EDIT_COST: &str = "actor.edit_cost";
 
@@ -117,7 +117,7 @@ pub enum DreamerIsolationClass {
 }
 
 /// Predicate prefixes whose heads are persona-core.
-pub const PERSONA_CORE_PREFIXES: [&str; 3] = ["companion.", "eiri.persona.", "core.identity."];
+pub const PERSONA_CORE_PREFIXES: [&str; 3] = ["companion.", "persona.identity.", "core.identity."];
 
 /// Predicate prefixes whose heads are mirroring-prone.
 pub const MIRRORING_PRONE_PREFIXES: [&str; 4] =

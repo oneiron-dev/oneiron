@@ -12,7 +12,7 @@
 /// type-0 write of this predicate — the op door's and an agent's alike —
 /// through `validate_distinct_from_claim_structure`. It is deliberately
 /// NOT a `CLAIM_PREDICATE_REGISTRY` entry: that list is the core/companion/
-/// eiri LAYER schema list (`registered_predicates_carry_layer_prefix` pins
+/// persona LAYER schema list (`registered_predicates_carry_layer_prefix` pins
 /// the prefix), and `entity.*` is a family namespace, not a layer — the
 /// same reason the fifteen other predicate families validate through their
 /// own dispatch arm without a registry row. The registry gates no write

@@ -12,8 +12,8 @@ use oneiron::{
     HnswConfig, MemoriesBudget, MemoriesSection, Result, TimeRange, Vault, VaultConfig,
     context_board::project_memories_section, genui::GrantMintIntent, genui::GrantMintIntentScope,
     outbound::OutboundIntent, outbound::OutboundIntentDraft, outbound::OutboundIntentTrigger,
-    prompt::PromptRecompileStamp, prompt::resolve_session_prompt_v3,
-    prompt::workspace_prompt_package_root, receipt::ContextReceiptFields, receipt::ReceiptQuery,
+    prompt::PromptRecompileStamp, prompt::SessionPromptParts, prompt::assemble_session_prompt,
+    prompt::resolve_prompt, receipt::ContextReceiptFields, receipt::ReceiptQuery,
     receipt::ReceiptRecord, receipt::SessionLocalReceiptLog,
     receipt::append_context_receipt_fields, receipt::memories_state_ref,
     receipt::outbound_intent_receipt, registry::ENTITY_TYPE_TURN,
@@ -60,9 +60,11 @@ fn assembled_board(vault: &Vault) -> Result<MemoriesSection> {
 }
 
 fn persona_stamp() -> PromptRecompileStamp {
-    let package_root = workspace_prompt_package_root().expect("monorepo prompt package");
-    resolve_session_prompt_v3(package_root)
-        .expect("eiri v3 prompt resolves")
+    let temp = tempfile::tempdir().expect("temporary host prompt package");
+    let prompt = temp.path().join("session.md");
+    std::fs::write(&prompt, "host-provided session instructions\n").expect("write host prompt");
+    resolve_prompt(prompt, temp.path())
+        .expect("host prompt resolves")
         .stamp
 }
 
@@ -131,6 +133,67 @@ fn emit_receipt_answers_what_did_she_know_from_the_receipt_alone() -> Result<()>
     assert_eq!(
         recorded.prompt_input_ref.as_deref(),
         Some("prompt:cafe1234")
+    );
+    Ok(())
+}
+
+#[test]
+fn host_section_edits_change_receipt_prompt_identity_without_changing_file_provenance() -> Result<()>
+{
+    let (_tmp, vault) = temp_vault()?;
+    put_memory(&vault, 0x21, "matcha ritual")?;
+    let board = assembled_board(&vault)?;
+    let package = tempfile::tempdir()?;
+    let prompt = package.path().join("session.md");
+    std::fs::write(&prompt, "host-supplied standing instructions\n")?;
+
+    let assemble = |policy: &str| {
+        assemble_session_prompt(
+            &prompt,
+            package.path(),
+            SessionPromptParts {
+                activated_memory: vec!["same activated memory".to_owned()],
+                history: Vec::new(),
+                host_sections: vec![format!("# Policy\nUse policy {policy}")],
+            },
+        )
+    };
+    let first = assemble("A")?;
+    let second = assemble("B")?;
+    let repeat = assemble("A")?;
+    assert_ne!(first.system_prompt, second.system_prompt);
+    assert_eq!(first.system_prompt, repeat.system_prompt);
+    assert_eq!(
+        first.stamp.source_fingerprint,
+        second.stamp.source_fingerprint
+    );
+    assert_eq!(
+        first.stamp.resolved_fingerprint,
+        second.stamp.resolved_fingerprint
+    );
+    assert_ne!(
+        first.stamp.assembled_fingerprint,
+        second.stamp.assembled_fingerprint
+    );
+    assert_eq!(
+        first.stamp.assembled_fingerprint,
+        repeat.stamp.assembled_fingerprint
+    );
+
+    let first_receipt = ContextReceiptFields::from_assembly(&first.stamp, &board)?;
+    let second_receipt = ContextReceiptFields::from_assembly(&second.stamp, &board)?;
+    let repeat_receipt = ContextReceiptFields::from_assembly(&repeat.stamp, &board)?;
+    assert_ne!(
+        first_receipt.persona_compile_stamp,
+        second_receipt.persona_compile_stamp
+    );
+    assert_eq!(
+        first_receipt.persona_compile_stamp,
+        repeat_receipt.persona_compile_stamp
+    );
+    assert_eq!(
+        first_receipt.board_state_ref,
+        second_receipt.board_state_ref
     );
     Ok(())
 }

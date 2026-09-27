@@ -101,7 +101,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     let writeback = facade
         .commit(&[{
             let mut input = claim_input(
-                "eiri.summary.window",
+                "companion.summary.window",
                 &subject,
                 "generated",
                 serde_json::json!({"summary": "moss gardens dominate the week"}),
@@ -135,7 +135,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
     let listed = facade
         .claim_list(&ClaimListFilter {
             subject_ref: Some(subject.to_hex()),
-            predicate: Some("eiri.summary.window".to_owned()),
+            predicate: Some("companion.summary.window".to_owned()),
             lifecycle: Some("active".to_owned()),
             limit: 10,
         })
@@ -240,13 +240,13 @@ fn seed_claims_force_proposed_with_per_element_receipts() {
 
     // AC-3: a user_stated seed — auto-eligible through commit — is FORCED
     // proposed on the seed path, parks for consent, and emits a receipt.
-    // eiri.* predicates carry the default manifest's critical criticality,
+    // persona.* predicates carry the default manifest's critical criticality,
     // so the forced-proposed seed parks as a pending consent (profile.*
     // seeds land proposed with gate outcome allow and do not park).
     let receipts = facade
         .seed_claims(&[
             claim_input(
-                "eiri.profile.name",
+                "companion.profile.name",
                 &subject,
                 "user_stated",
                 serde_json::json!("Cold Start"),
@@ -259,7 +259,7 @@ fn seed_claims_force_proposed_with_per_element_receipts() {
                 serde_json::json!("x"),
             ),
             claim_input(
-                "eiri.onboarding.answer",
+                "companion.onboarding.answer",
                 &subject,
                 "imported",
                 serde_json::json!({"question_id": "q-1", "selected_option_id": "a"}),

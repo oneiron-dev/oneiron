@@ -130,7 +130,7 @@ fn rcpt3_components_render_for_all_three_adapters() -> Result<()> {
         Of336Component::BundleApprove(bundle_card()?),
     ];
     let adapters = [
-        Of336SurfaceAdapter::EiriSpecCareRegister,
+        Of336SurfaceAdapter::CareRegister,
         Of336SurfaceAdapter::DashboardAtomKitAudit,
         Of336SurfaceAdapter::McpUi,
     ];
@@ -183,7 +183,7 @@ fn escalator_selection_emits_grant_mint_intent() -> Result<()> {
         ConsentActorIdentity::SurfaceActor {
             actor_ref: "owner".to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         101,
     )?;
 
@@ -213,7 +213,7 @@ fn beneficiary_cannot_confirm_always_this_verb_class() -> Result<()> {
         ConsentActorIdentity::SurfaceActor {
             actor_ref: "owner".to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         102,
     )?;
 
@@ -358,7 +358,7 @@ fn forged_typed_action_mismatch_is_rejected_before_grant_mint() -> Result<()> {
         ConsentActorIdentity::SurfaceActor {
             actor_ref: "owner".to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         103,
     )?;
 
@@ -445,7 +445,7 @@ fn principal_self_attestation_is_refused_and_store_authenticated_actor_succeeds(
         ConsentActorIdentity::SurfaceActor {
             actor_ref: "owner".to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         104,
     )?;
 
@@ -472,7 +472,7 @@ fn consent_actor_identity_pin_is_not_a_free_text_claim() {
         "action_id": "approve_once",
         "action": "approve",
         "actor": { "actor_ref": "owner" },
-        "surface": "eiri_conversation",
+        "surface": "companion_conversation",
         "occurred_at": 104
     });
     assert!(serde_json::from_value::<ConsentActionRequest>(untagged).is_err());
@@ -496,7 +496,7 @@ fn consent_actor_identity_pin_is_not_a_free_text_claim() {
         "action_id": "approve_once",
         "action": "approve",
         "actor": { "identity": "surface_actor", "actor_ref": "owner" },
-        "surface": "eiri_conversation",
+        "surface": "companion_conversation",
         "occurred_at": 104
     });
     assert!(matches!(

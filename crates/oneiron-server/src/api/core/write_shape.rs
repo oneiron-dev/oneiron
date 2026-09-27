@@ -133,7 +133,7 @@ pub(crate) fn normalize_platform_announcement_body(body: &Value) -> Cow<'_, Valu
         Value::String(PLATFORM_ANNOUNCEMENT_VOICE.to_owned()),
     );
     normalized.insert("platform_voice".to_owned(), Value::Bool(true));
-    normalized.insert("is_eiri".to_owned(), Value::Bool(false));
+    normalized.insert("is_companion".to_owned(), Value::Bool(false));
 
     let status = announcement_status(object);
     normalized.insert(

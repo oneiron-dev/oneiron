@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
-pub const DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH: &str = "packages/prompts";
-pub const SESSION_PROMPT_V3_RELATIVE_PATH: &str = "eiri/v3.md";
+#[cfg(any(test, feature = "test-support"))]
+pub const TEST_PROMPT_PACKAGE_RELATIVE_PATH: &str = "crates/oneiron/tests/fixtures/prompts";
 pub const ENGINE_EXECUTOR_WIRE_PROMPT_RELATIVE_PATH: &str = "blocks/engine-executor-wire.md";
 pub const PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION: &str = "oneiron.prompt_recompile.v1";
 
@@ -17,7 +17,11 @@ pub struct PromptRecompileStamp {
     pub prompt_path: String,
     pub compiled_at_secs: u64,
     pub source_fingerprint: String,
+    /// Hash of resolved package files, before host sections or memory assembly.
     pub resolved_fingerprint: String,
+    /// Hash of the exact system message sent to the model. `None` for a
+    /// resolved file that has not yet been assembled into a session request.
+    pub assembled_fingerprint: Option<String>,
     pub source_paths: Vec<String>,
 }
 
@@ -31,9 +35,9 @@ pub struct ResolvedPrompt {
 pub struct SessionPromptParts {
     pub activated_memory: Vec<String>,
     pub history: Vec<LlmMessage>,
-    /// Host-supplied off-record marker rendered as its own system-prompt
-    /// section. The engine never authors this text.
-    pub off_record_marker: Option<String>,
+    /// Host-supplied sections (including any off-record disclosure).
+    /// The host owns both the wording and its section headings.
+    pub host_sections: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +53,8 @@ pub struct StampedLlmRequest {
     pub stamp: PromptRecompileStamp,
 }
 
-pub fn workspace_prompt_package_root() -> Result<PathBuf, io::Error> {
+#[cfg(any(test, feature = "test-support"))]
+pub fn workspace_test_prompt_package_root() -> Result<PathBuf, io::Error> {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = crate_root.parent().and_then(Path::parent).ok_or_else(|| {
         io::Error::other(format!(
@@ -57,28 +62,15 @@ pub fn workspace_prompt_package_root() -> Result<PathBuf, io::Error> {
             crate_root.display()
         ))
     })?;
-    let package_root = workspace_root.join(DEFAULT_PROMPT_PACKAGE_RELATIVE_PATH);
+    let package_root = workspace_root.join(TEST_PROMPT_PACKAGE_RELATIVE_PATH);
     if package_root.is_dir() {
         Ok(package_root)
     } else {
         Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!(
-                "expected monorepo prompt package at {}",
-                package_root.display()
-            ),
+            format!("expected test prompt package at {}", package_root.display()),
         ))
     }
-}
-
-pub fn resolve_session_prompt_v3(
-    package_root: impl AsRef<Path>,
-) -> Result<ResolvedPrompt, io::Error> {
-    let package_root = package_root.as_ref();
-    resolve_prompt(
-        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
-        package_root,
-    )
 }
 
 /// Resolves the canonical engine-executor wire prompt through the package
@@ -106,15 +98,17 @@ pub fn resolve_prompt(
 }
 
 pub fn assemble_session_prompt(
+    prompt_path: impl AsRef<Path>,
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<SessionPromptAssembly, io::Error> {
-    let resolved = resolve_session_prompt_v3(package_root)?;
+    let mut resolved = resolve_prompt(prompt_path, package_root)?;
     let system_prompt = assemble_system_prompt(
         &resolved.text,
-        parts.off_record_marker.as_deref(),
+        &parts.host_sections,
         &parts.activated_memory,
     );
+    resolved.stamp.assembled_fingerprint = Some(hash_hex(system_prompt.as_bytes()));
     let mut messages = Vec::with_capacity(parts.history.len() + 1);
     messages.push(LlmMessage {
         role: LlmMessageRole::System,
@@ -133,10 +127,11 @@ pub fn assemble_session_prompt(
 
 pub fn build_session_request(
     mut request: LlmRequest,
+    prompt_path: impl AsRef<Path>,
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<StampedLlmRequest, io::Error> {
-    let assembly = assemble_session_prompt(package_root, parts)?;
+    let assembly = assemble_session_prompt(prompt_path, package_root, parts)?;
     request.messages = assembly.messages;
     Ok(StampedLlmRequest {
         request,
@@ -227,16 +222,21 @@ fn include_path(line: &str) -> Option<&str> {
 
 fn assemble_system_prompt(
     soul_prompt: &str,
-    off_record_marker: Option<&str>,
+    host_sections: &[String],
     activated_memory: &[String],
 ) -> String {
     let mut prompt = String::new();
     prompt.push_str(soul_prompt.trim_end());
     prompt.push('\n');
 
-    if let Some(marker) = off_record_marker.map(str::trim).filter(|m| !m.is_empty()) {
-        prompt.push_str("\n# Off-Record Session\n\n");
-        prompt.push_str(marker);
+    for section in host_sections
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        prompt.push('\n');
+        prompt.push_str(section);
         prompt.push('\n');
     }
 
@@ -275,6 +275,7 @@ fn recompile_stamp(
         compiled_at_secs: crate::unix_seconds_now(),
         source_fingerprint: source_fingerprint(source_hashes, package_root),
         resolved_fingerprint: hash_hex(resolved.as_bytes()),
+        assembled_fingerprint: None,
         source_paths,
     }
 }

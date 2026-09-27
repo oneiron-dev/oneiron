@@ -37,7 +37,7 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn prompt_package_root() -> std::path::PathBuf {
-    crate::prompt::workspace_prompt_package_root().expect("workspace prompt package")
+    crate::prompt::workspace_test_prompt_package_root().expect("workspace test prompt package")
 }
 
 use crate::error::{ArtifactError, GateError};
@@ -1656,7 +1656,7 @@ fn source_literals_and_comments_can_start_lines_with_every_wire_token() {
 /// One configurable non-Rust prompt-package block drives both teaching sites.
 #[test]
 fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
-    let package_root = crate::prompt::workspace_prompt_package_root().expect("prompt package");
+    let package_root = crate::prompt::workspace_test_prompt_package_root().expect("prompt package");
     let resolved = crate::prompt::resolve_engine_executor_wire_prompt(&package_root)
         .expect("resolve executor wire prompt");
     let canonical = resolved.text.trim_end();
@@ -1691,10 +1691,6 @@ fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
             "agent-facing teaching must not be authored in Rust: {teaching_line}"
         );
     }
-    assert!(
-        !engine_rust.contains("workspace_prompt_package_root"),
-        "executor constructors must require a deployed package instead of a source-checkout fallback"
-    );
     let prompt_rust = include_str!("../prompt.rs");
     assert!(
         !prompt_rust.contains(r#"include_str!("../../../packages/prompts"#),

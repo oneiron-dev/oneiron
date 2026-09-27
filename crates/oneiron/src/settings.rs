@@ -317,7 +317,7 @@ pub struct CustomizationSettingsChangeEvent {
     pub previous: CustomizationLayerValue,
     pub current: CustomizationLayerValue,
     // Intentionally camelCase in this otherwise snake_case client-readable event: it matches the
-    // Eiri client contract (`aiCanChange` in UIModeContextType). Do not snake_case.
+    // Client wire contract (`aiCanChange` in UIModeContextType). Do not snake_case.
     #[serde(rename = "aiCanChange")]
     pub ai_can_change: bool,
     pub notice: String,

@@ -73,8 +73,9 @@ impl ContextReceiptFields {
     /// Captures the field-set at the context-assembly seam — the one hook
     /// where the activation set is finalized (OF-369/RS9 emission point).
     ///
-    /// `persona_compile_stamp` records the compile id of the resolved
-    /// standing-block prompt in effect; `activated_memory_ids` and
+    /// `persona_compile_stamp` records the exact assembled system prompt
+    /// fingerprint when available, or the resolved file fingerprint for a
+    /// stamp that has not been assembled. `activated_memory_ids` and
     /// `board_state_ref` record the activated MEMORIES section
     /// ([`MemoriesSection`]) as shown — not the `[CONTEXT_BOARD]` render
     /// block, which is a distinct surface.
@@ -82,7 +83,11 @@ impl ContextReceiptFields {
         Ok(Self {
             persona_compile_stamp: format!(
                 "{}:{}",
-                persona.schema_version, persona.resolved_fingerprint
+                persona.schema_version,
+                persona
+                    .assembled_fingerprint
+                    .as_deref()
+                    .unwrap_or(&persona.resolved_fingerprint)
             ),
             activated_memory_ids: board.rows.iter().map(|row| row.id.clone()).collect(),
             board_state_ref: memories_state_ref(board)?,

@@ -94,7 +94,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         EngineExecutorConfig {
             run_id: seeded_test_entity_id(0x0024_6504),
             task: "template".into(),
-            prompt_package_root: oneiron::prompt::workspace_prompt_package_root().unwrap(),
+            prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root().unwrap(),
             model: ModelId::new("fixture/quickjs@v1").unwrap(),
             model_locality: ModelLocality::OnDevice,
             global_tier: ModelTierRef("fixture".into()),

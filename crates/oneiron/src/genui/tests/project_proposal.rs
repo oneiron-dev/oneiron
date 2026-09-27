@@ -31,7 +31,7 @@ fn request(
         ConsentActorIdentity::SurfaceActor {
             actor_ref: actor.to_owned(),
         },
-        ConsentSurface::EiriConversation,
+        ConsentSurface::CompanionConversation,
         42,
     )
 }
@@ -43,7 +43,7 @@ fn project_proposal_renders_stably_on_all_surfaces() -> Result<()> {
     let fallback = card.fallback_text();
     let mut digests = Vec::new();
     for adapter in [
-        Of336SurfaceAdapter::EiriSpecCareRegister,
+        Of336SurfaceAdapter::CareRegister,
         Of336SurfaceAdapter::DashboardAtomKitAudit,
         Of336SurfaceAdapter::McpUi,
     ] {
@@ -58,7 +58,7 @@ fn project_proposal_renders_stably_on_all_surfaces() -> Result<()> {
             serde_json::from_slice::<Of336RenderedComponent>(&bytes).expect("typed render decodes"),
             rendered
         );
-        if adapter == Of336SurfaceAdapter::EiriSpecCareRegister {
+        if adapter == Of336SurfaceAdapter::CareRegister {
             assert_eq!(
                 rendered.tree["elements"]["proposal"]["props"]["title"],
                 "Build a research index"
@@ -79,7 +79,7 @@ fn project_proposal_renders_stably_on_all_surfaces() -> Result<()> {
     assert_eq!(
         digests,
         [
-            "f18b926354b0dfb94c1bb2501ea3bd49a2c0bd9682e14340e4b97a5e830eb436",
+            "f5ab57e1a1069f540e285b2f44d2054610fb98647e7ea0cd24449847f55a4176",
             "f4e0ddebba2cfe272de40e3f51730a7ce0228c6d3ce89a8e611db064bf5449e4",
             "6b73ea879b2897a908e30815ca09332b6683d038d050feae57478c44346b1e8e",
         ],

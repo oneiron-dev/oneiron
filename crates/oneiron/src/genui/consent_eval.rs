@@ -107,7 +107,7 @@ pub fn consent_action_id_offers_duration(action_id: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsentSurface {
-    EiriConversation,
+    CompanionConversation,
     Dashboard,
     SharedSlack,
     McpUi,
@@ -118,7 +118,7 @@ impl ConsentSurface {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::EiriConversation => "eiri_conversation",
+            Self::CompanionConversation => "companion_conversation",
             Self::Dashboard => "dashboard",
             Self::SharedSlack => "shared_slack",
             Self::McpUi => "mcp_ui",
@@ -317,7 +317,7 @@ pub fn calendar_grant_mint_intent(
     })
 }
 
-pub(super) fn append_eirispec_actions(
+pub(super) fn append_care_register_actions(
     elements: &mut serde_json::Map<String, Value>,
     root_children: &mut Vec<String>,
     actions: &[Of336ActionDescriptor],
@@ -431,7 +431,7 @@ pub(super) fn noop_policy_rejection(
 pub(super) const fn widening_grant_surface_is_eligible(surface: ConsentSurface) -> bool {
     matches!(
         surface,
-        ConsentSurface::EiriConversation | ConsentSurface::Dashboard | ConsentSurface::McpUi
+        ConsentSurface::CompanionConversation | ConsentSurface::Dashboard | ConsentSurface::McpUi
     )
 }
 

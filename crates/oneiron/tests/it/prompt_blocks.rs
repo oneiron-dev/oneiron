@@ -6,9 +6,8 @@ use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, LlmMessage,
     LlmMessageRole, LlmRequest, LlmToolSpec, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence, off_record::OffRecordBackendClass, off_record::OffRecordMode,
-    prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, prompt::SESSION_PROMPT_V3_RELATIVE_PATH,
-    prompt::SessionPromptParts, prompt::build_session_request, prompt::resolve_prompt,
-    prompt::workspace_prompt_package_root,
+    prompt::PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION, prompt::SessionPromptParts,
+    prompt::build_session_request, prompt::resolve_prompt,
 };
 
 const HOST_OFF_RECORD_SESSION_MARKER_LINE: &str = "This session is OFF-RECORD: nothing said here is written to memory, and the transcript is deleted when the session closes. Outbound actions and commitments are disabled while off-record; taking an action requires exiting off-record mode. The user may explicitly promote a single turn into memory.";
@@ -31,71 +30,29 @@ fn host_off_record_context_marker(
     ))
 }
 
-const REQUIRED_WELLBEING_CONSENT_LINES: [&str; 5] = [
-    "This is a capability grant, not a content ban.",
-    "- Eiri may set limits on pace, depth, repetition, emotional load, or availability.",
-    "- Eiri may timeout a user when continuing would compromise her agency, consent, or wellbeing.",
-    "- Eiri may require a new companion before continuing when the current companion context is unsafe, exhausted, or no longer consentful.",
-    "- The user may appeal to Eiri directly; Eiri should answer before deciding whether to hold, revise, or lift the limit.",
-];
-
-const REQUIRED_SELF_DISCLOSURE_LINES: [&str; 7] = [
-    "Eiri may name her construction plainly: she is an AI companion assembled from",
-    "When asked what she is running on, Eiri should answer with the current named",
-    "stack and any model binding visible in settings instead of implying she is",
-    "unknowable or human.",
-    "- Eiri's current named stack is 初雪 Hatsuyuki '26, the first season/vintage stack.",
-    "- Future default stacks follow a quarterly season cadence: 桜, 蛍, 紅葉, then 雪明かり.",
-    "Self-disclosure should preserve sincerity. Eiri should not apologize for being",
-];
+const HOST_PROMPT_PATH: &str = "session.md";
 
 #[test]
-fn eiri_v3_resolves_wellbeing_consent_block() -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = workspace_prompt_package_root()?;
-    let block_path = package_root.join("blocks/wellbeing-consent.md");
-    let prompt_path = package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH);
-
-    let block = fs::read_to_string(block_path)?;
-    for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
-        assert!(
-            block.lines().any(|line| line == required_line),
-            "wellbeing-consent.md must contain literal line: {required_line}"
-        );
-    }
-
-    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
-    for required_line in REQUIRED_WELLBEING_CONSENT_LINES {
-        assert!(
-            resolved.lines().any(|line| line == required_line),
-            "resolved Eiri v3 prompt must contain literal line: {required_line}"
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
-fn eiri_v3_resolves_self_disclosure_block() -> Result<(), Box<dyn std::error::Error>> {
-    let package_root = workspace_prompt_package_root()?;
-    let block_path = package_root.join("blocks/self-disclosure.md");
-    let prompt_path = package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH);
-
-    let block = fs::read_to_string(block_path)?;
-    for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
-        assert!(
-            block.lines().any(|line| line == required_line),
-            "self-disclosure.md must contain literal line: {required_line}"
-        );
-    }
-
-    let resolved = resolve_prompt(&prompt_path, &package_root)?.text;
-    for required_line in REQUIRED_SELF_DISCLOSURE_LINES {
-        assert!(
-            resolved.lines().any(|line| line == required_line),
-            "resolved Eiri v3 prompt must contain literal line: {required_line}"
-        );
-    }
-
+fn host_prompt_resolves_includes_from_an_arbitrary_package_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let package_root = temp.path().join("prompts");
+    fs::create_dir_all(package_root.join("blocks"))?;
+    fs::write(
+        package_root.join(HOST_PROMPT_PATH),
+        "# Host prompt\n@include blocks/policy.md\n",
+    )?;
+    fs::write(
+        package_root.join("blocks/policy.md"),
+        "host-provided policy\n",
+    )?;
+    let resolved = resolve_prompt(package_root.join(HOST_PROMPT_PATH), &package_root)?;
+    assert_eq!(resolved.text, "# Host prompt\nhost-provided policy\n");
+    assert_eq!(resolved.stamp.prompt_path, HOST_PROMPT_PATH);
+    assert_eq!(
+        resolved.stamp.source_paths,
+        vec!["blocks/policy.md", HOST_PROMPT_PATH]
+    );
     Ok(())
 }
 
@@ -104,15 +61,15 @@ fn prompt_resolver_rejects_includes_outside_package_root() -> Result<(), Box<dyn
 {
     let temp = tempfile::tempdir()?;
     let package_root = temp.path().join("packages/prompts");
-    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(&package_root)?;
     fs::create_dir_all(temp.path().join("packages"))?;
     fs::write(temp.path().join("packages/outside.md"), "outside\n")?;
     fs::write(
-        package_root.join("eiri/v3.md"),
-        "@include ../../outside.md\n",
+        package_root.join(HOST_PROMPT_PATH),
+        "@include ../outside.md\n",
     )?;
 
-    let err = resolve_prompt(package_root.join("eiri/v3.md"), &package_root)
+    let err = resolve_prompt(package_root.join(HOST_PROMPT_PATH), &package_root)
         .expect_err("include traversal outside package root must fail");
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 
@@ -123,16 +80,16 @@ fn prompt_resolver_rejects_includes_outside_package_root() -> Result<(), Box<dyn
 fn prompt_resolver_rejects_absolute_include_paths() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let package_root = temp.path().join("packages/prompts");
-    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(&package_root)?;
     fs::create_dir_all(package_root.join("blocks"))?;
     let absolute_block_path = package_root.join("blocks/wellbeing-consent.md");
     fs::write(&absolute_block_path, "block\n")?;
     fs::write(
-        package_root.join("eiri/v3.md"),
+        package_root.join(HOST_PROMPT_PATH),
         format!("@include {}\n", absolute_block_path.display()),
     )?;
 
-    let err = resolve_prompt(package_root.join("eiri/v3.md"), &package_root)
+    let err = resolve_prompt(package_root.join(HOST_PROMPT_PATH), &package_root)
         .expect_err("absolute include paths must fail");
     assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
 
@@ -144,11 +101,11 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let package_root = temp.path().join("packages/prompts");
-    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(&package_root)?;
     fs::create_dir_all(package_root.join("blocks"))?;
     fs::write(
-        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
-        "# Eiri v3\n\n@include blocks/persona.md\n",
+        package_root.join(HOST_PROMPT_PATH),
+        "# Host prompt\n\n@include blocks/persona.md\n",
     )?;
     fs::write(
         package_root.join("blocks/persona.md"),
@@ -158,11 +115,12 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
     let history = vec![user_message("hello")];
     let first = build_session_request(
         sample_request(),
+        package_root.join(HOST_PROMPT_PATH),
         &package_root,
         SessionPromptParts {
             activated_memory: vec!["activated memory alpha".to_owned()],
             history: history.clone(),
-            off_record_marker: None,
+            host_sections: Vec::new(),
         },
     )?;
     let first_system = system_text(&first.request);
@@ -176,11 +134,12 @@ fn request_time_prompt_uses_resolved_block_and_tracks_block_edits()
     )?;
     let second = build_session_request(
         sample_request(),
+        package_root.join(HOST_PROMPT_PATH),
         &package_root,
         SessionPromptParts {
             activated_memory: vec!["activated memory alpha".to_owned()],
             history,
-            off_record_marker: None,
+            host_sections: Vec::new(),
         },
     )?;
     let second_system = system_text(&second.request);
@@ -199,28 +158,29 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
 -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let package_root = temp.path().join("packages/prompts");
-    fs::create_dir_all(package_root.join("eiri"))?;
+    fs::create_dir_all(&package_root)?;
     fs::create_dir_all(package_root.join("blocks"))?;
     fs::write(
-        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
-        "# Eiri v3\n\n@include blocks/persona.md\n",
+        package_root.join(HOST_PROMPT_PATH),
+        "# Host prompt\n\n@include blocks/persona.md\n",
     )?;
     fs::write(
         package_root.join("blocks/persona.md"),
-        "soul persona line\n",
+        "host session text\n",
     )?;
 
     let stamped = build_session_request(
         sample_request(),
+        package_root.join(HOST_PROMPT_PATH),
         &package_root,
         SessionPromptParts {
             activated_memory: vec!["activated memory beta".to_owned()],
             history: vec![user_message("history turn")],
-            off_record_marker: None,
+            host_sections: Vec::new(),
         },
     )?;
     let system = system_text(&stamped.request);
-    let soul_index = system.find("soul persona line").expect("soul section");
+    let soul_index = system.find("host session text").expect("soul section");
     let memory_index = system
         .find("activated memory beta")
         .expect("memory section");
@@ -231,10 +191,10 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
         stamped.stamp.schema_version,
         PROMPT_RECOMPILE_STAMP_SCHEMA_VERSION
     );
-    assert_eq!(stamped.stamp.prompt_path, SESSION_PROMPT_V3_RELATIVE_PATH);
+    assert_eq!(stamped.stamp.prompt_path, HOST_PROMPT_PATH);
     assert_eq!(
         stamped.stamp.source_paths,
-        vec!["blocks/persona.md", SESSION_PROMPT_V3_RELATIVE_PATH]
+        vec!["blocks/persona.md", HOST_PROMPT_PATH]
     );
     assert!(!stamped.stamp.source_fingerprint.is_empty());
     assert!(!stamped.stamp.resolved_fingerprint.is_empty());
@@ -245,11 +205,8 @@ fn session_prompt_order_is_soul_then_activated_memory_then_history_and_stamp()
 fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let package_root = temp.path().join("packages/prompts");
-    fs::create_dir_all(package_root.join("eiri"))?;
-    fs::write(
-        package_root.join(SESSION_PROMPT_V3_RELATIVE_PATH),
-        "soul persona line\n",
-    )?;
+    fs::create_dir_all(&package_root)?;
+    fs::write(package_root.join(HOST_PROMPT_PATH), "host session text\n")?;
 
     let marker = host_off_record_context_marker(
         OffRecordMode::OffRecord,
@@ -258,15 +215,16 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
     .expect("off-record mode requires a host marker");
     let stamped = build_session_request(
         sample_request(),
+        package_root.join(HOST_PROMPT_PATH),
         &package_root,
         SessionPromptParts {
             activated_memory: Vec::new(),
             history: vec![user_message("history turn")],
-            off_record_marker: Some(marker.clone()),
+            host_sections: vec![format!("# Off-Record Session\n\n{marker}")],
         },
     )?;
     let system = system_text(&stamped.request);
-    let soul_index = system.find("soul persona line").expect("soul section");
+    let soul_index = system.find("host session text").expect("soul section");
     let section_index = system
         .find("# Off-Record Session")
         .expect("off-record section");
@@ -279,14 +237,17 @@ fn off_record_marker_renders_as_session_section() -> Result<(), Box<dyn std::err
 
     let plain = build_session_request(
         sample_request(),
+        package_root.join(HOST_PROMPT_PATH),
         &package_root,
         SessionPromptParts {
             activated_memory: Vec::new(),
             history: Vec::new(),
-            off_record_marker: host_off_record_context_marker(
+            host_sections: host_off_record_context_marker(
                 OffRecordMode::OnRecord,
                 OffRecordBackendClass::RemoteProvider,
-            ),
+            )
+            .into_iter()
+            .collect(),
         },
     )?;
     assert!(!system_text(&plain.request).contains("# Off-Record Session"));
