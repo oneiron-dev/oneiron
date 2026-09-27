@@ -38,6 +38,45 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
+    /// Resolved restrictive cap, with vault cap and applicable artifact/sheet
+    /// rows combined by minimum. An untrusted row can only narrow this cap.
+    /// The holder may request a smaller limit, never exceed the vault cap.
+    pub(crate) fn sheet_answer_limit(
+        &self,
+        artifact_ref: &str,
+        sheet: &str,
+        holder_override: Option<u64>,
+    ) -> Option<u64> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        let mut vault_cap = None::<u64>; // bootstrap when no manifest is installed
+        let mut scoped_cap = u64::MAX;
+        for row in &self.sheet_answer_limits {
+            match (row.artifact_ref.as_deref(), row.sheet.as_deref()) {
+                (None, None) => {
+                    vault_cap = Some(vault_cap.map_or(row.max_count, |old| old.min(row.max_count)));
+                }
+                (Some(artifact), None) if artifact == artifact_ref => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                (Some(artifact), Some(name)) if artifact == artifact_ref && name == sheet => {
+                    scoped_cap = scoped_cap.min(row.max_count);
+                }
+                _ => {}
+            }
+        }
+        if holder_override == Some(0) {
+            return None;
+        }
+        Some(
+            vault_cap
+                .unwrap_or(4096)
+                .min(scoped_cap)
+                .min(holder_override.unwrap_or(u64::MAX)),
+        )
+    }
+
     #[must_use]
     pub(crate) fn proposal_check_threshold(&self) -> u64 {
         self.proposal_check_threshold

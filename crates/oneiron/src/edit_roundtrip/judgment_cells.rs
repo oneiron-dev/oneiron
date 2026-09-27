@@ -15,6 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 const SHEET_NS: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const REL_NS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
 
+/// Transient decoded cell while walking a worksheet's grid path.
+type CellRead = (CellRef, Option<String>, String, Option<String>, bool);
+
 fn invalid() -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(
         "typed sheet answers do not match the artifact bytes",
@@ -30,7 +33,7 @@ pub(crate) fn verify_sheet_answer_bytes(
 ) -> Result<()> {
     bundle.ops()?;
     if let Some(source) = source {
-        let actual = sheet_cells(source, bundle)?;
+        let actual = sheet_cells(source, bundle, true)?;
         for answer in &bundle.answers {
             if let Some(before) = &answer.before
                 && actual
@@ -44,7 +47,7 @@ pub(crate) fn verify_sheet_answer_bytes(
         }
     }
     if let Some(output) = output {
-        let actual = sheet_cells(output, bundle)?;
+        let actual = sheet_cells(output, bundle, false)?;
         for answer in &bundle.answers {
             if let Some(after) = &answer.value
                 && actual
@@ -60,15 +63,33 @@ pub(crate) fn verify_sheet_answer_bytes(
     Ok(())
 }
 
-fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<CellRef, CellValue>> {
+fn sheet_cells(
+    bytes: &[u8],
+    bundle: &SheetAnswerBundle,
+    source: bool,
+) -> Result<BTreeMap<CellRef, CellValue>> {
     let pkg = opc::read(bytes)?;
     let part = named_sheet_part(&pkg, &bundle.sheet)?;
     let sheet = pkg.part(&part).ok_or_else(invalid)?;
-    let targets: BTreeSet<CellRef> = bundle.answers.iter().map(|a| a.cell).collect();
+    // Only cells whose value is needed are parsed. In particular, a formula
+    // on an abstaining cell or an unchecked source is not an error.
+    let targets: BTreeSet<CellRef> = bundle
+        .answers
+        .iter()
+        .filter(|a| {
+            if source {
+                a.before.is_some()
+            } else {
+                a.value.is_some()
+            }
+        })
+        .map(|a| a.cell)
+        .collect();
     let mut cells = BTreeMap::new();
     let mut reader = NsReader::from_reader(sheet);
-    let mut current: Option<(CellRef, Option<String>, String, bool)> = None;
+    let mut current: Option<CellRead> = None;
     let mut capture: Option<&'static str> = None;
+    let mut inline_string = false;
     let mut in_sheet_data = false;
     let mut row: Option<u32> = None;
     let mut depth = 0usize;
@@ -114,7 +135,7 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
                 if Some(cell.row) != row {
                     return Err(invalid());
                 }
-                current = Some((cell, attrs.get("t").cloned(), String::new(), false));
+                current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
             }
             Event::Empty(tag) if depth == 3 && sheet_tag(&reader, &tag, "c") && row.is_some() => {
                 if current.is_some() {
@@ -126,30 +147,52 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
                 if Some(cell.row) != row {
                     return Err(invalid());
                 }
-                current = Some((cell, attrs.get("t").cloned(), String::new(), false));
+                current = Some((cell, attrs.get("t").cloned(), String::new(), None, false));
                 finish_cell(&mut current, &targets, &mut cells, &pkg)?;
             }
-            Event::Start(tag) if current.is_some() => match tag.local_name().as_ref() {
-                "v" | "t" => capture = Some("value"),
-                "f" => {
-                    if let Some(item) = current.as_mut() {
-                        item.3 = true;
-                    }
-                }
-                _ => {}
-            },
-            Event::Text(text) if capture.is_some() => {
+            Event::Start(tag)
+                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "is") =>
+            {
+                inline_string = true;
+            }
+            Event::Start(tag)
+                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "f") =>
+            {
+                current.as_mut().ok_or_else(invalid)?.3 = Some(String::new());
+                capture = Some("formula");
+            }
+            Event::Empty(tag)
+                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "f") =>
+            {
+                current.as_mut().ok_or_else(invalid)?.3 = Some(String::new());
+            }
+            Event::Start(tag)
+                if current.is_some()
+                    && ((depth == 5 && sheet_tag(&reader, &tag, "v"))
+                        || (depth == 6 && inline_string && sheet_tag(&reader, &tag, "t"))) =>
+            {
+                capture = Some("value");
+                current.as_mut().ok_or_else(invalid)?.4 = true;
+            }
+            Event::Empty(tag)
+                if current.is_some() && depth == 5 && sheet_tag(&reader, &tag, "v") =>
+            {
+                current.as_mut().ok_or_else(invalid)?.4 = true;
+            }
+            Event::Text(text)
+                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+            {
                 let v = quick_xml::escape::unescape(text.as_ref()).map_err(|_| invalid())?;
-                if let Some(item) = current.as_mut() {
-                    item.2.push_str(&v);
-                }
+                push_captured(&mut current, capture, &v)?;
             }
-            Event::CData(text) if capture.is_some() => {
-                if let Some(item) = current.as_mut() {
-                    item.2.push_str(text.as_ref());
-                }
+            Event::CData(text)
+                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+            {
+                push_captured(&mut current, capture, text.as_ref())?;
             }
-            Event::GeneralRef(reference) if capture.is_some() => {
+            Event::GeneralRef(reference)
+                if capture.is_some() && (depth == 5 || (depth == 6 && inline_string)) =>
+            {
                 let value = reference
                     .resolve_char_ref()
                     .map_err(|_| invalid())?
@@ -159,16 +202,22 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
                             .map(str::to_owned)
                     })
                     .ok_or_else(invalid)?;
-                if let Some(item) = current.as_mut() {
-                    item.2.push_str(&value);
-                }
+                push_captured(&mut current, capture, &value)?;
             }
-            Event::End(tag) if tag.local_name().as_ref() == "c" && current.is_some() => {
+            Event::End(tag) if depth == 4 && sheet_end(&reader, &tag, "c") && current.is_some() => {
                 finish_cell(&mut current, &targets, &mut cells, &pkg)?;
                 capture = None;
+                inline_string = false;
             }
-            Event::End(tag) if matches!(tag.local_name().as_ref(), "v" | "t") => {
+            Event::End(tag)
+                if (depth == 5
+                    && (sheet_end(&reader, &tag, "v") || sheet_end(&reader, &tag, "f")))
+                    || (depth == 6 && inline_string && sheet_end(&reader, &tag, "t")) =>
+            {
                 capture = None;
+            }
+            Event::End(tag) if depth == 5 && inline_string && sheet_end(&reader, &tag, "is") => {
+                inline_string = false;
             }
             Event::End(tag)
                 if depth == 3 && tag.local_name().as_ref() == "row" && row.is_some() =>
@@ -200,6 +249,26 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
     Ok(cells)
 }
 
+fn push_captured(current: &mut Option<CellRead>, capture: Option<&str>, text: &str) -> Result<()> {
+    let cell = current.as_mut().ok_or_else(invalid)?;
+    if capture == Some("formula") {
+        cell.3.as_mut().ok_or_else(invalid)?.push_str(text);
+    } else {
+        cell.2.push_str(text);
+    }
+    Ok(())
+}
+
+fn sheet_end(reader: &NsReader<&[u8]>, tag: &quick_xml::events::BytesEnd<'_>, name: &str) -> bool {
+    let (ns, local) = reader.resolver().resolve_element(tag.name());
+    local.as_ref() == name
+        && match ns {
+            ResolveResult::Bound(uri) => uri.as_ref().as_bytes() == SHEET_NS,
+            ResolveResult::Unbound => true,
+            ResolveResult::Unknown(_) => false,
+        }
+}
+
 /// Only worksheet-namespace cells under sheetData/row represent grid values.
 fn sheet_tag(reader: &NsReader<&[u8]>, tag: &BytesStart<'_>, name: &str) -> bool {
     let (ns, local) = reader.resolver().resolve_element(tag.name());
@@ -212,17 +281,14 @@ fn sheet_tag(reader: &NsReader<&[u8]>, tag: &BytesStart<'_>, name: &str) -> bool
 }
 
 fn finish_cell(
-    current: &mut Option<(CellRef, Option<String>, String, bool)>,
+    current: &mut Option<CellRead>,
     targets: &BTreeSet<CellRef>,
     cells: &mut BTreeMap<CellRef, CellValue>,
     pkg: &OpcPackage,
 ) -> Result<()> {
-    let (cell, kind, value, formula) = current.take().ok_or_else(invalid)?;
+    let (cell, kind, value, formula, value_seen) = current.take().ok_or_else(invalid)?;
     if !targets.contains(&cell) {
         return Ok(());
-    }
-    if formula {
-        return Err(invalid());
     }
     let parsed = match kind.as_deref() {
         Some("inlineStr" | "str") => CellValue::Text(value),
@@ -246,6 +312,14 @@ fn finish_cell(
         }
         _ => return Err(invalid()),
     };
+    let parsed = if let Some(expr) = formula {
+        CellValue::Formula {
+            expr,
+            cached: value_seen.then(|| Box::new(parsed)),
+        }
+    } else {
+        parsed
+    };
     if cells.insert(cell, parsed).is_some() {
         return Err(invalid());
     }
@@ -255,18 +329,44 @@ fn finish_cell(
 fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
     let xml = pkg.part("xl/sharedStrings.xml").ok_or_else(invalid)?;
     let mut reader = NsReader::from_reader(xml);
-    let (mut ordinal, mut content, mut inside, mut text) = (0usize, String::new(), false, false);
+    let (mut ordinal, mut content, mut depth) = (0usize, String::new(), 0usize);
+    let (mut in_item, mut in_run, mut text) = (false, false, false);
     loop {
-        match reader.read_event().map_err(|_| invalid())? {
-            Event::Start(tag) if tag.local_name().as_ref() == "si" => {
-                inside = true;
+        let event = reader.read_event().map_err(|_| invalid())?;
+        if let Event::Start(tag) = &event {
+            depth += 1;
+            if depth == 1 && !sheet_tag(&reader, tag, "sst") {
+                return Err(invalid());
+            }
+        }
+        let ended = matches!(&event, Event::End(_));
+        match event {
+            Event::Start(tag) if depth == 2 && sheet_tag(&reader, &tag, "si") => {
+                if in_item {
+                    return Err(invalid());
+                }
+                in_item = true;
                 content.clear();
             }
-            Event::Start(tag) if inside && tag.local_name().as_ref() == "t" => text = true,
-            Event::Text(v) if text => {
+            Event::Start(tag) if depth == 3 && in_item && sheet_tag(&reader, &tag, "r") => {
+                in_run = true;
+            }
+            Event::Start(tag)
+                if in_item
+                    && sheet_tag(&reader, &tag, "t")
+                    && ((depth == 3 && !in_run) || (depth == 4 && in_run)) =>
+            {
+                text = true;
+            }
+            Event::Text(v) if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) => {
                 content.push_str(&quick_xml::escape::unescape(v.as_ref()).map_err(|_| invalid())?);
             }
-            Event::GeneralRef(reference) if text => {
+            Event::CData(v) if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) => {
+                content.push_str(v.as_ref());
+            }
+            Event::GeneralRef(reference)
+                if text && ((depth == 3 && !in_run) || (depth == 4 && in_run)) =>
+            {
                 let value = reference
                     .resolve_char_ref()
                     .map_err(|_| invalid())?
@@ -278,17 +378,29 @@ fn shared_string(pkg: &OpcPackage, index: usize) -> Result<String> {
                     .ok_or_else(invalid)?;
                 content.push_str(&value);
             }
-            Event::End(tag) if tag.local_name().as_ref() == "t" => text = false,
-            Event::End(tag) if tag.local_name().as_ref() == "si" => {
+            Event::End(tag)
+                if text
+                    && ((depth == 3 && !in_run) || (depth == 4 && in_run))
+                    && sheet_end(&reader, &tag, "t") =>
+            {
+                text = false;
+            }
+            Event::End(tag) if depth == 3 && in_run && sheet_end(&reader, &tag, "r") => {
+                in_run = false;
+            }
+            Event::End(tag) if depth == 2 && in_item && sheet_end(&reader, &tag, "si") => {
                 if ordinal == index {
                     return Ok(content);
                 }
                 ordinal += 1;
-                inside = false;
+                in_item = false;
             }
             Event::DocType(_) => return Err(invalid()),
             Event::Eof => return Err(invalid()),
             _ => {}
+        }
+        if ended {
+            depth = depth.checked_sub(1).ok_or_else(invalid)?;
         }
     }
 }
@@ -312,15 +424,6 @@ fn attributes(tag: &quick_xml::events::BytesStart<'_>) -> Result<BTreeMap<String
 fn named_sheet_part(pkg: &OpcPackage, name: &str) -> Result<String> {
     let workbook = pkg.part("xl/workbook.xml").ok_or_else(invalid)?;
     let sheets = xml::elements(workbook).map_err(|_| invalid())?;
-    #[cfg(test)]
-    eprintln!(
-        "sheet elements {:?}",
-        sheets
-            .iter()
-            .filter(|e| e.is("sheet", SHEET_NS))
-            .map(|e| e.attribute("name"))
-            .collect::<Vec<_>>()
-    );
     let mut matched = sheets
         .iter()
         .filter(|e| e.is("sheet", SHEET_NS) && e.attribute("name") == Some(name));
@@ -331,15 +434,6 @@ fn named_sheet_part(pkg: &OpcPackage, name: &str) -> Result<String> {
     let part = if let Some(rels) = pkg.part("xl/_rels/workbook.xml.rels") {
         let id = sheet.relationship_id().ok_or_else(invalid)?;
         let relationships = xml::elements(rels).map_err(|_| invalid())?;
-        #[cfg(test)]
-        eprintln!(
-            "rel id {id} {:?}",
-            relationships
-                .iter()
-                .filter(|e| e.is("Relationship", REL_NS))
-                .map(|e| e.attribute("Id"))
-                .collect::<Vec<_>>()
-        );
         let mut matches = relationships
             .iter()
             .filter(|e| e.is("Relationship", REL_NS) && e.attribute("Id") == Some(id));
@@ -385,6 +479,7 @@ mod tests {
             principal: "owner".into(),
             sheet: sheet.into(),
             range: RangeRef::parse("B2:B2").unwrap(),
+            max_count_override: None,
             answers: vec![SheetCellAnswer {
                 cell: CellRef::parse("B2").unwrap(),
                 before,
@@ -415,6 +510,82 @@ mod tests {
             });
         }
         opc::write(&OpcPackage::from_parts(parts))
+    }
+
+    #[test]
+    fn source_formula_and_abstention_are_not_literal_answer_refusals() -> Result<()> {
+        let source = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2"><f>1+1</f><v>2</v></c></row><row r="3"><c r="B3"><f>3+3</f><v>6</v></c></row></sheetData></worksheet>"#,
+            false,
+        );
+        let output = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2"><v>7</v></c></row><row r="3"><c r="B3"><f>3+3</f><v>6</v></c></row></sheetData></worksheet>"#,
+            false,
+        );
+        let mut ask = bundle("Data & Co", None, CellValue::Number(7.0));
+        ask.answers.push(SheetCellAnswer {
+            cell: CellRef::parse("B3")?,
+            before: None,
+            value: None,
+            ..ask.answers[0].clone()
+        });
+        ask.range = RangeRef::parse("B2:B3")?;
+        verify_sheet_answer_bytes(&ask, Some(&source), Some(&output))?;
+        ask.answers[0].before = Some(CellValue::Formula {
+            expr: "1+1".into(),
+            cached: Some(Box::new(CellValue::Number(2.0))),
+        });
+        verify_sheet_answer_bytes(&ask, Some(&source), Some(&output))?;
+        let no_cache = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2"><f>1+1</f></c></row></sheetData></worksheet>"#,
+            false,
+        );
+        ask.answers[0].before = Some(CellValue::Formula {
+            expr: "1+1".into(),
+            cached: None,
+        });
+        verify_sheet_answer_bytes(&ask, Some(&no_cache), Some(&output))?;
+        ask.answers[0].before = Some(CellValue::Formula {
+            expr: "9+9".into(),
+            cached: Some(Box::new(CellValue::Number(2.0))),
+        });
+        assert!(verify_sheet_answer_bytes(&ask, Some(&source), Some(&output)).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn extension_and_phonetic_descendants_are_not_cell_values() -> Result<()> {
+        let mut ask = bundle("Data & Co", None, CellValue::Number(6.0));
+        let blank = package("<worksheet><sheetData/></worksheet>", false);
+        for fake in [
+            r#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext uri="urn:example"><x:v xmlns:x="urn:example">6</x:v></ext></extLst></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext><v>6</v></ext></extLst></c></row></sheetData></worksheet>"#,
+        ] {
+            let output = package(fake, false);
+            assert!(verify_sheet_answer_bytes(&ask, Some(&blank), Some(&output)).is_err());
+        }
+        ask.answers[0].value = Some(CellValue::Text("False".into()));
+        let fake_inline = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="inlineStr"><is><ext><t>False</t></ext></is></c></row></sheetData></worksheet>"#,
+            false,
+        );
+        assert!(verify_sheet_answer_bytes(&ask, Some(&blank), Some(&fake_inline)).is_err());
+        let shared_cell = package(
+            r#"<worksheet><sheetData><row r="2"><c r="B2" t="s"><v>0</v></c></row></sheetData></worksheet>"#,
+            true,
+        );
+        let mut pkg = opc::read(&shared_cell)?;
+        pkg.upsert(
+            "xl/sharedStrings.xml",
+            br#"<sst><si><rPh><t>False</t></rPh></si></sst>"#.to_vec(),
+        );
+        assert!(verify_sheet_answer_bytes(&ask, Some(&blank), Some(&opc::write(&pkg))).is_err());
+        pkg.upsert(
+            "xl/sharedStrings.xml",
+            br#"<sst><si><r><t>True</t></r><rPh><t>False</t></rPh></si></sst>"#.to_vec(),
+        );
+        assert!(verify_sheet_answer_bytes(&ask, Some(&blank), Some(&opc::write(&pkg))).is_err());
+        Ok(())
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub(crate) fn resolve_policy_manifest(
 ) -> Result<PolicyManifestResolution> {
     let mut resolution = PolicyManifestResolution::default();
     let mut untrusted_source_rows = Vec::new();
+    let mut untrusted_sheet_limits = Vec::new();
     let mut delegated_rows: Vec<DelegationGrantRecord> = Vec::new();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
@@ -60,6 +61,7 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.diagnostics.manifest_count += 1;
                 if !trusted {
                     untrusted_source_rows.push(decoded.source_trust);
+                    untrusted_sheet_limits.extend(decoded.sheet_answer_limits);
                     continue;
                 }
                 // Only trusted packs can authorize the no-LLM lane. Each must agree.
@@ -148,6 +150,9 @@ pub(crate) fn resolve_policy_manifest(
                 }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
+                resolution
+                    .sheet_answer_limits
+                    .extend(decoded.sheet_answer_limits);
                 if let Some(threshold) = decoded.proposal_check_threshold {
                     resolution.proposal_check_threshold = Some(
                         resolution
@@ -163,6 +168,9 @@ pub(crate) fn resolve_policy_manifest(
         }
     }
 
+    resolution
+        .sheet_answer_limits
+        .extend(untrusted_sheet_limits);
     for contribution in untrusted_source_rows {
         resolution.source_trust.restrict_only(contribution);
     }

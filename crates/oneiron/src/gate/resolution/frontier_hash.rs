@@ -55,6 +55,24 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, threshold);
     }
 
+    // An absent row and the shipped 4096 vault row have identical effective
+    // policy. Keep their existing frontier hash stable; hash only restrictions
+    // that actually move the default, scoped or otherwise.
+    let nondefault: Vec<_> = resolution
+        .sheet_answer_limits
+        .iter()
+        .filter(|row| row.artifact_ref.is_some() || row.sheet.is_some() || row.max_count != 4096)
+        .collect();
+    if !nondefault.is_empty() {
+        hash_str(hasher, "sheet_answer_limits");
+        hash_len(hasher, nondefault.len());
+        for row in nondefault {
+            hash_opt_str(hasher, row.artifact_ref.as_deref());
+            hash_opt_str(hasher, row.sheet.as_deref());
+            hash_u64(hasher, row.max_count);
+        }
+    }
+
     hash_len(hasher, resolution.packs.len());
     for pack in &resolution.packs {
         hash_str(hasher, &pack._pack_id);

@@ -1321,6 +1321,8 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
                 let mut pkg = opc::read(&doc.bytes)?;
                 let sheet = if self.mode == 1 {
                     "<worksheet><sheetData><row r=\"2\"><c r=\"C2\"><v>6</v></c></row></sheetData></worksheet>"
+                } else if self.mode == 3 {
+                    r#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext uri="urn:example"><x:v xmlns:x="urn:example">6</x:v></ext></extLst></c></row></sheetData></worksheet>"#
                 } else {
                     "<worksheet><sheetData><row r=\"2\"><c r=\"B2\"><v>5</v></c></row></sheetData></worksheet>"
                 };
@@ -1423,6 +1425,7 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         principal: human.to_hex(),
         sheet: "Sheet1".into(),
         range: RangeRef::parse("B2:B3")?,
+        max_count_override: None,
         answers: vec![answer(2, 6.0), answer(3, 8.0)],
     };
     let idempotent = SheetAnswerBundle {
@@ -1431,6 +1434,7 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         principal: human.to_hex(),
         sheet: "Sheet1".into(),
         range: RangeRef::parse("A1:A1")?,
+        max_count_override: None,
         answers: vec![SheetCellAnswer {
             cell: CellRef::new(1, 1),
             before: Some(CellValue::Number(5.0)),
@@ -1466,7 +1470,7 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         vault.sheet_answer_receipts(&artifact, "ask:idempotent")?[0].version,
         1
     );
-    for mode in 0..3 {
+    for mode in 0..4 {
         let refused = vault
             .propose_sheet_answers(
                 &artifact,
@@ -1474,7 +1478,7 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
                 bundle.clone(),
                 "ask:lie",
             )
-            .expect_err("no-op, wrong-cell and wrong-value output must fail before proposal");
+            .expect_err("no-op, wrong-cell, wrong-value and extension-only output must fail before proposal");
         assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
         assert!(
             vault
@@ -1488,6 +1492,12 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     let refused = vault
         .propose_sheet_answers(&artifact, &CellSession, wrong_before, "ask:before")
         .expect_err("the before value must be read from the artifact, not trusted");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    let mut capped = bundle.clone();
+    capped.max_count_override = Some(1);
+    let refused = vault
+        .propose_sheet_answers(&artifact, &CellSession, capped, "ask:cap")
+        .expect_err("holder cap below answer count refuses proposal");
     assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
     let EditOutcome::Proposed(proposal) =
         vault.propose_sheet_answers(&artifact, &CellSession, bundle.clone(), "ask:range")?
@@ -1504,6 +1514,28 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         vault
             .sheet_answer_receipts(&artifact, "ask:range")?
             .is_empty()
+    );
+    let mut policy_forged = proposal.clone();
+    policy_forged
+        .sheet_answers
+        .as_mut()
+        .unwrap()
+        .max_count_override = Some(1);
+    let refused = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &policy_forged,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            time,
+            11,
+        )
+        .expect_err("Keep rechecks effective answer count policy");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:range")?
+            .is_none()
     );
     let mut forged = proposal.clone();
     forged.manifest.ops.pop();
@@ -1524,7 +1556,9 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
             .is_none()
     );
     assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
-    for replacement in [original, {
+    let mut extension = opc::read(&proposal.new_bytes)?;
+    extension.upsert(SHEET_PART, br#"<worksheet><sheetData><row r="2"><c r="B2"><extLst><ext uri="urn:example"><x:v xmlns:x="urn:example">6</x:v></ext></extLst></c></row><row r="3"><c r="B3"><v>8</v></c></row></sheetData></worksheet>"#.to_vec());
+    for replacement in [original, opc::write(&extension), {
         let mut pkg = opc::read(&proposal.new_bytes)?;
         let sheet = std::str::from_utf8(pkg.part(SHEET_PART).unwrap())
             .unwrap()
@@ -1655,6 +1689,7 @@ fn typed_sheet_answers_refuse_invalid_positions_and_forged_manifest() -> Result<
         principal: "owner".into(),
         sheet: "Sheet1".into(),
         range: RangeRef::parse("B2:B3")?,
+        max_count_override: None,
         answers: vec![SheetCellAnswer {
             cell: CellRef::new(2, 2),
             before: None,

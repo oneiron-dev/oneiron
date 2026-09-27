@@ -40,6 +40,9 @@ pub struct SheetAnswerBundle {
     pub sheet: String,
     pub range: RangeRef,
     pub answers: Vec<SheetCellAnswer>,
+    /// Holder-selected run cap; the manifest vault and scoped rows can only narrow it.
+    #[serde(default)]
+    pub max_count_override: Option<u64>,
 }
 
 impl SheetAnswerBundle {
@@ -60,7 +63,6 @@ impl SheetAnswerBundle {
             || self.range.end.col < self.range.start.col
             || self.range.end.row < self.range.start.row
             || self.answers.is_empty()
-            || self.answers.len() > 4096
         {
             return Err(invalid());
         }
@@ -114,6 +116,23 @@ impl Vault {
         run_ref: &str,
     ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
+        let rtxn = self.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &rtxn)?;
+        let cap = policy
+            .sheet_answer_limit(
+                &artifact_id.to_hex(),
+                &bundle.sheet,
+                bundle.max_count_override,
+            )
+            .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed answer count policy unavailable",
+            )))?;
+        if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
+            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                "typed answer count exceeds policy",
+            )));
+        }
+        drop(rtxn);
         let head = self
             .blob_artifact_head(artifact_id)?
             .ok_or(Error::EntityNotFound)?;

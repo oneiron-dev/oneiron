@@ -69,6 +69,23 @@ impl Vault {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            if let Some(bundle) = &proposal.sheet_answers {
+                let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+                let cap = policy
+                    .sheet_answer_limit(
+                        &artifact_id.to_hex(),
+                        &bundle.sheet,
+                        bundle.max_count_override,
+                    )
+                    .ok_or(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count policy unavailable",
+                    )))?;
+                if u64::try_from(bundle.answers.len()).unwrap_or(u64::MAX) > cap {
+                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                        "typed answer count exceeds policy",
+                    )));
+                }
+            }
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));

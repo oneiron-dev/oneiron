@@ -16,7 +16,8 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -58,6 +59,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +105,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | POLICY_SHEET_ANSWER_LIMITS_KEY
         ) {
             return None;
         }
@@ -238,6 +241,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let sheet_answer_limits = match single_map_value(&entries, POLICY_SHEET_ANSWER_LIMITS_KEY) {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => parse_sheet_answer_limits(value)?,
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,6 +277,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        sheet_answer_limits,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,
@@ -313,4 +323,139 @@ fn parse_single_valued_predicates(value: &Value) -> Option<std::collections::BTr
         }
     }
     Some(predicates)
+}
+
+/// Exact row decoder; a malformed or unknown field rejects the manifest.
+fn parse_sheet_answer_limits(
+    value: &Value,
+) -> Option<Vec<crate::gate::resolution::SheetAnswerLimitRow>> {
+    use crate::gate::resolution::SheetAnswerLimitRow;
+    let Value::Array(rows) = value else {
+        return None;
+    };
+    if rows.len() > 1024 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return None;
+        };
+        if fields
+            .iter()
+            .any(|(key, _)| !matches!(key.as_str(), Some("artifact_ref" | "sheet" | "max_count")))
+        {
+            return None;
+        }
+        let artifact_ref = match single_map_value(fields, "artifact_ref") {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                let id = value.as_str()?;
+                crate::entity_id::EntityId::from_hex(id).ok()?;
+                Some(id.to_owned())
+            }
+        };
+        let sheet = match single_map_value(fields, "sheet") {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                artifact_ref.as_ref()?;
+                let name = value.as_str()?;
+                if name.trim().is_empty() || name.len() > 255 {
+                    return None;
+                }
+                Some(name.to_owned())
+            }
+        };
+        let max_count = match single_map_value(fields, "max_count") {
+            MapValue::Present(value) => value.as_u64().filter(|n| *n > 0)?,
+            _ => return None,
+        };
+        if !seen.insert((artifact_ref.clone(), sheet.clone())) {
+            return None;
+        }
+        out.push(SheetAnswerLimitRow {
+            artifact_ref,
+            sheet,
+            max_count,
+        });
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod sheet_answer_limit_tests {
+    use super::*;
+    use crate::gate::resolution::{PolicyManifestResolution, SheetAnswerLimitRow};
+
+    #[test]
+    fn default_and_nested_manifest_rows_restrict_holder_at_vault() {
+        let shipped = crate::gate::default_manifest::default_policy_manifest();
+        let default = decode_policy_manifest(&shipped).expect("shipped manifest decodes");
+        assert_eq!(default.sheet_answer_limits[0].max_count, 4096);
+        let artifact = "11111111111111111111111111111111";
+        let rows = Value::Array(vec![
+            Value::Map(vec![(Value::from("max_count"), Value::from(256u64))]),
+            Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(artifact)),
+                (Value::from("max_count"), Value::from(128u64)),
+            ]),
+            Value::Map(vec![
+                (Value::from("artifact_ref"), Value::from(artifact)),
+                (Value::from("sheet"), Value::from("Private")),
+                (Value::from("max_count"), Value::from(32u64)),
+            ]),
+        ]);
+        let parsed = parse_sheet_answer_limits(&rows).expect("nested rows parse");
+        let mut policy = PolicyManifestResolution::default();
+        policy.sheet_answer_limits = parsed;
+        let mut raised = PolicyManifestResolution::default();
+        raised.sheet_answer_limits.push(SheetAnswerLimitRow {
+            artifact_ref: None,
+            sheet: None,
+            max_count: 8192,
+        });
+        assert_eq!(
+            raised.sheet_answer_limit(artifact, "Public", Some(8192)),
+            Some(8192)
+        );
+        assert_eq!(
+            raised.sheet_answer_limit(artifact, "Public", Some(9000)),
+            Some(8192)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit(artifact, "Private", None),
+            Some(32)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit(artifact, "Public", Some(64)),
+            Some(64)
+        );
+        assert_eq!(
+            policy.sheet_answer_limit("22222222222222222222222222222222", "Private", Some(1000)),
+            Some(256)
+        );
+        assert_eq!(policy.sheet_answer_limit(artifact, "Public", Some(0)), None);
+        let mut narrowed = policy;
+        narrowed.sheet_answer_limits.push(SheetAnswerLimitRow {
+            artifact_ref: Some(artifact.into()),
+            sheet: Some("Private".into()),
+            max_count: 8,
+        });
+        assert_eq!(
+            narrowed.sheet_answer_limit(artifact, "Private", Some(4096)),
+            Some(8)
+        );
+        // Unknown or duplicate row keys fail the manifest rather than falling
+        // back to the shipped limit, which could inadvertently widen it.
+        assert!(
+            parse_sheet_answer_limits(&Value::Array(vec![Value::Map(vec![
+                (Value::from("max_count"), Value::from(1u64)),
+                (Value::from("unknown"), Value::from(1u64)),
+            ])]))
+            .is_none()
+        );
+    }
 }
