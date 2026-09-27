@@ -12,6 +12,7 @@ mod deadline;
 mod driver;
 mod grain;
 mod legibility;
+mod policy;
 mod scheduling;
 mod settlement;
 mod types;
@@ -20,6 +21,7 @@ pub use self::deadline::*;
 pub use self::driver::*;
 pub use self::grain::*;
 pub use self::legibility::*;
+pub use self::policy::*;
 pub use self::scheduling::*;
 pub use self::types::*;
 
