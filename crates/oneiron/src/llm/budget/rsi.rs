@@ -46,6 +46,14 @@ pub struct RsiExplorationRead {
     pub suspended: bool,
 }
 
+/// The stamped token-share overflow admitted from the unallocated token pool.
+/// Units record reservation-time overdraft, even if it settles for less.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RsiOverdraftReceipt {
+    pub share: String,
+    pub units: u64,
+}
+
 /// The durable receipt of one reservation's terminal outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RsiSettlement {
@@ -83,6 +91,7 @@ struct Reservation {
     purpose: Option<RsiSpendPurpose>,
     share: Option<String>,
     settlement: Option<RsiSettlement>,
+    overdraft: Option<RsiOverdraftReceipt>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +133,54 @@ impl Line {
         }
         Ok((spent, reserved))
     }
+    /// Only token reservations draw from shares and their unallocated pool.
+    /// Exploration is an independent exposure line, not a token-share debit.
+    fn free_pool_usage(&self) -> RsiResult<u64> {
+        let mut by_share = BTreeMap::<&str, u64>::new();
+        let mut free_used = 0u64;
+        for row in self
+            .reservations
+            .values()
+            .filter(|row| row.line == RsiLine::Tokens)
+        {
+            let units = match row.settlement {
+                Some(RsiSettlement::Spent(units)) => units,
+                Some(RsiSettlement::Refunded) => 0,
+                None => row.amount,
+                Some(RsiSettlement::Exposure(_)) => {
+                    return Err(crate::Error::CorruptedIndex("RSI token settlement line").into());
+                }
+            };
+            if let Some(share) = row.share.as_deref() {
+                let total = by_share.entry(share).or_default();
+                *total = total.checked_add(units).ok_or(RsiBudgetError::Exhausted)?;
+            } else {
+                free_used = free_used
+                    .checked_add(units)
+                    .ok_or(RsiBudgetError::Exhausted)?;
+            }
+        }
+        for (key, used) in by_share {
+            let allocation = self.config.shares.get(key).map_or(0, |share| share.units);
+            free_used = free_used
+                .checked_add(used.saturating_sub(allocation))
+                .ok_or(RsiBudgetError::Exhausted)?;
+        }
+        Ok(free_used)
+    }
+
+    fn free_pool_limit(&self) -> RsiResult<u64> {
+        let allocated = self.config.shares.values().try_fold(0u64, |total, share| {
+            total
+                .checked_add(share.units)
+                .ok_or(RsiBudgetError::Exhausted)
+        })?;
+        self.config
+            .limit
+            .checked_sub(allocated)
+            .ok_or(RsiBudgetError::Exhausted)
+    }
+
     fn has_room(
         &self,
         line: RsiLine,
@@ -166,6 +223,11 @@ impl Vault {
             .shares
             .iter()
             .any(|(key, share)| key.is_empty() || share.units > config.limit)
+            || config
+                .shares
+                .values()
+                .try_fold(0u64, |total, share| total.checked_add(share.units))
+                .is_none_or(|allocated| allocated > config.limit)
         {
             return Err(RsiBudgetError::InvalidConfig);
         }
@@ -218,29 +280,82 @@ impl Vault {
         if line.reservations.contains_key(&id.to_hex()) {
             return Err(RsiBudgetError::DuplicateReservation);
         }
-        let limit = match kind {
-            RsiLine::Tokens => line.config.limit,
-            RsiLine::Exposure => line.config.exploration_exposure_limit,
+        let pool_before = if kind == RsiLine::Tokens {
+            Some(line.free_pool_usage()?)
+        } else {
+            None
         };
-        line.has_room(kind, limit, amount, |_| true)?;
-        if let Some(key) = &share
-            && let Some(policy) = line.config.shares.get(key)
-            && policy.pinned
-        {
-            line.has_room(kind, policy.units, amount, |row| {
-                row.share.as_ref() == Some(key)
-            })?;
-        }
+        let key = id.to_hex();
         line.reservations.insert(
-            id.to_hex(),
+            key.clone(),
             Reservation {
                 amount,
                 line: kind,
                 purpose,
-                share,
+                share: share.clone(),
                 settlement: None,
+                overdraft: None,
             },
         );
+        let admission = (|| {
+            let limit = match kind {
+                RsiLine::Tokens => line.config.limit,
+                RsiLine::Exposure => line.config.exploration_exposure_limit,
+            };
+            line.has_room(kind, limit, 0, |_| true)?;
+            if kind == RsiLine::Tokens {
+                if let Some(share) = &share
+                    && let Some(policy) = line.config.shares.get(share)
+                    && policy.pinned
+                {
+                    line.has_room(kind, policy.units, 0, |row| {
+                        row.share.as_ref() == Some(share)
+                    })?;
+                }
+                let pool_after = line.free_pool_usage()?;
+                if pool_after > line.free_pool_limit()? {
+                    return Err(RsiBudgetError::Exhausted);
+                }
+                if let Some(share) = &share
+                    && !line
+                        .config
+                        .shares
+                        .get(share)
+                        .is_some_and(|policy| policy.pinned)
+                {
+                    let overdrawn = pool_after
+                        - pool_before.ok_or(crate::Error::InvariantViolation(
+                            "RSI token pool missing before admission",
+                        ))?;
+                    if overdrawn > 0 {
+                        return Ok(Some(RsiOverdraftReceipt {
+                            share: share.clone(),
+                            units: overdrawn,
+                        }));
+                    }
+                }
+            }
+            Ok(None)
+        })();
+        match admission {
+            Ok(overdraft) => {
+                let row =
+                    line.reservations
+                        .get_mut(&key)
+                        .ok_or(crate::Error::InvariantViolation(
+                            "RSI reservation missing after admission",
+                        ))?;
+                row.overdraft = overdraft;
+            }
+            Err(RsiBudgetError::Exhausted) => {
+                line.reservations.remove(&key);
+                line.suspended = true;
+                save(self, &mut txn, &line)?;
+                txn.commit().map_err(crate::Error::from)?;
+                return Err(RsiBudgetError::Exhausted);
+            }
+            Err(other) => return Err(other),
+        }
         save(self, &mut txn, &line)?;
         txn.commit().map_err(crate::Error::from)?;
         Ok(())
@@ -304,6 +419,11 @@ impl Vault {
         Ok(())
     }
 
+    /// Releases the hold on new loop work; admitted work may already settle while held.
+    pub fn resume_rsi_budget(&self) -> RsiResult<()> {
+        self.suspend_rsi_budget(false)
+    }
+
     pub fn rsi_budget(&self) -> RsiResult<RsiBudgetRead> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
         let line = load(self, &txn)?;
@@ -327,6 +447,16 @@ impl Vault {
             reserved_exposure,
             suspended: line.suspended,
         })
+    }
+
+    /// Reads the token-share overdraft stamped at reservation, including after settlement.
+    pub fn rsi_overdraft(&self, id: EntityId) -> RsiResult<Option<RsiOverdraftReceipt>> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let line = load(self, &txn)?;
+        Ok(line
+            .reservations
+            .get(&id.to_hex())
+            .and_then(|row| row.overdraft.clone()))
     }
 
     /// Reads the terminal receipt without exposing another vault's key material.
@@ -369,6 +499,7 @@ mod tests {
             vault.reserve_rsi_budget(second, 31, RsiSpendPurpose::Judge, None),
             Err(RsiBudgetError::Exhausted)
         ));
+        vault.resume_rsi_budget().unwrap();
         vault.reserve_rsi_exploration(second, 20).unwrap();
         drop(vault);
         let vault = Vault::open(dir.path(), config).unwrap();
@@ -415,6 +546,7 @@ mod tests {
             vault.reserve_rsi_budget(EntityId::now(), 1, RsiSpendPurpose::Judge, None),
             Err(RsiBudgetError::Exhausted)
         ));
+        vault.resume_rsi_budget().unwrap();
         assert!(matches!(
             vault.reserve_rsi_exploration(EntityId::now(), 1),
             Err(RsiBudgetError::Exhausted)
@@ -433,6 +565,7 @@ mod tests {
         ));
         vault.settle_rsi_budget(tokens, 10).unwrap();
         vault.settle_rsi_exploration(bandit, 1).unwrap();
+        vault.resume_rsi_budget().unwrap();
         assert_eq!(vault.rsi_budget().unwrap().spent, 10);
         assert_eq!(vault.rsi_exploration().unwrap().spent_exposure, 1);
         assert_eq!(
@@ -449,5 +582,142 @@ mod tests {
         assert_eq!(reopened.rsi_budget().unwrap().spent, 10);
         assert_eq!(reopened.rsi_exploration().unwrap().spent_exposure, 1);
         assert_eq!(reopened.rsi_exploration().unwrap().reserved_exposure, 1);
+    }
+    #[test]
+    fn exploration_exposure_and_pinned_tokens_are_independent_in_both_orders() {
+        for exposure_first in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+            vault
+                .configure_rsi_budget(RsiBudgetConfig {
+                    limit: 100,
+                    exploration_exposure_limit: 20,
+                    shares: BTreeMap::from([(
+                        "pin".into(),
+                        RsiBudgetShare {
+                            units: 30,
+                            pinned: true,
+                        },
+                    )]),
+                })
+                .unwrap();
+            let exposure = EntityId::now();
+            let pinned = EntityId::now();
+            if exposure_first {
+                vault.reserve_rsi_exploration(exposure, 20).unwrap();
+            }
+            vault
+                .reserve_rsi_budget(pinned, 30, RsiSpendPurpose::Judge, Some("pin".into()))
+                .unwrap();
+            if !exposure_first {
+                vault.reserve_rsi_exploration(exposure, 20).unwrap();
+            }
+            let free = EntityId::now();
+            vault
+                .reserve_rsi_budget(free, 70, RsiSpendPurpose::Experiment, None)
+                .unwrap();
+            assert!(!vault.rsi_budget().unwrap().suspended);
+            assert_eq!(vault.rsi_budget().unwrap().reserved, 100);
+            assert_eq!(vault.rsi_exploration().unwrap().reserved_exposure, 20);
+            assert_eq!(vault.rsi_overdraft(pinned).unwrap(), None);
+            assert_eq!(vault.rsi_overdraft(exposure).unwrap(), None);
+            vault.settle_rsi_budget(pinned, 30).unwrap();
+            vault.settle_rsi_exploration(exposure, 20).unwrap();
+        }
+    }
+
+    #[test]
+    fn token_soft_share_receipts_pool_overdraft_and_holds_until_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::VaultConfig::device();
+        let vault = Vault::open(dir.path(), config.clone()).unwrap();
+        vault
+            .configure_rsi_budget(RsiBudgetConfig {
+                limit: 100,
+                exploration_exposure_limit: 20,
+                shares: BTreeMap::from([
+                    (
+                        "pin".into(),
+                        RsiBudgetShare {
+                            units: 30,
+                            pinned: true,
+                        },
+                    ),
+                    (
+                        "soft".into(),
+                        RsiBudgetShare {
+                            units: 20,
+                            pinned: false,
+                        },
+                    ),
+                ]),
+            })
+            .unwrap();
+        let pinned = EntityId::now();
+        let soft = EntityId::now();
+        let free = EntityId::now();
+        vault
+            .reserve_rsi_budget(pinned, 30, RsiSpendPurpose::Judge, Some("pin".into()))
+            .unwrap();
+        vault
+            .reserve_rsi_budget(soft, 65, RsiSpendPurpose::Experiment, Some("soft".into()))
+            .unwrap();
+        assert_eq!(
+            vault.rsi_overdraft(soft).unwrap(),
+            Some(RsiOverdraftReceipt {
+                share: "soft".into(),
+                units: 45
+            })
+        );
+        drop(vault);
+        let vault = Vault::open(dir.path(), config).unwrap();
+        assert_eq!(vault.rsi_overdraft(soft).unwrap().unwrap().units, 45);
+        assert!(matches!(
+            vault.reserve_rsi_budget(free, 6, RsiSpendPurpose::Judge, None),
+            Err(RsiBudgetError::Exhausted)
+        ));
+        assert!(vault.rsi_budget().unwrap().suspended);
+        assert!(matches!(
+            vault.reserve_rsi_exploration(EntityId::now(), 1),
+            Err(RsiBudgetError::Suspended)
+        ));
+        vault.settle_rsi_budget(soft, 55).unwrap();
+        assert!(vault.rsi_budget().unwrap().suspended);
+        vault.resume_rsi_budget().unwrap();
+        vault
+            .reserve_rsi_budget(free, 6, RsiSpendPurpose::Judge, None)
+            .unwrap();
+        vault.settle_rsi_budget(free, 6).unwrap();
+        assert_eq!(vault.rsi_overdraft(soft).unwrap().unwrap().units, 45);
+        assert_eq!(vault.rsi_budget().unwrap().spent, 61);
+    }
+
+    #[test]
+    fn token_share_allocations_cannot_exceed_token_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+        assert!(matches!(
+            vault.configure_rsi_budget(RsiBudgetConfig {
+                limit: 10,
+                exploration_exposure_limit: 100,
+                shares: BTreeMap::from([
+                    (
+                        "a".into(),
+                        RsiBudgetShare {
+                            units: 7,
+                            pinned: false
+                        }
+                    ),
+                    (
+                        "b".into(),
+                        RsiBudgetShare {
+                            units: 7,
+                            pinned: true
+                        }
+                    ),
+                ]),
+            }),
+            Err(RsiBudgetError::InvalidConfig)
+        ));
     }
 }
