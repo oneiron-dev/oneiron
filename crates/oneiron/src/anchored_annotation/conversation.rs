@@ -1,4 +1,4 @@
-//! Composition with existing conversation MESSAGE nodes. Never owns room HEAD.
+//! Composition with existing conversation DAG TURN nodes. Never owns room HEAD.
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::error::{ArtifactError, Error, Result};
 use crate::write_envelope::ClaimCandidate;
@@ -9,8 +9,10 @@ const NODE_PREDICATE: &str = "annotation.conversation_node";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AnnotationConversationNode {
+    /// Conversation containing the bound DAG node.
     pub conversation_ref: EntityId,
-    pub message_ref: EntityId,
+    /// Existing TURN on a verified conversation DAG branch.
+    pub turn_ref: EntityId,
 }
 
 /// Read projection over one anchored thread. Agent replies are ordinary
@@ -52,7 +54,7 @@ impl Vault {
             Value::from(1),
             Value::from(thread.to_hex()),
             Value::from(node.conversation_ref.to_hex()),
-            Value::from(node.message_ref.to_hex()),
+            Value::from(node.turn_ref.to_hex()),
         ]);
         let id = EntityId::now();
         self.with_write_txn(|txn| {
@@ -101,7 +103,7 @@ impl Vault {
             }
             let node = AnnotationConversationNode {
                 conversation_ref: entity(2)?,
-                message_ref: entity(3)?,
+                turn_ref: entity(3)?,
             };
             validate_node(self, node)?;
             if result.is_some_and(|old| old != node) {
@@ -124,23 +126,26 @@ impl Vault {
             return Ok(AnnotationCollaborationState::Resolved);
         }
         let comments = self.annotation_thread_comments(&artifact, &thread)?;
-        let Some(last) = comments.last() else {
-            return Ok(AnnotationCollaborationState::Open);
-        };
-        let body = self.get_claim(&last.claim_id)?.ok_or_else(invalid)?;
-        // Identity comes from engine envelope evidence, never comment prose.
-        let agent = body
-            .evidence
-            .as_ref()
-            .and_then(Value::as_map)
-            .and_then(|map| {
-                map.iter().find(|(key, _)| {
-                    key.as_str()
-                        == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)
+        // An admitted agent answer stays answered even when the human adds
+        // another comment. The thread head is human-owned; an agent cannot
+        // supersede it just to record its own reply.
+        let mut agent = false;
+        for comment in comments {
+            let body = self.get_claim(&comment.claim_id)?.ok_or_else(invalid)?;
+            // Identity comes from engine envelope evidence, never comment prose.
+            agent |= body
+                .evidence
+                .as_ref()
+                .and_then(Value::as_map)
+                .and_then(|map| {
+                    map.iter().find(|(key, _)| {
+                        key.as_str()
+                            == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY)
+                    })
                 })
-            })
-            .and_then(|(_, value)| value.as_u64())
-            == Some(crate::edge::EdgeActorClass::Agent as u64);
+                .and_then(|(_, value)| value.as_u64())
+                == Some(crate::edge::EdgeActorClass::Agent as u64);
+        }
         Ok(if agent {
             AnnotationCollaborationState::AgentReplied
         } else {
@@ -150,18 +155,17 @@ impl Vault {
 }
 
 fn validate_node(vault: &Vault, node: AnnotationConversationNode) -> Result<()> {
-    if vault.get_entity_type(&node.conversation_ref)?
-        != Some(crate::registry::ENTITY_TYPE_CONVERSATION)
-        || vault.get_entity_type(&node.message_ref)? != Some(crate::registry::ENTITY_TYPE_MESSAGE)
-    {
-        return Err(invalid());
-    }
-    let parents: Vec<_> = vault
-        .edges_out(&node.message_ref)?
-        .into_iter()
-        .filter(|edge| edge.kind == crate::edge::EdgeKind::BelongsTo)
-        .collect();
-    if parents.len() != 1 || parents[0].target != node.conversation_ref {
+    // A typed TURN on a verified DAG branch, not a MESSAGE merely linked to
+    // a conversation by an arbitrary BelongsTo edge. Branch resolution checks
+    // the complete parent chain and ownership without moving HEAD.
+    let scope = crate::conversation_dag::ScopeSelector {
+        conversation: node.conversation_ref,
+        session: None,
+        path: crate::conversation_dag::ScopePath::Branch(node.turn_ref),
+        include_forks: false,
+    };
+    let path = vault.resolve_dag_scope(&scope).map_err(|_| invalid())?;
+    if path.records.last() != Some(&node.turn_ref) {
         return Err(invalid());
     }
     Ok(())
