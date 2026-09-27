@@ -15881,6 +15881,23 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AgentKind",
+      "CustomFailureGroup",
+      "FailureSignalClass",
+      "TierOneFailureCount"
+     ],
+     "path": "src/failure_ladder/custom_review.rs",
+     "purpose": "Vault-local custom-agent failure index and content-free health projection",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/failure_ladder/healer_case.rs",
      "purpose": "Durable failure-ladder cases bind healer admission to the fenced failure",
@@ -15931,7 +15948,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -15981,6 +15998,14 @@
      "notable": [],
      "path": "src/failure_ladder/tests.rs",
      "purpose": "ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_ladder/tests/custom_review.rs",
+     "purpose": "Custom-agent retrospective grouping uses only committed terminal dispatches",
      "surface": {}
     },
     {
@@ -35332,7 +35357,7 @@
      "purpose": "—"
     },
     "failure_ladder": {
-     "files": 12,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -36055,8 +36080,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2129,
-   "test_files": 725
+   "source_files": 2130,
+   "test_files": 726
   },
   "oneiron-android": {
    "files": [
