@@ -148,7 +148,10 @@ fn advertised_host_verbs(dts: &str) -> Vec<String> {
             if let Some(name) = rest.split_whitespace().next() {
                 namespaces.push(name);
             }
-        } else if let Some(rest) = line.strip_prefix("function ") {
+        } else if let Some(rest) = line
+            .strip_prefix("declare function ")
+            .or_else(|| line.strip_prefix("function "))
+        {
             let name = rest.split('(').next().unwrap_or_default().trim();
             if !name.is_empty() {
                 let mut verb = namespaces.join(".");
@@ -247,6 +250,9 @@ const CLOCK_NOW_UNIX_MS_IMPORT: SandboxLinkedImport =
 const RANDOM_BYTES_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("oneiron.random.bytes", SandboxImportClass::Determinism);
 
+const SELF_JSON_VALIDATE_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("self.json.validate", SandboxImportClass::ReadOnly);
+
 const SELF_MEMORY_SEARCH_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.memory.search", SandboxImportClass::ReadOnly);
 
@@ -262,11 +268,8 @@ const SELF_MEMORY_PUT_EDGE_IMPORT: SandboxLinkedImport =
 const SELF_REPORT_BLOCKED_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.report_blocked", SandboxImportClass::WriteTrap);
 
-const SELF_ASK_HUMAN_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.ask_human", SandboxImportClass::DurableWait);
-
-const SELF_ASK_HUMAN_CAMEL_IMPORT: SandboxLinkedImport =
-    SandboxLinkedImport::new("self.askHuman", SandboxImportClass::DurableWait);
+const SELF_ASK_IMPORT: SandboxLinkedImport =
+    SandboxLinkedImport::new("ask", SandboxImportClass::DurableWait);
 
 const SELF_SPEAK_IMPORT: SandboxLinkedImport =
     SandboxLinkedImport::new("self.speak", SandboxImportClass::Speech);
@@ -289,13 +292,13 @@ const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[
     CREDENTIAL_CALL_IMPORT,
     CLOCK_NOW_UNIX_MS_IMPORT,
     RANDOM_BYTES_IMPORT,
+    SELF_JSON_VALIDATE_IMPORT,
     SELF_MEMORY_SEARCH_IMPORT,
     SELF_MEMORY_PUT_CLAIM_IMPORT,
     SELF_MEMORY_SUPERSEDE_CLAIM_IMPORT,
     SELF_MEMORY_PUT_EDGE_IMPORT,
     SELF_REPORT_BLOCKED_IMPORT,
-    SELF_ASK_HUMAN_IMPORT,
-    SELF_ASK_HUMAN_CAMEL_IMPORT,
+    SELF_ASK_IMPORT,
     SELF_SPEAK_IMPORT,
     SELF_THINK_IMPORT,
     SELF_EXPRESS_IMPORT,
