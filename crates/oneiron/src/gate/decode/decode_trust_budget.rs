@@ -9,8 +9,8 @@ use crate::gate::constants::{
     ACTOR_REF_KEY, BUDGET_POLICY_ACTOR_KEY, BUDGET_POLICY_CAP_KEY, BUDGET_POLICY_FLOOR_KEY,
     BUDGET_POLICY_PURPOSE_KEY, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY,
     GATE_RETENTION_HORIZON_SECS_KEY, GATE_RETENTION_MAX_SWEEP_ROWS_KEY,
-    GATE_RETENTION_PRECEDENCE_KEY, SOURCE_TRUST_AUTO_KEY,
-    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    GATE_RETENTION_PRECEDENCE_KEY, SOURCE_TRUST_AUTO_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
+    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use crate::gate::resolution::{CommOptOutPosture, GateDecisionRetentionPolicy};
 use crate::llm::{
@@ -113,10 +113,8 @@ pub(super) fn parse_gate_decision_retention(value: &Value) -> Option<GateDecisio
             return None;
         }
     }
-    if required_value(entries, GATE_RETENTION_PRECEDENCE_KEY)?.as_str()?
-        != "nested_narrowing"
-        || required_value(entries, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY)?.as_str()?
-            != "vault"
+    if required_value(entries, GATE_RETENTION_PRECEDENCE_KEY)?.as_str()? != "nested_narrowing"
+        || required_value(entries, GATE_RETENTION_HOLDER_OVERRIDE_CEILING_KEY)?.as_str()? != "vault"
     {
         return None;
     }
@@ -124,11 +122,10 @@ pub(super) fn parse_gate_decision_retention(value: &Value) -> Option<GateDecisio
         Value::Nil => None,
         value => Some(value.as_u64().filter(|seconds| *seconds > 0)?),
     };
-    let max_sweep_rows = usize::try_from(
-        required_value(entries, GATE_RETENTION_MAX_SWEEP_ROWS_KEY)?.as_u64()?,
-    )
-    .ok()
-    .filter(|rows| *rows > 0)?;
+    let max_sweep_rows =
+        usize::try_from(required_value(entries, GATE_RETENTION_MAX_SWEEP_ROWS_KEY)?.as_u64()?)
+            .ok()
+            .filter(|rows| *rows > 0)?;
     Some(GateDecisionRetentionPolicy {
         horizon_secs,
         max_sweep_rows,

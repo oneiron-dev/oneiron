@@ -94,8 +94,7 @@ pub(crate) use self::input::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{
-    GateDecisionRetentionPolicy, PolicyManifestResolution, resolve_gate_decision_retention,
-    resolve_policy_manifest,
+    PolicyManifestResolution, resolve_gate_decision_retention, resolve_policy_manifest,
 };
 pub use self::retrieval_filter::RetrievalFilter;
 pub(crate) use self::retrieval_filter::{

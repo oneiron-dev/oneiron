@@ -85,7 +85,7 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
-        if reason.active_store_hard_purge_v1() && !crdt_persisted {
+        if reason.active_store_hard_purge_v1() {
             self.store
                 .reject_held_gate_partition_in_txn(&wtxn, id.as_bytes())?;
         }

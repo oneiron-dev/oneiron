@@ -1534,6 +1534,60 @@ fn guard_claim(vault: &Vault, subject: &EntityId, value: &str, learned_at: u64) 
     id
 }
 
+#[test]
+fn gate_receipt_horizon_does_not_block_later_retraction_of_a_live_claim() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let vault = Vault::open(temp.path().join("vault"), crate::VaultConfig::device())?;
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let claim = guard_claim(&vault, &subject, "osaka", 2);
+    let owner = vault.authenticate_owner(
+        subject,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    // Seed an old, claim-bound receipt without changing the live CLAIM. The
+    // following lifecycle write must receive fresh custody after the sweep.
+    let old = crate::store::GateDecisionRecord {
+        version: crate::store::GATE_DECISION_LEDGER_VERSION,
+        decision_id: crate::store::GateDecisionId::now(),
+        created_at: 1,
+        outcome: "approved".to_owned(),
+        reason_codes: vec!["gate.test.receipt_family".to_owned()],
+        receipt_reasons: Vec::new(),
+        system_notices: Vec::new(),
+        actor_class: "agent".to_owned(),
+        actor_ref: None,
+        content_kind: "claim".to_owned(),
+        policy_manifest_version: "v0".to_owned(),
+        claim_id: Some(*claim.as_bytes()),
+        grant_ref: None,
+        diff_handle: vec![0xAA],
+        read_frontier_hash: [0xBB; 32],
+        redacted_at: None,
+    };
+    vault.with_write_txn(|txn| vault.store.append_gate_decision_in_txn(txn, &old))?;
+    vault.set_gate_decision_retention_secs(&owner, Some(60))?;
+    assert_eq!(vault.sweep_gate_decision_retention()?, 1);
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("live claim").lifecycle,
+        ClaimLifecycleStatus::Active
+    );
+    vault.retract_claim(&claim, vault.store.clock.now_recorded_at())?;
+    assert_eq!(
+        vault.get_claim(&claim)?.expect("retracted").lifecycle,
+        ClaimLifecycleStatus::Retracted
+    );
+    Ok(())
+}
+
 fn guard_short_ref(vault: &Vault, id: &EntityId) -> String {
     let rtxn = vault.store.env.read_txn().expect("read txn");
     vault.claim_short_ref_in(&rtxn, id).expect("short ref")

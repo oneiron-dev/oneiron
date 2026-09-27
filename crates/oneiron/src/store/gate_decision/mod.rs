@@ -9,6 +9,8 @@ mod ledger;
 mod lookup;
 mod orcb;
 mod retention;
+#[cfg(test)]
+pub(in crate::store) use self::retention::arm_before_retire_lock;
 mod sidecar;
 mod types;
 mod vet;
@@ -48,7 +50,7 @@ pub(in crate::store) use self::keys::{
     gate_decision_claim_index_prefix, gate_decision_grant_ref_index_key,
 };
 #[cfg(test)]
-pub(in crate::store) use self::ledger::encode_gate_decision;
+pub(in crate::store) use self::ledger::{arm_before_gate_page_decode, encode_gate_decision};
 #[cfg(test)]
 pub(in crate::store) use self::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
 #[cfg(test)]

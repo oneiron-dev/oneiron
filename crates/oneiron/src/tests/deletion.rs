@@ -910,3 +910,33 @@ fn held_key_partition_defers_hard_erase_without_a_tombstone() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn held_partition_after_tombstone_publication_defers_local_purge() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, test_time_range(10, 10), 20, b"late hold")?;
+    let result = run_raced_delete(&vault, &id, DeleteReason::UserHardDelete, |txn| {
+        let mut key = b"gate_decision:partition_hold:v1:".to_vec();
+        key.push(1);
+        key.extend_from_slice(id.as_bytes());
+        vault.store.vault_meta.put(txn, &key, &[1])?;
+        Ok(())
+    });
+    assert!(matches!(result, Err(Error::InvalidConfig(_))));
+    let txn = vault.store.env.read_txn()?;
+    let physical = vault
+        .store
+        .entities
+        .get(&txn, id.as_bytes())?
+        .expect("held entity still has its physical row");
+    assert!(physical.ends_with(b"late hold"));
+    drop(txn);
+    vault.set_gate_decision_partition_hold(Some(*id.as_bytes()), false)?;
+    assert!(
+        vault
+            .delete_entity_with_reason(&id, DeleteReason::UserHardDelete)?
+            .existed
+    );
+    Ok(())
+}

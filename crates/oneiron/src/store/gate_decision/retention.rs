@@ -9,39 +9,21 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
 use super::orcb;
 use super::types::GateDecisionRecord;
 
-const HORIZON_KEY: &[u8] = b"gate_decision:retention_secs:v1";
 const HOLD_PREFIX: &[u8] = b"gate_decision:partition_hold:v1:";
 const RETAIN_PREFIX: &[u8] = b"gate_decision:partition_retain_until:v1:";
 const RETIRE_PENDING_PREFIX: &[u8] = b"gate_decision:partition_retire_pending:v1:";
-const MAX_SWEEP_ROWS: usize = 256;
 
 pub(super) fn pending_key(claim: &[u8; 16]) -> Vec<u8> {
     let mut key = Vec::from(RETIRE_PENDING_PREFIX);
     key.extend_from_slice(claim);
     key
-}
-
-fn retention_secs_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Option<u64>> {
-    match store.vault_meta.get(txn, HORIZON_KEY)? {
-        None => Ok(None),
-        Some(raw) => {
-            let bytes: [u8; 8] = raw
-                .as_ref()
-                .try_into()
-                .map_err(|_| Error::CorruptedIndex("gate decision retention"))?;
-            let seconds = u64::from_be_bytes(bytes);
-            if seconds == 0 {
-                return Err(Error::CorruptedIndex("gate decision retention"));
-            }
-            Ok(Some(seconds))
-        }
-    }
 }
 
 fn partition_key(prefix: &[u8], claim: Option<&[u8; 16]>) -> Vec<u8> {
@@ -77,12 +59,17 @@ impl Store {
         &self,
         txn: &RoTxn<'_>,
         claim: &[u8; 16],
-    ) -> Result<bool> {
-        match self.vault_meta.get(txn, &pending_key(claim))? {
-            None => Ok(false),
-            Some(raw) if raw.as_ref() == [1] => Ok(true),
-            Some(_) => Err(Error::CorruptedIndex("gate decision retirement intent")),
-        }
+    ) -> Result<Option<u64>> {
+        self.vault_meta
+            .get(txn, &pending_key(claim))?
+            .map(|raw| {
+                let bytes: [u8; 8] = raw
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
+                Ok(u64::from_be_bytes(bytes))
+            })
+            .transpose()
     }
 
     pub(crate) fn reject_held_gate_partition_in_txn(
@@ -99,35 +86,119 @@ impl Store {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static BEFORE_RETIRE_LOCK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::store) fn arm_before_retire_lock(callback: impl FnOnce() + 'static) {
+    BEFORE_RETIRE_LOCK.with(|slot| *slot.borrow_mut() = Some(Box::new(callback)));
+}
+
 impl Vault {
-    /// Set an owner-chosen age limit in seconds. No setting means NO pruning.
-    /// Zero is rejected rather than turning a configuration mistake into a
-    /// sweep of every historical decision.
-    pub fn set_gate_decision_retention_secs(&self, seconds: Option<u64>) -> Result<()> {
+    /// Owner-authored retention horizon, kept in the trusted POLICY_MANIFEST
+    /// instead of an alternate vault_meta scalar. `None` explicitly disables
+    /// age pruning. The shipped manifest defaults to `None`.
+    pub fn set_gate_decision_retention_secs(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        seconds: Option<u64>,
+    ) -> Result<()> {
         if seconds == Some(0) {
             return Err(Error::InvalidConfig(
                 "gate decision retention must be positive".into(),
             ));
         }
-        self.with_write_txn(|txn| {
-            match seconds {
-                Some(seconds) => {
-                    self.store
-                        .vault_meta
-                        .put(txn, HORIZON_KEY, &seconds.to_be_bytes())?;
-                }
-                None => {
-                    self.store.vault_meta.delete(txn, HORIZON_KEY)?;
-                }
-            }
-            Ok(())
-        })
+        self.update_gate_decision_retention_manifest(owner, Some(seconds), None)
     }
 
-    /// The configured age limit, or None if no age sweep is authorized.
+    /// Owner-authored maximum number of decisions removed by one sweep pass.
+    pub fn set_gate_decision_sweep_budget(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        rows: usize,
+    ) -> Result<()> {
+        if rows == 0 {
+            return Err(Error::InvalidConfig(
+                "gate decision sweep budget must be positive".into(),
+            ));
+        }
+        self.update_gate_decision_retention_manifest(owner, None, Some(rows))
+    }
+
+    fn update_gate_decision_retention_manifest(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        horizon: Option<Option<u64>>,
+        budget: Option<usize>,
+    ) -> Result<()> {
+        use crate::batch::ENTITY_METADATA_HEADER_LEN;
+        let mut txn = self.store.env.write_txn()?;
+        // Read the effective trusted row in the SAME transaction that writes
+        // the owner replacement; no policy override gets lost between reads.
+        let current = crate::gate::resolve_gate_decision_retention(&self.store, &txn)?.ok_or(
+            Error::InvalidConfig("gate decision retention manifest missing".into()),
+        )?;
+        let id = crate::gate::default_policy_manifest_id()?;
+        let raw = self
+            .store
+            .entities
+            .get(&txn, id.as_bytes())?
+            .ok_or(Error::CorruptedIndex("default policy manifest"))?;
+        let manifest_body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("default policy manifest"))?;
+        let mut body: rmpv::Value = rmpv::decode::read_value(&mut &manifest_body[..])
+            .map_err(|_| Error::CorruptedIndex("default policy manifest"))?;
+        let rmpv::Value::Map(ref mut fields) = body else {
+            return Err(Error::CorruptedIndex("default policy manifest"));
+        };
+        fields.retain(|(key, _)| key.as_str() != Some("gate_decision_retention"));
+        fields.push((
+            rmpv::Value::from("gate_decision_retention"),
+            rmpv::Value::Map(vec![
+                (
+                    rmpv::Value::from("horizon_secs"),
+                    horizon
+                        .unwrap_or(current.horizon_secs)
+                        .map_or(rmpv::Value::Nil, rmpv::Value::from),
+                ),
+                (
+                    rmpv::Value::from("max_sweep_rows"),
+                    rmpv::Value::from(
+                        u64::try_from(budget.unwrap_or(current.max_sweep_rows)).map_err(|_| {
+                            Error::InvalidConfig("gate decision sweep budget too large".into())
+                        })?,
+                    ),
+                ),
+                (
+                    rmpv::Value::from("precedence"),
+                    rmpv::Value::from("nested_narrowing"),
+                ),
+                (
+                    rmpv::Value::from("holder_override_ceiling"),
+                    rmpv::Value::from("vault"),
+                ),
+            ]),
+        ));
+        let mut data = Vec::new();
+        rmpv::encode::write_value(&mut data, &body)
+            .map_err(|_| Error::InvariantViolation("gate decision retention manifest encode"))?;
+        let now = self.store.clock.now_recorded_at();
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Effective trusted-policy horizon. No horizon means NO age pruning.
     pub fn gate_decision_retention_secs(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
-        retention_secs_in_txn(&self.store, &txn)
+        Ok(
+            crate::gate::resolve_gate_decision_retention(&self.store, &txn)?
+                .and_then(|policy| policy.horizon_secs),
+        )
     }
 
     /// Hold the entire exterior-key partition, not an individual decision.
@@ -141,6 +212,20 @@ impl Vault {
         let key = partition_key(HOLD_PREFIX, claim_partition.as_ref());
         self.with_write_txn(|txn| {
             if held {
+                if let Some(claim) = claim_partition.as_ref()
+                    && let Some(generation) = self
+                        .store
+                        .gate_partition_retire_pending_in_txn(txn, claim)?
+                    && orcb::generation_retired(
+                        &self.store.core.gate_custody_root,
+                        claim,
+                        generation,
+                    )?
+                {
+                    return Err(Error::InvalidConfig(
+                        "gate decision partition key already retired".into(),
+                    ));
+                }
                 self.store.vault_meta.put(txn, &key, &[1])?;
             } else {
                 self.store.vault_meta.delete(txn, &key)?;
@@ -186,14 +271,36 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex("gate decision retirement intent"))?
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
-            if value.as_ref() != [1] {
-                return Err(Error::CorruptedIndex("gate decision retirement intent"));
-            }
-            pending.push(claim);
+            let generation: [u8; 8] = value
+                .as_ref()
+                .try_into()
+                .map_err(|_| Error::CorruptedIndex("gate decision retirement intent"))?;
+            pending.push((claim, u64::from_be_bytes(generation)));
         }
         drop(txn);
-        for claim in pending {
-            let txn = self.store.env.read_txn()?;
+        for (claim, generation) in pending {
+            #[cfg(test)]
+            BEFORE_RETIRE_LOCK.with(|slot| {
+                if let Some(callback) = slot.borrow_mut().take() {
+                    callback();
+                }
+            });
+            // One LMDB writer owns hold admission, live-row inspection,
+            // exterior destruction and intent consumption as one boundary.
+            // A hold accepted before this txn defers retirement; a hold after
+            // the key is retired is refused by the setter.
+            let mut txn = self.store.env.write_txn()?;
+            match self
+                .store
+                .gate_partition_retire_pending_in_txn(&txn, &claim)?
+            {
+                None => continue, // another finisher consumed the intent
+                Some(current) if current == generation => {}
+                Some(_) => return Err(Error::CorruptedIndex("gate decision retirement intent")),
+            }
+            if self.store.gate_partition_held_in_txn(&txn, Some(&claim))? {
+                continue;
+            }
             let mut has_live_row = false;
             self.store.for_each_gate_decision_in_txn(&txn, |record| {
                 has_live_row |= record.claim_id == Some(claim);
@@ -204,20 +311,11 @@ impl Vault {
                     "retiring gate decision partition has live rows",
                 ));
             }
-            drop(txn);
-            orcb::retire_claim_key(&self.store.core.gate_custody_root, &claim)?;
-            self.with_write_txn(|txn| {
-                // Keep the marker if a concurrent caller has replaced it with
-                // an unexpected value; never silently erase a new obligation.
-                if !self
-                    .store
-                    .gate_partition_retire_pending_in_txn(txn, &claim)?
-                {
-                    return Err(Error::CorruptedIndex("gate decision retirement intent"));
-                }
-                self.store.vault_meta.delete(txn, &pending_key(&claim))?;
-                Ok(())
-            })?;
+            orcb::retire_claim_key(&self.store.core.gate_custody_root, &claim, generation)?;
+            self.store
+                .vault_meta
+                .delete(&mut txn, &pending_key(&claim))?;
+            txn.commit()?;
         }
         Ok(())
     }
@@ -225,7 +323,7 @@ impl Vault {
     /// Remove decisions strictly older than the owner-selected horizon.
     /// Sidecars and primaries leave together. A key is destroyed only when
     /// *every* decision it decrypts is gone; a held partition is untouched.
-    /// Removes at most 256 rows per call; repeat until it returns zero.
+    /// Removes at most the manifest's `max_sweep_rows` per call; repeat until zero.
     /// Returns the number of decision rows removed.
     pub fn sweep_gate_decision_retention(&self) -> Result<u64> {
         self.finish_gate_decision_retirements()?;
@@ -233,13 +331,14 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         // Read the owner setting UNDER the same writer lock as pruning: an
         // owner who disables or lengthens retention before this pass wins.
-        let Some(seconds) = retention_secs_in_txn(&self.store, &txn)? else {
+        let policy = crate::gate::resolve_gate_decision_retention(&self.store, &txn)?.ok_or(
+            Error::InvalidConfig("gate decision retention manifest missing".into()),
+        )?;
+        let Some(seconds) = policy.horizon_secs else {
             return Ok(0);
         };
         let cutoff = now.saturating_sub(seconds);
-        let retain_until = now
-            .checked_add(seconds)
-            .ok_or(Error::ArithmeticOverflow("gate decision retain until"))?;
+        let retain_until = now.saturating_add(seconds);
         // Decode BEFORE mutating. A corrupt ciphertext/key aborts the entire
         // sweep instead of quietly miscounting the rows that share that key.
         let mut eligible: Vec<GateDecisionRecord> = Vec::new();
@@ -256,11 +355,26 @@ impl Vault {
                 if let Some(claim) = claim {
                     live_claims.insert(claim);
                 }
-            } else if record.created_at < cutoff && eligible.len() < MAX_SWEEP_ROWS {
-                if let Some(claim) = claim {
-                    removed_claims.insert(claim);
+            } else if record.created_at < cutoff && eligible.len() < policy.max_sweep_rows {
+                // An unanswered consent must retain its exact source receipt;
+                // closure loads it by decision ID in this same key partition.
+                let required_by_pending = if let Some(claim) = claim {
+                    self.store
+                        .pending_gate_consent_in_txn(&txn, &EntityId::from_bytes(claim)?)?
+                        .is_some_and(|pending| pending.decision_id == record.decision_id)
+                } else {
+                    false
+                };
+                if required_by_pending {
+                    if let Some(claim) = claim {
+                        live_claims.insert(claim);
+                    }
+                } else {
+                    if let Some(claim) = claim {
+                        removed_claims.insert(claim);
+                    }
+                    eligible.push(record);
                 }
-                eligible.push(record);
             } else if let Some(claim) = claim {
                 // A skipped old row is still live until a later bounded pass.
                 live_claims.insert(claim);
@@ -295,9 +409,10 @@ impl Vault {
         // A crash before commit leaves readable rows; a crash after commit
         // leaves a resumable pending marker and no rows that need the key.
         for claim in removed_claims.difference(&live_claims) {
+            let generation = orcb::key_generation(&self.store.core.gate_custody_root, claim)?;
             self.store
                 .vault_meta
-                .put(&mut txn, &pending_key(claim), &[1])?;
+                .put(&mut txn, &pending_key(claim), &generation.to_be_bytes())?;
         }
         txn.commit()?;
         self.finish_gate_decision_retirements()?;

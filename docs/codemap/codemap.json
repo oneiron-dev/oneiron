@@ -16681,7 +16681,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 82
      }
     },
     {
@@ -16731,7 +16731,7 @@
      "path": "src/gate/decode/decode_trust_budget.rs",
      "purpose": "Source-trust ceilings and budget-policy parsers",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -17029,7 +17029,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -17040,7 +17040,7 @@
      "path": "src/gate/resolution/manifest_types.rs",
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -30011,7 +30011,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 1
      }
     },
@@ -30032,7 +30032,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 1
      }
     },
@@ -30043,7 +30043,7 @@
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -30053,8 +30053,8 @@
      "path": "src/store/gate_decision/retention.rs",
      "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit",
      "surface": {
-      "crate-vis": 4,
-      "fn": 5
+      "crate-vis": 5,
+      "fn": 6
      }
     },
     {
