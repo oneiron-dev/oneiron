@@ -10,6 +10,7 @@ use super::validate::{provenance_matches_record, validate_manifest_for_admission
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::skill::SkillLifecycle;
+use crate::skill_hub::pack_catalog::PackSection;
 use crate::vault::Vault;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -131,9 +132,19 @@ pub struct AdmittedPluginSection {
 /// In-memory typed state rebuilt from approved install claims plus current
 /// skill lifecycle/content identity. It is a PROJECTION: it mints no entity
 /// bytes and is never a second persistent registry.
+/// Pack-origin recipe projected from an Active pinned installation. It is not
+/// an Approved plugin claim and grants no section verb by itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackSectionRegistration {
+    pub source_id: String,
+    pub pack_name: String,
+    pub content_hash: String,
+    pub section: PackSection,
+}
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PluginSectionRegistry {
     admitted: BTreeMap<SectionId, AdmittedPluginSection>,
+    pack_sections: BTreeMap<SectionId, PackSectionRegistration>,
 }
 
 impl PluginSectionRegistry {
@@ -148,6 +159,11 @@ impl PluginSectionRegistry {
         manifest: ValidatedSectionManifest,
     ) -> PluginResult<()> {
         let section_id = manifest.section_id().clone();
+        if self.pack_sections.contains_key(&section_id) {
+            return Err(PluginSectionError::SectionIdCollision {
+                section_id: section_id.0,
+            });
+        }
         if let Some(existing) = self.admitted.get(&section_id)
             && existing.manifest != manifest
         {
@@ -231,7 +247,40 @@ impl PluginSectionRegistry {
                 }
             }
         }
-        Ok(Self { admitted })
+        let mut pack_sections = BTreeMap::new();
+        for receipt in vault.installed_packs()? {
+            for section in receipt.sections {
+                if !bindings.state_family_exists(&section.state_family)
+                    || !bindings.authority_lane_exists(&section.authority_lane)
+                    || !bindings.budget_policy_exists(&section.budget_policy)
+                {
+                    continue;
+                }
+                let id = SectionId(section.section_id.clone());
+                // Namespace collisions are never resolved by install order.
+                if poisoned.contains(&id) {
+                    continue;
+                }
+                if admitted.remove(&id).is_some() || pack_sections.contains_key(&id) {
+                    pack_sections.remove(&id);
+                    poisoned.insert(id);
+                    continue;
+                }
+                pack_sections.insert(
+                    id,
+                    PackSectionRegistration {
+                        source_id: receipt.source_id.clone(),
+                        pack_name: receipt.pack_name.clone(),
+                        content_hash: receipt.content_hash.clone(),
+                        section,
+                    },
+                );
+            }
+        }
+        Ok(Self {
+            admitted,
+            pack_sections,
+        })
     }
 
     /// Drops every section supplied by `skill_id`, returning how many left.
@@ -255,14 +304,22 @@ impl PluginSectionRegistry {
         self.admitted.values()
     }
 
+    pub fn pack_sections(&self) -> impl Iterator<Item = &PackSectionRegistration> {
+        self.pack_sections.values()
+    }
+
+    pub fn get_pack_section(&self, id: &SectionId) -> Option<&PackSectionRegistration> {
+        self.pack_sections.get(id)
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
-        self.admitted.len()
+        self.admitted.len() + self.pack_sections.len()
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.admitted.is_empty()
+        self.admitted.is_empty() && self.pack_sections.is_empty()
     }
 
     #[must_use]

@@ -67,8 +67,23 @@ pub(crate) async fn run_context_pack(
     ),
     ApiError,
 > {
-    let interlocutors =
-        resolve_core_interlocutor_set(&server.vault, auth, req.interlocutors.as_ref())?;
+    let room_members = req
+        .conversation_id
+        .as_deref()
+        .map(|room| {
+            let room = super::super::parse_entity_id_param(room, "conversation_id")?;
+            server
+                .vault
+                .room_audience_members(room)
+                .map_err(|error| core_engine_error("room audience failed", error))
+        })
+        .transpose()?;
+    let interlocutors = resolve_core_interlocutor_set(
+        &server.vault,
+        auth,
+        req.interlocutors.as_ref(),
+        room_members.as_deref(),
+    )?;
     let query = non_empty_query(req.query.as_deref());
     validate_core_query_seeds(query, req.query_vector.as_deref())?;
     let (edge_hop, edge_hop_field, max_neighbors, max_neighbors_field) =
@@ -97,21 +112,10 @@ pub(crate) async fn run_context_pack(
         .unwrap_or(View::Standard);
     let projection = context_pack_json_projection_config(view, req.budget.as_ref());
     let scoped_read = scoped_read_for_core_auth(&server.vault, auth)?;
-    let room_audience = if let Some(room) = req.conversation_id.as_deref() {
-        let room = super::super::parse_entity_id_param(room, "conversation_id")?;
-        Some(
-            server
-                .vault
-                .members(room)
-                .map_err(|e| core_engine_error("room audience failed", e))?,
-        )
-    } else {
-        None
-    };
     let interlocutor_audience =
         if let Some(set) = interlocutors.as_ref().filter(|set| set.has_non_owner()) {
-            // Explicit interlocutors conjoin with room membership, never disappear
-            // when both controls are present. Unresolved contacts fail closed.
+            // Explicit interlocutors conjoin with the main-owned room audience.
+            // Unresolved contacts fail closed instead of silently disappearing.
             let mut audience = Vec::new();
             let mut unresolved = false;
             if let Some(actor) = auth.principal_ref() {
@@ -146,7 +150,7 @@ pub(crate) async fn run_context_pack(
         } else {
             None
         };
-    let signal_audience = match (room_audience, interlocutor_audience) {
+    let signal_audience = match (room_members.clone(), interlocutor_audience) {
         (Some(mut room), Some(people)) => {
             if people.is_empty() {
                 Some(Vec::new())
@@ -177,7 +181,13 @@ pub(crate) async fn run_context_pack(
     // the one applied (design §11 rule 6).
     let disclosure = interlocutors
         .as_ref()
-        .map(|set| oneiron::DisclosureContext::resolve(&server.vault, set.clone()))
+        .map(|set| {
+            if room_members.is_some() {
+                oneiron::DisclosureContext::resolve_room(&server.vault, set.clone())
+            } else {
+                oneiron::DisclosureContext::resolve(&server.vault, set.clone())
+            }
+        })
         .transpose()
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack disclosure resolution failed");

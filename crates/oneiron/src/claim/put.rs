@@ -52,6 +52,7 @@ impl Vault {
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         // Canonical consolidation opens its own writer only after durable
         // approval. Errors remain errors, without rolling back Approved.
         for claim_id in approved {
@@ -194,6 +195,7 @@ impl Vault {
             ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
         )?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 
@@ -280,6 +282,7 @@ impl Vault {
         Self::require_active_claim(&new_body)?;
         Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
+        let revisions = super::supersession_diff::capture_in_txn(self, &wtxn, *old_id, *new_id)?;
         old_body.lifecycle = ClaimLifecycleStatus::Superseded;
         old_body.valid_to = Some(now);
         let data = encode_claim_body(&old_body)?;
@@ -317,6 +320,7 @@ impl Vault {
                 .load(std::sync::atomic::Ordering::Acquire),
             ApplyOpsGateMode::new(false, false),
         )?;
+        super::supersession_diff::store_in_txn(self, &mut wtxn, *old_id, *new_id, revisions)?;
         wtxn.commit()?;
         Ok(())
     }

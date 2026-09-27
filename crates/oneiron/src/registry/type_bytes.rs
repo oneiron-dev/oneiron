@@ -95,6 +95,10 @@ pub const ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT: u8 = 74;
 
 pub const ENTITY_TYPE_REDACTION_AUDIT: u8 = 72;
 
+/// Engine-authored, immutable terminal outbound suppression receipt (ONE-1881).
+/// Audit record, not an ASSET: no public write or delete door.
+pub const ENTITY_TYPE_RECEIPT_RECORD: u8 = 86;
+
 /// MODEL substrate entity (ONE-1138, ratified): engine-authored maintenance
 /// kind — "written when a substrate first appears in a write path". Public
 /// puts are rejected with `MaintenanceKindNotWritable`. Short-ID prefix

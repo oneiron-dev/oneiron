@@ -133,6 +133,7 @@ mod ask_band;
 mod brief;
 mod dials;
 mod gate;
+mod goal_axes;
 mod job;
 mod selection;
 mod tier;
@@ -148,14 +149,20 @@ pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
+pub use self::goal_axes::{
+    AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisPlan, GoalAxisReport,
+    GoalAxisScorer, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
+};
 pub use self::job::{
     PROVENANCE_OPTIMIZE_ATTEMPT_KEY, PROVENANCE_OPTIMIZE_CYCLE_KEY,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize, run_skill_optimize_as,
+    run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
 };
-pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
+pub use self::selection::{
+    SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
+};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,

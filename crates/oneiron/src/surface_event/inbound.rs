@@ -483,15 +483,15 @@ struct ActorStamps {
 }
 
 impl ActorStamps {
-    fn resolve(
+    fn resolve_in_txn(
         vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
         actor_ref: EntityId,
         facet_ref: Option<EntityId>,
         at: u64,
     ) -> Result<Self> {
-        let rtxn = vault.store.env.read_txn()?;
         if let Some(facet) = facet_ref
-            && vault.get_entity_type_in_txn(&rtxn, &facet)?
+            && vault.get_entity_type_in_txn(rtxn, &facet)?
                 != Some(crate::registry::ENTITY_TYPE_FACET)
         {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
@@ -499,7 +499,7 @@ impl ActorStamps {
             )));
         }
         let subject_ref =
-            crate::subject_model::actor_subject_anchor_in_txn(vault, &rtxn, &actor_ref, at)?
+            crate::subject_model::actor_subject_anchor_in_txn(vault, rtxn, &actor_ref, at)?
                 .map(|anchor| anchor.subject_ref);
         Ok(Self {
             actor_ref,
@@ -513,10 +513,22 @@ pub(super) fn route_inbound_surface_event(
     vault: &Vault,
     input: InboundSurfaceEventInput,
 ) -> Result<InboundSurfaceRouteReceipt> {
+    let rtxn = vault.store.env.read_txn()?;
+    route_inbound_surface_event_in_txn(vault, &rtxn, input)
+}
+
+pub(crate) fn route_inbound_surface_event_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: InboundSurfaceEventInput,
+) -> Result<InboundSurfaceRouteReceipt> {
     input.validate()?;
     let claims_not_instructions = input.foreign_inbound;
-    let Some((identity_ref, identity)) =
-        vault.channel_identity_by_assignment(&input.channel, &input.receiving_address_or_handle)?
+    let Some((identity_ref, identity)) = vault.channel_identity_by_assignment_in_txn(
+        txn,
+        &input.channel,
+        &input.receiving_address_or_handle,
+    )?
     else {
         return Ok(rejected_receipt(
             input,
@@ -556,14 +568,14 @@ pub(super) fn route_inbound_surface_event(
         ChannelIdentityState::Active | ChannelIdentityState::Rotating => routed_receipt(
             input,
             identity_ref,
-            ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
+            ActorStamps::resolve_in_txn(vault, txn, actor_ref, facet_ref, at)?,
             false,
             claims_not_instructions,
         ),
         ChannelIdentityState::Released | ChannelIdentityState::Quarantine => routed_receipt(
             input,
             identity_ref,
-            ActorStamps::resolve(vault, actor_ref, facet_ref, at)?,
+            ActorStamps::resolve_in_txn(vault, txn, actor_ref, facet_ref, at)?,
             true,
             claims_not_instructions,
         ),

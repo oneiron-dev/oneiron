@@ -79,21 +79,9 @@ pub enum RecordError {
     /// validation at the FEDERATION ADMISSION door. Nothing was written, and
     /// nothing was staged.
     ///
-    /// FED-1380: `companion::decode_companion_record_body` reports every body
-    /// fault as [`Error::InvalidClaimBody`](crate::error::Error::InvalidClaimBody), which `stage_foreign_vault_import`
-    /// classifies TERMINAL. Returning that variant from admission would mint a
-    /// permanently `Failed` receipt for a kind materialization merely
-    /// quarantines — the retry-semantics flip that door deliberately avoids. So
-    /// the admission arm re-labels the fault with this variant: same verdict
-    /// text, same coarse [`ErrorKind::InvalidClaimBody`] for anything reading
-    /// `kind()`, but a distinct variant that the staging classifier does not
-    /// list, leaving the refusal RETRYABLE — no receipt, no import, and no
-    /// staged bytes for a confirmation to GC.
-    ///
-    /// It must NEVER be added to that terminal list. As with the other
-    /// pinned-body refusals there (`InvalidTaskBody`, `InvalidSkillBody`), the
-    /// operator re-presenting the same malformed artifact is expected to be
-    /// refused again rather than handed a receipt that outlives the row.
+    /// Retired companion identity carriers are refused before import staging.
+    /// This typed variant is retryable rather than a terminal staged receipt:
+    /// repeated presentation must never confirm a row storage cannot admit.
     #[error("invalid companion record body: {0}")]
     InvalidCompanionRecordBody(&'static str),
     /// A PSYCH_PROFILE entity body failed pinned structural validation.
@@ -172,6 +160,14 @@ pub enum RecordError {
     /// through the untrusted-detail leaf. Nothing was written.
     #[error("invalid diagnostic body: {0}")]
     InvalidDiagnosticBody(&'static str),
+    /// An incoming suppression ASSET claims the reserved domain but does not
+    /// decode or bind to its deterministic entity ID.
+    #[error("invalid outbound suppression receipt body: {0}")]
+    InvalidSuppressionReceiptBody(&'static str),
+    /// An incoming write tries to change an already committed suppression
+    /// ASSET. Its stored bytes remain authoritative.
+    #[error("outbound suppression receipt is immutable")]
+    SuppressionReceiptDivergence,
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -254,6 +250,8 @@ impl RecordError {
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
+            Self::InvalidSuppressionReceiptBody(_) => ErrorKind::InvalidSuppressionReceiptBody,
+            Self::SuppressionReceiptDivergence => ErrorKind::SuppressionReceiptDivergence,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             // Deliberately the SAME coarse kind a companion body fault has

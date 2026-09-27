@@ -354,7 +354,7 @@ fn land(
             .ok_or(invalid("NOTE head sequence exhausted"))?;
         super::documents::set_head(&vault.store, txn, fork.note, fork.fork, seq)?;
         let doc = super::document::NoteDocument::from_loro(fork.note, proposed.doc)?;
-        super::document_store::persist(vault, txn, &doc)?;
+        super::document_store::persist_authoritative(vault, txn, &doc)?;
         fork.fork
     } else {
         vault

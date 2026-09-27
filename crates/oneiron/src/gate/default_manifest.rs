@@ -8,7 +8,7 @@ use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
 use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
+    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
@@ -88,6 +88,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                     (
                         Value::from(RULE_PREFIX_KEY),
                         Value::from(crate::commitment::PREDICATE_COMMITMENT_RECORD),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
+                // A delivered-send receipt projects this non-restrictive
+                // standing fact. Keep the rule exact: comm.opt_out still
+                // inherits the critical floor and cannot auto-widen consent.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
                     ),
                     (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
                     (
@@ -340,6 +357,33 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 ),
             ]),
         ),
+        // Hosted render resource limits are shipped POLICY rows, not adapter
+        // constants. Holder rows in other trusted manifests can narrow them.
+        (
+            Value::from(POLICY_HOSTED_TTS_KEY),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("rows"),
+                    Value::Array(
+                        ["cartesia", "elevenlabs_flash"]
+                            .into_iter()
+                            .map(|provider| {
+                                Value::Map(vec![
+                                    (Value::from("provider"), Value::from(provider)),
+                                    (Value::from("scope"), Value::from("vault")),
+                                    (Value::from("max_text_bytes"), Value::from(8_192_u64)),
+                                    (
+                                        Value::from("max_pcm_fragment_bytes"),
+                                        Value::from(2_097_152_u64),
+                                    ),
+                                ])
+                            })
+                            .collect(),
+                    ),
+                ),
+            ]),
+        ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
@@ -362,7 +406,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
                 (
                     Value::from(SIGNATURE_SIG_KEY),
-                    Value::from("first-party-eiri-auto"),
+                    Value::from("first-party-agent-auto"),
                 ),
             ])]),
         ),

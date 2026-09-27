@@ -185,7 +185,7 @@ fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T> {
         .map_err(|_| invalid_companion("invalid persona value"))
 }
 
-fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
+pub(crate) fn body_fields(data: &[u8]) -> Result<Vec<(Value, Value)>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -218,6 +218,18 @@ fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Result<&'a Value> {
         .ok_or_else(|| invalid_companion("persona record field is missing"))
 }
 
+/// The PERSON identity baseline accepted by both onboarding and scoped replay.
+/// Decodes the entire body (including duplicate/trailing-key checks), not just
+/// the presence of a `persona_definition` field.
+pub(crate) fn validated_persona_baseline(data: &[u8]) -> Result<JsonValue> {
+    let baseline: BaselineWire = from_value(field(&body_fields(data)?, BASELINE_KEY)?)?;
+    if baseline.schema_version != 1 {
+        return Err(invalid_companion("unsupported persona baseline version"));
+    }
+    object(&baseline.baseline)?;
+    Ok(baseline.baseline)
+}
+
 fn put_field(entries: &mut Vec<(Value, Value)>, name: &str, value: Value) {
     entries.retain(|(key, _)| key.as_str() != Some(name));
     entries.push((name.into(), value));
@@ -239,12 +251,25 @@ impl Vault {
         baseline: &JsonValue,
         at: u64,
     ) -> Result<()> {
-        object(baseline)?;
         let mut txn = self.store.env.write_txn()?;
+        self.put_persona_baseline_in_txn(&mut txn, person, baseline, at)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Transactional baseline write for authorized composite operations.
+    pub(crate) fn put_persona_baseline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        person: &EntityId,
+        baseline: &JsonValue,
+        at: u64,
+    ) -> Result<()> {
+        object(baseline)?;
         let raw = self
             .store
             .entities
-            .get(&txn, person.as_bytes())?
+            .get(&*txn, person.as_bytes())?
             .ok_or(Error::EntityNotFound)?
             .into_owned();
         let header = EntityMetadataHeader::parse(&raw)
@@ -273,8 +298,7 @@ impl Vault {
                 at,
                 &bytes,
             )
-            .apply(&mut txn)?;
-        txn.commit()?;
+            .apply(txn)?;
         Ok(())
     }
 
@@ -378,12 +402,7 @@ impl ScopedRead<'_> {
         if kind != ENTITY_TYPE_PERSON {
             return Err(Error::InvalidEntityType(kind));
         }
-        let baseline: BaselineWire = from_value(field(&body_fields(&data)?, BASELINE_KEY)?)?;
-        if baseline.schema_version != 1 {
-            return Err(invalid_companion("unsupported persona baseline version"));
-        }
-        object(&baseline.baseline)?;
-        let mut value = baseline.baseline;
+        let mut value = validated_persona_baseline(&data)?;
         let mut changes = Vec::new();
         for id in self.vault().claims_for_subject(person)? {
             let crate::claim::ScopedReadResult {

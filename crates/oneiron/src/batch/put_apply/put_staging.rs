@@ -167,6 +167,9 @@ pub(in crate::batch) fn stage_edge_rows(
     value: &[u8],
 ) -> Result<()> {
     crate::reaction::guard_edge(store, wtxn, *src, kind, *tgt)?;
+    let weight = crate::edge::decode_edge_value_for_kind(kind, value)?.weight;
+    crate::workspace_roster::validate_project_edge_put(store, wtxn, *src, kind, *tgt, weight)?;
+
     let key_out = Store::encode_edge_key(src, kind, tgt);
     let key_in = Store::encode_edge_key(tgt, kind, src);
     store.edges_out().put(wtxn, &key_out, value)?;
@@ -215,17 +218,198 @@ pub(super) fn stage_claim_projection_indexes(
     crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
 }
 
+/// The caller's write stamps and origin for the three carrier guards.
+pub(super) struct PutCarrierContext<'a> {
+    entity_type: u8,
+    occurred: TimeRange,
+    learned_at: u64,
+    replicated: bool,
+    origin: super::BaseWriteOrigin<'a>,
+}
+
+impl<'a> PutCarrierContext<'a> {
+    pub(super) fn new(
+        entity_type: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        replicated: bool,
+        origin: super::BaseWriteOrigin<'a>,
+    ) -> Self {
+        Self {
+            entity_type,
+            occurred,
+            learned_at,
+            replicated,
+            origin,
+        }
+    }
+}
+
+/// Run the existing scope, storage-owned, and domain guards in order.
+pub(super) fn validate_put_carriers(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    data: &[u8],
+    context: PutCarrierContext<'_>,
+) -> Result<()> {
+    validate_scope_carriers(store, txn, id, context.entity_type, data, context.origin)?;
+    super::owned_body::guard_storage_owned_body(
+        store,
+        txn,
+        &id,
+        context.entity_type,
+        context.occurred,
+        data,
+        context.replicated,
+    )?;
+    validate_domain_carriers(
+        store,
+        txn,
+        id,
+        context.entity_type,
+        (context.occurred, context.learned_at),
+        data,
+        context.replicated,
+    )
+}
+
+/// Validate producer-owned source carriers before any body or index is
+/// staged. Preserve their existing write-door order on the same snapshot.
+pub(super) fn validate_source_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    row: (EntityId, u8, &[u8], TimeRange, u64),
+) -> Result<()> {
+    let (id, entity_type, data, occurred, learned_at) = row;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_refinement_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
+    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+}
+
+/// Inputs for the post-put proposal observation. The source/actor decision
+/// stays separate from the refinement origin row staged beside it.
+pub(super) struct ProposalObservation<'a> {
+    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
+    pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
+    pub(super) replicated: bool,
+    pub(super) body_changed: bool,
+}
+
+/// Count authenticated local Proposed submissions, including changed bodies
+/// under an actor-owned claim ID. Exact same-body retry is not a new proposal;
+/// replay and envelope-less system puts have no local actor to count.
+pub(super) fn observe_claim_proposal_after_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    input: ProposalObservation<'_>,
+) -> Result<()> {
+    if !input.replicated
+        && input
+            .body
+            .is_some_and(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+        && let Some(envelope) = input.envelope
+    {
+        let threshold = match input.policy {
+            Some(policy) => policy.proposal_check_threshold(),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        };
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            wtxn,
+            envelope.actor().entity_ref(),
+            &format!("claim:{}", id.to_hex()),
+            threshold,
+            input.body_changed,
+        )?;
+    }
+    Ok(())
+}
+
+/// Keep TASK and TURN post-put side effects beside their staged body. Their
+/// ordering relative to receipt/source staging and the short-id work is fixed.
+pub(super) fn stage_task_and_turn_post_put(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+    body_changed: bool,
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TASK {
+        crate::task_verb::index_owner_fact(store, wtxn, id, Some(data))?;
+        if body_changed {
+            crate::task_verb::note_task_write(store, wtxn, *id, data)?;
+        }
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::stage_session_carrier(store, wtxn, *id, data)?;
+    }
+    Ok(())
+}
+
+/// The last put-side embedding changes, after short-id and body indexes land.
+pub(super) struct PostPutEmbeddingEffects {
+    pub(super) pending_embedding_token: Option<Vec<u8>>,
+    pub(super) cleared_pending_embedding: bool,
+    pub(super) had_vector_mutation: bool,
+}
+
+pub(super) fn stage_post_put_embeddings(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    data: &[u8],
+    is_lexical_query_hint_claim: bool,
+    body_changed: bool,
+) -> Result<PostPutEmbeddingEffects> {
+    let mut cleared_pending_embedding = false;
+    let mut had_vector_mutation = false;
+    if is_lexical_query_hint_claim {
+        cleared_pending_embedding = store.clear_pending_embedding(wtxn, id)?;
+        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
+        had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
+        crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    }
+    let pending_embedding_token =
+        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
+            // Mint the new invalidation token even while idle publication is
+            // pending. The worker skips these revisions; old completions must
+            // still observe that their token no longer owns the current body.
+            let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, id)?;
+            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
+            if !body_changed && has_vector && !has_current_pending {
+                None
+            } else {
+                Some(store.mark_pending_embedding(wtxn, id, data)?)
+            }
+        } else {
+            None
+        };
+    Ok(PostPutEmbeddingEffects {
+        pending_embedding_token,
+        cleared_pending_embedding,
+        had_vector_mutation,
+    })
+}
+
 /// Validate typed storage carriers before any put effect is staged.
 pub(super) fn validate_domain_carriers(
     store: &Store,
     txn: &RwTxn<'_>,
     id: EntityId,
     entity_type: u8,
+    timestamps: (TimeRange, u64),
     data: &[u8],
     replicated: bool,
 ) -> Result<()> {
     if entity_type == crate::registry::ENTITY_TYPE_TASK {
-        crate::task_verb::guard_ask_fact_put(store, txn, id, data)?;
+        crate::task_verb::guard_ask_fact_put(store, txn, id, timestamps.0, timestamps.1, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_TURN {
         crate::conversation_dag::validate_session_carrier(store, txn, id, data, replicated)?;

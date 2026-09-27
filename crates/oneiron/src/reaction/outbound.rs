@@ -75,7 +75,7 @@ pub(super) fn enqueue(
     };
     let bytes = rmp_serde::to_vec_named(&payload)
         .map_err(|_| crate::error::Error::CorruptedIndex("reaction outbound payload"))?;
-    AttemptQueue::new(vault).enqueue_in_txn(
+    AttemptQueue::new(vault).enqueue_with_task_ref_and_dedupe_actor_in_txn(
         txn,
         EnqueueAttempt {
             kind: REACTION_OUTBOUND_ATTEMPT_KIND.to_owned(),
@@ -88,6 +88,8 @@ pub(super) fn enqueue(
             run_id: None,
             now: vault.store.clock.now_recorded_at(),
         },
+        None,
+        None,
     )?;
     Ok(())
 }

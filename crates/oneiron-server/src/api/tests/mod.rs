@@ -70,6 +70,9 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_OPERATIONS: &[(&str, &str)] = &[
     ("/v1/core/run-tree", "get"),
     ("/v1/core/run-tree/observe", "get"),
     ("/v1/core/run-tree/intervene", "post"),
+    ("/v1/core/memory/{id}/watch", "get"),
+    ("/v1/core/memory/{id}/watch", "put"),
+    ("/v1/core/memory/{id}/watch", "delete"),
     ("/v1/core/conversations", "get"),
     ("/v1/core/conversations", "post"),
     ("/v1/core/conversations/{conversation_id}/turns", "get"),
@@ -147,6 +150,8 @@ pub(super) const V1_CORE_OPENAPI_CONTRACT_SCHEMA_NAMES: &[&str] = &[
     "CoreHydrateResponse",
     "CoreHydrateStatus",
     "CoreListQuery",
+    "CoreMemoryChange",
+    "CoreMemoryWatchResponse",
     "CoreMemoryOperationKind",
     "CoreMemoryTimelineRecord",
     "CoreMemoryTimelineRecordState",
@@ -223,6 +228,7 @@ pub(super) fn test_server_with_config(
     let dir = tempfile::tempdir().expect("temp vault dir");
     // API contract fixtures assert retrieval evidence and cursor run IDs.
     // Device defaults now leave capture off; opt these test servers in.
+
     let mut vault_config = oneiron::VaultConfig::device();
     vault_config.retrieval_telemetry_capture = true;
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).unwrap());
