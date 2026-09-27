@@ -83,6 +83,14 @@ impl ExternalEffectGovernance {
     }
 }
 
+/// Same composer used by the Gate's approve-once lookup, so the owner
+/// approves the exact effect the dispatcher later re-evaluates.
+pub(crate) fn external_effect_approval_digest(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::EffectDigest> {
+    external_effect_composed_effect(effect).map(|composed| composed.digest())
+}
+
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
 pub(crate) fn evaluate_external_effect_policy(
@@ -197,6 +205,12 @@ pub(crate) fn evaluate_external_effect_policy(
         .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
+        // Only a still-available marker looked up by the engine-computed,
+        // exact publish digest can release this one proposed public effect.
+        effect.artifact_publish_approve_once = approve_once.is_some()
+            && hydrated_effect.channel == "artifact"
+            && hydrated_effect.verb == "publish"
+            && hydrated_effect.brief_ref.is_some();
         // ONE-1752: the same post-conversion seam. Hydration cannot reach a
         // context that does not exist until `gate_input()` builds it, so the
         // override it resolved is written on here, once, before evaluation.
