@@ -734,6 +734,7 @@ impl<'a> TxnBatchBuilder<'a> {
         } else {
             Vec::new()
         };
+        let changes_claims = super::vad_postcommit::ops_change_proactivity(&this.ops);
         apply_ops_with_origin(
             &this.vault.store,
             &this.vault.config,
@@ -747,6 +748,9 @@ impl<'a> TxnBatchBuilder<'a> {
         // Queue only after admitted apply. The owner checks the final body and
         // redeemed consent after ALL of its batches, then commits before VAD.
         super::vad_postcommit::queue_dreamer_vad_approvals(this.vault, wtxn, pending_vad_ids);
+        if changes_claims {
+            super::vad_postcommit::queue_proactivity_change(this.vault, wtxn);
+        }
         Ok(())
     }
 }

@@ -3890,6 +3890,156 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
 }
 
 #[test]
+fn remote_proposed_claim_materialization_invalidates_digest_deadline_after_commit() -> Result<()> {
+    use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+    let origin = test_vault();
+    let receiver = test_vault();
+    let actor = origin.dreamer_authority()?;
+    assert_eq!(
+        receiver.dreamer_authority()?.entity_ref(),
+        actor.entity_ref()
+    );
+    let claim_id = EntityId::now();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    origin
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            crate::ClaimCandidate::new(
+                "dreamer.proactivity.follow_up",
+                crate::ClaimSubject::Entity(actor.entity_ref()),
+                Value::from("pending"),
+                0.7,
+            ),
+            &envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .commit()?;
+    let blob = origin.get_raw(&claim_id)?.expect("source claim");
+    let mut changes = receiver.subscribe_proactivity_changes();
+    assert_eq!(receiver.next_proactivity_digest_at()?, None);
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &receiver, &materializer, "2026-03");
+    map_insert_bytes(&doc.get_map("entities"), &claim_id.to_hex(), &blob).unwrap();
+    doc.commit();
+    assert_eq!(receiver.next_proactivity_digest_at()?, Some(0));
+    assert!(changes.has_changed().expect("vault still open"));
+    changes.borrow_and_update();
+    assert!(!changes.has_changed().expect("vault still open"));
+    Ok(())
+}
+
+#[test]
+fn edge_only_claim_hydration_signals_after_outer_commit_not_rollback() -> Result<()> {
+    use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+    let origin = test_vault();
+    let receiver = test_vault();
+    let actor = origin.dreamer_authority()?;
+    assert_eq!(
+        receiver.dreamer_authority()?.entity_ref(),
+        actor.entity_ref()
+    );
+    let claim_id = EntityId::now();
+    let peer_id = EntityId::now();
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    origin
+        .batch()
+        .claim_candidate(
+            &claim_id,
+            crate::ClaimCandidate::new(
+                "dreamer.proactivity.follow_up",
+                crate::ClaimSubject::Entity(actor.entity_ref()),
+                Value::from("pending"),
+                0.7,
+            ),
+            &envelope,
+            TimeRange { start: 1, end: 1 },
+            1,
+        )
+        .commit()?;
+    let claim_blob = origin.get_raw(&claim_id)?.expect("source claim");
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let edges = doc.get_map("edges");
+    map_insert_bytes(&entities, &claim_id.to_hex(), &claim_blob).unwrap();
+    map_insert_bytes(
+        &entities,
+        &peer_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"peer",
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    let mut changes = receiver.subscribe_proactivity_changes();
+    assert_eq!(receiver.next_proactivity_digest_at()?, None);
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &receiver, &materializer, "2026-03");
+    let edge_key = format_edge_key(&claim_id, EdgeKind::Mentions, &peer_id);
+    super::entities::INJECT_BATCH_COMMIT_FAILURES.with(|cell| cell.set(1));
+    map_insert_bytes(
+        &edges,
+        &edge_key,
+        &encode_edge_value_for_crdt(
+            EdgeKind::Mentions,
+            0.8,
+            10,
+            Some(crate::affect::Vad::NEUTRAL),
+            None,
+        )?,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(receiver.get_claim(&claim_id)?.is_none());
+    assert!(
+        !changes.has_changed().expect("vault open"),
+        "rolled-back edge hydration cannot signal"
+    );
+    map_insert_bytes(
+        &edges,
+        &edge_key,
+        &encode_edge_value_for_crdt(
+            EdgeKind::Mentions,
+            0.9,
+            11,
+            Some(crate::affect::Vad::NEUTRAL),
+            None,
+        )?,
+    )
+    .unwrap();
+    doc.commit();
+    assert!(receiver.get_claim(&claim_id)?.is_some());
+    assert_eq!(receiver.next_proactivity_digest_at()?, Some(0));
+    assert!(
+        changes.has_changed().expect("vault open"),
+        "committed edge-only hydration re-arms waiting timer"
+    );
+    changes.borrow_and_update();
+    Ok(())
+}
+
+#[test]
 fn observer_b_quarantines_project_parent_forgery_removal_and_claim_hub_edge() {
     use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::workspace_roster::ProjectRecord;

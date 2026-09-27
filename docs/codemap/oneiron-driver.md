@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 4 fn | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | m | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 5 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
-| `src/supervisor/loop_tests.rs` | test | m | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
+| `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
 | `src/supervisor/mod.rs` | src | s | 4 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
 | `src/supervisor/pass.rs` | src | s | 4 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/shutdown.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | ShutdownHandle | Cooperative shutdown handle and listener channels |
@@ -35,4 +35,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tick/tests/tests_commitment.rs` | test | m | — | — | Tick commitment-lane tests: merge and tie, admission, and fire tests |
 | `src/tick/tests/tests_policy.rs` | test | s | — | — | One-shot wake-policy timer: quiet expiry, inbound cancellation, and durable queue |
 | `src/tick/tests/tests_push.rs` | test | m | — | — | Tick push and hybrid tests: coalescing, lane fairness, drain order, hint order and overflow, exhaustion races |
-| `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 3 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |
+| `src/tick/timer.rs` | src | m | 3 struct · 6 fn · 4 crate-vis | AttemptQueueDeadlines, CommitmentDueDeadlines, TimerTick | Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep |

@@ -13,7 +13,7 @@ fn predicate_prefix(predicate: &str) -> Vec<u8> {
 fn predicate_name_key(predicate: &str) -> Vec<u8> {
     [b"claim:predicate_name:v1:".as_slice(), predicate.as_bytes()].concat()
 }
-fn producer_prefix(producer: EntityId) -> Vec<u8> {
+pub(crate) fn producer_prefix(producer: EntityId) -> Vec<u8> {
     [
         b"claim:pending_producer:v1:".as_slice(),
         producer.as_bytes(),
@@ -135,13 +135,6 @@ pub(crate) fn claim_ids_for_predicate_in_txn(
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
     ids(store, txn, &predicate_prefix(predicate))
-}
-pub(crate) fn pending_claim_ids_for_producer_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    producer: EntityId,
-) -> Result<Vec<EntityId>> {
-    ids(store, txn, &producer_prefix(producer))
 }
 
 /// Classify distinct stored predicates under live policy before reading any

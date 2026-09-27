@@ -341,6 +341,14 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     if !materialized {
         return Ok(EndpointHydration::Deferred);
     }
+    // This savepoint has no postcommit owner. Carry an admitted claim
+    // hydration to the edge batch's OUTER transaction; only its commit may
+    // re-arm the digest timer. Rollback drops that owner's marker.
+    if EntityMetadataHeader::parse(&blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+    {
+        crate::batch::queue_proactivity_change(vault, wtxn);
+    }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
     // edge-batch swallow site can flag a durable rm: marker (parity guard +
