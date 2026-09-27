@@ -25,6 +25,8 @@ mod input;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
+mod tracker_limits;
+pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
 mod share;
 mod witness_message;

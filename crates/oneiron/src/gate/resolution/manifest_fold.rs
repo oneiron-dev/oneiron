@@ -139,6 +139,13 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                if let Some(limits) = decoded.livequery_tracker_limits {
+                    if let Some(existing) = &mut resolution.livequery_tracker_limits {
+                        existing.restrict(limits);
+                    } else {
+                        resolution.livequery_tracker_limits = Some(limits);
+                    }
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),

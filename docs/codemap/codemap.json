@@ -16692,7 +16692,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 26,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -17054,6 +17054,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/tracker_limits.rs",
+     "purpose": "Policy rows bound the server's revision-provenance lifecycle",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -17076,6 +17084,20 @@
      "path": "src/gate/tests/witness_message.rs",
      "purpose": "Witness messages: ceilings, envelope binding, and replicated refusal",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LiveQueryTrackerLimits"
+     ],
+     "path": "src/gate/tracker_limits.rs",
+     "purpose": "Policy-manifest operating budgets for retained live-query provenance",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -21069,7 +21091,7 @@
      "surface": {
       "crate-vis": 8,
       "mod": 2,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -34914,7 +34936,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35602,8 +35624,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2101,
-   "test_files": 719
+   "source_files": 2102,
+   "test_files": 720
   },
   "oneiron-android": {
    "files": [
@@ -41426,7 +41448,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/livequery/production_tests.rs",
@@ -41442,7 +41464,7 @@
      "path": "src/livequery/publication.rs",
      "purpose": "Revision-keyed publication lifecycle; one bounded owner per logical session",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {

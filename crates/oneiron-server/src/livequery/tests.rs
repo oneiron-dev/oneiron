@@ -549,3 +549,55 @@ fn lost_publication_provenance_gaps_only_the_affected_subscription() {
     assert_eq!(a[0].kind, "gap");
     assert!(tier.pending(2).unwrap().is_empty());
 }
+
+#[test]
+fn settled_foreign_revisions_do_not_gap_an_unrelated_healthy_subscription() {
+    use oneiron::memory::{EntityRevisionChange, IndexedPublication, RevisionRef};
+    use oneiron::sync::bridge::RevisionEvent;
+
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source.clone());
+    let opened = tier
+        .open(7, view(WORLD_A), Channel::View, None, None)
+        .unwrap();
+    tier.ack(7, &opened[0].cursor).unwrap();
+    let foreign = oneiron::EntityId::from_bytes([0xEF; 16]).unwrap();
+    let path = format!("e:{}", foreign.to_hex());
+    let revision = |n: u16| {
+        let mut bytes = [0xEF; 16];
+        bytes[14..].copy_from_slice(&n.to_be_bytes());
+        RevisionRef(bytes)
+    };
+    for n in 1..=1300 {
+        tier.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+                revision_events: vec![RevisionEvent::Original(EntityRevisionChange {
+                    entity: foreign,
+                    previous_revision: Some(revision(n - 1)),
+                    revision: Some(revision(n)),
+                    indexed_revision: Some(revision(n - 1)),
+                })],
+            },
+            &OriginMark {
+                conn_id: Some(2),
+                origin: Some("conn:2".into()),
+            },
+        );
+        tier.on_indexed_published(IndexedPublication {
+            entity: foreign,
+            previous_indexed: revision(n - 1),
+            indexed: revision(n),
+        });
+        tier.refresh().unwrap();
+    }
+    assert!(tier.pending(7).unwrap().is_empty());
+    source.write(WORLD_A, 1);
+    notify(&tier, WORLD_A, OriginMark::default());
+    let tail = tier.pending(7).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].kind, "data");
+    assert_eq!(tail[0].result, Some(json!(1)));
+}

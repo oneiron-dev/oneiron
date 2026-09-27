@@ -1313,6 +1313,13 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         },
         independent_hash,
     );
+    for client in &clients {
+        client.refresh().unwrap();
+        assert!(
+            client.pending(7).unwrap().is_empty(),
+            "bridge-only live edit cannot push before index"
+        );
+    }
     let previous_indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
     let report = server
         .vault()
@@ -1478,5 +1485,208 @@ async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
             .unwrap()
             .to_string()
             .contains("lagcachemarker second")
+    );
+}
+
+#[tokio::test]
+async fn a_session_opened_after_live_edit_resyncs_when_its_missing_revision_is_indexed() {
+    let (_dir, server) = server();
+    let id = EntityId::from_hex("edededededededededededededededed").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("latejoincursor old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    put("latejoincursor new"); // the subscription owner does not exist yet
+    assert_eq!(server.vault().indexed_revision(&id).unwrap(), Some(indexed));
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "latejoin".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "latejoin".into(), source);
+    let view = ScopedView {
+        query: Some("latejoincursor".into()),
+        ..Default::default()
+    };
+    let opened = queries
+        .open(7, view.clone(), Channel::View, None, None)
+        .unwrap();
+    assert!(
+        opened[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("old")
+    );
+    let old_cursor = opened[0].cursor.clone();
+    queries.ack(7, &old_cursor).unwrap();
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    publish_indexed(&hub, &report, id, indexed);
+    queries.refresh().unwrap();
+    let gap = queries.pending(7).unwrap();
+    assert_eq!(gap.len(), 1);
+    assert_eq!(gap[0].kind, "gap");
+    let replay = queries
+        .open(7, view, Channel::View, Some(&old_cursor), None)
+        .unwrap();
+    assert!(replay.iter().any(|push| {
+        push.result
+            .as_ref()
+            .is_some_and(|value| value.to_string().contains("new"))
+    }));
+}
+
+#[tokio::test]
+async fn newer_unindexed_writer_does_not_poison_older_indexed_publication_echo() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark, RevisionEvent};
+    let (_dir, server) = server();
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    let id = EntityId::from_hex("fefefefefefefefefefefefefefefefe").unwrap();
+    let put = |text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put("twoadvance old");
+    let indexed = server.vault().indexed_revision(&id).unwrap().unwrap();
+    let hub = connection::Hub::for_server(&server);
+    let mut clients = Vec::new();
+    for conn in [1, 2] {
+        let document = format!("twoadvance-{conn}");
+        let source = Arc::new(BoundSource::new(
+            Arc::downgrade(&server),
+            auth(&server, "human"),
+            document.clone(),
+        ));
+        let queries = hub.install_source(auth(&server, "human"), document, source);
+        queries.reconnect(conn).unwrap();
+        let opened = queries
+            .open(
+                7,
+                ScopedView {
+                    query: Some("twoadvance".into()),
+                    ..Default::default()
+                },
+                Channel::View,
+                None,
+                Some(format!("conn:{conn}")),
+            )
+            .unwrap();
+        queries.ack(7, &opened[0].cursor).unwrap();
+        clients.push(queries);
+    }
+    let notify = |previous, revision, indexed_revision, conn| {
+        let path = format!("e:{}", id.to_hex());
+        let diff = MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+            revision_events: vec![RevisionEvent::Original(
+                oneiron::memory::EntityRevisionChange {
+                    entity: id,
+                    previous_revision: Some(previous),
+                    revision: Some(revision),
+                    indexed_revision: Some(indexed_revision),
+                },
+            )],
+        };
+        for client in &clients {
+            client.on_materialized(
+                &path,
+                &diff,
+                &OriginMark {
+                    conn_id: Some(conn),
+                    origin: Some(format!("conn:{conn}")),
+                },
+            );
+        }
+    };
+    put("twoadvance first");
+    let r1 = server.vault().pin_entity_revision(&id).unwrap();
+    notify(indexed, r1, indexed, 1);
+    for client in &clients {
+        client.refresh().unwrap();
+        assert!(client.pending(7).unwrap().is_empty());
+    }
+    let report1 = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    // The index committed R1 but its callback is delayed behind writer 2.
+    put("twoadvance second");
+    let r2 = server.vault().pin_entity_revision(&id).unwrap();
+    notify(r1, r2, r1, 2);
+    publish_indexed(&hub, &report1, id, indexed);
+    for client in &clients {
+        client.refresh().unwrap();
+    }
+    assert!(
+        clients[0].pending(7).unwrap().is_empty(),
+        "writer 1 must not receive R1 echo"
+    );
+    let first = clients[1].pending(7).unwrap();
+    assert_eq!(first.len(), 1);
+    assert!(
+        first[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("twoadvance first")
+    );
+    clients[1].ack(7, &first[0].cursor).unwrap();
+    let report2 = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    publish_indexed(&hub, &report2, id, r1);
+    for client in &clients {
+        client.refresh().unwrap();
+    }
+    assert!(
+        clients[1].pending(7).unwrap().is_empty(),
+        "writer 2 must not receive R2 echo"
+    );
+    let second = clients[0].pending(7).unwrap();
+    assert_eq!(second.len(), 1);
+    assert!(
+        second[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("twoadvance second")
     );
 }

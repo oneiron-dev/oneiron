@@ -26,6 +26,13 @@ pub(crate) struct DerivedView {
 /// must not return raw full-window updates as app-tier data.
 pub(crate) trait LiveQuerySource: Send + Sync {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError>;
+    /// Entities already ahead of their index when this logical session opens.
+    fn pending_at_open(
+        &self,
+        _dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        Ok(Vec::new())
+    }
     /// Probe insertions and changed memberships not yet in the served read set.
     fn membership_changed(
         &self,
@@ -178,7 +185,13 @@ impl LiveQueries {
         source: Arc<dyn LiveQuerySource>,
         hub_budget: Arc<Budget>,
     ) -> Self {
-        Self::with_budgets(conn_id, source, Budget::new(SESSION_BYTES), hub_budget)
+        Self::with_budgets(
+            conn_id,
+            source,
+            Budget::new(SESSION_BYTES),
+            hub_budget,
+            oneiron::memory::LiveQueryTrackerLimits::default(),
+        )
     }
 
     pub(super) fn with_budgets(
@@ -186,6 +199,7 @@ impl LiveQueries {
         source: Arc<dyn LiveQuerySource>,
         session_budget: Arc<Budget>,
         hub_budget: Arc<Budget>,
+        limits: oneiron::memory::LiveQueryTrackerLimits,
     ) -> Self {
         Self {
             source,
@@ -197,7 +211,7 @@ impl LiveQueries {
                 subs: BTreeMap::new(),
                 index: BTreeMap::new(),
             }),
-            tracker: super::publication::PublicationTracker::default(),
+            tracker: super::publication::PublicationTracker::with_limits(limits),
         }
     }
 
@@ -252,6 +266,7 @@ impl LiveQueries {
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        let new_subscription = !state.subs.contains_key(&id);
         let mut latest = None;
         if let Some(sub) = state.subs.get_mut(&id) {
             if sub.view != view || sub.channel != channel {
@@ -305,6 +320,10 @@ impl LiveQueries {
         } else {
             self.source.derive(&view, channel)?
         };
+        if new_subscription && channel == Channel::View {
+            let missing = self.source.pending_at_open(&derived.dependencies)?;
+            self.tracker.mark_unavailable_at_open(&missing);
+        }
         if let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
@@ -477,14 +496,14 @@ impl LiveQueries {
 
     fn materialized(
         &self,
-        changes: &[(String, MaterializedDiffSummary, Vec<OriginMark>)],
+        changes: &[(String, MaterializedDiffSummary, Vec<OriginMark>, bool)],
     ) -> Result<(), AppError> {
         let mut state = self.state.lock().map_err(|_| state_error())?;
         // Coarse re-derive sees CURRENT state, not intermediate event
         // states. Suppress only when EVERY affecting invalidation is our
         // own; an earlier own write must not swallow a later foreign one.
         let mut affected = BTreeMap::<u64, bool>::new();
-        for (path, diff, contributors) in changes {
+        for (path, diff, contributors, live_only) in changes {
             for (dependency, ids) in &state.index {
                 let relevant = dependency == path
                     || path
@@ -499,6 +518,9 @@ impl LiveQueries {
                     continue;
                 }
                 for id in ids {
+                    if *live_only && state.subs[id].channel == Channel::View {
+                        continue;
+                    }
                     if !relevant
                         && !self.source.membership_changed(
                             &state.subs[id].view,
@@ -586,7 +608,7 @@ impl LiveQueries {
         for row in changes {
             let by = row.contributors.first().cloned().unwrap_or_default();
             match self.source.ready(&row.diff, &by) {
-                Ok(true) => ready.push((row.path, row.diff, row.contributors)),
+                Ok(true) => ready.push((row.path, row.diff, row.contributors, row.live_only)),
                 Ok(false) => self.tracker.record(&row.path, &row.diff, &by),
                 Err(error) => {
                     self.require_resync();

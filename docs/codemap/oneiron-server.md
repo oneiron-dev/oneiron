@@ -241,8 +241,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/history.rs` | src | s | 6 crate-vis | — | Retained scoped app payloads live in a separate journal, not the cursor document |
 | `src/livequery/membership.rs` | src | s | 1 crate-vis | — | Insertion/edge membership checks, separate from served entity dependencies |
 | `src/livequery/production_socket_tests.rs` | test | m | — | — | Full production socket + Hub + BoundSource + engine writes |
-| `src/livequery/production_tests.rs` | test | L | 8 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
-| `src/livequery/publication.rs` | src | m | 5 crate-vis | — | Revision-keyed publication lifecycle; one bounded owner per logical session |
+| `src/livequery/production_tests.rs` | test | XL | 8 crate-vis | — | Real vault, verified slips and production facade/source; no injected read source |
+| `src/livequery/publication.rs` | src | m | 7 crate-vis | — | Revision-keyed publication lifecycle; one bounded owner per logical session |
 | `src/livequery/reads.rs` | src | s | 5 crate-vis | — | The eight existing WS read verbs call the engine facade, without write aliases |
 | `src/livequery/remediation_tests.rs` | test | s | — | — | — |
 | `src/livequery/routing.rs` | src | s | 3 crate-vis | — | Private routing header for the EXISTING server broadcast channel |

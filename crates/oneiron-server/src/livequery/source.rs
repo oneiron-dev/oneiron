@@ -74,6 +74,34 @@ struct ViewFilter {
 }
 
 impl LiveQuerySource for BoundSource {
+    fn pending_at_open(
+        &self,
+        dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        let server = self.server()?;
+        let mut missing = Vec::new();
+        for path in dependencies {
+            let Some(entity) = path
+                .strip_prefix("e:")
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+            else {
+                continue;
+            };
+            let live = server
+                .vault()
+                .get_raw(&entity)
+                .map_err(|_| AppError::internal_server_error("live revision read failed"))?;
+            let indexed = server
+                .vault()
+                .get_raw_with_mode(&entity, oneiron::memory::ReadMode::Indexed)
+                .map_err(|_| AppError::internal_server_error("indexed revision read failed"))?;
+            if live != indexed {
+                missing.push(entity);
+            }
+        }
+        Ok(missing)
+    }
+
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError> {
         let server = self.server()?;
         let filter: ViewFilter =

@@ -126,6 +126,10 @@ impl Hub {
             ));
         }
         let server = self.server.upgrade().ok_or_else(AppError::unauthorized)?;
+        let limits = server
+            .vault()
+            .policy_livequery_tracker_limits(auth.principal_ref())
+            .map_err(|_| AppError::internal_server_error("livequery tracker policy refused"))?;
         let document = oneiron::EntityId::now().to_hex();
         let session_budget = super::budget::Budget::new(super::budget::SESSION_BYTES);
         let source: Arc<dyn LiveQuerySource> = Arc::new(super::source::BoundSource::with_budgets(
@@ -140,6 +144,7 @@ impl Hub {
             source,
             session_budget,
             self.budget.clone(),
+            limits,
         ));
         let tee: Arc<dyn LiveQueryTee> = queries.clone();
         server
