@@ -10585,7 +10585,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 16,
       "struct": 2
      }
@@ -10646,8 +10646,46 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 7
+      "re-export": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerReasonConfirm",
+      "OwnerReasonConfirmation",
+      "OwnerReasonUndo",
+      "OwnerReasonVerdict",
+      "ReasonMatchConfidence"
+     ],
+     "path": "src/consent/owner_reason.rs",
+     "purpose": "Owner-authenticated confirm reasons, bounded rule rows, and their derived grants",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection.rs",
+     "purpose": "Pure nearest-reason selection: remove dominated covering bounds first",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/owner_reason/selection/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -10683,6 +10721,14 @@
      "notable": [],
      "path": "src/consent/tests.rs",
      "purpose": "DEC-0006 unified consent-mode conformance",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/consent/tests/owner_reason.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -35376,6 +35422,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_reason.rs",
+     "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -35824,7 +35878,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 13,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36792,8 +36846,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2183,
-   "test_files": 737
+   "source_files": 2185,
+   "test_files": 740
   },
   "oneiron-android": {
    "files": [

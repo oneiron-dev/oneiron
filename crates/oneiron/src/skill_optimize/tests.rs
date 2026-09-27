@@ -2656,12 +2656,15 @@ fn a_terminal_reason_that_stops_holding_aborts_instead_of_refusing() -> Result<(
     attribute_defects_across_split(vault, &skill, "oneiron.skill.losing");
     let proposal = optimizer_proposal_citing(vault, &skill, Value::Array(Vec::new()));
 
-    // The predecessor is gone when the lock-free pre-read runs, so the reason
-    // that read forms is a terminal stale-target refusal.
-    assert!(vault.delete_entity_with_options(
-        &skill,
-        crate::deletion::DeleteEntityOptions { purge: true }
-    )?);
+    // The predecessor is absent when the lock-free pre-read runs, so the reason
+    // that read forms is a terminal stale-target refusal. Use internal batch
+    // removal rather than an owner hard delete: that permanent marker would
+    // correctly forbid the later recreate, obscuring this transaction race.
+    vault.batch().delete(&skill).commit()?;
+    assert!(
+        vault.get_skill_record(&skill)?.is_none(),
+        "the target is absent"
+    );
 
     // The window the repair closed: the reason was read BEFORE the transaction
     // that would have written it, and the world moved in between — here the
@@ -3519,10 +3522,13 @@ fn the_birth_marker_leaves_ordinary_and_replicated_writes_alone() -> Result<()> 
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let born = stored(&vault, &proposal);
     let remote = crate::skill::encode_skill_record(&born)?;
-    assert!(vault.delete_entity_with_options(
-        &proposal,
-        crate::deletion::DeleteEntityOptions { purge: true }
-    )?);
+    // Internal removal lets the replica re-present this ID. An owner hard
+    // delete would instead make that ID permanently unavailable.
+    vault.batch().delete(&proposal).commit()?;
+    assert!(
+        vault.get_skill_record(&proposal)?.is_none(),
+        "the body is gone"
+    );
     vault
         .batch()
         .put_replicated(&proposal, ENTITY_TYPE_SKILL, t(400), 401, &remote)
@@ -4184,12 +4190,14 @@ fn a_rematerialized_optimizer_born_id_is_marked_and_cannot_be_laundered() -> Res
         "the replica records the origin of an id it is meeting for the first time"
     );
 
-    // So the laundering road is closed on the replica too: delete the body and
-    // re-present the id as an ordinary candidate.
-    assert!(replica.delete_entity_with_options(
-        &proposal,
-        crate::deletion::DeleteEntityOptions { purge: true }
-    )?);
+    // So the laundering road is closed on the replica too: remove the body
+    // without an owner hard-delete marker, then re-present it as an ordinary
+    // candidate. The optimizer birth marker itself must still enforce this.
+    replica.batch().delete(&proposal).commit()?;
+    assert!(
+        replica.get_skill_record(&proposal)?.is_none(),
+        "the body is gone"
+    );
     assert!(
         origin_marked(&replica, &proposal),
         "no delete road clears the marker"
