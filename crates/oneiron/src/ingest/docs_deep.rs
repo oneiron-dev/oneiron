@@ -45,6 +45,7 @@ pub struct DocsDeepReceipt {
 pub(super) struct DeepApproval<'a> {
     pub(super) owner: EntityId,
     pub(super) digest: &'a str,
+    pub(super) project_id: EntityId,
 }
 
 struct PreparedDeepClaim {
@@ -179,7 +180,6 @@ pub(super) fn set_deep_ceiling(
     txn: &mut heed::RwTxn<'_>,
     asset: EntityId,
     text: &str,
-    project_id: EntityId,
     allowed: bool,
     approval: DeepApproval<'_>,
     now: u64,
@@ -193,7 +193,9 @@ pub(super) fn set_deep_ceiling(
         .transpose()?;
     let hash = source_hash(text);
     if old.as_ref().is_some_and(|old| {
-        old.source_hash != hash || old.project_id != project_id || (old.allowed && !allowed)
+        old.source_hash != hash
+            || old.project_id != approval.project_id
+            || (old.allowed && !allowed)
     }) {
         let receipt_key = receipt_key(asset);
         if let Some(raw) = vault.store.vault_meta.get(&*txn, receipt_key.as_bytes())? {
@@ -215,7 +217,7 @@ pub(super) fn set_deep_ceiling(
         allowed,
         owner: approval.owner.to_hex(),
         approval_digest: approval.digest.to_owned(),
-        project_id,
+        project_id: approval.project_id,
     })
     .map_err(|_| invalid("docs deep ceiling encoding"))?;
     vault.store.vault_meta.put(txn, key.as_bytes(), &data)?;

@@ -349,8 +349,24 @@ fn candidate_project_stamp_ignores_legacy_corpus_entry() -> crate::Result<()> {
     // which audience sees a stored candidate-derived claim.
     let dir = tempfile::tempdir()?;
     let vault = crate::Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.put_entity(
+        &actor().entity_ref(),
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 9, end: 9 },
+        9,
+        b"actor",
+    )?;
     let id = EntityId::from_bytes([0x63; 16])?;
-    vault.put_claim(&id, &last, crate::TimeRange { start: 10, end: 10 }, 10)?;
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_CLAIM,
+            crate::TimeRange { start: 10, end: 10 },
+            10,
+            &crate::claim::encode_claim_body(&last)?,
+        )
+        .commit()?;
     let query = |scope| -> crate::Result<Vec<EntityId>> {
         Ok(vault
             .query()
@@ -365,6 +381,6 @@ fn candidate_project_stamp_ignores_legacy_corpus_entry() -> crate::Result<()> {
     };
     assert_eq!(query(CorpusScope::Corpus(project))?, vec![id]);
     assert!(query(CorpusScope::Corpus(legacy))?.is_empty());
-    assert!(query(CorpusScope::Unscoped)?.is_empty());
+    assert!(!query(CorpusScope::Unscoped)?.contains(&id));
     Ok(())
 }

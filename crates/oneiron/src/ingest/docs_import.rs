@@ -303,11 +303,11 @@ impl Vault {
                 &mut txn,
                 asset,
                 &page.text,
-                docs.project_id,
                 ceiling.allow_derivations,
                 super::docs_deep::DeepApproval {
                     owner: owner.actor(),
                     digest: &digest.to_hex(),
+                    project_id: docs.project_id,
                 },
                 now,
             )?;

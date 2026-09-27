@@ -807,7 +807,7 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         .map(|id| EntityId::from_hex(id))
         .collect::<Result<_>>()?;
 
-    let mut second_doc = first_doc.clone();
+    let mut second_doc = first_doc;
     second_doc.corpus_id = "second-corpus".into();
     second_doc.project_id = EntityId::from_bytes([0xD7; 16])?;
     ensure_docs_corpus(&vault, owner.actor(), &second_doc)?;
@@ -838,12 +838,22 @@ fn project_corpus_import_deep_ingest_and_query_select_exact_project_set() -> Res
         ClaimLifecycleStatus::Active,
     );
     vault.put_claim(&default_claim, &body, TimeRange { start: 4, end: 4 }, 4)?;
+    // Import also writes consent/owner control claims in the default project.
+    // Restrict this retrieval to the three fixture audiences under test.
+    let fixture_ids: BTreeSet<_> = first_ids
+        .union(&second_ids)
+        .copied()
+        .chain([default_claim])
+        .collect();
+    let fixture =
+        |_: &crate::store::Store, _: &heed::RoTxn<'_>, id: &EntityId| Ok(fixture_ids.contains(id));
     let query = |scope| -> Result<BTreeSet<EntityId>> {
         Ok(vault
             .query()
             .search_temporal_with_sigma(3, 3, 10, crate::temporal::TemporalAnchorMode::Occurred, 16)
             .temporal_adaptive(false)
             .filter_types(&[ENTITY_TYPE_CLAIM])
+            .filter_candidates(&fixture)
             .corpus(scope)
             .run()?
             .into_iter()
