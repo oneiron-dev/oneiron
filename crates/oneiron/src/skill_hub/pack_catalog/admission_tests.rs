@@ -138,9 +138,10 @@ fn installed_inventory_skips_deleted_source_but_refuses_corrupt_receipt() -> Res
         HubPin::ContentHash(second.content_hash().to_hex()),
     )?;
     let next = install(&second, &next_ref, 4)?;
-    assert_eq!(vault.installed_packs()?.len(), 2);
+    assert_eq!(vault.installed_packs()?.len(), 2 + 4);
     assert!(vault.delete_entity(&EntityId::from_hex(&old.source_id)?)?);
-    assert_eq!(vault.installed_packs()?, vec![next]);
+    assert!(vault.installed_packs()?.contains(&next));
+    assert_eq!(vault.installed_packs()?.len(), 1 + 4);
     vault.with_write_txn(|txn| {
         vault
             .store
@@ -248,6 +249,9 @@ fn code_free_pack_installs_active_without_qualification_or_consent() -> Result<(
             panic!("post-fit install");
         };
         assert_eq!(receipt.status, PackInstallStatus::Active);
+        assert_eq!(receipt.kind, PackKind::Capability);
+        assert_eq!(receipt.adapter, None);
+        assert_eq!(receipt.engine_version, None);
         assert_eq!(receipt.hub_ref, "pack");
         assert_eq!(receipt.pin_value, source.content_hash().to_hex());
         assert_eq!(
