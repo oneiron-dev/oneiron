@@ -96,6 +96,7 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
     fork_hash_retrieval_blend_weights(&mut hasher, blend_weights);
     fork_hash_scoring_constants(&mut hasher, builder.vault.config.fast_dims);
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
+    fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());
     fork_hash_candidate_set(&mut hasher, evidence.candidate_set);
 
     hasher.finalize().into()
