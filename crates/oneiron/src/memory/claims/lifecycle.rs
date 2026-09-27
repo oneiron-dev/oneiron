@@ -2,7 +2,7 @@ use super::commit::claim_envelope_actor;
 use super::*;
 
 impl Memory<'_> {
-    pub(super) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
+    pub(in crate::memory) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
         verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;

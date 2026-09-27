@@ -93,6 +93,100 @@ fn owner_verbs_require_active_owner_binding_when_rooted() {
         .expect("self-retraction never needs an owner binding");
 }
 
+/// A recipient committed after owner revocation must never be read under an
+/// earlier owner authorization snapshot.
+#[test]
+fn revoked_owner_preview_cannot_observe_later_share_recipient() {
+    use crate::authority::{AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature};
+    let (_dir, vault, issuer, mut share) = crate::share::tests::fixture().expect("share fixture");
+    let memory = vault.memory(issuer.entity_ref(), EdgeActorClass::Human);
+    memory.bless_brief_kind().expect("brief kind");
+    let brief = EntityId::from_hex(
+        &memory
+            .author_brief("preview body", &[])
+            .expect("brief")
+            .id_hex,
+    )
+    .expect("brief id");
+    share.brief_ref = brief.to_hex();
+    let grant1 = EntityId::from_bytes([0xC6; 16]).expect("grant id");
+    let grant2 = EntityId::from_bytes([0xC7; 16]).expect("grant id");
+    vault
+        .create_share(&grant1, &issuer, &share)
+        .expect("share 1");
+
+    let (genesis, signing) = authority_root(0xA1);
+    let vault_id = crate::authority::genesis_vault_id(&genesis).expect("vault id");
+    let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
+    let entry = |seq, parents, op| {
+        sign_authority(
+            AuthorityLogEntry {
+                schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
+                vault_id: Some(vault_id),
+                seq,
+                parent_hashes: parents,
+                op,
+                signer: AuthoritySignature {
+                    suite: key.suite(),
+                    public_key: key.clone(),
+                    signature: vec![0; 64],
+                },
+                cosigns: Vec::new(),
+                ts: 100 + seq,
+            },
+            &signing,
+        )
+    };
+    let bind = entry(
+        1,
+        vec![genesis_hash],
+        AuthorityOp::BindActor {
+            authority_key: key.clone(),
+            actor_ref: issuer.entity_ref(),
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+    );
+    let bind_hash = crate::authority::authority_entry_hash(&bind).expect("bind hash");
+    vault
+        .put_authority_log_entries(&[(genesis, test_time(1), 1), (bind, test_time(2), 2)])
+        .expect("root + bind");
+    let revoke = entry(
+        2,
+        vec![bind_hash],
+        AuthorityOp::RevokeActor {
+            authority_key: key.clone(),
+            epoch: 1,
+        },
+    );
+    let preview = memory
+        .preview_entity_delete_with_after_authority_hook(&brief, || {
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        vault
+                            .create_share(&grant2, &issuer, &share)
+                            .expect("new share");
+                        vault
+                            .put_authority_log_entries(&[(revoke, test_time(3), 3)])
+                            .expect("revoke owner");
+                    })
+                    .join()
+                    .expect("racing writer");
+            });
+        })
+        .expect("original authorized snapshot");
+    assert_eq!(preview.shared_with(), &[(grant1, share.recipient_ref)]);
+    assert_eq!(
+        memory
+            .preview_entity_delete(&brief)
+            .expect_err("revoked owner")
+            .code,
+        MEMORY_CODE_OWNER_BINDING_REQUIRED
+    );
+}
+
 /// T10: an UNROOTED vault keeps today's store-truth behavior exactly.
 ///
 /// This pins the ratified enforcement mode (S-AUTH3 D6 fork (a),

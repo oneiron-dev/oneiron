@@ -31,6 +31,14 @@ impl EdgeStoreMaintenance for Store {
             crate::affect::Vad::NEUTRAL,
             None,
         )?;
+        crate::workspace_roster::validate_project_edge_put(
+            self,
+            txn,
+            *source,
+            kind,
+            *target,
+            kind.default_weight().unwrap_or(1.0),
+        )?;
         let out = Store::encode_edge_key(source, kind, target);
         let incoming = Store::encode_edge_key(target, kind, source);
         let changed = self

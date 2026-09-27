@@ -1,4 +1,4 @@
-//! Claim lifecycle verbs: commit/upsert/retract, safe delete, and the
+//! Claim lifecycle verbs: commit/upsert/retract and the
 //! internal commit-decision plumbing (gate request/resubmit, supersession).
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
@@ -125,7 +125,7 @@ impl SafeDeleteReason {
         }
     }
 
-    const fn delete_reason(self) -> DeleteReason {
+    pub(super) const fn delete_reason(self) -> DeleteReason {
         match self {
             Self::UserDelete => DeleteReason::UserDelete,
             Self::UserHardDelete => DeleteReason::UserHardDelete,
@@ -193,5 +193,4 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 }
 
 mod commit;
-mod delete;
 mod lifecycle;

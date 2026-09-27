@@ -110,3 +110,17 @@ pub(super) fn apply_edge_op(store: &Store, wtxn: &mut RwTxn<'_>, op: BatchOp) ->
         )),
     }
 }
+
+/// Both endpoints may acquire a PROJECT/CLAIM type later in this same batch.
+/// Collect them so the final graph check sees that type change.
+pub(super) fn edge_op_endpoints(op: &BatchOp) -> [EntityId; 2] {
+    match op {
+        BatchOp::Edge { src, tgt, .. }
+        | BatchOp::PublicEdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::EdgeWithCreatedAt { src, tgt, .. }
+        | BatchOp::SetEdgeWeight { src, tgt, .. }
+        | BatchOp::SetEdgeVad { src, tgt, .. }
+        | BatchOp::DeleteEdge { src, tgt, .. } => [*src, *tgt],
+        _ => unreachable!("edge arm contains only edge operations"),
+    }
+}
