@@ -12,6 +12,13 @@ use crate::{
 };
 use heed::RoTxn;
 
+/// Shared with the guest's `MAX_SOURCE` and host protocol's `MAX_FILE`.
+pub(super) const MAX_GUEST_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
+/// Conservative ceiling for at most 128 declared grants: JSON-escaped names
+/// (<=256 bytes each), a 37-byte opaque handle, HTTPS and a DNS host <=253
+/// bytes, plus JSON syntax. Runtime checks the actual encoded prelude too.
+pub(super) const MAX_PACK_GRANT_PRELUDE_BYTES: usize = 128 * 1024;
+
 fn install_key(name: &str) -> Vec<u8> {
     [b"pack.install.v1/".as_slice(), name.as_bytes()].concat()
 }
@@ -300,8 +307,13 @@ fn validate_script_snapshot(source: &PackSource) -> Result<()> {
     let mut total = 0_usize;
     let mut directories = std::collections::BTreeSet::new();
     for file in source.files() {
-        if file.content.len() > 1024 * 1024 || file.path.len() > 4096 {
+        if file.content.len() > MAX_GUEST_SCRIPT_SOURCE_BYTES || file.path.len() > 4096 {
             return Err(invalid("script pack source exceeds sandbox file limit"));
+        }
+        if matches!(&source.manifest.adapter, Some(super::PackAdapter::Script(path)) if path == &file.path)
+            && file.content.len() > MAX_GUEST_SCRIPT_SOURCE_BYTES - MAX_PACK_GRANT_PRELUDE_BYTES
+        {
+            return Err(invalid("adapter script leaves no room for injected grants"));
         }
         total = total
             .checked_add(file.content.len())
@@ -311,7 +323,7 @@ fn validate_script_snapshot(source: &PackSource) -> Result<()> {
         }
         let mut parent = String::new();
         let parts: Vec<_> = file.path.split('/').collect();
-        if parts.len() > 65 {
+        if parts.len() > 64 {
             return Err(invalid(
                 "script pack source exceeds sandbox directory depth",
             ));

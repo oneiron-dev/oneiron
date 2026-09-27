@@ -816,3 +816,77 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
     Ok(())
 }
+
+#[test]
+fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Result<()> {
+    let (_dir, vault, agent, grant, image) = setup(false)?;
+    // Capture exactly the source/receipt pair the runtime will execute. A
+    // newer, separately consented install removes the declared wake before
+    // the runner reaches the sandbox; the old script must not run as B.
+    let selected = vault.installed_script_pack("fixture.echo")?;
+    let mut files = source()?.files().to_vec();
+    let pack = files
+        .iter_mut()
+        .find(|file| file.path == "PACK.md")
+        .unwrap();
+    let updated = String::from_utf8(pack.content.clone())
+        .unwrap()
+        .replace("version: 1", "version: 2")
+        .replace("wakes: [\"email.arrived\"]", "wakes: []");
+    pack.content = updated.into_bytes();
+    let replacement = PackSource::from_files(files)?;
+    let id = vault.stage_pack_source(&replacement, TimeRange { start: 4, end: 4 }, 4)?;
+    let owner = vault.authenticate_owner(
+        entity(0xB1),
+        "principal:script-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub = entity(0xB4);
+    let publisher =
+        vault.admit_skill_publisher(&owner, "publisher:script-fixture-revision", hub)?;
+    let reference = HubRef::new(
+        hub,
+        "pack",
+        HubPin::ContentHash(replacement.content_hash().to_hex()),
+    )?;
+    let digest = blake3::hash(b"pinned mock component").to_hex().to_string();
+    let ask = vault.prepare_pack_install(id, &reference, &publisher, &Qualified(digest))?;
+    vault.approve_pack_install(&ask, &owner)?;
+    assert!(matches!(
+        vault.install_pack(&ask)?,
+        super::super::PackInstallDisposition::Installed(_)
+    ));
+    assert_ne!(
+        vault.installed_pack("fixture.echo")?,
+        Some(selected.2.clone())
+    );
+    let scratch = tempfile::tempdir()?;
+    let outcome = vault.run_selected_script_pack_in_vm(
+        PackScriptRun {
+            name: "fixture.echo",
+            agent,
+            grants: std::slice::from_ref(&grant),
+            image: &image,
+            budget: ExecutionBudget::new(5, 128, 2),
+            now: 1_800_000_123,
+        },
+        Box::new(OutputBackend {
+            root: scratch.path().to_path_buf(),
+            output: output(),
+            seen_secret: Arc::new(Mutex::new(Vec::new())),
+            after_run: None,
+        }),
+        selected,
+    );
+    assert!(outcome.is_err());
+    assert!(vault.surface_event_handoff_status("message-1")?.is_none());
+    assert!(
+        vault
+            .store
+            .gate_decisions(100)?
+            .iter()
+            .all(|row| row.content_kind != "connector_wake")
+    );
+    Ok(())
+}

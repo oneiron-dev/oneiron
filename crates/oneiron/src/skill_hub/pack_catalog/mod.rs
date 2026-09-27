@@ -33,7 +33,7 @@ pub use admission_types::{
     PackCodeAutoInstall, PackInstallAsk, PackInstallDisposition, PackInstallReceipt,
     PackQualification, PackQualifier, PackRuntimeRecipe,
 };
-#[cfg(all(test, feature = "microvm-firecracker"))]
+#[cfg(all(test, feature = "microvm-firecracker", target_os = "linux"))]
 pub(crate) use script_runtime::script_output_bytes;
 pub use script_runtime::{PackScriptGrant, PackScriptOutcome, PackScriptRun};
 #[cfg(test)]

@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::{collections::BTreeMap, fs, io::Read};
 use std::{collections::BTreeSet, sync::Arc};
 
-use super::{PackAdapter, PackSource, invalid};
+use super::{PackAdapter, PackInstallReceipt, PackSource, invalid};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
@@ -96,7 +96,7 @@ impl Vault {
         agent: EntityId,
         grants: &[PackScriptGrant],
     ) -> Result<Vec<EntityId>> {
-        let (source, _) = self.installed_script_pack(name)?;
+        let (source, _, _) = self.installed_script_pack(name)?;
         let _ = validate_grants(self, &source, agent, grants)?;
         let existing = self.connector_event_subscriptions(agent)?;
         let mut filters = Vec::new();
@@ -153,7 +153,10 @@ impl Vault {
         }
     }
 
-    fn installed_script_pack(&self, name: &str) -> Result<(PackSource, String)> {
+    fn installed_script_pack(
+        &self,
+        name: &str,
+    ) -> Result<(PackSource, String, PackInstallReceipt)> {
         let receipt = self
             .installed_pack(name)?
             .ok_or_else(|| invalid("pack not installed"))?;
@@ -172,7 +175,7 @@ impl Vault {
             return Err(invalid("installed runtime does not bind script"));
         }
         let path = path.clone();
-        Ok((source, path))
+        Ok((source, path, receipt))
     }
 
     #[cfg(any(test, feature = "microvm-firecracker"))]
@@ -180,6 +183,17 @@ impl Vault {
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
         backend: Box<dyn MicroVmBackend>,
+    ) -> Result<PackScriptOutcome> {
+        let selected = self.installed_script_pack(request.name)?;
+        self.run_selected_script_pack_in_vm(request, backend, selected)
+    }
+
+    #[cfg(any(test, feature = "microvm-firecracker"))]
+    fn run_selected_script_pack_in_vm(
+        self: &Arc<Self>,
+        request: PackScriptRun<'_>,
+        backend: Box<dyn MicroVmBackend>,
+        (source, path, receipt): (PackSource, String, PackInstallReceipt),
     ) -> Result<PackScriptOutcome> {
         let PackScriptRun {
             name,
@@ -189,10 +203,11 @@ impl Vault {
             budget,
             now,
         } = request;
-        if backend.name() != "firecracker" {
-            return Err(invalid("foreign pack requires isolating code-mode backend"));
+        if backend.name() != "firecracker" || receipt.pack_name != name {
+            return Err(invalid(
+                "foreign pack requires isolating code-mode backend and installed source",
+            ));
         }
-        let (source, path) = self.installed_script_pack(name)?;
         let secret_refs = validate_grants(self, &source, agent, grants)?;
         let mut allowlist = CredentialAllowlist::new();
         let mut bindings = BTreeMap::new();
@@ -231,9 +246,6 @@ impl Vault {
             .ok_or_else(|| invalid("script source absent"))?;
         let script =
             std::str::from_utf8(&script.content).map_err(|_| invalid("script is not UTF-8"))?;
-        let receipt = self
-            .installed_pack(name)?
-            .ok_or_else(|| invalid("pack not installed"))?;
         let runtime = receipt
             .runtime
             .as_ref()
@@ -280,8 +292,13 @@ impl Vault {
         )?;
         let grant_json = serde_json::to_string(&guest_grants)
             .map_err(|_| invalid("script grant mapping encoding failed"))?;
-        let injected = format!("const packGrants = Object.freeze({grant_json});\n{script}");
-        let guest = image.clone().with_source(injected);
+        let prelude = format!("const packGrants = Object.freeze({grant_json});\n");
+        if prelude.len() > super::admission::MAX_PACK_GRANT_PRELUDE_BYTES
+            || prelude.len() + script.len() > super::admission::MAX_GUEST_SCRIPT_SOURCE_BYTES
+        {
+            return Err(invalid("injected script exceeds guest source budget"));
+        }
+        let guest = image.clone().with_source(format!("{prelude}{script}"));
         let exit = adapter.run(&guest, budget)?;
         if exit.status != 0 {
             return Err(invalid("pack script failed in sandbox"));
@@ -461,6 +478,24 @@ fn validate_grant_in_txn(
         .contains(&grant.requested)
     {
         return Err(invalid("undeclared script grant"));
+    }
+    let host = grant.destination.host_suffix();
+    if grant.destination.scheme() != "https"
+        || host.is_empty()
+        || host.len() > 253
+        || !host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
+    {
+        return Err(invalid(
+            "script grant destination outside guest HTTPS/DNS contract",
+        ));
     }
     let key = crate::connector_key::read_key_for_pack_in_txn(vault, txn, &grant.key_id)?
         .ok_or_else(|| invalid("connector key absent"))?;

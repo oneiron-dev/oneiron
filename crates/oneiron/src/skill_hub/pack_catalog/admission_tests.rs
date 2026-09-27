@@ -315,9 +315,8 @@ impl PackQualifier for QualifiedScript {
         })
     }
 }
-#[test]
-fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> Result<()> {
-    let mut files = vec![
+fn echo_script_files() -> Vec<HubFile> {
+    vec![
         HubFile::new(
             "PACK.md",
             include_bytes!("../../../tests/fixtures/echo_pack/PACK.md").to_vec(),
@@ -330,11 +329,9 @@ fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> 
             "scripts/input.json",
             include_bytes!("../../../tests/fixtures/echo_pack/scripts/input.json").to_vec(),
         ),
-    ];
-    files.push(HubFile::new(
-        "knowledge/reference.txt",
-        vec![b'x'; 1024 * 1024 + 1],
-    ));
+    ]
+}
+fn assert_unrunnable_script_refused(files: Vec<HubFile>) -> Result<()> {
     let source = PackSource::from_files(files)?;
     let (_dir, vault, _owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
     let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
@@ -345,4 +342,36 @@ fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> 
     );
     assert!(vault.installed_pack("fixture.echo")?.is_none());
     Ok(())
+}
+#[test]
+fn script_snapshot_refuses_large_non_executable_knowledge_at_qualification() -> Result<()> {
+    let mut files = echo_script_files();
+    files.push(HubFile::new(
+        "knowledge/reference.txt",
+        vec![b'x'; 1024 * 1024 + 1],
+    ));
+    assert_unrunnable_script_refused(files)
+}
+
+#[test]
+fn script_snapshot_refuses_guest_path_with_65_relative_components() -> Result<()> {
+    let mut files = echo_script_files();
+    let deep_path = format!("knowledge/{}x", "a/".repeat(63));
+    assert_eq!(deep_path.split('/').count(), 65);
+    files.push(HubFile::new(deep_path, b"read-only knowledge".to_vec()));
+    assert_unrunnable_script_refused(files)
+}
+
+#[test]
+fn script_snapshot_reserves_space_for_injected_grants_at_exact_source_limit() -> Result<()> {
+    let mut files = echo_script_files();
+    let script = files
+        .iter_mut()
+        .find(|file| file.path == "scripts/adapter.js")
+        .unwrap();
+    script
+        .content
+        .resize(super::admission::MAX_GUEST_SCRIPT_SOURCE_BYTES, b' ');
+    assert_eq!(script.content.len(), 1024 * 1024);
+    assert_unrunnable_script_refused(files)
 }
