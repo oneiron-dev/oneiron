@@ -8,10 +8,10 @@ use super::codec::{field_hash, linear_event_digest, linear_operation_id};
 use super::model::{
     ERR_BLANK_EVENT_ID, ERR_UNLINKED_ISSUE, FieldDecision, LINEAR_FIELD_ASSIGNEE_REF,
     LINEAR_FIELD_DESCRIPTION, LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE,
-    LINEAR_MIRRORED_FIELDS, LinearChangeSource, LinearEgress, LinearFieldConflict,
-    LinearIssueChange, LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus, LinearPullReceipt,
-    LinearSyncDirection, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
-    TaskIssueLink, TaskMirrorSnapshot,
+    LINEAR_MIRRORED_FIELDS, LinearChangeSource, LinearCreateIntent, LinearEgress,
+    LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
+    LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError, LinearSyncResult,
+    LinearTaskStore, MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot,
 };
 
 /// Mirrors one TASK against one tracker issue.
@@ -115,6 +115,8 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             skipped_echo,
             conflicts,
             new_cursor: page.next_cursor,
+            has_more: page.has_more,
+            refused_outbound: Vec::new(),
             pulled_at: now,
         })
     }
@@ -242,21 +244,31 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         snapshot: &TaskMirrorSnapshot,
         now: u64,
     ) -> LinearSyncResult<LinearMirrorReceipt> {
-        let operation_id = linear_operation_id(
-            LinearSyncDirection::TaskToIssue,
-            snapshot.task_ref,
-            snapshot.revision,
-            None,
-            None,
-            None,
-        );
+        let intent = self.tasks.create_intent(&LinearCreateIntent {
+            task_ref: snapshot.task_ref,
+            task_revision: snapshot.revision,
+            operation_id: linear_operation_id(
+                LinearSyncDirection::TaskToIssue,
+                snapshot.task_ref,
+                snapshot.revision,
+                None,
+                None,
+                None,
+            ),
+            fields: snapshot.fields.clone(),
+            writer: None,
+        })?;
+        let operation_id = intent.operation_id;
         let created =
             self.outbound
-                .create_issue(operation_id, snapshot.task_ref, &snapshot.fields)?;
+                .create_issue(operation_id, snapshot.task_ref, &intent.fields)?;
+        if created.fields != intent.fields {
+            return Err(LinearSyncError::CreateConflict);
+        }
         let link = TaskIssueLink {
             task_ref: snapshot.task_ref,
             issue: created.issue.clone(),
-            task_revision: snapshot.revision,
+            task_revision: intent.task_revision,
             issue_updated_at_ms: created.updated_at_ms,
             // Our own create is the first event this issue will ever emit, so
             // seeding the history is what stops it bouncing back inbound.

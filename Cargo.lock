@@ -7526,6 +7526,7 @@ dependencies = [
  "blake3",
  "candle-core",
  "candle-nn",
+ "chrono",
  "clap",
  "ed25519-dalek 2.2.0",
  "futures-util",

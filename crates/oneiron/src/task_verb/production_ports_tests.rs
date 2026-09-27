@@ -126,13 +126,16 @@ struct Tracker {
     changes: Rc<RefCell<Vec<LinearIssueChange>>>,
     cursors: Rc<RefCell<Vec<Option<String>>>>,
     updates: Rc<RefCell<usize>>,
+    more: Rc<std::cell::Cell<bool>>,
 }
 impl LinearChangeSource for Tracker {
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         self.cursors.borrow_mut().push(cursor.map(str::to_owned));
+        let changes = std::mem::take(&mut *self.changes.borrow_mut());
         Ok(LinearChangePage {
-            changes: std::mem::take(&mut *self.changes.borrow_mut()),
-            next_cursor: None,
+            next_cursor: (!changes.is_empty()).then(|| "next".into()),
+            changes,
+            has_more: self.more.replace(false),
         })
     }
 }
@@ -195,6 +198,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         changes: Rc::new(RefCell::new(Vec::new())),
         cursors: Rc::new(RefCell::new(Vec::new())),
         updates: Rc::new(RefCell::new(0)),
+        more: Rc::new(std::cell::Cell::new(false)),
     };
     let mut adapter = LinearSyncAdapter::new(
         VaultLinearTaskStore::new(&vault),
@@ -271,7 +275,10 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
     assert!(reopened.tasks().dirty_tasks()?.is_empty());
-    assert_eq!(*tracker.cursors.borrow(), vec![None, None, None]);
+    assert_eq!(
+        *tracker.cursors.borrow(),
+        vec![None, None, Some("next".into())]
+    );
     assert!(reopened.synchronize(105)?.0.is_empty());
     Ok(())
 }
@@ -303,6 +310,7 @@ fn scheduled_linear_pull_blocks_same_field_overwrite_before_egress() -> LinearSy
         changes: Rc::new(RefCell::new(Vec::new())),
         cursors: Rc::new(RefCell::new(Vec::new())),
         updates: Rc::new(RefCell::new(0)),
+        more: Rc::new(std::cell::Cell::new(false)),
     };
     let mut adapter = LinearSyncAdapter::new(
         VaultLinearTaskStore::new(&vault),
@@ -335,5 +343,248 @@ fn scheduled_linear_pull_blocks_same_field_overwrite_before_egress() -> LinearSy
         "remote edit must not be overwritten"
     );
     assert_eq!(adapter.tasks().dirty_tasks()?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn scheduled_linear_final_pages_push_and_restart_from_the_saved_checkpoint() -> LinearSyncResult<()>
+{
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let create_task = |vault: &Vault, label: &str| {
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .tasks_create(&TaskCreateSpec::new(
+                Value::from("work"),
+                Some(label.into()),
+                None,
+                Some(100),
+            ))
+            .expect("create TASK")
+            .task_ref
+            .unwrap()
+    };
+    let anchor = create_task(&vault, "anchor");
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        updates: Rc::new(RefCell::new(0)),
+        more: Rc::new(std::cell::Cell::new(false)),
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    assert_eq!(adapter.synchronize(100)?.0.len(), 1);
+    let link = adapter.tasks().link(anchor)?.unwrap();
+    for n in 0..2 {
+        let pending = create_task(&vault, &format!("pending-{n}"));
+        let mut remote = adapter.tasks().task_snapshot(anchor)?.fields;
+        remote.description = Some(format!("tracker edit {n}"));
+        tracker.changes.borrow_mut().push(LinearIssueChange {
+            event_id: format!("remote-{n}"),
+            issue: link.issue.clone(),
+            updated_at_ms: 2000 + n,
+            fields: remote,
+        });
+        let (pushed, pulled) = adapter.synchronize(101 + n)?;
+        assert_eq!(pulled.applied, 1);
+        assert_eq!(pulled.new_cursor.as_deref(), Some("next"));
+        assert!(
+            !pulled.has_more,
+            "final nonempty page cannot starve outbound"
+        );
+        assert!(pushed.iter().any(|receipt| receipt.task_ref == pending));
+        assert!(adapter.tasks().dirty_tasks()?.is_empty());
+    }
+    let before_close = adapter.tasks().link(anchor)?;
+    drop(adapter);
+    drop(vault);
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    assert_eq!(
+        VaultLinearTaskStore::new(&vault).link(anchor)?,
+        before_close
+    );
+    let pending = create_task(&vault, "after-restart");
+    let mut reopened = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    let mut remote = reopened.tasks().task_snapshot(anchor)?.fields;
+    remote.description = Some("after restart".into());
+    tracker.changes.borrow_mut().push(LinearIssueChange {
+        event_id: "remote-after-restart".into(),
+        issue: link.issue.clone(),
+        updated_at_ms: 3000,
+        fields: remote,
+    });
+    let (pushed, pulled) = reopened.synchronize(110)?;
+    assert_eq!(
+        tracker.cursors.borrow().last().cloned(),
+        Some(Some("next".into()))
+    );
+    assert_eq!(pulled.applied, 1);
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == pending));
+    assert!(reopened.tasks().dirty_tasks()?.is_empty());
+
+    // A true multi-page continuation defers writes but persists its cursor.
+    let pending = create_task(&vault, "pending-page");
+    tracker.more.set(true);
+    let mut next = reopened.tasks().task_snapshot(anchor)?.fields;
+    next.description = Some("page one".into());
+    tracker.changes.borrow_mut().push(LinearIssueChange {
+        event_id: "remote-page-one".into(),
+        issue: link.issue,
+        updated_at_ms: 4000,
+        fields: next,
+    });
+    let (pushed, first) = reopened.synchronize(111)?;
+    assert!(first.has_more);
+    assert!(pushed.is_empty());
+    assert!(
+        reopened
+            .tasks()
+            .dirty_tasks()?
+            .iter()
+            .any(|(task, _)| *task == pending)
+    );
+    let (pushed, final_page) = reopened.synchronize(112)?;
+    assert!(!final_page.has_more);
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == pending));
+    assert!(reopened.tasks().dirty_tasks()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn raw_task_write_has_no_mirror_actor_and_cannot_hold_later_tasks() -> LinearSyncResult<()> {
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let create = |label: &str| {
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .tasks_create(&TaskCreateSpec::new(
+                Value::from("work"),
+                Some(label.into()),
+                None,
+                Some(100),
+            ))
+            .unwrap()
+            .task_ref
+            .unwrap()
+    };
+    let raw = create("raw task");
+    let trusted = create("trusted task");
+    let mut body = super::wire_decode::task_verb_body(&vault, raw)?.unwrap();
+    body.label = Some("unattributed update".into());
+    vault.put_entity(
+        &raw,
+        crate::registry::ENTITY_TYPE_TASK,
+        TimeRange {
+            start: 101,
+            end: 101,
+        },
+        101,
+        &super::wire_encode::encode_task_verb_body(body),
+    )?;
+    let store = VaultLinearTaskStore::new(&vault);
+    assert!(store.dirty_writer(raw)?.is_none());
+    assert_eq!(store.dirty_writer(trusted)?.unwrap().actor_ref, owner);
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        updates: Rc::new(RefCell::new(0)),
+        more: Rc::new(std::cell::Cell::new(false)),
+    };
+    let mut adapter = LinearSyncAdapter::new(store, tracker.clone(), tracker);
+    let (pushed, pulled) = adapter.synchronize(102)?;
+    assert_eq!(pulled.refused_outbound, vec![raw]);
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == trusted));
+    assert_eq!(adapter.tasks().dirty_tasks()?, vec![(raw, 2)]);
+    Ok(())
+}
+
+#[test]
+fn inbound_merge_preserves_verified_writer_for_unsent_local_terminal() -> LinearSyncResult<()> {
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let facade = vault.memory(owner, EdgeActorClass::Human);
+    let task = facade
+        .tasks_create(&TaskCreateSpec::new(
+            Value::from("work"),
+            Some("title".into()),
+            None,
+            Some(100),
+        ))
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        updates: Rc::new(RefCell::new(0)),
+        more: Rc::new(std::cell::Cell::new(false)),
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    assert_eq!(adapter.synchronize(100)?.0.len(), 1);
+    let link = adapter.tasks().link(task)?.unwrap();
+    facade
+        .land_task_result(
+            task,
+            &TaskResultInput {
+                result_ref: owner,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: 101,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        adapter.tasks().dirty_writer(task)?.unwrap().actor_ref,
+        owner
+    );
+    let mut remote = adapter.tasks().task_snapshot(task)?.fields;
+    remote.status = "queued".into();
+    remote.description = Some("tracker note".into());
+    tracker.changes.borrow_mut().push(LinearIssueChange {
+        event_id: "remote-disjoint".into(),
+        issue: link.issue,
+        updated_at_ms: 3000,
+        fields: remote,
+    });
+    let (pushed, pulled) = adapter.synchronize(102)?;
+    assert_eq!(pulled.applied, 1);
+    assert!(pulled.refused_outbound.is_empty());
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == task));
+    assert_eq!(*tracker.updates.borrow(), 1);
+    assert!(adapter.tasks().dirty_tasks()?.is_empty());
     Ok(())
 }

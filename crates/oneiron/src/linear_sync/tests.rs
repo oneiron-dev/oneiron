@@ -26,6 +26,7 @@ fn task_fields() -> MirroredTaskFields {
 struct FakeStore {
     snapshots: BTreeMap<EntityId, TaskMirrorSnapshot>,
     links: BTreeMap<EntityId, TaskIssueLink>,
+    create_intents: BTreeMap<EntityId, LinearCreateIntent>,
     applies: usize,
     issue_link_lookups: Cell<usize>,
     /// A concurrent link write to commit from INSIDE the store, in the window
@@ -66,6 +67,23 @@ impl FakeStore {
 }
 
 impl LinearTaskStore for FakeStore {
+    fn create_intent(
+        &mut self,
+        draft: &LinearCreateIntent,
+    ) -> LinearSyncResult<LinearCreateIntent> {
+        Ok(self
+            .create_intents
+            .entry(draft.task_ref)
+            .or_insert_with(|| LinearCreateIntent {
+                writer: Some(LinearWriteActor {
+                    actor_ref: draft.task_ref,
+                    actor_class: 1,
+                }),
+                ..draft.clone()
+            })
+            .clone())
+    }
+
     fn task_snapshot(&self, task_ref: EntityId) -> LinearSyncResult<TaskMirrorSnapshot> {
         self.snapshots
             .get(&task_ref)
@@ -131,6 +149,7 @@ impl LinearTaskStore for FakeStore {
             });
         }
         self.links.insert(link.task_ref, link.clone());
+        self.create_intents.remove(&link.task_ref);
         Ok(())
     }
 }
@@ -146,6 +165,8 @@ struct FakeEgress {
     updated: usize,
     operations: Vec<[u8; 32]>,
     payloads: Vec<MirroredTaskFields>,
+    created_results: BTreeMap<[u8; 32], LinearIssueChange>,
+    lost_create_once: bool,
 }
 
 impl LinearEgress for FakeEgress {
@@ -155,16 +176,25 @@ impl LinearEgress for FakeEgress {
         _task_ref: EntityId,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
+        if let Some(existing) = self.created_results.get(&operation_id) {
+            return Ok(existing.clone());
+        }
         self.created += 1;
         self.clock_ms += 1_000;
         self.operations.push(operation_id);
         self.payloads.push(fields.clone());
-        Ok(LinearIssueChange {
+        let created = LinearIssueChange {
             event_id: format!("evt-create-{}", self.created),
             issue: issue_ref(self.created),
             updated_at_ms: self.clock_ms,
             fields: fields.clone(),
-        })
+        };
+        self.created_results.insert(operation_id, created.clone());
+        if self.lost_create_once {
+            self.lost_create_once = false;
+            return Err(LinearSyncError::Transport("lost create response".into()));
+        }
+        Ok(created)
     }
 
     fn update_issue(
@@ -205,6 +235,7 @@ impl LinearChangeSource for FakeSource {
         let empty = LinearChangePage {
             changes: Vec::new(),
             next_cursor: None,
+            has_more: false,
         };
         Ok(self.pages.get(key).cloned().unwrap_or(empty))
     }
@@ -719,6 +750,7 @@ fn pull_skips_unmirrored_issues_and_replays_nothing_twice() {
     let page = LinearChangePage {
         changes: vec![change("evt-1", 5_000, mirrored), foreign],
         next_cursor: Some("page-2".to_owned()),
+        has_more: true,
     };
     let mut adapter = linked_adapter(task_ref, FakeSource::with_page("start", page));
 
@@ -742,6 +774,7 @@ fn pull_reports_conflicts_without_applying_them() {
     let page = LinearChangePage {
         changes: vec![change("evt-1", 5_000, incoming)],
         next_cursor: None,
+        has_more: false,
     };
     let mut adapter = linked_adapter(task_ref, FakeSource::with_page("start", page));
     let store = adapter.tasks_mut();
@@ -895,6 +928,7 @@ fn the_adapter_registers_field_ownership_and_needs_no_credential() {
     let page = LinearChangePage {
         changes: vec![change("evt-1", 5_000, incoming)],
         next_cursor: None,
+        has_more: false,
     };
     let mut adapter = linked_adapter(task_ref, FakeSource::with_page("start", page));
 
@@ -915,4 +949,73 @@ fn the_adapter_registers_field_ownership_and_needs_no_credential() {
     let key = linear_sync_link_key(task_ref);
     assert!(key.starts_with(LINEAR_SYNC_LINK_KEY_PREFIX));
     assert_eq!(key.len(), LINEAR_SYNC_LINK_KEY_PREFIX.len() + 16);
+}
+
+#[test]
+fn lost_create_response_then_local_revision_change_reuses_frozen_intent() {
+    let task = task_id(0x48);
+    let egress = FakeEgress {
+        lost_create_once: true,
+        ..Default::default()
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        FakeStore::with_task(task, task_fields()),
+        FakeSource::default(),
+        egress,
+    );
+    assert!(matches!(
+        adapter.push_task(task, 10),
+        Err(LinearSyncError::Transport(_))
+    ));
+    let intent = adapter.tasks().create_intents.get(&task).unwrap().clone();
+    adapter
+        .tasks_mut()
+        .edit(task, |fields| fields.title = "new TASK title".into());
+    let linked = adapter.push_task(task, 11).unwrap();
+    assert_eq!(linked.status, LinearMirrorStatus::Linked);
+    assert_eq!(linked.operation_id, intent.operation_id);
+    let link = adapter.tasks().stored_link(task);
+    assert_eq!(link.task_revision, intent.task_revision);
+    assert_eq!(link.base_field_hashes, intent.fields.field_hashes());
+    assert!(!adapter.tasks().create_intents.contains_key(&task));
+    let updated = adapter.push_task(task, 12).unwrap();
+    assert_eq!(updated.status, LinearMirrorStatus::Applied);
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(
+        egress.created, 1,
+        "one remote issue across two TASK revisions"
+    );
+    assert_eq!(
+        egress.updated, 1,
+        "newer local fields use the linked update door"
+    );
+    assert_eq!(egress.payloads[0], intent.fields);
+    assert_eq!(egress.payloads[1].title, "new TASK title");
+}
+
+#[test]
+fn changed_remote_create_replay_refuses_without_consuming_intent() {
+    let task = task_id(0x49);
+    let egress = FakeEgress {
+        lost_create_once: true,
+        ..Default::default()
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        FakeStore::with_task(task, task_fields()),
+        FakeSource::default(),
+        egress,
+    );
+    assert!(adapter.push_task(task, 10).is_err());
+    let (store, source, mut egress) = adapter.into_parts();
+    let remote = egress.created_results.values_mut().next().unwrap();
+    remote.fields.title = "foreign tracker edit".into();
+    let mut adapter = LinearSyncAdapter::new(store, source, egress);
+    assert!(matches!(
+        adapter.push_task(task, 11),
+        Err(LinearSyncError::CreateConflict)
+    ));
+    assert!(adapter.tasks().link(task).unwrap().is_none());
+    assert!(adapter.tasks().create_intents.contains_key(&task));
+    let (_, _, egress) = adapter.into_parts();
+    assert_eq!(egress.created, 1);
 }

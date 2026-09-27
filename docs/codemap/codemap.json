@@ -19408,6 +19408,21 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinearEffectKind",
+      "LinearEffectRequest"
+     ],
+     "path": "src/linear_sync/effect.rs",
+     "purpose": "External-effect admission for Linear mirror mutations",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LinearSyncAdapter"
      ],
      "path": "src/linear_sync/engine.rs",
@@ -19425,7 +19440,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -19434,6 +19449,7 @@
      "notable": [
       "LinearChangePage",
       "LinearChangeSource",
+      "LinearCreateIntent",
       "LinearEgress",
       "LinearFieldConflict",
       "LinearIssueChange",
@@ -19445,6 +19461,7 @@
       "LinearSyncError",
       "LinearSyncRegistration",
       "LinearTaskStore",
+      "LinearWriteActor",
       "MirroredTaskFields",
       "TaskIssueLink",
       "TaskMirrorSnapshot"
@@ -19456,7 +19473,7 @@
       "crate-vis": 7,
       "enum": 3,
       "fn": 5,
-      "struct": 10,
+      "struct": 12,
       "trait": 3,
       "type": 2
      }
@@ -31657,8 +31674,8 @@
      "path": "src/task_verb/linear_store.rs",
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
-      "crate-vis": 2,
-      "fn": 4,
+      "crate-vis": 6,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -35014,8 +35031,8 @@
      "purpose": "—"
     },
     "linear_sync": {
-     "files": 6,
-     "impl_vault": false,
+     "files": 7,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
@@ -35590,7 +35607,7 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
+   "source_files": 2101,
    "test_files": 719
   },
   "oneiron-android": {
@@ -41352,11 +41369,11 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in authenticated Linear host for the vault TASK mirror",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/linear_host/tests.rs",
@@ -42597,14 +42614,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/linear_host.rs",
-     "purpose": "Standalone host tests also run while unrelated server-lib test fixtures catch up to the six-axis disclosure…",
-     "surface": {}
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42823,7 +42832,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 232,
-   "test_files": 99
+   "test_files": 98
   },
   "oneiron-uniffi": {
    "files": [

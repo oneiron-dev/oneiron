@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use chrono::DateTime;
 use oneiron::linear_sync::{
-    LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange, LinearIssueRef,
-    LinearSyncAdapter, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
-    VaultLinearTaskStore,
+    LinearChangePage, LinearChangeSource, LinearEffectKind, LinearEffectRequest, LinearEgress,
+    LinearIssueChange, LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult,
+    LinearTaskStore, MirroredTaskFields, VaultLinearTaskStore,
 };
 use oneiron::{EntityId, Vault};
 use serde_json::{Value, json};
@@ -25,12 +25,40 @@ const TICK: Duration = Duration::from_secs(60);
 #[path = "linear_host/tests.rs"]
 mod tests;
 
+fn valid_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+            }
+        })
+}
+
+/// A bearer-gated server is a prerequisite, independent of provider auth.
+/// Otherwise an anonymous core batch writer can inject TASKs for the mirror.
+pub(crate) fn validate_server_auth(
+    configured: bool,
+    auth_secret: Option<&str>,
+    allow_unauthenticated: bool,
+) -> anyhow::Result<()> {
+    if configured && (allow_unauthenticated || auth_secret.is_none_or(str::is_empty)) {
+        anyhow::bail!("Linear mirror refuses a server without authenticated core writes");
+    }
+    Ok(())
+}
+
 /// Explicit opt-in: a credential alone cannot turn on periodic external writes.
 /// The host admits only Linear's fixed HTTPS endpoint (no caller-selected URL).
 pub(crate) struct LinearHostConfig {
     token: String,
     team_id: String,
     status_names: BTreeMap<String, String>,
+    assignee_ids: BTreeMap<String, String>,
+    scheduler_actor: EntityId,
+    #[cfg(test)]
+    endpoint: Option<String>,
 }
 impl LinearHostConfig {
     pub(crate) fn from_env() -> anyhow::Result<Option<Self>> {
@@ -38,7 +66,15 @@ impl LinearHostConfig {
         let token = std::env::var("ONEIRON_LINEAR_API_KEY").ok();
         let team_id = std::env::var("ONEIRON_LINEAR_TEAM_ID").ok();
         let status_map = std::env::var("ONEIRON_LINEAR_STATUS_NAMES").ok();
-        if enabled.is_none() && token.is_none() && team_id.is_none() && status_map.is_none() {
+        let assignee_map = std::env::var("ONEIRON_LINEAR_ASSIGNEE_IDS").ok();
+        let scheduler_actor = std::env::var("ONEIRON_LINEAR_SCHEDULER_ACTOR").ok();
+        if enabled.is_none()
+            && token.is_none()
+            && team_id.is_none()
+            && status_map.is_none()
+            && assignee_map.is_none()
+            && scheduler_actor.is_none()
+        {
             return Ok(None);
         }
         let (Some(token), Some(team_id), Some(status_map)) = (token, team_id, status_map) else {
@@ -51,6 +87,10 @@ impl LinearHostConfig {
         {
             anyhow::bail!("Linear sync requires enabled=true, API key, team id, and status map");
         }
+        let scheduler_actor = scheduler_actor
+            .ok_or_else(|| anyhow::anyhow!("Linear sync requires a scheduler actor"))?;
+        let scheduler_actor = EntityId::from_hex(&scheduler_actor)
+            .map_err(|_| anyhow::anyhow!("Linear scheduler actor must be a valid entity ID"))?;
         let status_names: BTreeMap<String, String> = serde_json::from_str(&status_map)?;
         if status_names.is_empty()
             || status_names
@@ -64,10 +104,29 @@ impl LinearHostConfig {
         {
             anyhow::bail!("Linear status mapping must be nonempty and bijective");
         }
+        let assignee_ids: BTreeMap<String, String> = assignee_map
+            .map(|raw| serde_json::from_str(&raw))
+            .transpose()?
+            .unwrap_or_default();
+        if assignee_ids
+            .iter()
+            .any(|(actor, user)| EntityId::from_hex(actor).is_err() || !valid_uuid(user))
+            || assignee_ids
+                .values()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != assignee_ids.len()
+        {
+            anyhow::bail!("Linear assignee mapping must be canonical and bijective");
+        }
         Ok(Some(Self {
             token,
             team_id,
             status_names,
+            assignee_ids,
+            scheduler_actor,
+            #[cfg(test)]
+            endpoint: None,
         }))
     }
 }
@@ -78,6 +137,8 @@ struct LinearHttp {
     token: Arc<str>,
     team_id: Arc<str>,
     status_names: Arc<BTreeMap<String, String>>,
+    assignee_ids: Arc<BTreeMap<String, String>>,
+    scheduler_actor: EntityId,
     endpoint: Arc<str>,
 }
 impl LinearHttp {
@@ -87,12 +148,18 @@ impl LinearHttp {
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()?;
+        #[cfg(test)]
+        let endpoint = config.endpoint.unwrap_or_else(|| GRAPHQL.to_owned());
+        #[cfg(not(test))]
+        let endpoint = GRAPHQL.to_owned();
         Ok(Self {
             client,
             token: Arc::from(config.token),
             team_id: Arc::from(config.team_id),
             status_names: Arc::new(config.status_names),
-            endpoint: Arc::from(GRAPHQL),
+            assignee_ids: Arc::new(config.assignee_ids),
+            scheduler_actor: config.scheduler_actor,
+            endpoint: Arc::from(endpoint),
         })
     }
     fn query(&self, query: &str, variables: Value) -> LinearSyncResult<Value> {
@@ -193,12 +260,35 @@ impl LinearHttp {
         if issue.issue.team_id != *self.team_id {
             return Err(transport());
         }
+        issue.fields.assignee_ref = self.engine_assignee(issue.fields.assignee_ref.as_deref())?;
         Ok(issue)
     }
+    fn engine_assignee(&self, provider: Option<&str>) -> LinearSyncResult<Option<String>> {
+        provider
+            .map(|id| {
+                self.assignee_ids
+                    .iter()
+                    .find(|(_, value)| value.as_str() == id)
+                    .map(|(actor, _)| actor.clone())
+                    .ok_or(LinearSyncError::AssigneeUnmapped)
+            })
+            .transpose()
+    }
+    fn provider_assignee(&self, actor: Option<&str>) -> LinearSyncResult<Option<String>> {
+        actor
+            .map(|id| {
+                self.assignee_ids
+                    .get(id)
+                    .cloned()
+                    .ok_or(LinearSyncError::AssigneeUnmapped)
+            })
+            .transpose()
+    }
     fn fields_input(&self, fields: &MirroredTaskFields) -> LinearSyncResult<Value> {
+        let assignee_id = self.provider_assignee(fields.assignee_ref.as_deref())?;
         Ok(
             json!({"title":fields.title,"description":fields.description,
-            "priority":fields.priority,"assigneeId":fields.assignee_ref,
+            "priority":fields.priority,"assigneeId":assignee_id,
             "stateId":self.state_id(&fields.status)?}),
         )
     }
@@ -228,6 +318,7 @@ fn parse_issue(value: &Value) -> LinearSyncResult<LinearIssueChange> {
         priority: value
             .get("priority")
             .and_then(Value::as_u64)
+            .filter(|priority| *priority != 0) // Linear's unprioritized default.
             .map(|n| n.try_into().map_err(|_| transport()))
             .transpose()?,
         assignee_ref: value
@@ -259,15 +350,83 @@ fn parse_issue(value: &Value) -> LinearSyncResult<LinearIssueChange> {
     })
 }
 
+fn stable_issue_uuid(task: EntityId, team: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:linear-task-issue:v1");
+    hasher.update(task.as_bytes());
+    hasher.update(team.as_bytes());
+    let mut id = hasher.finalize().as_bytes()[..16].to_vec();
+    id[6] = (id[6] & 0x0f) | 0x40;
+    id[8] = (id[8] & 0x3f) | 0x80;
+    let hex = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
+}
+
 #[derive(Clone)]
-struct LinearPort(LinearHttp, Option<Arc<Vault>>);
+struct LinearPort {
+    http: LinearHttp,
+    vault: Option<Arc<Vault>>,
+    #[cfg(test)]
+    bypass_gate: bool,
+}
+impl LinearPort {
+    fn new(http: LinearHttp, vault: Option<Arc<Vault>>) -> Self {
+        Self {
+            http,
+            vault,
+            #[cfg(test)]
+            bypass_gate: false,
+        }
+    }
+    #[cfg(test)]
+    fn unchecked_for_test(http: LinearHttp, vault: Option<Arc<Vault>>) -> Self {
+        let mut port = Self::new(http, vault);
+        port.bypass_gate = true;
+        port
+    }
+    fn admit(
+        &self,
+        kind: LinearEffectKind,
+        operation_id: [u8; 32],
+        task_ref: EntityId,
+        issue_id: Option<&str>,
+        fields: &MirroredTaskFields,
+    ) -> LinearSyncResult<()> {
+        #[cfg(test)]
+        if self.bypass_gate {
+            return Ok(());
+        }
+        let vault = self
+            .vault
+            .as_ref()
+            .ok_or(LinearSyncError::AuthorizationDenied)?;
+        let gate_ref = vault.authorize_linear_effect(&LinearEffectRequest {
+            operation_id,
+            task_ref,
+            scheduler_actor: self.http.scheduler_actor,
+            team_id: self.http.team_id.to_string(),
+            issue_id: issue_id.map(str::to_owned),
+            kind,
+            fields: fields.clone(),
+        })?;
+        tracing::debug!(gate_ref = %gate_ref, "Linear external effect admitted");
+        Ok(())
+    }
+}
 impl LinearChangeSource for LinearPort {
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         // Persist the GraphQL cursor after a successful page. A stopped worker
         // resumes from that position; echo suppression lives in the TASK link.
-        let data = self.0.query(
-            &format!("query($team:ID!,$after:String,$first:Int!){{ issues(filter:{{team:{{id:{{eq:$team}}}}}},sort:[{{updatedAt:{{order:Ascending}}}}],after:$after,first:$first){{nodes{{{ISSUE_FIELDS}}} pageInfo{{endCursor}}}}}}"),
-            json!({"team":&*self.0.team_id,"after":cursor,"first":PAGE_SIZE}),
+        let data = self.http.query(
+            &format!("query($team:ID!,$after:String,$first:Int!){{ issues(filter:{{team:{{id:{{eq:$team}}}}}},sort:[{{updatedAt:{{order:Ascending}}}}],after:$after,first:$first){{nodes{{{ISSUE_FIELDS}}} pageInfo{{endCursor hasNextPage}}}}}}"),
+            json!({"team":&*self.http.team_id,"after":cursor,"first":PAGE_SIZE}),
         )?;
         let nodes = data
             .pointer("/issues/nodes")
@@ -275,18 +434,25 @@ impl LinearChangeSource for LinearPort {
             .ok_or_else(transport)?;
         let changes = nodes
             .iter()
-            .map(|node| self.0.parse_issue(node))
+            .map(|node| self.http.parse_issue(node))
             .collect::<LinearSyncResult<Vec<_>>>()?;
         let next_cursor = data
             .pointer("/issues/pageInfo/endCursor")
             .and_then(Value::as_str)
             .map(str::to_owned);
-        if !changes.is_empty() && next_cursor.is_none() {
+        let has_more = data
+            .pointer("/issues/pageInfo/hasNextPage")
+            .and_then(Value::as_bool)
+            .ok_or_else(transport)?;
+        if (!changes.is_empty() && next_cursor.is_none())
+            || (has_more && (changes.is_empty() || next_cursor.is_none()))
+        {
             return Err(transport());
         }
         Ok(LinearChangePage {
             changes,
             next_cursor,
+            has_more,
         })
     }
 }
@@ -294,30 +460,27 @@ impl LinearEgress for LinearPort {
     fn create_issue(
         &mut self,
         operation_id: [u8; 32],
-        _task: EntityId,
+        task: EntityId,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
-        // Linear accepts a caller-provided issue UUID. A retry after a lost
-        // response reads the same id, instead of creating a second issue.
-        let mut id = operation_id[..16].to_vec();
-        id[6] = (id[6] & 0x0f) | 0x40;
-        id[8] = (id[8] & 0x3f) | 0x80;
-        let hex = id.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        let uuid = format!(
-            "{}-{}-{}-{}-{}",
-            &hex[..8],
-            &hex[8..12],
-            &hex[12..16],
-            &hex[16..20],
-            &hex[20..]
-        );
-        if let Some(existing) = self.0.issue(&uuid)? {
-            return Ok(existing);
+        // The UUID depends on the stable TASK, not its current revision.
+        // A lost create response followed by a TASK edit must revisit the
+        // SAME remote issue, never create a second one.
+        let uuid = stable_issue_uuid(task, &self.http.team_id);
+        self.http
+            .provider_assignee(fields.assignee_ref.as_deref())?;
+        self.admit(LinearEffectKind::Create, operation_id, task, None, fields)?;
+        if let Some(existing) = self.http.issue(&uuid)? {
+            return if existing.fields == *fields {
+                Ok(existing)
+            } else {
+                Err(LinearSyncError::CreateConflict)
+            };
         }
-        let mut input = self.0.fields_input(fields)?;
+        let mut input = self.http.fields_input(fields)?;
         input["id"] = json!(uuid);
-        input["teamId"] = json!(&*self.0.team_id);
-        let data = self.0.query(
+        input["teamId"] = json!(&*self.http.team_id);
+        let data = self.http.query(
             &format!("mutation($input:IssueCreateInput!){{issueCreate(input:$input){{success issue{{{ISSUE_FIELDS}}}}}}}"),
             json!({"input":input}),
         )?;
@@ -329,7 +492,7 @@ impl LinearEgress for LinearPort {
             return Err(transport());
         }
         let created = self
-            .0
+            .http
             .parse_issue(data.pointer("/issueCreate/issue").ok_or_else(transport)?)?;
         if created.issue.issue_id != uuid {
             return Err(transport());
@@ -338,18 +501,27 @@ impl LinearEgress for LinearPort {
     }
     fn update_issue(
         &mut self,
-        _operation_id: [u8; 32],
+        operation_id: [u8; 32],
         issue: &LinearIssueRef,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
-        if issue.team_id != *self.0.team_id {
+        if issue.team_id != *self.http.team_id {
             return Err(transport());
         }
-        let vault = self.1.as_ref().ok_or_else(transport)?;
+        self.http
+            .provider_assignee(fields.assignee_ref.as_deref())?;
+        let vault = self.vault.as_ref().ok_or_else(transport)?;
         let link = VaultLinearTaskStore::new(vault)
             .link_for_issue(issue)?
             .ok_or_else(transport)?;
-        let current = self.0.issue(&issue.issue_id)?.ok_or_else(transport)?;
+        self.admit(
+            LinearEffectKind::Update,
+            operation_id,
+            link.task_ref,
+            Some(&issue.issue_id),
+            fields,
+        )?;
+        let current = self.http.issue(&issue.issue_id)?.ok_or_else(transport)?;
         if current.issue.issue_id != issue.issue_id {
             return Err(transport());
         }
@@ -364,8 +536,8 @@ impl LinearEgress for LinearPort {
         {
             return Err(transport());
         }
-        let input = self.0.fields_input(fields)?;
-        let data = self.0.query(
+        let input = self.http.fields_input(fields)?;
+        let data = self.http.query(
             &format!("mutation($id:String!,$input:IssueUpdateInput!){{issueUpdate(id:$id,input:$input){{success issue{{{ISSUE_FIELDS}}}}}}}"),
             json!({"id":issue.issue_id,"input":input}),
         )?;
@@ -377,7 +549,7 @@ impl LinearEgress for LinearPort {
             return Err(transport());
         }
         let updated = self
-            .0
+            .http
             .parse_issue(data.pointer("/issueUpdate/issue").ok_or_else(transport)?)?;
         if updated.issue.issue_id != issue.issue_id {
             return Err(transport());
@@ -395,16 +567,25 @@ fn sync_once(vault: &Vault, port: &LinearPort) -> LinearSyncResult<()> {
         pushed = pushed.len(),
         applied = pulled.applied,
         conflicts = pulled.conflicts.len(),
+        refused = pulled.refused_outbound.len(),
         "Linear mirror tick completed"
     );
     Ok(())
 }
 
-pub(crate) fn spawn_linear_sync(
+pub(crate) async fn spawn_linear_sync(
     vault: Arc<Vault>,
     config: LinearHostConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    let port = LinearPort(LinearHttp::new(config)?, Some(Arc::clone(&vault)));
+    // reqwest::blocking::ClientBuilder::build starts its own runtime and
+    // panics if called from inside Tokio. Finish initialization on a blocking
+    // thread before the server reports ready; a failed init refuses startup.
+    let init_vault = Arc::clone(&vault);
+    let port = tokio::task::spawn_blocking(move || {
+        Ok::<_, anyhow::Error>(LinearPort::new(LinearHttp::new(config)?, Some(init_vault)))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Linear host client initialization failed"))??;
     Ok(tokio::spawn(async move {
         let mut interval = tokio::time::interval(TICK);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

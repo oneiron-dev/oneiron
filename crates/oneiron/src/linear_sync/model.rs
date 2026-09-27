@@ -361,6 +361,16 @@ pub enum LinearSyncError {
         /// Link revision the store actually holds, or `None` when unlinked.
         found: Option<u64>,
     },
+    /// Missing or revoked actor/host grant, or an unattributed TASK write.
+    #[error("linear external effect lacks current actor and host authority")]
+    AuthorizationDenied,
+    /// A host cannot map this TASK or tracker assignee to the other identity namespace.
+    #[error("linear assignee has no configured host mapping")]
+    AssigneeUnmapped,
+    /// A remote issue created by an earlier attempt no longer matches the
+    /// still-dirty local create. Do not acknowledge or create another issue.
+    #[error("linear create replay disagrees with remote issue")]
+    CreateConflict,
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
@@ -371,8 +381,11 @@ pub enum LinearSyncError {
 pub struct LinearChangePage {
     /// Changes in ascending `updated_at_ms` order.
     pub changes: Vec<LinearIssueChange>,
-    /// Cursor for the next page; `None` means caught up.
+    /// Durable checkpoint after this page, including a final nonempty page.
     pub next_cursor: Option<String>,
+    /// Whether another page is pending in this source pass. A checkpoint is
+    /// not proof of pending work: the last nonempty page still has a cursor.
+    pub has_more: bool,
 }
 
 /// What one pull pass did.
@@ -390,8 +403,13 @@ pub struct LinearPullReceipt {
     /// its NON-conflicting issue-owned fields — the refusal is per field — so
     /// this is a count of changes, not of untouched TASKs.
     pub conflicts: Vec<LinearMirrorReceipt>,
-    /// Cursor to resume from; `None` means caught up.
+    /// Durable source checkpoint after this page.
     pub new_cursor: Option<String>,
+    /// Whether the source has another page before outbound work may run.
+    pub has_more: bool,
+    /// Dirty TASKs refused individually by the host (unmapped assignee or a
+    /// mismatched create replay). Later TASKs may still sync; these stay dirty.
+    pub refused_outbound: Vec<EntityId>,
     /// Wall-clock stamp of the pass.
     pub pulled_at: u64,
 }
@@ -459,8 +477,41 @@ pub trait LinearEgress {
     ) -> LinearSyncResult<LinearIssueChange>;
 }
 
+/// Writer provenance stamped only by the verified TASK facade after its
+/// write. Raw/replayed generic puts never receive this mark.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinearWriteActor {
+    #[serde(with = "super::storage_codec::entity_ref")]
+    pub actor_ref: EntityId,
+    pub actor_class: u8,
+}
+
+/// Frozen first-create payload, stored before any external HTTP call.
+/// A TASK revision may move while a response is lost; this row keeps the
+/// originally authorized operation and fields stable through reconciliation.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct LinearCreateIntent {
+    #[serde(with = "super::storage_codec::entity_ref")]
+    pub task_ref: EntityId,
+    pub task_revision: u64,
+    pub operation_id: [u8; 32],
+    pub fields: MirroredTaskFields,
+    /// Filled by the store from the first typed TASK write, never by caller text.
+    pub writer: Option<LinearWriteActor>,
+}
+
 /// Engine-side storage the mirror reads and writes.
 pub trait LinearTaskStore {
+    /// Store this first-create intent atomically if absent; otherwise return
+    /// the previously frozen intent. `put_link` consumes it in the link CAS.
+    ///
+    /// # Errors
+    /// Returns a store error for corrupt state or a conflicting link.
+    fn create_intent(&mut self, draft: &LinearCreateIntent)
+    -> LinearSyncResult<LinearCreateIntent>;
+
     /// Current mirror state of one TASK.
     ///
     /// # Errors

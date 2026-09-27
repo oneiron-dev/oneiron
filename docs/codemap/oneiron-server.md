@@ -234,8 +234,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/idempotency.rs` | src | m | 5 crate-vis | — | — |
 | `src/idempotency/tests.rs` | test | m | — | — | — |
 | `src/lib.rs` | src | s | 1 fn · 15 mod · 1 re-export | — | Oneiron CRDT sync server library |
-| `src/linear_host.rs` | src | m | 3 crate-vis | — | Opt-in authenticated Linear host for the vault TASK mirror |
-| `src/linear_host/tests.rs` | test | s | — | — | Live HTTP fixture at the host transport; no provider token leaves this process |
+| `src/linear_host.rs` | src | m | 4 crate-vis | — | Opt-in authenticated Linear host for the vault TASK mirror |
+| `src/linear_host/tests.rs` | test | m | — | — | Live HTTP fixture at the host transport; no provider token leaves this process |
 | `src/livequery.rs` | src | s | 15 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |
 | `src/livequery/budget.rs` | src | s | 8 crate-vis | — | Retained app state has both a session ceiling and a shared hub ceiling |
 | `src/livequery/connection.rs` | src | m | 12 crate-vis | — | Socket attachment and bounded reconnect retention |
@@ -338,7 +338,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
-| `tests/linear_host.rs` | test | s | — | — | Standalone host tests also run while unrelated server-lib test fixtures catch up to the six-axis disclosure… |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

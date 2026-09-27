@@ -88,15 +88,27 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 ## Optional Linear TASK mirror
 
 The **bare** `oneiron-server serve` host can run a vault's Linear mirror every
-60 seconds. It is off by default. Supply all four variables in the host's
+60 seconds. It is off by default. Supply these five required variables in the host's
 secret-bearing environment, not in a repository, checkout, or vault row:
 
 - `ONEIRON_LINEAR_SYNC_ENABLED=true`
 - `ONEIRON_LINEAR_API_KEY` — a Linear API key for the intended workspace
 - `ONEIRON_LINEAR_TEAM_ID` — the team's opaque Linear ID
+- `ONEIRON_LINEAR_SCHEDULER_ACTOR` — a registered vault Machine/System actor with an
+  active owner-consented outbound grant for the team and both Linear issue verbs;
+  the owner policy must separately give this Machine/System actor an Auto ceiling
 - `ONEIRON_LINEAR_STATUS_NAMES` — a JSON map from TASK status tokens to exact
   Linear workflow state names for that team, e.g. `{"queued":"Backlog", "completed":"Done"}`.
   Names must be unique. Unmapped inbound or outbound states fail closed.
+
+Optional `ONEIRON_LINEAR_ASSIGNEE_IDS` is a JSON map of local actor/agent
+entity IDs (32 lowercase hex) to Linear user UUIDs. Mapping must be one-to-one.
+Unmapped assignees remain dirty with a typed refusal, not a provider call. The
+scheduler AND the attributed TASK writer each need a live grant for the exact
+`linear_issue_create` and `linear_issue_update` verbs. An owner can narrow each
+grant with a `BriefVerbClass` scope bound to the team ID. A raw or replicated
+TASK write has no verified writer stamp and is never sent. No Linear worker
+starts when unauthenticated core writes are enabled or no auth secret exists.
 
 A partial configuration refuses server startup. The adapter uses only
 `https://api.linear.app/graphql` with a 15-second timeout, no redirects or
