@@ -933,6 +933,8 @@ fn anchored_thread_binds_verified_room_dag_node_without_copy_or_head_mutation() 
         conversation: room,
         parent,
         reply_to: None,
+        address: crate::conversation_dag::AddressMode::Broadcast,
+        recipients: vec![],
         advance,
         kind: crate::registry::ENTITY_TYPE_TURN,
         occurred: test_time(12),

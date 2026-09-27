@@ -59,13 +59,21 @@ pub(crate) fn preflight_canonical_recovery(
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
         let fields = crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
         if kind == crate::edge::EdgeKind::AddressedTo {
-            if !crate::conversation_dag::addressed_to_echo_in_txn(
-                &vault.store,
-                &txn,
+            let trusted_soft = crate::recovery::trusted_soft_addressing_edge(
+                snapshot,
                 &source,
                 &target,
-                fields,
-            )? {
+                &edge.value,
+            )?;
+            if !trusted_soft
+                && !crate::conversation_dag::addressed_to_echo_in_txn(
+                    &vault.store,
+                    &txn,
+                    &source,
+                    &target,
+                    fields,
+                )?
+            {
                 return Err(
                     crate::error::RegistryError::ReservedEdgeKind("conversation_dag").into(),
                 );

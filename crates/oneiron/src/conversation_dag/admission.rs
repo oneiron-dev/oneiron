@@ -2,8 +2,8 @@
 use super::graph::{MIGRATED, invalid, key};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
-use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
+use crate::ports::{EdgeStoreRead, TombstoneStoreRead};
 use crate::store::{ManifestDbs, Store};
 use crate::{
     EntityId,
@@ -77,11 +77,12 @@ fn pin_key(id: &EntityId) -> Vec<u8> {
     key(b"conversation_dag:body_pin:", id)
 }
 
-fn body_pin(kind: u8, occurred: crate::TimeRange, body: &[u8]) -> [u8; 32] {
+fn body_pin(kind: u8, occurred: crate::TimeRange, learned_at: u64, body: &[u8]) -> [u8; 32] {
     let mut hash = blake3::Hasher::new_derive_key("oneiron/conversation-dag/body-pin");
     hash.update(&[kind]);
     hash.update(&occurred.start.to_be_bytes());
     hash.update(&occurred.end.to_be_bytes());
+    hash.update(&learned_at.to_be_bytes());
     hash.update(body);
     *hash.finalize().as_bytes()
 }
@@ -90,11 +91,11 @@ pub(crate) fn guard_record_put(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
-    kind: u8,
-    occurred: crate::TimeRange,
+    metadata: (u8, crate::TimeRange, u64),
     body: &[u8],
     replicated: bool,
 ) -> Result<()> {
+    let (kind, occurred, learned_at) = metadata;
     if kind == ENTITY_TYPE_TURN
         && let Some((_, recipients)) = addressing(body)?
     {
@@ -124,7 +125,7 @@ pub(crate) fn guard_record_put(
                     && store.vault_meta.get(txn, &key(MIGRATED, &owner))?.is_some();
             }
             (owned || record_kind(&row.body)?.is_some())
-                .then(|| body_pin(row.entity_type, row.occurred, &row.body))
+                .then(|| body_pin(row.entity_type, row.occurred, row.learned_at, &row.body))
         } else {
             None
         }
@@ -143,7 +144,7 @@ pub(crate) fn guard_record_put(
     if pin.len() != 32 {
         return Err(Error::CorruptedIndex("DAG body pin"));
     }
-    if !replicated || prior.is_none() || pin != body_pin(kind, occurred, body) {
+    if !replicated || prior.is_none() || pin != body_pin(kind, occurred, learned_at, body) {
         return Err(invalid("DAG records are append-only"));
     }
     Ok(())
@@ -172,6 +173,7 @@ fn stored_record_pin(
             start: header.occurred_start,
             end: header.occurred_end,
         },
+        header.learned_at,
         body,
     )))
 }
@@ -405,12 +407,22 @@ pub(super) fn reconcile_addressing(
         }
     }
     for recipient in recipients {
-        super::graph::require_type(
+        match super::graph::require_type(
             &vault.store,
             txn,
             &recipient,
             crate::registry::ENTITY_TYPE_PERSON,
-        )?;
+        ) {
+            Ok(_) => {}
+            Err(Error::EntityNotFound)
+                if vault.store.port_deletion_state(txn, &recipient)?.deleted =>
+            {
+                // A terminal addressee is not a pending replica. Keep the
+                // historical `to`, but do not resurrect its retired edge.
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
         if !present.contains(&recipient) {
             vault
                 .batch_in()

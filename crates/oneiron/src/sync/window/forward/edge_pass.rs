@@ -102,11 +102,28 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
             };
 
-            if kind == crate::edge::EdgeKind::AddressedTo
-                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some()
-            {
-                // The retained soft shell no longer contains its `to` carrier.
-                return;
+            let soft_addressing = kind == crate::edge::EdgeKind::AddressedTo
+                && crate::recovery::retained_soft_shell(ctx.doc, &src).is_some();
+            if soft_addressing {
+                // Ordinary peer replay has no body proof after a soft erase.
+                // Only canonical recovery's validated BaseEdge may retain it.
+                let Some(snapshot) = ctx.trusted else {
+                    return;
+                };
+                match crate::recovery::trusted_soft_addressing_edge(snapshot, &src, &tgt, buf) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        edge_error = Some(
+                            crate::error::RegistryError::ReservedEdgeKind("conversation_dag")
+                                .into(),
+                        );
+                        return;
+                    }
+                    Err(error) => {
+                        edge_error = Some(error);
+                        return;
+                    }
+                }
             }
 
             // Never re-add an edge whose endpoint is tombstoned in the CRDT.
@@ -172,6 +189,7 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
 
                 if kind == crate::edge::EdgeKind::AddressedTo
+                    && !soft_addressing
                     && !crate::conversation_dag::addressed_to_echo_in_txn(
                         &vault.store,
                         &*wtxn,

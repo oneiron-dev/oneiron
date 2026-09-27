@@ -215,7 +215,7 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
         let body = vault.get(&id).unwrap().unwrap();
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 21, &body)
+            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 20, &body)
             .commit()
             .unwrap();
     }
@@ -255,7 +255,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     }
     vault
         .batch()
-        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 21, &original)
+        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 20, &original)
         .commit()
         .unwrap();
     let sentinel = EntityId::now();
@@ -488,4 +488,116 @@ fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() 
         [person]
     );
     assert_eq!(peer.head(&conv).unwrap(), Some(direct));
+}
+
+#[test]
+fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let record = source.append_dag_record(&input).unwrap().id;
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::GdprDelete,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        for id in [conv, record, person] {
+            let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+            let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+            peer.batch()
+                .put_replicated(
+                    &id,
+                    h.entity_type,
+                    crate::TimeRange {
+                        start: h.occurred_start,
+                        end: h.occurred_end,
+                    },
+                    h.learned_at,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )
+                .commit()
+                .unwrap();
+        }
+        peer.batch()
+            .edge_checked(&record, &conv, 1.0)
+            .commit()
+            .unwrap();
+        peer.delete_entity_with_reason(&person, reason).unwrap();
+        assert!(peer.migrate_conversation_dag(&conv).unwrap());
+        assert_eq!(peer.head(&conv).unwrap(), Some(record));
+        assert!(
+            peer.targets(&record, EdgeKind::AddressedTo, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            peer.get(&record).unwrap().unwrap(),
+            source.get(&record).unwrap().unwrap()
+        );
+    }
+}
+
+#[test]
+fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let id = vault.append_dag_record(&input).unwrap().id;
+    let original = vault.get_raw_unsealed(&id).unwrap().unwrap();
+    let payload = &original[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_TURN,
+                input.occurred,
+                input.learned_at + 1,
+                payload
+            )
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
+    assert_eq!(
+        vault.targets(&id, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_TURN,
+            input.occurred,
+            input.learned_at,
+            payload,
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
 }

@@ -338,9 +338,6 @@ pub fn capture_canonical_window(
             if (soft.contains(&source) || soft.contains(&target))
                 && !hard.contains(&source)
                 && !hard.contains(&target)
-                // A soft-erased TURN has no recipient carrier left to prove
-                // this derived edge on a newly recovered vault.
-                && !(soft.contains(&source) && key[16] == crate::EdgeKind::AddressedTo as u8)
             {
                 snapshot.base_edges.push(CanonicalBaseEdge {
                     source,

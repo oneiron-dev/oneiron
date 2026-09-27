@@ -21,6 +21,8 @@ mod soft_shell;
 mod validation;
 #[cfg(feature = "sync")]
 pub(crate) use soft_shell::{materialize_retained_shells, retained_soft_shell};
+#[cfg(feature = "sync")]
+pub(crate) use validation::trusted_soft_addressing_edge;
 
 pub use canonical::*;
 pub use document::{CanonicalDocument, CanonicalHead, CanonicalHeadMove};

@@ -31,6 +31,12 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteEnvelope;
 
+fn normalized_policy_body(entity_type: u8, data: &[u8]) -> Option<Vec<u8>> {
+    (entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST)
+        .then(|| crate::gate::normalize_policy_manifest_scope(data))
+        .flatten()
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "decomposing would obscure direct LMDB write logic"
@@ -64,14 +70,17 @@ pub(in crate::batch) fn apply_put(
     // Normalize before body comparison, short-id hashing and scope stamping so
     // every index names the bytes actually stored. Malformed policy stays intact
     // and is diagnosed fail-closed by the policy resolver, never defaulted away.
-    let normalized_policy = if entity_type == crate::registry::ENTITY_TYPE_POLICY_MANIFEST {
-        crate::gate::normalize_policy_manifest_scope(data)
-    } else {
-        None
-    };
+    let normalized_policy = normalized_policy_body(entity_type, data);
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
-    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
+    guard_storage_owned_body(
+        store,
+        wtxn,
+        &id,
+        (entity_type, occurred, learned_at),
+        data,
+        replicated,
+    )?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;

@@ -165,6 +165,184 @@ fn typed_addressing_recovery_restores_only_body_proved_edges() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn soft_deleted_addressed_turn_keeps_its_edge_across_canonical_recovery() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let recipient = EntityId::now();
+    source.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &crate::conversation_dag::fixtures::body("person"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: 100,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    source.apply_replayed_tombstone(&record, &tombstone)?;
+    assert_eq!(
+        source.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        source.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    let key = WindowKey::from_timestamp(input.learned_at);
+    let doc = create_window_doc("source", &key);
+    for id in [conv, actor.entity_ref(), recipient] {
+        map_insert_bytes(
+            &doc.get_map("entities"),
+            &id.to_hex(),
+            &source.get_raw_unsealed(&id)?.unwrap(),
+        )?;
+    }
+    apply_tombstone_to_window_doc(&doc, &record, &tombstone)?;
+    doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|edge| edge.source == *record.as_bytes()
+                && edge.kind == EdgeKind::AddressedTo as u8
+                && edge.target == *recipient.as_bytes())
+    );
+    let dir = tempfile::tempdir()?;
+    let peer = Vault::open(dir.path(), VaultConfig::device())?;
+    let path = dir.path().join("manifest");
+    std::fs::write(&path, b"corrupt")?;
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        &path,
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    let mut forged = snapshot;
+    let edge = forged
+        .base_edges
+        .iter_mut()
+        .find(|edge| edge.source == *record.as_bytes() && edge.kind == EdgeKind::AddressedTo as u8)
+        .unwrap();
+    edge.value[..4].copy_from_slice(&0.0_f32.to_le_bytes()); // not the door's 1.0 weight
+    let other_dir = tempfile::tempdir()?;
+    let other = Vault::open(other_dir.path(), VaultConfig::device())?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &other,
+            &Materializer::new(),
+            other_dir.path().join("manifest"),
+            &forged,
+            crate::recovery::RecoveryBudget::default()
+        )
+        .is_err()
+    );
+    assert_eq!(other.get_entity_type(&record)?, None);
+    Ok(())
+}
+
+#[test]
+fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_hard_edge()
+-> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::GdprDelete,
+    ] {
+        let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+        let recipient = EntityId::now();
+        source.put_entity(
+            &recipient,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &crate::conversation_dag::fixtures::body("person"),
+        )?;
+        let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+        input.address = crate::conversation_dag::AddressMode::Direct;
+        input.recipients = vec![recipient];
+        let record = source.append_dag_record(&input)?.id;
+        let tombstone = crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: 100,
+            request_id: *EntityId::now().as_bytes(),
+        }
+        .encode();
+        source.apply_replayed_tombstone(&recipient, &tombstone)?;
+        let key = WindowKey::from_timestamp(input.learned_at);
+        let doc = create_window_doc("source", &key);
+        for id in [conv, actor.entity_ref(), record] {
+            map_insert_bytes(
+                &doc.get_map("entities"),
+                &id.to_hex(),
+                &source.get_raw_unsealed(&id)?.unwrap(),
+            )?;
+        }
+        for edge in source.edges_out(&record)? {
+            let bytes = encode_edge_value_for_crdt(
+                edge.kind,
+                edge.weight,
+                edge.created_at,
+                edge.vad,
+                edge.provenance,
+            )?;
+            map_insert_bytes(
+                &doc.get_map("edges"),
+                &format_edge_key(&record, edge.kind, &edge.target),
+                &bytes,
+            )?;
+        }
+        apply_tombstone_to_window_doc(&doc, &recipient, &tombstone)?;
+        doc.commit();
+        let mut snapshot = crate::recovery::capture_canonical_window(&source, key.as_str(), &doc)?;
+        // This bounded fixture captures the room's record graph, not other
+        // outgoing PERSON substrate edges whose targets were not imported.
+        snapshot.base_edges.retain(|edge| {
+            edge.source == *record.as_bytes()
+                && (edge.target == *conv.as_bytes() || edge.target == *recipient.as_bytes())
+        });
+        let dir = tempfile::tempdir()?;
+        let peer = Vault::open(dir.path(), VaultConfig::device())?;
+        crate::recovery::recover_vault_window(
+            &peer,
+            &Materializer::new(),
+            dir.path().join("manifest"),
+            &snapshot,
+            crate::recovery::RecoveryBudget::default(),
+        )?;
+        assert_eq!(
+            peer.main_line(&conv, Default::default())?.main_line,
+            [record]
+        );
+        assert_eq!(peer.head(&conv)?, Some(record));
+        let restored = peer.targets(&record, EdgeKind::AddressedTo, None)?;
+        if reason == crate::deletion::TombstoneReason::UserDelete {
+            assert_eq!(restored, [recipient]);
+        } else {
+            assert!(
+                restored.is_empty(),
+                "hard deletion must not restore addressing edge"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
 /// learned_at u64 BE + body (`occurred == learned` so CRDT-vs-LMDB
 /// byte-equality is exact).

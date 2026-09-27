@@ -5,6 +5,70 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Recovery-only proof for an AddressedTo edge retained by a soft-erased
+/// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
+/// are gone, so only a validated local canonical snapshot of the retained
+/// shell and its BaseEdge can carry the historical structural fact.
+#[cfg(feature = "sync")]
+pub(crate) fn trusted_soft_addressing_edge(
+    snapshot: &CanonicalSnapshot,
+    source: &crate::EntityId,
+    target: &crate::EntityId,
+    value: &[u8],
+) -> Result<bool> {
+    let Some(tombstone) = snapshot
+        .tombstones
+        .iter()
+        .find(|row| row.id == *source.as_bytes())
+    else {
+        return Ok(false);
+    };
+    let decoded = crate::deletion::decode_tombstone_value(&tombstone.value);
+    if decoded.reason != Some(crate::deletion::TombstoneReason::UserDelete) {
+        return Err(invalid(
+            "addressing source is not a retained user-delete shell",
+        ));
+    }
+    let source_row = snapshot
+        .entity_blobs
+        .iter()
+        .find(|row| row.id == *source.as_bytes())
+        .ok_or(invalid("missing retained addressing shell"))?;
+    let header = EntityMetadataHeader::parse(&source_row.blob)
+        .ok_or(invalid("invalid retained addressing shell"))?;
+    if source_row.blob.len() != ENTITY_METADATA_HEADER_LEN
+        || header.entity_type != crate::registry::ENTITY_TYPE_TURN
+    {
+        return Err(invalid("addressing shell is not an erased TURN"));
+    }
+    let person = snapshot
+        .entity_blobs
+        .iter()
+        .find(|row| row.id == *target.as_bytes())
+        .ok_or(invalid("retained addressing recipient missing"))?;
+    if EntityMetadataHeader::parse(&person.blob)
+        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+    {
+        return Err(invalid("retained addressing recipient is not a PERSON"));
+    }
+    let fields = crate::edge::decode_edge_value_for_kind(crate::EdgeKind::AddressedTo, value)?;
+    if fields.layout != crate::edge::EdgeValueLayout::Structural
+        || fields.weight != 1.0
+        || fields.created_at != header.learned_at
+        || !snapshot.base_edges.iter().any(|row| {
+            row.source == *source.as_bytes()
+                && row.kind == crate::EdgeKind::AddressedTo as u8
+                && row.target == *target.as_bytes()
+                && row.value == value
+        })
+    {
+        return Err(invalid(
+            "retained addressing edge differs from canonical shell",
+        ));
+    }
+    Ok(true)
+}
+
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     let window = snapshot.window.as_bytes();
     if window.len() != 7
@@ -77,6 +141,17 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(invalid("edge kind"))?;
         crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
+        #[cfg(feature = "sync")]
+        if kind == crate::EdgeKind::AddressedTo
+            && snapshot.tombstones.iter().any(|row| row.id == edge.source)
+        {
+            trusted_soft_addressing_edge(
+                snapshot,
+                &id(edge.source)?,
+                &id(edge.target)?,
+                &edge.value,
+            )?;
+        }
     }
     for tombstone in &snapshot.tombstones {
         id(tombstone.id)?;
