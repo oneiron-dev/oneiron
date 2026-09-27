@@ -9,8 +9,8 @@ use crate::http::GraphQlCall;
 use crate::source::LinearTrackerConfig;
 use crate::{data, invalid};
 
-const CREATE: &str = "mutation OneironCreateIssue($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier updatedAt title description priority team { id } state { id } assignee { id } } } }";
-const UPDATE: &str = "mutation OneironUpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id identifier updatedAt title description priority team { id } state { id } assignee { id } } } }";
+pub(crate) const CREATE: &str = "mutation OneironCreateIssue($input: IssueCreateInput!) { issueCreate(input: $input) { success issue { id identifier updatedAt title description priority team { id } state { id } assignee { id } } } }";
+pub(crate) const UPDATE: &str = "mutation OneironUpdateIssue($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id identifier updatedAt title description priority team { id } state { id } assignee { id } } } }";
 
 /// The host's *authorized* outbound door. It binds an operation ID to the
 /// exact serialized call, stores the successful response durably, and returns

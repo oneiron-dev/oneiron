@@ -6,8 +6,8 @@ use oneiron::{EntityId, LinearChangeSource, LinearEgress, LinearSyncError, Mirro
 use serde_json::{Value, json};
 
 use crate::{
-    GraphQlCall, GraphQlExecutor, LinearHostChangeSource, LinearHostEgress, LinearOutboundDoor,
-    LinearTrackerConfig,
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearHostChangeSource, LinearHostEgress,
+    LinearOutboundDoor, LinearTrackerConfig,
 };
 
 fn config() -> LinearTrackerConfig {
@@ -32,15 +32,21 @@ fn fields() -> MirroredTaskFields {
         status: "queued".into(),
     }
 }
+
+impl<T: GraphQlExecutor + ?Sized> GraphQlExecutor for &mut T {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
+        (**self).execute(call)
+    }
+}
 struct StubReader {
     replies: Vec<Value>,
     calls: Rc<RefCell<Vec<GraphQlCall>>>,
 }
 impl GraphQlExecutor for StubReader {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, LinearSyncError> {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
         self.calls.borrow_mut().push(call.clone());
         if self.replies.is_empty() {
-            return Err(LinearSyncError::Transport("no reply".into()));
+            return Err(GraphQlTransportError::Uncertain);
         }
         Ok(self.replies.remove(0))
     }
@@ -80,6 +86,26 @@ fn cursor_pages_normalize_issue_snapshots_and_preserve_cursor() {
     assert_eq!(calls.borrow()[1].variables["before"], "page-2");
     let reread = config().issue(&a).expect("stable event");
     assert_eq!(first.changes[0].event_id, reread.event_id);
+}
+
+#[test]
+fn linked_issue_preflight_reads_exact_tracker_snapshot() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let reader = StubReader {
+        calls: calls.clone(),
+        replies: vec![json!({"data":{"issue":issue("linked", "2026-09-26T00:00:02Z", "Remote")}})],
+    };
+    let mut source = LinearHostChangeSource::new(reader, config()).expect("source");
+    let linked = oneiron::LinearIssueRef {
+        issue_id: "linked".into(),
+        team_id: "team-1".into(),
+        identifier: "TASK-linked".into(),
+    };
+    let change = source.current_issue(&linked).expect("current issue");
+    assert_eq!(change.fields.title, "Remote");
+    assert_eq!(calls.borrow()[0].variables["id"], "linked");
+    assert!(calls.borrow()[0].query.contains("issue(id: $id)"));
+    assert!(calls.borrow()[0].query.contains("$id: String!"));
 }
 
 #[test]
@@ -165,49 +191,42 @@ fn operation_id_retry_after_adapter_restart_collapses_to_one_write() {
     assert_eq!(state.borrow().writes, 2);
 }
 
-struct Allow;
-impl crate::LinearOutboundAuthorization for Allow {
-    fn authorize(&mut self, _: [u8; 32], _: &GraphQlCall) -> Result<(), LinearSyncError> {
-        Ok(())
-    }
-}
 struct JournalTransport {
     writes: Rc<RefCell<usize>>,
-    fail: bool,
+    failure: Option<GraphQlTransportError>,
 }
 impl GraphQlExecutor for JournalTransport {
-    fn execute(&mut self, _: &GraphQlCall) -> Result<Value, LinearSyncError> {
-        *self.writes.borrow_mut() += 1;
-        if self.fail {
-            return Err(LinearSyncError::Transport("timeout after send".into()));
+    fn execute(&mut self, _: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
+        if let Some(failure) = self.failure {
+            return Err(failure);
         }
+        *self.writes.borrow_mut() += 1;
         Ok(json!({"data":{"issueCreate":{"success":true,
             "issue":issue("created","2026-09-26T00:00:00Z","New title")}}}))
     }
 }
 #[test]
-fn durable_door_replays_success_after_restart_and_never_retries_ambiguous_send() {
+fn response_journal_replays_success_and_never_retries_ambiguous_send() {
     let dir = tempfile::tempdir().expect("journal dir");
     let writes = Rc::new(RefCell::new(0));
     let call = GraphQlCall {
-        query: "mutation { ok }",
-        variables: json!({"input":"fixed"}),
+        query: crate::egress::CREATE,
+        variables: json!({"input":{"teamId":"team-1"}}),
     };
-    let make = |fail| {
-        crate::JournaledLinearOutboundDoor::new(
+    let make = |failure| {
+        crate::journal::LinearResponseJournal::new(
             JournalTransport {
                 writes: writes.clone(),
-                fail,
+                failure,
             },
-            Allow,
             dir.path().to_path_buf(),
         )
-        .expect("door")
+        .expect("journal")
     };
-    let mut first = make(false);
+    let mut first = make(None);
     let response = first.dispatch([1; 32], &call).expect("first");
     drop(first);
-    let mut restarted = make(false);
+    let mut restarted = make(None);
     assert_eq!(
         restarted.dispatch([1; 32], &call).expect("replay"),
         response
@@ -219,15 +238,254 @@ fn durable_door_replays_success_after_restart_and_never_retries_ambiguous_send()
                 [1; 32],
                 &GraphQlCall {
                     query: call.query,
-                    variables: json!({"input":"changed"})
+                    variables: json!({"input":{"teamId":"other"}})
                 }
             )
             .is_err()
     );
+    let mut uncertain = make(Some(GraphQlTransportError::Uncertain));
+    assert_eq!(
+        uncertain.dispatch([2; 32], &call),
+        Err(GraphQlTransportError::Uncertain)
+    );
+    let mut recovered = make(None);
+    assert_eq!(
+        recovered.dispatch([2; 32], &call),
+        Err(GraphQlTransportError::Uncertain)
+    );
     assert_eq!(*writes.borrow(), 1);
-    let mut uncertain = make(true);
-    assert!(uncertain.dispatch([2; 32], &call).is_err());
-    let mut recovered = make(false);
-    assert!(recovered.dispatch([2; 32], &call).is_err());
-    assert_eq!(*writes.borrow(), 2);
+}
+
+#[test]
+fn definitely_unsent_request_can_retry_after_restart() {
+    let dir = tempfile::tempdir().expect("journal dir");
+    let writes = Rc::new(RefCell::new(0));
+    let call = GraphQlCall {
+        query: crate::egress::CREATE,
+        variables: json!({"input":{"teamId":"team-1"}}),
+    };
+    let mut offline = crate::journal::LinearResponseJournal::new(
+        JournalTransport {
+            writes: writes.clone(),
+            failure: Some(GraphQlTransportError::NotSent),
+        },
+        dir.path().to_path_buf(),
+    )
+    .expect("journal");
+    assert_eq!(
+        offline.dispatch([3; 32], &call),
+        Err(GraphQlTransportError::NotSent)
+    );
+    drop(offline);
+    let mut online = crate::journal::LinearResponseJournal::new(
+        JournalTransport {
+            writes: writes.clone(),
+            failure: None,
+        },
+        dir.path().to_path_buf(),
+    )
+    .expect("journal");
+    online.dispatch([3; 32], &call).expect("safe retry");
+    assert_eq!(*writes.borrow(), 1);
+}
+
+#[test]
+fn page_query_variable_types_match_pinned_linear_filter_schema() {
+    let schema = include_str!("../tests/fixtures/linear-page-schema.graphql");
+    let type_of = |block: &str, field: &str| -> &str {
+        let body = schema
+            .split(block)
+            .nth(1)
+            .expect("pinned schema type")
+            .split('}')
+            .next()
+            .expect("schema fields");
+        body.lines()
+            .find_map(|line| line.trim().strip_prefix(field))
+            .expect("pinned schema field")
+            .trim()
+    };
+    assert_eq!(type_of("input IDComparator {", "eq:"), "ID");
+    assert_eq!(type_of("input TeamFilter {", "id:"), "IDComparator");
+    assert_eq!(type_of("input IssueFilter {", "team:"), "TeamFilter");
+    assert!(type_of("type Query {", "issues(").contains("filter: IssueFilter"));
+    let mut reader = StubReader {
+        replies: vec![json!({"data":{"issues":{"nodes":[],
+            "pageInfo":{"hasPreviousPage":false,"startCursor":null}}}})],
+        calls: Rc::new(RefCell::new(Vec::new())),
+    };
+    let calls = reader.calls.clone();
+    let mut source = LinearHostChangeSource::new(&mut reader, config()).expect("source");
+    source.changes_since(None).expect("query");
+    let query = calls.borrow()[0].query;
+    let type_token = type_of("input IDComparator {", "eq:");
+    assert!(query.contains(&format!("$team: {type_token}!")));
+    assert!(query.contains("$before: String"));
+    assert!(query.contains("$last: Int!"));
+    assert!(query.contains("eq: $team"));
+    assert!(query.contains("orderBy: updatedAt, last: $last, before: $before"));
+}
+
+fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
+    use rmpv::Value as V;
+    let mut scope = oneiron::federation::Scope::top();
+    scope.verbs = oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        "effect".to_owned(),
+    ]));
+    let scope_bytes = rmp_serde::to_vec_named(&scope).expect("scope");
+    let scope_value = rmpv::decode::read_value(&mut scope_bytes.as_slice()).expect("scope value");
+    let entries = vec![
+        (V::from("schema_version"), V::from("1.2")),
+        (V::from("pack_id"), V::from("linear-egress-test")),
+        (V::from("pack_version"), V::from("v1")),
+        (
+            V::from("min_engine_version"),
+            V::from(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            V::from("defaults"),
+            V::Map(vec![
+                (V::from("criticality"), V::from("normal")),
+                (V::from("sensitivity"), V::from("normal")),
+            ]),
+        ),
+        (V::from("rules"), V::Array(vec![])),
+        (
+            V::from("actor_ceilings"),
+            V::Array(vec![V::Map(vec![
+                (V::from("actor_class"), V::from("agent")),
+                (V::from("actor_ref"), V::from(actor.to_hex())),
+                (V::from("ceiling"), V::from("auto")),
+            ])]),
+        ),
+        (
+            V::from("scoped_grants"),
+            V::Array(
+                ["create_issue", "update_issue"]
+                    .iter()
+                    .map(|verb| {
+                        V::Map(vec![
+                            (V::from("actor_ref"), V::from(actor.to_hex())),
+                            (V::from("effector"), V::from(format!("external:{verb}"))),
+                            (V::from("scope"), scope_value.clone()),
+                            (
+                                V::from("selectors"),
+                                V::Map(vec![(V::from("channel"), V::from("linear"))]),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ];
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &V::Map(entries)).expect("encode policy");
+    let owner = vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner auth");
+    vault
+        .install_owner_policy_manifest(
+            &owner,
+            EntityId::from_bytes([0x77; 16]).expect("policy ref"),
+            bytes,
+            1,
+        )
+        .expect("install policy");
+}
+
+#[test]
+fn vault_door_gate_and_budget_prevent_wire_and_replay_never_debits_twice() {
+    use oneiron::connector_key::{
+        CalendarPeriod, ConnectorKeyRecord, EffectorBudget, EffectorBudgetOnExhaust,
+        EffectorBudgetWindow,
+    };
+    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    let dir = tempfile::tempdir().expect("vault");
+    let responses = tempfile::tempdir().expect("responses");
+    let vault =
+        oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("vault open");
+    let actor = EntityId::from_bytes([0x56; 16]).expect("actor");
+    vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("person");
+    grant_linear_effects(&vault, actor);
+    let key_id = EntityId::from_bytes([0x58; 16]).expect("key");
+    vault
+        .register_connector_key(
+            &key_id,
+            ConnectorKeyRecord::active(
+                "linear",
+                None,
+                vec![EffectorBudget::sends(
+                    1,
+                    EffectorBudgetWindow::Calendar {
+                        period: CalendarPeriod::Day,
+                        tz: None,
+                    },
+                    EffectorBudgetOnExhaust::Suspend,
+                )],
+                1000,
+            ),
+        )
+        .expect("budget");
+    let writes = Rc::new(RefCell::new(0));
+    let transport = || JournalTransport {
+        writes: writes.clone(),
+        failure: None,
+    };
+    let door = crate::VaultLinearOutboundDoor::new(
+        &vault,
+        transport(),
+        responses.path().to_path_buf(),
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1000,
+    )
+    .expect("door");
+    let mut egress = LinearHostEgress::new(door, config()).expect("egress");
+    let first = egress
+        .create_issue([41; 32], actor, &fields())
+        .expect("first dispatch");
+    let replay = egress
+        .create_issue([41; 32], actor, &fields())
+        .expect("engine replay");
+    assert_eq!(first, replay);
+    assert_eq!(*writes.borrow(), 1);
+    assert!(egress.create_issue([42; 32], actor, &fields()).is_err());
+    assert_eq!(*writes.borrow(), 1);
+    assert_eq!(
+        vault
+            .get_connector_key(&key_id)
+            .expect("key read")
+            .expect("key")
+            .status,
+        oneiron::connector_key::ConnectorKeyStatus::Suspended,
+    );
+    let denied = crate::VaultLinearOutboundDoor::new(
+        &vault,
+        transport(),
+        responses.path().to_path_buf(),
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate {
+            has_opted_in: false,
+            has_permission: false,
+            policy_risk: Default::default(),
+        },
+        1001,
+    )
+    .expect("denied door");
+    let mut denied = LinearHostEgress::new(denied, config()).expect("egress");
+    assert!(denied.create_issue([43; 32], actor, &fields()).is_err());
+    assert_eq!(*writes.borrow(), 1);
 }

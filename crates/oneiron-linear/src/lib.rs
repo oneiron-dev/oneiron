@@ -6,14 +6,15 @@
 //! this crate never puts credentials in the engine or claims that a header alone
 //! makes Linear mutations idempotent.
 
+mod dispatch;
 mod egress;
 mod http;
 mod journal;
 mod source;
 
+pub use dispatch::VaultLinearOutboundDoor;
 pub use egress::{LinearHostEgress, LinearOutboundDoor};
-pub use http::{GraphQlCall, GraphQlExecutor, HttpLinearClient};
-pub use journal::{JournaledLinearOutboundDoor, LinearOutboundAuthorization};
+pub use http::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient};
 pub use source::{LinearHostChangeSource, LinearTrackerConfig};
 
 use oneiron::LinearSyncError;

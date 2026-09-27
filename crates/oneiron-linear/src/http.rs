@@ -24,8 +24,27 @@ impl GraphQlCall {
 
 /// Host transport. Mutations must be invoked by an authorized outbound door,
 /// not directly by the mirror's egress adapter.
+/// Typed delivery certainty. Only a failure before any request bytes could
+/// leave the host is safe to retry automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphQlTransportError {
+    NotSent,
+    Uncertain,
+}
+
+impl From<GraphQlTransportError> for LinearSyncError {
+    fn from(error: GraphQlTransportError) -> Self {
+        match error {
+            GraphQlTransportError::NotSent => crate::invalid("Linear request was not sent"),
+            GraphQlTransportError::Uncertain => {
+                crate::invalid("Linear request delivery is uncertain")
+            }
+        }
+    }
+}
+
 pub trait GraphQlExecutor {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, LinearSyncError>;
+    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError>;
 }
 
 /// Production Linear API transport. Keep this on the credential-bearing host.
@@ -59,24 +78,30 @@ impl HttpLinearClient {
 }
 
 impl GraphQlExecutor for HttpLinearClient {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, LinearSyncError> {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
         let response = self
             .client
             .post("https://api.linear.app/graphql")
             .json(&call.body())
             .send()
-            .map_err(|_| invalid("Linear HTTP request failed"))?;
+            .map_err(|error| {
+                if error.is_connect() {
+                    GraphQlTransportError::NotSent
+                } else {
+                    GraphQlTransportError::Uncertain
+                }
+            })?;
         if !response.status().is_success() {
-            return Err(invalid("Linear HTTP returned a failure status"));
+            return Err(GraphQlTransportError::Uncertain);
         }
         let mut bytes = Vec::new();
         response
             .take(1_048_577)
             .read_to_end(&mut bytes)
-            .map_err(|_| invalid("Linear HTTP response could not be read"))?;
+            .map_err(|_| GraphQlTransportError::Uncertain)?;
         if bytes.len() > 1_048_576 {
-            return Err(invalid("Linear HTTP response exceeds size limit"));
+            return Err(GraphQlTransportError::Uncertain);
         }
-        serde_json::from_slice(&bytes).map_err(|_| invalid("Linear HTTP response is not JSON"))
+        serde_json::from_slice(&bytes).map_err(|_| GraphQlTransportError::Uncertain)
     }
 }

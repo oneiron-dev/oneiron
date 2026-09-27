@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 use chrono::DateTime;
 use oneiron::{
-    LinearChangePage, LinearChangeSource, LinearIssueChange, LinearIssueRef, LinearSyncResult,
-    MirroredTaskFields,
+    LinearChangePage, LinearChangeSource, LinearIssueChange, LinearIssueRef, LinearSyncError,
+    LinearSyncResult, MirroredTaskFields,
 };
 use serde_json::{Value, json};
 
@@ -15,7 +15,9 @@ use crate::{data, invalid, string};
 // Linear sorts updatedAt newest first. Backward Relay pagination begins at
 // the oldest tail, then walks toward the newest. Reverse each page so the
 // engine observes ascending changes, including across page boundaries.
-const PAGE_QUERY: &str = "query OneironLinearChanges($team: String!, $before: String, $last: Int!) { issues(filter: { team: { id: { eq: $team } } }, orderBy: updatedAt, last: $last, before: $before) { nodes { id identifier updatedAt title description priority team { id } state { id } assignee { id } } pageInfo { hasPreviousPage startCursor } } }";
+const PAGE_QUERY: &str = "query OneironLinearChanges($team: ID!, $before: String, $last: Int!) { issues(filter: { team: { id: { eq: $team } } }, orderBy: updatedAt, last: $last, before: $before) { nodes { id identifier updatedAt title description priority team { id } state { id } assignee { id } } pageInfo { hasPreviousPage startCursor } } }";
+
+const ISSUE_QUERY: &str = "query OneironLinearIssue($id: String!) { issue(id: $id) { id identifier updatedAt title description priority team { id } state { id } assignee { id } } }";
 
 /// Host-owned mapping between engine field tokens and Linear workflow/user IDs.
 /// Unmapped values fail closed rather than silently changing tracker ownership.
@@ -176,12 +178,30 @@ impl<R> LinearHostChangeSource<R> {
 }
 
 impl<R: GraphQlExecutor> LinearChangeSource for LinearHostChangeSource<R> {
+    fn current_issue(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<LinearIssueChange> {
+        if issue.team_id != self.config.team_id {
+            return Err(invalid("Linear issue belongs to another team"));
+        }
+        let response = self
+            .reader
+            .execute(&GraphQlCall {
+                query: ISSUE_QUERY,
+                variables: json!({"id": issue.issue_id}),
+            })
+            .map_err(LinearSyncError::from)?;
+        let current = self.config.issue(data(&response, "issue")?)?;
+        if current.issue.issue_id != issue.issue_id {
+            return Err(invalid("Linear issue lookup returned another issue"));
+        }
+        Ok(current)
+    }
+
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         let call = GraphQlCall {
             query: PAGE_QUERY,
             variables: json!({"team": self.config.team_id, "before": cursor, "last": self.config.page_size}),
         };
-        let response = self.reader.execute(&call)?;
+        let response = self.reader.execute(&call).map_err(LinearSyncError::from)?;
         let issues = data(&response, "issues")?;
         let nodes = issues
             .get("nodes")

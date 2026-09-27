@@ -30,6 +30,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         feedback_manifest("feedback_cloud"),
         feedback_manifest("feedback_collector"),
         feedback_manifest("feedback_github"),
+        linear_manifest(),
         manifest(
             "esign", "signing", "Native signing request organ.",
             ["send_for_signature", "remind", "void"].into_iter().map(|kind| verb(
@@ -599,6 +600,31 @@ fn in_app_reaction_manifest() -> OutboundCapabilityManifest {
             false,
             "The first-party adapter checks message visibility and audience before writing a reaction.",
         )],
+    )
+}
+
+fn linear_manifest() -> OutboundCapabilityManifest {
+    manifest(
+        "linear",
+        "issue_tracker",
+        "TASK mirror mutations must pass the ordinary outbound gate.",
+        ["create_issue", "update_issue"]
+            .into_iter()
+            .map(|kind| {
+                verb(
+                    kind,
+                    kind,
+                    json!({"operation_id":"engine digest", "payload":"frozen GraphQL mutation"}),
+                    OutboundInterruptionClass::Ambient,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::IdempotentEmulated,
+                    OutboundPermissionState::Conditional,
+                    false,
+                    "The host reconciles uncertain delivery; provider-native idempotency is not assumed.",
+                )
+            })
+            .collect(),
     )
 }
 

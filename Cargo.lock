@@ -7341,6 +7341,8 @@ dependencies = [
  "chrono",
  "oneiron",
  "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
  "serde_json",
  "tempfile",
 ]
