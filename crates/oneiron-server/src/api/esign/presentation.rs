@@ -38,16 +38,14 @@ pub(super) async fn layout(Json(request): Json<LayoutRequest>) -> Response {
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: Result<
-        axum::extract::ConnectInfo<std::net::SocketAddr>,
-        axum::extract::rejection::ExtensionRejection,
-    >,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<PdfRequest>,
 ) -> Response {
     let Ok(token) = EsignCapability::parse(&request.token) else {
         return refused();
     };
-    let Ok(axum::extract::ConnectInfo(peer)) = peer else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
     let ua = headers
@@ -55,12 +53,10 @@ pub(super) async fn preview(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    let Ok((page, bytes)) = server.vault.esign_preview_for_capability(
-        &token,
-        request.item,
-        Some(peer.ip().to_string()),
-        ua,
-    ) else {
+    let Ok((page, bytes)) = server
+        .vault
+        .esign_preview_for_capability(&token, request.item, ip, ua)
+    else {
         return refused();
     };
     let Ok(pages) = render::inspect_pdf_pages(&bytes) else {
