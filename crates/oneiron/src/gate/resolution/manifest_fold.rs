@@ -139,6 +139,9 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                resolution
+                    .booking_conversion_rows
+                    .extend(decoded.booking_conversion_rows);
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
@@ -186,7 +189,9 @@ pub(crate) fn resolve_policy_manifest(
     // resolution malformed, fail-closing the write gate exactly like any
     // malformed manifest and refusing the budget-policy accessor. Never wrap
     // or silently truncate a row index.
-    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
+    if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1
+        || resolution.booking_conversion_rows.len() > 128
+    {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 

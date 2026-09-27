@@ -361,6 +361,20 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
             Value::from("suspend"),
         ),
+        (
+            Value::from("booking_conversion"),
+            Value::Array(vec![
+                rmpv::ext::to_value(
+                    serde_json::to_value(crate::booking::BookingConversionPolicyRow {
+                        scope: crate::booking::BookingPolicyScope::Vault,
+                        holder_ref: None,
+                        policy: crate::booking::BookingConversionPolicy::default(),
+                    })
+                    .expect("default booking conversion row encodes"),
+                )
+                .expect("default booking conversion JSON becomes MessagePack"),
+            ]),
+        ),
         // The owner policy plane ships OFF with zero rows: a fresh vault
         // classifies nothing and calls no safeguard model until its owner
         // opts in and writes their own rows.

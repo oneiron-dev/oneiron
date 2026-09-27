@@ -32,7 +32,13 @@ async fn public_booking_render_requires_no_authentication() {
         model.visitor_tz,
         expected["initial_availability"]["visitor_tz"]
     );
-    let shortlist = oneiron::booking::booking_shortlist(&mask.slots, 3).expect("shortlist");
+    let policy = fixture
+        .server
+        .vault
+        .booking_conversion_policy(None)
+        .expect("policy");
+    let shortlist =
+        oneiron::booking::booking_shortlist(&mask.slots, 3, &policy).expect("shortlist");
     assert_eq!(shortlist.recommended, mask.slots.first().cloned());
     assert_eq!(shortlist.visible, mask.slots[..mask.slots.len().min(3)]);
     assert_eq!(shortlist.more_count, mask.slots.len().saturating_sub(3));
@@ -148,27 +154,49 @@ async fn linked_time_preselects_only_a_live_solver_slot() {
     let proposed = slots.first().expect("second event offers a future slot");
     assert!(proposed.start_utc > initial_end);
     assert_eq!(proposed.end_utc - proposed.start_utc, 3_600);
+    let mask = oneiron::booking::SlotMask {
+        event_type: EventTypeKey("consultation&60".to_owned()),
+        window_start_utc: proposed.start_utc,
+        window_end_utc: proposed.end_utc,
+        slots: vec![proposed.clone()],
+        flex_used: false,
+    };
+    let face = format!("https://book.example.org/schedule/{}", fixture.token);
     let snippet = oneiron::booking::booking_slots_snippet(
-        "https://book.example.org",
-        &PublicBookingPageToken(fixture.token.clone()),
-        &EventTypeKey("consultation&60".to_owned()),
-        std::slice::from_ref(proposed),
+        &mask,
+        &[proposed.start_utc],
         "Europe/London",
-        "Available:",
-        "All slots",
+        &PublicBookingPageToken(fixture.token.clone()),
+        &face,
+        oneiron::booking::BookingSnippetCopy {
+            introduction: "Available:",
+            optional_link_label: "All slots",
+        },
+        &fixture
+            .server
+            .vault
+            .booking_conversion_policy(None)
+            .expect("policy"),
     )
     .unwrap();
-    let linked = snippet
+    let href = snippet
         .lines()
         .nth(1)
         .unwrap()
         .split_once("](")
         .unwrap()
         .1
-        .trim_end_matches(')')
-        .strip_prefix("https://book.example.org")
-        .unwrap();
-    let page = fixture.route("GET", linked, Value::Null).await;
+        .trim_end_matches(')');
+    let hint = oneiron::booking::booking_snippet_selection_from_url(
+        href,
+        &PublicBookingPageToken(fixture.token.clone()),
+    )
+    .expect("host page consumes its human link");
+    assert_eq!(hint.start_utc, proposed.start_utc);
+    assert_eq!(hint.end_utc, proposed.end_utc);
+    let query = href.split_once('?').unwrap().1;
+    let linked = format!("{path}?{query}");
+    let page = fixture.route("GET", &linked, Value::Null).await;
     assert_eq!(page.status(), StatusCode::OK);
     let selected: Value = serde_json::from_slice(&bytes(page).await).expect("linked page");
     assert_eq!(

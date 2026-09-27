@@ -47,14 +47,16 @@ pub use constraint::{
     SlotOracle, SolveRequest, SolveResult,
 };
 pub use conversion::{
-    BookingFaq, BookingIntakeStages, BookingLandingContent, BookingReminder, BookingShortlist,
-    BookingSlotLinkHint, BookingSlotPreview, BookingSnippetLink, BookingSnippetSelection,
-    ConfigurableReminderWake, ConversionError, MeetingLocation, ReminderAction, ReminderStep,
-    RepeatNoShowOffer, ZonedBookingTime, booking_display_zones, booking_due_reminder,
-    booking_intake_stages, booking_reminder_wakes, booking_reminders, booking_shortlist,
-    booking_slot_preview, booking_slots_snippet, booking_snippet_links,
-    booking_snippet_selection_from_url, booking_suggested_slot, booking_zoned_time,
-    parse_booking_slot_link, repeat_no_show_offer,
+    BookingConversionPolicy, BookingConversionPolicyRow, BookingFaq, BookingIntakeStages,
+    BookingLandingContent, BookingPolicyPrecedence, BookingPolicyScope, BookingReminder,
+    BookingShortlist, BookingSlotLinkHint, BookingSlotPreview, BookingSnippetCopy,
+    BookingSnippetLink, BookingSnippetSelection, ConfigurableReminderWake, ConversionError,
+    MeetingLocation, ReminderAction, ReminderStep, RepeatNoShowOffer, ZonedBookingTime,
+    booking_display_zones, booking_due_reminder, booking_intake_stages, booking_reminder_wakes,
+    booking_reminders, booking_shortlist, booking_slot_preview, booking_slots_snippet,
+    booking_snippet_links, booking_snippet_selection_from_url, booking_suggested_slot,
+    booking_zoned_time, parse_booking_slot_link, repeat_no_show_offer,
+    resolve_booking_conversion_rows,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,

@@ -4304,10 +4304,35 @@
      "path": "src/booking/conversion.rs",
      "purpose": "Renderer-neutral booking conversion data, derived only from public slots and owner copy",
      "surface": {
-      "fn": 4,
-      "re-export": 1,
+      "fn": 5,
+      "re-export": 2,
       "struct": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingConversionPolicy",
+      "BookingConversionPolicyRow",
+      "BookingPolicyPrecedence",
+      "BookingPolicyScope"
+     ],
+     "path": "src/booking/conversion/policy.rs",
+     "purpose": "Resolved BK-07 conversion choices, never booking authority",
+     "surface": {
+      "enum": 2,
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/conversion/policy/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -4324,7 +4349,7 @@
       "BookingIntakeStages",
       "BookingReminder",
       "BookingShortlist",
-      "BookingSlotLinkHint",
+      "BookingSnippetCopy",
       "ConfigurableReminderWake",
       "ConversionError",
       "MeetingLocation",
@@ -4336,9 +4361,10 @@
      "path": "src/booking/conversion/ux.rs",
      "purpose": "BK-07 conversion data",
      "surface": {
-      "enum": 5,
+      "enum": 4,
       "fn": 11,
-      "struct": 6
+      "struct": 7,
+      "type": 1
      }
     },
     {
@@ -17033,7 +17059,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -35156,7 +35182,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 81,
+     "files": 83,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36355,8 +36381,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2144,
-   "test_files": 734
+   "source_files": 2145,
+   "test_files": 735
   },
   "oneiron-android": {
    "files": [

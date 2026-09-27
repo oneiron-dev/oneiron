@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::booking::{PUBLIC_BOOKING_ROUTE_PREFIX, PublicBookingPageToken, RankedSlot};
+use crate::booking::{PublicBookingPageToken, RankedSlot};
 use crate::calendar::tz::utc_to_wall;
 
 /// Errors are explicit: invalid zone names and times never become UTC labels.
@@ -27,13 +27,16 @@ pub struct BookingShortlist {
     pub more_count: usize,
 }
 
-/// Show three to five ranked slots, and keep the whole solver result available
+/// Show an owner-chosen ranked prefix within resolved vault policy, keeping
+/// the whole solver result available
 /// for the host's separate availability query. Empty availability is valid.
 pub fn booking_shortlist(
     slots: &[RankedSlot],
     visible_count: usize,
+    policy: &super::BookingConversionPolicy,
 ) -> Result<BookingShortlist, ConversionError> {
-    if !(3..=5).contains(&visible_count) {
+    if policy.validate().is_err() || visible_count == 0 || visible_count > policy.max_visible_slots
+    {
         return Err(ConversionError::InvalidConfig);
     }
     if slots
@@ -54,77 +57,19 @@ pub fn booking_shortlist(
     })
 }
 
-/// A link carries the configured event type, selected visitor zone, and one
-/// half-open UTC slot. It is a hint only, never proof that the solver offered
-/// the slot or that a hold is authorized.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BookingSlotLinkHint {
-    pub event_type: crate::booking::EventTypeKey,
-    pub visitor_tz: String,
-    pub start_utc: u64,
-    pub end_utc: u64,
-}
+/// An inert public-face link hint. The exact slot is re-solved at the JSON
+/// model route and revalidated once more by the hold writer.
+pub type BookingSlotLinkHint = super::BookingSnippetSelection;
 
-fn hex_text(value: &str) -> String {
-    use std::fmt::Write;
-    let mut hex = String::with_capacity(value.len() * 2);
-    for byte in value.bytes() {
-        write!(&mut hex, "{byte:02x}").expect("write to string");
-    }
-    hex
-}
-
-fn decode_hex_text(value: &str, max_bytes: usize) -> Option<String> {
-    if value.is_empty()
-        || value.len() > max_bytes * 2
-        || !value.len().is_multiple_of(2)
-        || !value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        return None;
-    }
-    let bytes = value
-        .as_bytes()
-        .chunks_exact(2)
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect::<Option<Vec<_>>>()?;
-    String::from_utf8(bytes).ok()
-}
-
-/// Parse only the snippet generator's closed query shape. No arbitrary URL
-/// or query member can become an operation argument or an event identifier.
+/// Parse the same closed query contract used by the owner-supplied public-face
+/// URL. A second incompatible snippet protocol must not be introduced here.
 #[must_use]
 pub fn parse_booking_slot_link(query: Option<&str>) -> Option<BookingSlotLinkHint> {
-    let mut parts = query.filter(|query| query.len() <= 512)?.split('&');
-    let event_type = decode_hex_text(parts.next()?.strip_prefix("event_type=")?, 64)?;
-    let visitor_tz = decode_hex_text(parts.next()?.strip_prefix("visitor_tz=")?, 64)?;
-    let start_utc = parts
-        .next()?
-        .strip_prefix("start_utc=")?
-        .parse::<u64>()
-        .ok()?;
-    let end_utc = parts
-        .next()?
-        .strip_prefix("end_utc=")?
-        .parse::<u64>()
-        .ok()?;
-    if parts.next().is_some()
-        || event_type.trim().is_empty()
-        || start_utc >= end_utc
-        || booking_zoned_time(start_utc, &visitor_tz).is_err()
-    {
-        return None;
-    }
-    Some(BookingSlotLinkHint {
-        event_type: crate::booking::EventTypeKey(event_type),
-        visitor_tz,
-        start_utc,
-        end_utc,
-    })
+    super::parse_booking_snippet_query(query?)
 }
 
-/// A parsed hint selects only an exact slot in the fresh solver answer.
+/// Select only the exact solved half-open interval, never a time guessed by a
+/// query string, even when its event type and display zone are valid.
 #[must_use]
 pub fn booking_suggested_slot(
     slots: &[RankedSlot],
@@ -148,8 +93,13 @@ pub struct BookingIntakeStages {
 pub fn booking_intake_stages(
     fields: &[String],
     before_confirm: usize,
+    policy: &super::BookingConversionPolicy,
 ) -> Result<BookingIntakeStages, ConversionError> {
-    if !(2..=3).contains(&before_confirm) || fields.len() < before_confirm || fields.len() > 16 {
+    if policy.validate().is_err()
+        || before_confirm > policy.max_preconfirm_fields
+        || fields.len() < before_confirm
+        || fields.len() > policy.max_total_fields
+    {
         return Err(ConversionError::InvalidConfig);
     }
     let mut unique = BTreeSet::new();
@@ -170,131 +120,125 @@ pub fn booking_intake_stages(
     })
 }
 
-/// A scheduled reminder is an instruction to the host's existing durable wake
-/// and delivery path, not a delivery or a new timer. A wake must recheck the
-/// booking's live status and deduplicate the attempt before sending.
+/// A scheduled reminder is host wake data, not a delivery or new timer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BookingReminder {
     pub due_utc: u64,
     pub action: ReminderAction,
+    pub step: ReminderStep,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Copy/CTA posture chosen by a resolved notification-policy row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ReminderAction {
     RescheduleFirst,
+    Neutral,
 }
 
-/// The two offset dials are owner configuration, not fixed copy or policy.
-/// Overdue steps are omitted; a newly confirmed near-term meeting must not
-/// receive an immediate stale reminder.
+/// The row chooses how many reminders, when they are due, and the CTA. An
+/// overdue step is omitted; a near-term booking gets no stale wake.
 pub fn booking_reminders(
     start_utc: u64,
     now_utc: u64,
-    first_before_secs: u64,
-    second_before_secs: u64,
+    policy: &super::BookingConversionPolicy,
 ) -> Result<Vec<BookingReminder>, ConversionError> {
-    if first_before_secs <= second_before_secs || second_before_secs == 0 {
-        return Err(ConversionError::InvalidConfig);
-    }
-    Ok([first_before_secs, second_before_secs]
-        .into_iter()
-        .filter_map(|offset| start_utc.checked_sub(offset))
-        .filter(|due| *due > now_utc)
-        .map(|due_utc| BookingReminder {
-            due_utc,
-            action: ReminderAction::RescheduleFirst,
+    policy
+        .validate()
+        .map_err(|_| ConversionError::InvalidConfig)?;
+    Ok(policy
+        .reminder_leads_secs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, lead)| {
+            let due_utc = start_utc.checked_sub(*lead)?;
+            (due_utc > now_utc).then_some(BookingReminder {
+                due_utc,
+                action: policy.reminder_action,
+                step: ReminderStep(index as u8),
+            })
         })
         .collect())
 }
 
-/// Stable identity of a scheduled wake. The host REPLACES the wake on a move
-/// and removes it on a cancel. A stale wake is refused again at fire time.
+/// Stable index across moves; a configured policy may have zero to eight
+/// reminder steps. The host replaces a wake with the same event/index id.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ReminderStep {
-    First,
-    Second,
-}
-
-impl ReminderStep {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::First => "first",
-            Self::Second => "second",
-        }
-    }
-}
+#[serde(transparent)]
+pub struct ReminderStep(pub u8);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurableReminderWake {
-    /// The same id on reschedule, so no second schedule accumulates.
     pub id: String,
     /// Canonical hex, never an authority token or public page address.
     pub event_ref: String,
     pub expected_start_utc: u64,
     pub due_utc: u64,
     pub step: ReminderStep,
+    pub action: ReminderAction,
 }
 
 fn reminder_wake_id(event_ref: &crate::EntityId, step: ReminderStep) -> String {
-    format!("booking.reminder.{}:{}", step.as_str(), event_ref.to_hex())
+    format!("booking.reminder.step-{}:{}", step.0, event_ref.to_hex())
 }
 
-/// Map the two owner-configured offsets to stable per-booking host wakes.
-/// Scheduling belongs to the host, through its existing durable wake service.
+/// Map resolved notification rows to stable per-booking host wakes.
 pub fn booking_reminder_wakes(
     event_ref: crate::EntityId,
     start_utc: u64,
     now_utc: u64,
-    first_before_secs: u64,
-    second_before_secs: u64,
+    policy: &super::BookingConversionPolicy,
 ) -> Result<Vec<ConfigurableReminderWake>, ConversionError> {
-    let planned = booking_reminders(start_utc, now_utc, first_before_secs, second_before_secs)?;
-    Ok(planned
+    Ok(booking_reminders(start_utc, now_utc, policy)?
         .into_iter()
-        .map(|reminder| {
-            let step = if start_utc - reminder.due_utc == first_before_secs {
-                ReminderStep::First
-            } else {
-                ReminderStep::Second
-            };
-            ConfigurableReminderWake {
-                id: reminder_wake_id(&event_ref, step),
-                event_ref: event_ref.to_hex(),
-                expected_start_utc: start_utc,
-                due_utc: reminder.due_utc,
-                step,
-            }
+        .map(|reminder| ConfigurableReminderWake {
+            id: reminder_wake_id(&event_ref, reminder.step),
+            event_ref: event_ref.to_hex(),
+            expected_start_utc: start_utc,
+            due_utc: reminder.due_utc,
+            step: reminder.step,
+            action: reminder.action,
         })
         .collect())
 }
 
-/// Recheck live booking truth when a host wake fires. This is only permission
-/// to assemble a reschedule-first reminder; delivery still needs the ordinary
-/// outbound authorization, one-shot dedupe, and a recipient-bound send.
+/// Recheck booking and resolved notification truth when a host wake fires.
+/// Delivery still needs the ordinary outbound authorization and dedupe.
 ///
 /// # Errors
-/// A corrupt or unreadable booking aborts the wake, never sends by default.
+/// A corrupt or unreadable booking or policy aborts the wake, never sends.
 pub fn booking_due_reminder(
     vault: &crate::Vault,
     wake: &ConfigurableReminderWake,
     fired_at: u64,
+    policy: &super::BookingConversionPolicy,
 ) -> Result<Option<ReminderAction>, crate::booking::BookingError> {
     let event_ref = crate::EntityId::from_hex(&wake.event_ref).map_err(|_| {
         crate::booking::BookingError::InvalidConstraint("reminder EVENT id is invalid".to_owned())
     })?;
     if wake.event_ref != event_ref.to_hex()
         || wake.id != reminder_wake_id(&event_ref, wake.step)
-        || wake.due_utc >= wake.expected_start_utc
         || fired_at < wake.due_utc
         || fired_at >= wake.expected_start_utc
     {
         return Ok(None);
     }
-    // No independent read of the EVENT body or old snapshot: the lifecycle
-    // reads its current status claim and occurrence in one read transaction.
+    // The host supplies its latest vault-resolved row at the due door. A
+    // changed schedule or CTA invalidates the older persisted wake.
+    if !booking_reminder_wakes(event_ref, wake.expected_start_utc, 0, policy)
+        .map_err(|_| {
+            crate::booking::BookingError::InvalidConfig(
+                "booking reminder policy is malformed".to_owned(),
+            )
+        })?
+        .iter()
+        .any(|planned| planned == wake)
+    {
+        return Ok(None);
+    }
     let current = crate::booking::lifecycle::confirmed_start_for_reminder(vault, &event_ref)?;
-    Ok((current == Some(wake.expected_start_utc)).then_some(ReminderAction::RescheduleFirst))
+    Ok((current == Some(wake.expected_start_utc)).then_some(wake.action))
 }
 
 /// A verified prior no-show may offer an extra step, never silently impose a
@@ -308,6 +252,7 @@ pub enum RepeatNoShowOffer {
 pub fn repeat_no_show_offer(
     prior_outcomes_for_contact: &[crate::calendar::outcome::EventOutcome],
     owner_enabled_confirm_link: bool,
+    policy: &super::BookingConversionPolicy,
 ) -> RepeatNoShowOffer {
     // Unknown (including silence), cancellations, and held calls are not
     // evidence of a no-show. The caller must resolve these outcomes from the
@@ -315,9 +260,12 @@ pub fn repeat_no_show_offer(
     let verified_prior_no_shows = prior_outcomes_for_contact
         .iter()
         .filter(|outcome| **outcome == crate::calendar::outcome::EventOutcome::NoShow)
-        .take(2)
+        .take(policy.repeat_no_show_at)
         .count();
-    if verified_prior_no_shows >= 2 && owner_enabled_confirm_link {
+    if policy.validate().is_ok()
+        && verified_prior_no_shows >= policy.repeat_no_show_at
+        && owner_enabled_confirm_link
+    {
         RepeatNoShowOffer::ConfirmLink
     } else {
         RepeatNoShowOffer::Ordinary
@@ -371,70 +319,56 @@ pub fn booking_display_zones(
     ))
 }
 
-/// One copy-paste-ready message, supplied with host-owned prose and an HTTPS
-/// origin. The slot choice is a hint for the host page, not a credential: the
-/// booking verb must still re-solve and revalidate the selected instant.
-/// Exactly one or two concrete times precede the optional page link.
+/// Host-authored message prose. No executable prompt/copy is shipped.
+#[derive(Clone, Copy, Debug)]
+pub struct BookingSnippetCopy<'a> {
+    pub introduction: &'a str,
+    pub optional_link_label: &'a str,
+}
+
+/// One copy-paste-ready message for the host's human booking page. The
+/// existing validated public-face link seam owns URL/token binding and the
+/// offered slot check. This function only supplies owner-authored prose and
+/// Markdown assembly, never a route to the engine's JSON model endpoint.
 pub fn booking_slots_snippet(
-    origin: &str,
+    mask: &crate::booking::SlotMask,
+    selected_starts_utc: &[u64],
+    visitor_tz: &str,
     page_token: &PublicBookingPageToken,
-    event_type: &crate::booking::EventTypeKey,
-    slots: &[RankedSlot],
-    zone: &str,
-    introduction: &str,
-    optional_link_label: &str,
-) -> Result<String, ConversionError> {
-    let host = origin
-        .strip_prefix("https://")
-        .ok_or(ConversionError::InvalidOrigin)?;
-    if host.is_empty()
-        || host.starts_with('.')
-        || !host.contains('.')
-        || !host
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
-        || host.split('.').any(str::is_empty)
+    public_page_url: &str,
+    copy: BookingSnippetCopy<'_>,
+    policy: &super::BookingConversionPolicy,
+) -> Result<String, crate::booking::BookingError> {
+    policy.validate()?;
+    if selected_starts_utc.is_empty()
+        || selected_starts_utc.len() > policy.max_snippet_times
+        || copy.introduction.trim().is_empty()
+        || copy.optional_link_label.trim().is_empty()
+        || copy.introduction.len() > 4096
+        || copy.optional_link_label.len() > 256
     {
-        return Err(ConversionError::InvalidOrigin);
+        return Err(crate::booking::BookingError::Surface(
+            "booking snippet copy is missing or too large".to_owned(),
+        ));
     }
-    let token = page_token
-        .0
-        .strip_prefix("bkp_")
-        .ok_or(ConversionError::InvalidToken)?;
-    if token.len() != 32
-        || !token
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
-        return Err(ConversionError::InvalidToken);
-    }
-    if !(1..=2).contains(&slots.len())
-        || event_type.0.trim().is_empty()
-        || event_type.0.len() > 64
-        || introduction.trim().is_empty()
-        || optional_link_label.trim().is_empty()
-        || introduction.len() > 4096
-        || optional_link_label.len() > 256
-        || slots
-            .iter()
-            .any(|s| s.start_utc >= s.end_utc || !s.rank.is_finite())
-    {
-        return Err(ConversionError::InvalidConfig);
-    }
-    let page = format!("{origin}{PUBLIC_BOOKING_ROUTE_PREFIX}/{}", page_token.0);
-    let event_hex = hex_text(&event_type.0);
-    let zone_hex = hex_text(zone);
-    let mut lines = vec![introduction.to_owned()];
-    for slot in slots {
-        let local = booking_zoned_time(slot.start_utc, zone)?;
+    let links = super::booking_snippet_links(
+        mask,
+        selected_starts_utc,
+        visitor_tz,
+        page_token,
+        public_page_url,
+    )?;
+    let mut lines = vec![copy.introduction.to_owned()];
+    for link in links {
         lines.push(format!(
-            "[{} ({})]({page}?event_type={event_hex}&visitor_tz={zone_hex}&start_utc={}&end_utc={})",
-            local.local, local.zone, slot.start_utc, slot.end_utc
+            "[{}]({})",
+            escape_markdown_label(&link.label),
+            link.href
         ));
     }
     lines.push(format!(
-        "[{}]({page})",
-        escape_markdown_label(optional_link_label)
+        "[{}]({public_page_url})",
+        escape_markdown_label(copy.optional_link_label),
     ));
     Ok(lines.join("\n"))
 }

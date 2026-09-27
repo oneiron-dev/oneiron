@@ -103,11 +103,15 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
 
     let (_dir, vault, receipt, plan) = executable(EmergencyActionPolicy::Cancel);
     let event_ref = receipt.calendar.event_ref;
-    let wakes = booking_reminder_wakes(event_ref, plan.booking.occurrence.start, NOW, 1_800, 600)
+    let policy = crate::booking::BookingConversionPolicy {
+        reminder_leads_secs: vec![1_800, 600],
+        ..vault.booking_conversion_policy(None).unwrap()
+    };
+    let wakes = booking_reminder_wakes(event_ref, plan.booking.occurrence.start, NOW, &policy)
         .expect("two reminder wakes");
     assert_eq!(wakes.len(), 2);
     assert!(
-        booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc)
+        booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc, &policy)
             .unwrap()
             .is_some()
     );
@@ -159,7 +163,7 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
         // A pending row must not suppress the reminder; owner approval makes
         // this an effective provider cancellation on the existing EVENT.
         assert!(
-            booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc)
+            booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc, &policy)
                 .unwrap()
                 .is_some()
         );
@@ -180,7 +184,7 @@ fn provider_cancelled_booking_cannot_pass_a_due_reminder_wake() {
         &vault.get_claim(&status_id).unwrap().unwrap()
     ));
     assert_eq!(
-        booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc).unwrap(),
+        booking_due_reminder(&vault, &wakes[0], wakes[0].due_utc, &policy).unwrap(),
         None
     );
 }

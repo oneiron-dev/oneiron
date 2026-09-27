@@ -56,6 +56,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
@@ -101,6 +102,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | "booking_conversion"
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
         ) {
@@ -224,6 +226,21 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let booking_conversion_rows = match single_map_value(&entries, "booking_conversion") {
+        MapValue::Missing => Vec::new(),
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) if rows.len() <= 128 => rows
+            .iter()
+            .map(|row| {
+                let json: serde_json::Value = rmpv::ext::from_value(row.clone()).ok()?;
+                let parsed: crate::booking::BookingConversionPolicyRow =
+                    serde_json::from_value(json).ok()?;
+                parsed.validate().ok()?;
+                Some(parsed)
+            })
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
+    };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -266,6 +283,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        booking_conversion_rows,
         diagnostic_bounds,
         proposal_check_threshold,
         unsupported_schema,

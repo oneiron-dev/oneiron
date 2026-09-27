@@ -478,34 +478,35 @@ fn reminder_wake_rechecks_confirmed_status_and_current_occurrence() {
     let slot = slot_of(&fixture.offered_slots()[0]);
     let visitor = session(b"reminder-wake");
     let confirmed = book(&fixture, visitor, slot);
-    let wakes = booking_reminder_wakes(
-        confirmed.calendar.event_ref,
-        slot.start,
-        NOW,
-        45 * 60,
-        15 * 60,
-    )
-    .expect("wake plan");
+    let policy = oneiron::booking::BookingConversionPolicy {
+        reminder_leads_secs: vec![45 * 60, 15 * 60],
+        ..fixture
+            .vault
+            .booking_conversion_policy(None)
+            .expect("vault policy")
+    };
+    let wakes = booking_reminder_wakes(confirmed.calendar.event_ref, slot.start, NOW, &policy)
+        .expect("wake plan");
     assert_eq!(wakes.len(), 2);
     assert_ne!(wakes[0].id, wakes[1].id);
     for wake in &wakes {
         assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, wake.due_utc - 1).unwrap(),
+            booking_due_reminder(&fixture.vault, wake, wake.due_utc - 1, &policy).unwrap(),
             None
         );
         assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, wake.due_utc).unwrap(),
+            booking_due_reminder(&fixture.vault, wake, wake.due_utc, &policy).unwrap(),
             Some(ReminderAction::RescheduleFirst)
         );
         assert_eq!(
-            booking_due_reminder(&fixture.vault, wake, slot.start).unwrap(),
+            booking_due_reminder(&fixture.vault, wake, slot.start, &policy).unwrap(),
             None
         );
     }
     let mut forged = wakes[0].clone();
     forged.id.push_str("-other");
     assert_eq!(
-        booking_due_reminder(&fixture.vault, &forged, forged.due_utc).unwrap(),
+        booking_due_reminder(&fixture.vault, &forged, forged.due_utc, &policy).unwrap(),
         None
     );
     fixture
@@ -518,7 +519,7 @@ fn reminder_wake_rechecks_confirmed_status_and_current_occurrence() {
         )
         .expect("cancel");
     assert_eq!(
-        booking_due_reminder(&fixture.vault, &wakes[0], wakes[0].due_utc).unwrap(),
+        booking_due_reminder(&fixture.vault, &wakes[0], wakes[0].due_utc, &policy).unwrap(),
         None
     );
 }
@@ -532,11 +533,17 @@ fn reminder_wake_refuses_a_user_deleted_booking_shell() {
     let slot = slot_of(&fixture.offered_slots()[0]);
     let confirmed = book(&fixture, session(b"deleted-reminder"), slot);
     let event = confirmed.calendar.event_ref;
-    let wakes =
-        booking_reminder_wakes(event, slot.start, NOW, 45 * 60, 15 * 60).expect("reminder plan");
+    let policy = oneiron::booking::BookingConversionPolicy {
+        reminder_leads_secs: vec![45 * 60, 15 * 60],
+        ..fixture
+            .vault
+            .booking_conversion_policy(None)
+            .expect("vault policy")
+    };
+    let wakes = booking_reminder_wakes(event, slot.start, NOW, &policy).expect("reminder plan");
     let first = &wakes[0];
     assert_eq!(
-        booking_due_reminder(&fixture.vault, first, first.due_utc).expect("live booking"),
+        booking_due_reminder(&fixture.vault, first, first.due_utc, &policy).expect("live booking"),
         Some(ReminderAction::RescheduleFirst)
     );
 
@@ -561,7 +568,8 @@ fn reminder_wake_refuses_a_user_deleted_booking_shell() {
         Some(ENTITY_TYPE_EVENT)
     );
     assert_eq!(
-        booking_due_reminder(&fixture.vault, first, first.due_utc).expect("deleted booking"),
+        booking_due_reminder(&fixture.vault, first, first.due_utc, &policy)
+            .expect("deleted booking"),
         None
     );
 }
