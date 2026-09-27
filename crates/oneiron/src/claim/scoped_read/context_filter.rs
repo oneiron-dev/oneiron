@@ -2,7 +2,7 @@ use super::*;
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&rtxn, None)?;
         let had_l2_base = pack.l2_base.is_some();
         let mut auxiliary_suppressed = 0;

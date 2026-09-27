@@ -66,7 +66,7 @@ impl ScopedRead<'_> {
         &self,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         self.resolve_retrieval_filter_in(&txn, requested)
     }
 
@@ -102,7 +102,7 @@ impl ScopedRead<'_> {
         previously_suppressed: usize,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
@@ -185,7 +185,7 @@ impl ScopedRead<'_> {
             return Ok(0);
         }
 
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
         if self.audience.is_none()
@@ -213,7 +213,7 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let before = results.len();
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;

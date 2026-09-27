@@ -2,7 +2,7 @@ use super::*;
 
 impl ScopedRead<'_> {
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         self.is_entity_readable_in(&rtxn, id)
     }
 

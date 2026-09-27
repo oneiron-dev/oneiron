@@ -9,4 +9,5 @@ include!("ranking_hydration.rs");
 include!("bounds_execution.rs");
 include!("temporal.rs");
 include!("control_kinds.rs");
+include!("read_grants.rs");
 include!("clock_consistency.rs");

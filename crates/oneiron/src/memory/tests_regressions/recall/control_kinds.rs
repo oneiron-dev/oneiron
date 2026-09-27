@@ -42,8 +42,11 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
         )
         .expect("pair");
 
+    // This control-kind check uses the trusted local owner. The witness actor
+    // above is not owner-bound after the authority root is established.
+    let owner = vault.ensure_embedded_owner_actor().expect("local owner");
     // Medium is the SDKs' default recall effort; no vector makes it sparse.
-    let pack = facade
+    let pack = facade_for(&vault, owner)
         .recall(
             "window seat",
             Effort::Medium,
@@ -101,7 +104,9 @@ fn recall_leaves_a_fresh_slip_mint_out_unless_the_kind_is_named() {
 
 /// A fresh fixture per retrieval keeps all four control operations immediately
 /// before that retrieval (the policy test door only accepts the stock manifest).
-fn recall_after_control_writes_fixture() -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
+fn recall_after_control_writes_fixture(
+    grant_read: bool,
+) -> (tempfile::TempDir, crate::Vault, EntityId, EntityId) {
     use crate::access_grant::{
         AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
     };
@@ -143,9 +148,11 @@ fn recall_after_control_writes_fixture() -> (tempfile::TempDir, crate::Vault, En
         )
         .expect("slip mint");
     vault.authority_fold().expect("authority log fold");
-    vault
-        .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
-        .expect("scoped read permit");
+    if grant_read {
+        vault
+            .install_read_permit_for_test(crate::WriteActor::new(scoped, EdgeActorClass::Human))
+            .expect("scoped read permit");
+    }
     vault
         .create_access_grant(
             &EntityId::from_bytes([0x6b; 16]).unwrap(),
@@ -181,7 +188,7 @@ fn assert_recall_after_control_writes_has_only_context(pack: &crate::memory::Mem
 #[test]
 fn owner_recall_after_control_writes_holds_no_control_kind() {
     for effort in [Effort::Medium, Effort::Light] {
-        let (_dir, vault, owner, _scoped) = recall_after_control_writes_fixture();
+        let (_dir, vault, owner, _scoped) = recall_after_control_writes_fixture(true);
         let pack = facade_for(&vault, owner)
             .recall(
                 "window seat",
@@ -199,7 +206,7 @@ fn owner_recall_after_control_writes_holds_no_control_kind() {
 #[test]
 fn scoped_person_recall_after_control_writes_holds_no_control_kind() {
     for effort in [Effort::Medium, Effort::Light] {
-        let (_dir, vault, _owner, scoped) = recall_after_control_writes_fixture();
+        let (_dir, vault, _owner, scoped) = recall_after_control_writes_fixture(true);
         let pack = facade_for(&vault, scoped)
             .recall(
                 "window seat",
@@ -220,7 +227,7 @@ fn naming_a_control_kind_returns_it_to_a_caller_allowed_to_read_it() {
 
     for effort in [Effort::Medium, Effort::Light] {
         for kind in [ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_ACCESS_GRANT] {
-            let (_dir, vault, _owner, _scoped) = recall_after_control_writes_fixture();
+            let (_dir, vault, _owner, _scoped) = recall_after_control_writes_fixture(true);
             // The stock policy row retains its pinned timestamp 0 on rewrite;
             // explicit kind reach needs a candidate signal at that row's time.
             let anchor = if kind == ENTITY_TYPE_POLICY_MANIFEST {
