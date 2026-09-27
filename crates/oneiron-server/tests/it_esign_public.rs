@@ -1,4 +1,8 @@
 //! The public path and signing API are separate from hosted device leases.
+#![expect(
+    clippy::unwrap_used,
+    reason = "integration fixture unwraps only setup and response assertions"
+)]
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
