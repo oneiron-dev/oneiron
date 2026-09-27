@@ -170,7 +170,10 @@ impl Store {
         });
         let owner = StoreOwner {
             core: Arc::downgrade(&core),
+            #[cfg(unix)]
             env,
+            #[cfg(not(unix))]
+            _env: env,
             _registered_path: registered_path,
         };
         Ok(Self {

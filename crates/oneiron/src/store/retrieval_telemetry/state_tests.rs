@@ -575,6 +575,123 @@ fn install_retention_rows(
     )
 }
 
+/// Test the resolver boundary with a trusted row whose loaded diagnostics
+/// reject the policy. Raw fixture insertion models replay/corruption; the
+/// normal owner write door still validates before admission.
+fn install_unusable_retention_manifest(vault: &crate::Vault, mode: &str) -> crate::Result<()> {
+    let mut value =
+        rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
+            .expect("shipped manifest decodes");
+    let rmpv::Value::Map(entries) = &mut value else {
+        unreachable!("manifest map")
+    };
+    let row = entries
+        .iter_mut()
+        .find(|(key, _)| {
+            key.as_str() == Some(crate::gate::retrieval_retention::RETRIEVAL_RETENTION_ROWS_KEY)
+        })
+        .expect("shipped retention rows");
+    row.1 = rmpv::Value::Array(vec![
+        rmpv::Value::Map(vec![
+            ("scope".into(), "vault".into()),
+            ("max_age_secs".into(), 1_u64.into()),
+            (
+                "max_runs".into(),
+                if mode == "malformed_rows" {
+                    "not a count".into()
+                } else {
+                    1_u64.into()
+                },
+            ),
+        ]),
+        rmpv::Value::Map(vec![
+            ("scope".into(), "precedence".into()),
+            ("order".into(), "nested_narrowing".into()),
+        ]),
+    ]);
+    match mode {
+        "unsupported_schema" | "unsupported_engine" => {
+            let key = if mode == "unsupported_schema" {
+                "schema_version"
+            } else {
+                "min_engine_version"
+            };
+            entries
+                .iter_mut()
+                .find(|(k, _)| k.as_str() == Some(key))
+                .expect("manifest field")
+                .1 = "999.0.0".into();
+        }
+        "malformed_rows" => {}
+        _ => unreachable!("test mode"),
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &value).expect("encode rejected policy");
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )
+}
+
+#[test]
+fn rejected_retention_policy_never_authorizes_deletion_or_blocks_reopen() -> crate::Result<()> {
+    for mode in ["malformed_rows", "unsupported_schema", "unsupported_engine"] {
+        let clock = crate::ports::ManualClock::new(1_000_000);
+        let mut config = telemetry_config();
+        config.store_clock = clock.bundle();
+        let dir = tempfile::tempdir()?;
+        let first = record(1_000_000);
+        let second = record(1_000_000);
+        let provisional = record(1_000_000);
+        let attempted = record(1_000_000);
+        {
+            let vault = crate::Vault::open(dir.path(), config.clone())?;
+            vault.store.record_retrieval_run(&first)?;
+            vault.store.record_retrieval_run(&second)?;
+            vault
+                .store
+                .record_context_pack_provisional_retrieval_run(&provisional)?;
+            install_unusable_retention_manifest(&vault, mode)?;
+            let txn = vault.store.env.read_txn()?;
+            let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+            assert!(
+                resolved.diagnostics.loaded_manifest_forces_fail_closed(),
+                "{mode}"
+            );
+            assert!(resolved.retrieval_retention_policy().is_none(), "{mode}");
+            drop(txn);
+            clock.set(1_000_000 + DEFAULT_RETRIEVAL_AGE_SECS + 1);
+            assert!(
+                vault.store.record_retrieval_run(&attempted).is_err(),
+                "{mode}"
+            );
+            assert!(
+                vault
+                    .store
+                    .finalize_context_pack_retrieval_run(RetrievalRunFinalize {
+                        run_id: provisional.run_id,
+                        elapsed_us: 1,
+                        total_in_scope: 0,
+                        claims_suppressed: 0,
+                        surfaced_result_ids: &[],
+                        empty_reason: None,
+                        pack_output: None,
+                        pack_config: None,
+                    })
+                    .is_err(),
+                "{mode}"
+            );
+            assert_eq!(vault.retrieval_runs(10)?.len(), 2, "{mode}");
+        }
+        let vault = crate::Vault::open(dir.path(), config)?;
+        assert!(vault.retrieval_run(first.run_id)?.is_some(), "{mode}");
+        assert!(vault.retrieval_run(second.run_id)?.is_some(), "{mode}");
+        assert!(vault.retrieval_run(attempted.run_id)?.is_none(), "{mode}");
+    }
+    Ok(())
+}
+
 #[test]
 fn shipped_manifest_declares_default_retention_and_precedence() -> crate::Result<()> {
     let dir = tempfile::tempdir()?;
@@ -803,6 +920,52 @@ fn open_does_not_sweep_a_provisional_run_while_another_owner_holds_the_vault() -
             .get(&vault.store.env.read_txn()?, &retrieval_run_key(run.run_id))?
             .is_none()
     );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn shared_lease_open_expires_published_rows_without_sweeping_live_provisional() -> crate::Result<()>
+{
+    use std::os::fd::AsRawFd;
+    let clock = crate::ports::ManualClock::new(1_000_000);
+    let mut config = telemetry_config();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir()?;
+    let published = record(1_000_000);
+    let live = record(1_000_000);
+    {
+        let vault = crate::Vault::open(dir.path(), config.clone())?;
+        install_retention_rows(&vault, 10, 4, 1, 2)?;
+        vault.store.record_retrieval_run(&published)?;
+        vault
+            .store
+            .record_context_pack_provisional_retrieval_run(&live)?;
+    }
+    let lock = std::fs::OpenOptions::new().read(true).write(true).open(
+        dir.path()
+            .join(super::retention::RETRIEVAL_TELEMETRY_LOCK_FILE),
+    )?;
+    // SAFETY: lock owns a live fd; flock receives no foreign pointer.
+    let acquired = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+    assert_eq!(acquired, 0);
+    clock.set(1_000_002);
+    let vault = crate::Vault::open(dir.path(), config)?;
+    assert!(vault.retrieval_run(published.run_id)?.is_none());
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(
+                &vault.store.env.read_txn()?,
+                &retrieval_run_key(live.run_id)
+            )?
+            .is_some()
+    );
+    drop(vault);
+    // SAFETY: this process still owns the descriptor.
+    let released = unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_UN) };
+    assert_eq!(released, 0);
     Ok(())
 }
 

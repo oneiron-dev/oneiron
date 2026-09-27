@@ -64,6 +64,23 @@ fn shipped_row_and_holder_compose_by_nested_narrowing() {
         .unwrap(),
     );
     assert_eq!(changed_vault.effective(), (5, 500));
+
+    let mut larger = RetrievalRetentionPolicy::default();
+    larger.narrow(
+        parse_retrieval_retention_rows(&Value::Array(vec![
+            limit_row("vault", 20, 65_536),
+            precedence("nested_narrowing"),
+        ]))
+        .expect("representable authored capacity"),
+    );
+    larger.narrow(
+        parse_retrieval_retention_rows(&Value::Array(vec![
+            limit_row("holder", 20, 100_000),
+            precedence("nested_narrowing"),
+        ]))
+        .expect("holder request over vault ceiling"),
+    );
+    assert_eq!(larger.effective(), (20, 65_536));
 }
 
 #[test]
@@ -77,10 +94,6 @@ fn malformed_retention_rows_fail_closed_at_manifest_decode() {
         Value::Array(vec![
             limit_row("vault", 1, 10),
             limit_row("vault", 2, 20),
-            precedence("nested_narrowing"),
-        ]),
-        Value::Array(vec![
-            limit_row("vault", 1, 65536),
             precedence("nested_narrowing"),
         ]),
         Value::Array(vec![

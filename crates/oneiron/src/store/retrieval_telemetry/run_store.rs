@@ -158,7 +158,7 @@ impl Store {
         let result = (|| {
             let mut wtxn = self.env.write_txn()?;
             if published {
-                super::retention::prune_retrieval_runs(self, &mut wtxn, 1)?;
+                super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
             }
             stage_retrieval_run_with_visibility(self, &mut wtxn, record, published)?;
             if published {
@@ -212,7 +212,7 @@ impl Store {
             .get(&wtxn, &retrieval_run_provisional_key(run_id))?
             .is_some()
         {
-            super::retention::prune_retrieval_runs(self, &mut wtxn, 1)?;
+            super::retention::require_prune_retrieval_runs(self, &mut wtxn, 1)?;
         }
         stage_context_pack_retrieval_run_finalize(self, &mut wtxn, finalize)?;
         if self

@@ -85,10 +85,9 @@ pub(crate) fn parse_retrieval_retention_rows(value: &Value) -> Option<RetrievalR
                 "scope" if scope.is_none() => scope = Some(value.as_str()?),
                 "max_age_secs" if age.is_none() => age = Some(value.as_u64().filter(|v| *v > 0)?),
                 "max_runs" if runs.is_none() => {
-                    // u16 is the admission bound for one run-count row.
-                    runs = Some(usize::from(
-                        u16::try_from(value.as_u64().filter(|v| *v > 0)?).ok()?,
-                    ));
+                    // Overflow is a representation refusal, not a compiled
+                    // behavioral ceiling over the owner's policy row.
+                    runs = Some(usize::try_from(value.as_u64().filter(|v| *v > 0)?).ok()?);
                 }
                 "order" if order.is_none() => order = Some(value.as_str()?),
                 _ => return None,

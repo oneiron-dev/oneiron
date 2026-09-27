@@ -108,8 +108,10 @@ impl Store {
         {
             let (lease, sole_opener) =
                 RetrievalTelemetryLease::acquire(self.owner.env.bound_root_dir()?)?;
+            // Published age/cap entries are safe to prune under LMDB's
+            // writer lock even if another process owns a shared lease.
+            let mut wtxn = self.env.write_txn()?;
             if sole_opener {
-                let mut wtxn = self.env.write_txn()?;
                 let mut orphans = Vec::new();
                 for row in self
                     .vault_meta
@@ -124,8 +126,10 @@ impl Store {
                 for id in orphans {
                     stage_retrieval_run_delete(self, &mut wtxn, id)?;
                 }
-                prune_retrieval_runs(self, &mut wtxn, 0)?;
-                wtxn.commit()?;
+            }
+            let _ = prune_retrieval_runs(self, &mut wtxn, 0)?;
+            wtxn.commit()?;
+            if sole_opener {
                 lease.downgrade()?;
             }
             let mut guard = self.core.retrieval_telemetry_lease.lock().map_err(|_| {
@@ -136,8 +140,12 @@ impl Store {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            // LMDB is opened by pathname here. A retained directory fd may
-            // name a different inode: no lock can prove a row is orphaned.
+            // A pathname-opened LMDB cannot use the retained directory as
+            // proof of orphanhood. Published rows have their own age index,
+            // however, and can be pruned under LMDB's writer transaction.
+            let mut wtxn = self.env.write_txn()?;
+            let _ = prune_retrieval_runs(self, &mut wtxn, 0)?;
+            wtxn.commit()?;
             Ok(())
         }
     }
@@ -189,9 +197,14 @@ pub(super) fn prune_retrieval_runs(
     store: &Store,
     txn: &mut RwTxn<'_>,
     reserve: usize,
-) -> Result<()> {
+) -> Result<bool> {
     let resolved = crate::gate::resolve_policy_manifest(store, txn)?;
-    let (max_age_secs, max_runs) = resolved.retrieval_retention.effective();
+    let Some(policy) = resolved.retrieval_retention_policy() else {
+        // Opening a degraded vault stays possible, but no rejected policy
+        // is permission to erase published runs.
+        return Ok(false);
+    };
+    let (max_age_secs, max_runs) = policy.effective();
     let now = store.clock.now_recorded_at();
     let cutoff = now.saturating_sub(max_age_secs);
     // Collect keys before any delete; heed forbids mutating under an active cursor.
@@ -217,5 +230,21 @@ pub(super) fn prune_retrieval_runs(
         }
         stage_retrieval_run_delete(store, txn, id)?;
     }
-    Ok(())
+    Ok(true)
+}
+
+/// Publication and finalization must refuse when the manifest is rejected;
+/// unlike a healthy open they cannot use an invalid policy to admit a row.
+pub(super) fn require_prune_retrieval_runs(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    reserve: usize,
+) -> Result<()> {
+    if prune_retrieval_runs(store, txn, reserve)? {
+        Ok(())
+    } else {
+        Err(Error::InvalidConfig(
+            "retrieval retention policy unavailable".to_owned(),
+        ))
+    }
 }
