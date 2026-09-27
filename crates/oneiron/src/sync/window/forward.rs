@@ -38,6 +38,7 @@ struct RematLedger {
     healed: Vec<EntityId>,
     terminal_quarantines: Vec<EntityId>,
     pending_entity_dependencies: HashSet<EntityId>,
+    pending_dag_parent_sources: HashSet<EntityId>,
     count: u32,
 }
 
@@ -120,6 +121,7 @@ fn forward_with_recovery(
         healed: Vec::new(),
         terminal_quarantines: Vec::new(),
         pending_entity_dependencies: HashSet::new(),
+        pending_dag_parent_sources: HashSet::new(),
         count: 0u32,
     };
 
@@ -137,17 +139,26 @@ fn forward_with_recovery(
     }
     crate::recovery::materialize_retained_shells(vault, doc)?;
     edge_pass::run(&ctx, &mut ledger)?;
+    // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
+    // Parent obligation left by a different window whose doc is not loaded.
+    vault.with_write_txn(|txn| super::bridge::retry_in_txn(vault, txn))?;
     let tombstone_outcome = tombstone_pass::run(&ctx, &mut ledger);
 
     // An edge outcome is not proof that its source claim's missing actor or
     // subject arrived. Keep that replay pending; a successful tombstone purge may
     // still discharge it through `cleared`, with delete-safety precedence.
-    ledger
-        .healed
-        .retain(|id| !ledger.pending_entity_dependencies.contains(id));
-    ledger
-        .terminal_quarantines
-        .retain(|id| !ledger.pending_entity_dependencies.contains(id));
+    // A ChildOf write for a deferred Parent's SOURCE is not evidence that
+    // the Parent landed: its TARGET membership may still be missing. Keep
+    // the source-scoped retry until the exact Parent is written or receives
+    // a terminal rejection, never discharge it via an unrelated edge heal.
+    ledger.healed.retain(|id| {
+        !ledger.pending_entity_dependencies.contains(id)
+            && !ledger.pending_dag_parent_sources.contains(id)
+    });
+    ledger.terminal_quarantines.retain(|id| {
+        !ledger.pending_entity_dependencies.contains(id)
+            && !ledger.pending_dag_parent_sources.contains(id)
+    });
     if !tombstone_outcome.purge_failures.is_empty()
         || !tombstone_outcome.cleared.is_empty()
         || !ledger.healed.is_empty()
@@ -191,15 +202,33 @@ fn forward_with_recovery(
                     "delete-safety invariant: healed ids must be disjoint from unproven rm: markers"
                 );
             }
+            let tombstone_cleared: HashSet<_> = tombstone_outcome.cleared.iter().copied().collect();
             for id in ledger.healed.iter().chain(tombstone_outcome.cleared.iter()) {
                 if !success_seen.insert(*id) {
+                    continue;
+                }
+                if !tombstone_cleared.contains(id)
+                    && super::bridge::has_pending_source_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        id,
+                    )?
+                {
                     continue;
                 }
                 quarantine::clear_remat_marker_in_txn(vault, wtxn, window_key.as_str(), id)?;
             }
             let mut terminal_seen = HashSet::new();
             for id in &ledger.terminal_quarantines {
-                if !terminal_seen.insert(*id) {
+                if !terminal_seen.insert(*id)
+                    || super::bridge::has_pending_source_in_txn(
+                        vault,
+                        wtxn,
+                        window_key.as_str(),
+                        id,
+                    )?
+                {
                     continue;
                 }
                 let cleared = quarantine::clear_replay_remat_marker_in_txn(

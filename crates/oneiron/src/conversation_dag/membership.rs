@@ -5,7 +5,7 @@ use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, error::Result, store::Store};
 use rmpv::Value;
 
-fn carrier(body: &[u8]) -> Result<Option<EntityId>> {
+pub(super) fn carrier(body: &[u8]) -> Result<Option<EntityId>> {
     let mut input = body;
     let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut input) else {
         return Ok(None); // Generic opaque TURNs are not DAG records.
@@ -82,7 +82,15 @@ pub(super) fn restore(vault: &Vault, txn: &mut heed::RwTxn<'_>, turn: EntityId) 
         return Ok(());
     }
     if let Some(session) = carrier(&row.body)? {
-        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
+        // A received TURN may precede its SESSION. Defer only that missing
+        // dependency for this conversation; never mask a storage/read error.
+        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION).map_err(|error| {
+            if matches!(error, crate::error::Error::EntityNotFound) {
+                invalid("received DAG session has not arrived")
+            } else {
+                error
+            }
+        })?;
         if crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &turn)?
             .is_some_and(|old| old != session)
         {
@@ -103,27 +111,31 @@ pub(super) fn validate_topology(
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     turn: EntityId,
+    placement: super::topology::SessionPlacement,
 ) -> Result<()> {
-    let Some(session) = crate::compaction::turn_session_membership_in_txn(store, txn, &turn)?
-    else {
+    let super::topology::SessionPlacement::Spawned { anchor, .. } = placement else {
         return Ok(());
     };
-    let spawning = graph::edge_ids(store, txn, &session, crate::EdgeKind::SpawnedBy, false, 2)?;
-    if spawning.len() > 1 {
-        return Err(invalid("session has multiple SpawnedBy edges"));
-    }
-    let Some(anchor) = spawning.first() else {
-        return Ok(());
-    };
-    graph::require_member(store, txn, &conversation, anchor)?;
     let parent =
         graph::parent(store, txn, &turn)?.ok_or(invalid("sub-session record has no parent"))?;
-    if parent != *anchor
-        && crate::compaction::turn_session_membership_in_txn(store, txn, &parent)? != Some(session)
-    {
-        return Err(invalid("sub-session parent crosses membership boundary"));
-    }
-    if !graph::chain(store, txn, &conversation, turn)?.contains(anchor) {
+    let target_placement = if parent == anchor {
+        None
+    } else {
+        crate::compaction::turn_session_membership_in_txn(store, txn, &parent)?
+            .map(|session| super::topology::classify_session(store, txn, session, conversation))
+            .transpose()?
+            .map(|fact| match fact {
+                super::topology::Fact::Known(placement) => Ok(placement),
+                super::topology::Fact::Wait(_) => {
+                    Err(invalid("sub-session anchor has not been reconciled"))
+                }
+                super::topology::Fact::Reject(reason) => Err(reason.into_error()),
+            })
+            .transpose()?
+    };
+    super::topology::parent_boundary(Some(placement), target_placement, parent)
+        .map_err(super::topology::DagRejection::into_error)?;
+    if !graph::chain(store, txn, &conversation, turn)?.contains(&anchor) {
         return Err(invalid(
             "sub-session does not descend from its spawning turn",
         ));

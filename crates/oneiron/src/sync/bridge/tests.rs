@@ -896,7 +896,14 @@ fn apply_materialized_edge_ops_keeps_other_edges_after_child_of_failure() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
@@ -939,7 +946,14 @@ fn apply_materialized_edge_ops_keeps_valid_child_of_delete_when_add_fails() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
@@ -987,7 +1001,14 @@ fn apply_materialized_edge_ops_child_of_subset_is_deterministic() {
                 },
             ];
             let metas = test_metas_for_ops(&ops);
-            apply_materialized_edge_ops(&vault, wtxn, ops, &metas, "2026-03")?;
+            apply_materialized_edge_ops(
+                &vault,
+                wtxn,
+                ops,
+                &metas,
+                "2026-03",
+                &LoroDoc::new().get_map("tombstones"),
+            )?;
             Ok(())
         })
         .unwrap();
