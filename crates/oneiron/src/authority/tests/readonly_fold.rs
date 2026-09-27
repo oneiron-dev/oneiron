@@ -370,3 +370,137 @@ fn authority_cache_is_bound_to_snapshot_and_abort_does_not_publish_a_mint() {
         "human"
     ));
 }
+
+#[test]
+fn pre_handoff_rotation_deadline_rechecks_cached_root_and_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let owner = ed_key(126);
+    let replacement = ed_key(127);
+    let host = ed_key(128);
+    let owner_key = authority_key_from_ed(&owner);
+    let replacement_key = authority_key_from_ed(&replacement);
+    let host_key = authority_key_from_ed(&host);
+    let genesis = genesis_entry(126, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &owner, owner_key.clone(), 127, 1);
+    let rotation_hash = authority_entry_hash(&rotation).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![rotation_hash],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    host_key.clone(),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            replacement_key.clone(),
+            3,
+        ),
+        &replacement,
+    );
+    let handoff_hash = authority_entry_hash(&handoff).unwrap();
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (rotation.clone(), TimeRange { start: 2, end: 2 }, 2),
+            (handoff, TimeRange { start: 3, end: 3 }, 3),
+        ])
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let before = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert!(before.pending_widens.contains_key(&rotation_hash));
+    assert!(!before.valid_entries.contains(&handoff_hash));
+    assert!(!before.roster[&owner_key].revoked);
+    assert!(!before.roster.contains_key(&host_key));
+    assert_eq!(
+        *vault.authority_view_readonly_in_txn(&txn).unwrap(),
+        *before
+    );
+    drop(txn);
+    mature_observed_widen(&vault, &rotation);
+    let txn = vault.store.env.read_txn().unwrap();
+    let after = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    assert!(after.valid_entries.contains(&handoff_hash));
+    assert!(after.pending_widens.is_empty());
+    assert!(after.roster[&owner_key].revoked);
+    assert!(after.roster[&replacement_key].revoked);
+    assert!(!after.roster[&host_key].revoked);
+    drop(txn);
+    drop(vault);
+    let reopened = open_vault_at(dir.path(), 1_000);
+    assert!(
+        reopened
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&handoff_hash)
+    );
+    assert!(reopened.authority_fold().unwrap().roster[&owner_key].revoked);
+}
+
+#[test]
+fn pre_handoff_rotation_without_local_observation_refuses_readonly_authority() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault_at(dir.path(), 1_000);
+    let owner = ed_key(129);
+    let replacement = ed_key(130);
+    let genesis = genesis_entry(129, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let id = genesis_vault_id(&genesis).unwrap();
+    let rotation = rotate_entry(id, &genesis, &owner, authority_key_from_ed(&owner), 130, 1);
+    let rotation_hash = authority_entry_hash(&rotation).unwrap();
+    let handoff = sign_ed(
+        unsigned_entry(
+            Some(id),
+            0,
+            vec![rotation_hash],
+            AuthorityOp::ReRoot {
+                new_device: device(
+                    authority_key_from_ed(&ed_key(131)),
+                    ROLE_OWNER | ROLE_ADMIN,
+                    AuthorityTier::Software,
+                ),
+            },
+            authority_key_from_ed(&replacement),
+            3,
+        ),
+        &replacement,
+    );
+    vault
+        .put_authority_log_entries(&[
+            (genesis, TimeRange { start: 1, end: 1 }, 1),
+            (rotation, TimeRange { start: 2, end: 2 }, 0),
+            (handoff, TimeRange { start: 3, end: 3 }, 0),
+        ])
+        .unwrap();
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .pending_widens
+            .contains_key(&rotation_hash)
+    );
+    vault
+        .with_write_txn(|txn| {
+            vault
+                .store
+                .sync_state
+                .delete(txn, &authority_first_seen_sync_key(&rotation_hash))?;
+            vault
+                .store
+                .sync_state
+                .delete(txn, authority_first_seen_backfill_sync_key())?;
+            advance_authority_cache_generation(&vault.store, txn)?;
+            Ok(())
+        })
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let err = vault.authority_fold_readonly_in_txn(&txn).unwrap_err();
+    assert!(is_indeterminate_first_seen(&err), "{err}");
+    drop(txn);
+    let backfilled = vault.authority_fold().unwrap();
+    assert!(backfilled.pending_widens.contains_key(&rotation_hash));
+}

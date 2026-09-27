@@ -278,6 +278,68 @@ fn signed_pre_handoff_rotation_survives_hosted_transfer_and_cannot_be_reissued()
     assert!(!rejected.roster.contains_key(&new_key));
     assert!(rejected.roster[&old_key].revoked);
     assert!(rejected.slip_is_live(&root_slip.claims.slip_id));
+
+    // A validly signed sibling floor is not an ancestor of the handoff.
+    // Even its unrestricted probe must not restore the old root.
+    let floor = sign_ed(
+        unsigned_entry(
+            Some(id),
+            2,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            AuthorityOp::SetTierFloor {
+                tier_floor: AuthorityTier::Hardware,
+            },
+            old_key.clone(),
+            5,
+        ),
+        &old,
+    );
+    let floor_hash = authority_entry_hash(&floor).unwrap();
+    for entries in [
+        vec![
+            genesis.clone(),
+            rotation.clone(),
+            handoff.clone(),
+            floor.clone(),
+        ],
+        vec![floor.clone(), handoff.clone(), rotation.clone(), genesis],
+    ] {
+        let folded = fold_authority_log_for_posture(
+            &entries,
+            &BTreeMap::from([
+                (authority_entry_hash(&rotation).unwrap(), 0),
+                (floor_hash, 0),
+            ]),
+            DEFAULT_PENDING_WIDEN_DELAY_SECS,
+            &BTreeMap::new(),
+            crate::HostingPrivacyPosture::Hosted,
+        );
+        assert!(!folded.valid_entries.contains(&floor_hash));
+        assert!(
+            folded
+                .valid_entries
+                .contains(&authority_entry_hash(&handoff).unwrap())
+        );
+        assert!(folded.roster[&old_key].revoked);
+        assert!(folded.roster[&next_key].revoked);
+        assert!(!folded.roster[&host.public_key()].revoked);
+    }
+    store(&target, &floor);
+    let after_floor = target.authority_fold().unwrap();
+    assert!(!after_floor.valid_entries.contains(&floor_hash));
+    assert!(
+        after_floor
+            .valid_entries
+            .contains(&authority_entry_hash(&handoff).unwrap())
+    );
+    assert!(after_floor.roster[&old_key].revoked);
+    assert!(after_floor.roster[&next_key].revoked);
+    assert!(!after_floor.roster[&host.public_key()].revoked);
+    assert!(
+        target
+            .capability_slip_id_is_live(&root_slip.claims.slip_id)
+            .unwrap()
+    );
 }
 
 #[test]

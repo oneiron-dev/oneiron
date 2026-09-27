@@ -283,32 +283,19 @@ fn fold_authority_log_inner(
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
     if local.retire_device_ops {
-        // Only a fully verified re-root can authenticate retired ancestry.
-        // The probe never authorizes; shrink candidate handoffs until each
-        // survives a strict refold under just its own pre-handoff ancestors.
-        let probe = fold_authority_log_inner(
+        // An unrelated retired sibling must not vote in a handoff probe:
+        // its tier floor could otherwise disqualify a valid rotation before
+        // the strict fold ever gets a chance to reject the sibling. Validate
+        // each candidate against ONLY its own claimed signed ancestry.
+        let (mut candidates, pending_handoff_ancestry) = verified_handoff_candidates(
             entries,
             first_seen_at_secs,
             now_secs,
             enforce_seen_time_delay,
             peer_consent_roots,
             consent_arm,
-            FoldLocalInputs {
-                retire_device_ops: false,
-                pre_handoff_entries: None,
-                ..local
-            },
+            local,
         );
-        let mut candidates: BTreeSet<_> = if probe.vault_root_is_conflicted() {
-            BTreeSet::new()
-        } else {
-            entries
-                .iter()
-                .filter(|entry| matches!(entry.op, AuthorityOp::ReRoot { .. }))
-                .filter_map(|entry| authority_entry_hash(entry).ok())
-                .filter(|hash| probe.valid_entries.contains(hash))
-                .collect()
-        };
         loop {
             let allowed = verified_handoff_ancestors(entries, &candidates);
             let result = fold_authority_log_inner(
@@ -329,6 +316,12 @@ fn fold_authority_log_inner(
                 .copied()
                 .collect();
             if retained == candidates {
+                let mut result = result;
+                // Pending pre-handoff ancestry does not grant a client key, but
+                // its observed deadline still decides when a signed handoff
+                // may retire the old root. Keep that fact for cache expiry and
+                // fail-closed readonly folds with a missing local sidecar.
+                result.pending_widens.extend(pending_handoff_ancestry);
                 return result;
             }
             candidates = retained;
@@ -401,6 +394,78 @@ fn fold_authority_log_inner(
         }
     }
     fold
+}
+
+/// Probe each signed re-root against its own causal history. A tier-floor or
+/// other retired sibling outside that history has zero authority to eliminate
+/// a candidate. The final strict fold rechecks these candidates as a set.
+fn verified_handoff_candidates(
+    entries: &[AuthorityLogEntry],
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    enforce_seen_time_delay: bool,
+    peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
+    consent_arm: fn(&FoldedDevice) -> bool,
+    local: FoldLocalInputs<'_>,
+) -> (
+    BTreeSet<AuthorityEntryHash>,
+    BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
+) {
+    let by_hash: BTreeMap<_, _> = entries
+        .iter()
+        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .collect();
+    let mut candidates = BTreeSet::new();
+    let mut pending = BTreeMap::new();
+    for (candidate, entry) in &by_hash {
+        if !matches!(entry.op, AuthorityOp::ReRoot { .. })
+            || entry.validate_shape().is_err()
+            || verify_entry_signatures(entry).is_err()
+        {
+            continue;
+        }
+        let mut closure = BTreeSet::new();
+        let mut stack = vec![*candidate];
+        let mut complete = true;
+        while let Some(hash) = stack.pop() {
+            if !closure.insert(hash) {
+                continue;
+            }
+            let Some(ancestor) = by_hash.get(&hash) else {
+                complete = false;
+                break;
+            };
+            stack.extend(ancestor.parent_hashes.iter().copied());
+        }
+        if !complete {
+            continue;
+        }
+        let scoped: Vec<_> = closure
+            .iter()
+            .map(|hash| (*by_hash[hash]).clone())
+            .collect();
+        let probe = fold_authority_log_inner(
+            &scoped,
+            first_seen_at_secs,
+            now_secs,
+            enforce_seen_time_delay,
+            peer_consent_roots,
+            consent_arm,
+            FoldLocalInputs {
+                deadline_observer: local.deadline_observer,
+                retire_device_ops: false,
+                pre_handoff_entries: None,
+                ..local
+            },
+        );
+        if !probe.vault_root_is_conflicted() {
+            pending.extend(probe.pending_widens);
+            if probe.valid_entries.contains(candidate) {
+                candidates.insert(*candidate);
+            }
+        }
+    }
+    (candidates, pending)
 }
 
 /// Retired device operations are usable only in a verified re-root's signed

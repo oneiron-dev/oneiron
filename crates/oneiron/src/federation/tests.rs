@@ -1659,9 +1659,8 @@ use crate::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFoldIssue,
     AuthoritySignature, AuthorityTier, DeviceAuthority, FederationLifecycleAction,
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_OWNER, authority_transcript, encode_authority_log_entry_body,
-    federation_scope_digest, fold_authority_log_with_peer_consent_roots,
-    sign_federation_pact_gesture,
+    ROLE_OWNER, authority_transcript, encode_authority_log_entry_body, federation_scope_digest,
+    fold_authority_log_with_peer_consent_roots, sign_federation_pact_gesture,
 };
 use crate::error::{ClaimError, RecordError, RegistryError};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -1797,49 +1796,19 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
     let vault_id = genesis_vault_id(&genesis).expect("genesis vault id");
     let genesis_hash = authority_entry_hash(&genesis).expect("genesis hash");
 
-    let enroll_admin = auth_entry(
+    // The peer authority log has a host root and a signed, non-widening
+    // withdrawal. Admin is pinned for the Connect gesture, not enrolled into
+    // the peer authority roster; agent/spare keys remain ineligible too.
+    let withdrawal = auth_entry(
         Some(vault_id),
         1,
         vec![genesis_hash],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&admin_signing), ROLE_OWNER | ROLE_ADMIN),
+        AuthorityOp::SlipRevoke {
+            slip_id: [seed.wrapping_add(20); 32],
         },
         &host_signing,
         None,
         2,
-    );
-    let enroll_agent = auth_entry(
-        Some(vault_id),
-        2,
-        vec![authority_entry_hash(&enroll_admin).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&agent_signing), ROLE_AGENT),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        3,
-    );
-    let enroll_spare = auth_entry(
-        Some(vault_id),
-        3,
-        vec![authority_entry_hash(&enroll_agent).expect("hash")],
-        AuthorityOp::EnrollDevice {
-            device: auth_device(auth_pub(&revoked_signing), ROLE_OWNER | ROLE_ADMIN),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        4,
-    );
-    let revoke_spare = auth_entry(
-        Some(vault_id),
-        4,
-        vec![authority_entry_hash(&enroll_spare).expect("hash")],
-        AuthorityOp::RevokeDevice {
-            revoked_key: auth_pub(&revoked_signing),
-        },
-        &host_signing,
-        Some(&admin_signing),
-        5,
     );
 
     PeerVaultFixture {
@@ -1852,13 +1821,7 @@ fn peer_vault_fixture(seed: u8) -> PeerVaultFixture {
         agent_signing,
         revoked_signing,
         vault_id,
-        entries: vec![
-            genesis,
-            enroll_admin,
-            enroll_agent,
-            enroll_spare,
-            revoke_spare,
-        ],
+        entries: vec![genesis, withdrawal],
     }
 }
 
@@ -2054,7 +2017,7 @@ fn peer_roster_is_refolded_from_relayed_bytes_never_relayed_whole() {
         roots.contains(&peer.host),
         "host-root: the peer HOST key roots",
     );
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2089,7 +2052,7 @@ fn peer_entry_admission_is_idempotent_and_order_free() {
     assert_eq!(roster.vault_id, Some(peer.vault_id));
     let roots = peer_consent_roots(&roster);
     assert!(roots.contains(&peer.host));
-    assert!(roots.contains(&peer.admin));
+    assert!(!roots.contains(&peer.admin));
     assert!(!roots.contains(&peer.agent));
     assert!(!roots.contains(&peer.revoked));
 
@@ -2213,8 +2176,8 @@ fn corrupt_stored_peer_bytes_fail_closed_instead_of_shrinking_the_roster() {
         "a corrupt local row is refused, never skipped into a partial roster"
     );
     assert!(
-        peer_consent_roots(&healthy).contains(&peer.admin),
-        "the skipped-row roster would have silently dropped this consent root"
+        peer_consent_roots(&healthy).contains(&peer.host),
+        "the healthy peer root is proved by the full signed history"
     );
     assert!(
         vault.authority_fold().is_err(),

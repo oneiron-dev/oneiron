@@ -601,3 +601,79 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
         "a matured widen must not resurrect the revoked actor's authority"
     );
 }
+
+#[test]
+fn rejected_client_enrollment_does_not_strand_independent_actor_revocation() {
+    let owner = ed_key(231);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(232);
+    let genesis = genesis_entry(231, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    let enroll = enroll_device_entry(
+        vault_id,
+        &bind,
+        &owner,
+        EnrollSpec {
+            seed: 233,
+            roles: ROLE_AGENT,
+            tier: AuthorityTier::Software,
+            seq: 2,
+            ts: 3,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let prior = fold_authority_log(&[genesis.clone(), bind.clone()]);
+    assert!(actor_binding_is_active(&prior, &actor, "human"));
+    let revoke = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            3,
+            vec![enroll_hash],
+            revoke_actor_op(&owner_key, 5),
+            owner_key.clone(),
+            4,
+        ),
+        &owner,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let entries = [genesis.clone(), bind.clone(), enroll.clone(), revoke];
+    for ordered in [entries.to_vec(), entries.iter().rev().cloned().collect()] {
+        let fold =
+            fold_authority_log_with_seen_times(&ordered, &BTreeMap::from([(enroll_hash, 1)]), 1);
+        assert!(!fold.valid_entries.contains(&enroll_hash));
+        assert!(fold.valid_entries.contains(&revoke_hash));
+        assert!(!actor_binding_is_active(&fold, &actor, "human"));
+        assert_eq!(
+            folded_status(&fold, &owner_key),
+            Some(ActorBindingStatus::Revoked)
+        );
+    }
+    // A signature from the rejected device has no independent ancestry.
+    let rejected_key = ed_key(233);
+    let wrong = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            0,
+            vec![enroll_hash],
+            revoke_actor_op(&owner_key, 5),
+            authority_key_from_ed(&rejected_key),
+            5,
+        ),
+        &rejected_key,
+    );
+    let wrong_hash = authority_entry_hash(&wrong).unwrap();
+    let fold = fold_authority_log(&[genesis, bind, enroll, wrong]);
+    assert!(!fold.valid_entries.contains(&wrong_hash));
+    assert!(actor_binding_is_active(&fold, &actor, "human"));
+}
