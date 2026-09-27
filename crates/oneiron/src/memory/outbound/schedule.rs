@@ -42,17 +42,43 @@ impl Memory<'_> {
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
     ) -> MemoryResult<OutboundIntentReceipt> {
-        self.schedule_outbound_inner(draft, schedule_context, None)
+        self.schedule_outbound_inner(draft, schedule_context, None, None)
             .map(|(receipt, _)| receipt)
     }
 
-    /// Returns the sender recorded by the real outbound admission, without
-    /// adding a second sender guess to the human follow-up lane.
+    /// Returns the sender recorded by the real outbound admission.
     pub(crate) fn schedule_human_followup(
         &self,
         draft: &OutboundDraftInput,
     ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
-        self.schedule_outbound_inner(draft, &OutboundScheduleContext::default(), None)
+        self.schedule_outbound_inner(draft, &OutboundScheduleContext::default(), None, None)
+    }
+
+    /// Schedules a communication addressed to an explicit counterparty.
+    /// The transport target may be a shared channel or handle; it is never
+    /// inferred to be a PERSON. A missing binding on the ordinary schedule
+    /// path leaves `comm.last_touch` unchanged after delivery.
+    pub fn schedule_outbound_for_counterparty(
+        &self,
+        draft: &OutboundDraftInput,
+        counterparty_ref: &str,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_with_context_for_counterparty(
+            draft,
+            &OutboundScheduleContext::default(),
+            counterparty_ref,
+        )
+    }
+
+    /// The clock-aware form of [`Self::schedule_outbound_for_counterparty`].
+    pub fn schedule_outbound_with_context_for_counterparty(
+        &self,
+        draft: &OutboundDraftInput,
+        schedule_context: &OutboundScheduleContext,
+        counterparty_ref: &str,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_inner(draft, schedule_context, None, Some(counterparty_ref))
+            .map(|(receipt, _)| receipt)
     }
 
     /// The single scheduling implementation.
@@ -68,8 +94,25 @@ impl Memory<'_> {
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
         calendar_invite: Option<&crate::calendar::CalendarInvitePayload>,
+        counterparty_ref: Option<&str>,
     ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
         schedule_context.validate()?;
+        if let Some(party) = counterparty_ref {
+            crate::comm::validate_comm_party_key(party).map_err(|_| {
+                MemoryError::bad_request("counterparty_ref is not a valid comm party key")
+            })?;
+            // A capability lookup accepts aliases such as " email ", but a
+            // counterparty-bound receipt is a projector source. Refuse those
+            // aliases before any gate, TASK, or provider delivery can persist
+            // a channel/verb the comm projector cannot decode.
+            if outbound_verb_contract(&draft.channel, &draft.verb).is_ok()
+                && !crate::outbound::is_canonical_outbound_verb(&draft.channel, &draft.verb)
+            {
+                return Err(MemoryError::bad_request(
+                    "counterparty-bound channel and verb must use manifest spellings",
+                ));
+            }
+        }
         if schedule_context.apns_interruption_level.is_some()
             && !(draft.channel == "apns" && draft.verb == "push")
         {
@@ -254,6 +297,9 @@ impl Memory<'_> {
         if let Some(session_ref) = originating_session_ref.as_deref() {
             request = request.originating_session(session_ref);
         }
+        if let Some(party) = counterparty_ref {
+            request = request.counterparty_ref(party);
+        }
         if let Some(payload) = calendar_invite {
             request = request.calendar_invite(payload.clone());
         }
@@ -315,6 +361,7 @@ impl Memory<'_> {
                     originating_session_ref.as_deref(),
                     schedule_context,
                     calendar_invite,
+                    counterparty_ref,
                     now,
                 )?;
                 // The SEQUENCE bump joins the SAME transaction as the ready
