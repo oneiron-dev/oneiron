@@ -77,6 +77,9 @@ pub(super) struct AblationUnavailable {
     ablation: &'static str,
     reason: &'static str,
 }
+mod offline;
+use offline::{OfflineStages, elapsed_cost, offline_provider_cost, offline_totals};
+
 #[derive(Debug, Serialize)]
 pub(super) struct MeasuredReport {
     /// Retrieval-manifest cards, separate from the measured answerer/judge pins.
@@ -96,7 +99,10 @@ pub(super) struct MeasuredReport {
     pub points: Vec<AccuracyCostPoint>,
     pub chat_cost_accuracy_points: Vec<AccuracyCostPoint>,
     pub agency_lift: BTreeMap<String, f64>,
+    pub offline_stages: OfflineStages,
+    pub offline_stages_amortized: OfflineStages,
     pub offline_total: CostComponentReport,
+    pub offline_amortized: CostComponentReport,
     pub amortized_question_count: usize,
     pub offline_cost_usd_per_question: f64,
     pub query_cost_usd_total: f64,
@@ -303,22 +309,33 @@ pub(super) fn run_with_session(
     let mut ablation_unavailable = Vec::new();
     let mut access_factor_observations = Vec::new();
     let mut rows = Vec::new();
-    let mut offline_tokens = 0_u64;
-    let mut offline_us = 0_u64;
+    let mut offline_ingest = elapsed_cost(0);
+    offline_ingest.token_source = TokenAccountingSource::TokenizerCount;
+    offline_ingest.tokenizer_id = Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into());
+    let mut offline_index = elapsed_cost(0);
+    let mut offline_receipts = Vec::new();
     for id in &manifest.case_ids {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), beam_vault_config())?;
         let mut one = manifest.clone();
         one.case_ids = vec![id.clone()];
-        let started = Instant::now();
+        let receipt_start = session.receipts().len();
         let loaded = load_dataset(&vault, &one, None)?;
-        offline_us += started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        offline_ingest.elapsed_us = offline_ingest.elapsed_us.saturating_add(
+            loaded
+                .offline
+                .elapsed_us
+                .saturating_sub(loaded.offline_index_build_us),
+        );
+        offline_index.elapsed_us = offline_index
+            .elapsed_us
+            .saturating_add(loaded.offline_index_build_us);
         let record = loaded
             .contract_records
             .get(id)
             .ok_or_else(|| refusal("measured answering requires run.jsonl corpus"))?;
         plan.judge.validate_dataset(&record.dataset.id)?;
-        offline_tokens += record
+        offline_ingest.input_tokens += record
             .corpus
             .iter()
             .map(|c| oneiron::count_context_pack_tokens(&c.text) as u64)
@@ -341,11 +358,14 @@ pub(super) fn run_with_session(
             .map(|config| super::chroma::ChromaArm::ingest(config, &record.corpus))
             .transpose()?;
         if chroma.is_some() {
-            offline_us += chroma_started
+            offline_index.elapsed_us += chroma_started
                 .elapsed()
                 .as_micros()
                 .min(u128::from(u64::MAX)) as u64;
         }
+        // Only calls made while loading this case belong to offline work.
+        // Query and judge calls below are deliberately excluded.
+        offline_receipts.extend(session.receipts().into_iter().skip(receipt_start));
         let (factor_overrides, observations) =
             super::ablations::access_factors(&vault, plan.temporal_now)?;
         access_factor_observations.extend(observations);
@@ -513,6 +533,27 @@ pub(super) fn run_with_session(
             }
         }
     }
+    // Any unexpected model call during ingestion must not disappear from the cost row.
+    if offline_receipts.iter().any(|r| {
+        !matches!(
+            r.purpose,
+            CallPurpose::Extraction | CallPurpose::Consolidation
+        )
+    }) {
+        return Err(refusal("unexpected offline provider call purpose"));
+    }
+    let stages = OfflineStages {
+        ingest: offline_ingest,
+        extraction: offline_provider_cost(&offline_receipts, CallPurpose::Extraction, session)?,
+        dreamer_consolidation: offline_provider_cost(
+            &offline_receipts,
+            CallPurpose::Consolidation,
+            session,
+        )?,
+        index_build: offline_index,
+    };
+    let (offline, offline_amortized, stages_amortized) =
+        offline_totals(&stages, plan.amortized_question_count)?;
     let mut points = Vec::new();
     for effort in &plan.efforts {
         for arm in &plan.answerers {
@@ -569,15 +610,6 @@ pub(super) fn run_with_session(
         .iter()
         .map(|r| r.judge_overhead.cost_usd)
         .sum::<f64>();
-    let offline = CostComponentReport {
-        token_source: TokenAccountingSource::TokenizerCount,
-        tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into()),
-        input_tokens: offline_tokens,
-        output_tokens: 0,
-        target_tokens: 0,
-        elapsed_us: offline_us,
-        cost_usd: 0.0,
-    };
     Ok(MeasuredReport {
         retrieval_cards: manifest
             .competitors
@@ -620,14 +652,14 @@ pub(super) fn run_with_session(
         rows,
         chroma_card_id: plan.chroma.as_ref().map(|c| c.card_id.clone()),
         agency_lift: lift,
-        offline_total: offline,
+        offline_stages: stages,
+        offline_stages_amortized: stages_amortized,
+        offline_total: offline.clone(),
+        offline_amortized,
         amortized_question_count: plan.amortized_question_count,
-        offline_cost_usd_per_question: 0.0,
+        offline_cost_usd_per_question: offline.cost_usd / plan.amortized_question_count as f64,
         query_cost_usd_total: query_total,
-        total_cost_usd: query_total
-            + ablation_query_cost_usd
-            + judge_total
-            + ablation_judge_cost_usd,
+        total_cost_usd: offline.cost_usd + query_total,
         ablation_query_cost_usd,
         ablation_judge_cost_usd,
         judge_overhead_usd: judge_total,

@@ -71,6 +71,49 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn fixture_runner_keeps_loader_index_time_once_in_offline_cost() {
+        let fixture = parse_fixture_json(BUILTIN_FIXTURE_JSON).unwrap();
+        let manifest = parse_manifest_json(BUILTIN_MANIFEST_JSON).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let vault = oneiron::Vault::open(dir.path(), beam_vault_config()).unwrap();
+        let loaded = load_dataset(&vault, &manifest, Some(&fixture)).unwrap();
+        assert!(loaded.offline_index_build_us > 0);
+        assert_eq!(
+            loaded.offline.elapsed_us,
+            loaded.offline_ingest_us + loaded.offline_index_build_us
+        );
+        let (cases, _) = run_loaded_cases(&vault, &manifest, &loaded).unwrap();
+        let expected = loaded
+            .offline
+            .elapsed_us
+            .div_ceil(manifest.case_ids.len() as u64);
+        assert_eq!(cases[0].offline_amortized_cost.elapsed_us, expected);
+        assert!(
+            cases[0]
+                .competitors
+                .iter()
+                .chain(&cases[0].appendix)
+                .chain(&cases[0].dropped)
+                .all(|row| row.costs.offline.elapsed_us == expected)
+        );
+    }
+
+    #[test]
+    fn elapsed_only_is_an_applicable_stage_but_not_applicable_requires_zero() {
+        let mut stage = CostComponentInput {
+            token_source: TokenAccountingSource::ElapsedOnly,
+            elapsed_us: 7,
+            ..CostComponentInput::default()
+        };
+        assert!(validate_cost_component("index", &stage).is_ok());
+        stage.token_source = TokenAccountingSource::NotApplicable;
+        assert!(validate_cost_component("index", &stage).is_err());
+        stage.token_source = TokenAccountingSource::ElapsedOnly;
+        stage.input_tokens = 1;
+        assert!(validate_cost_component("index", &stage).is_err());
+    }
+
+    #[test]
     fn query_cost_elapsed_uses_serialized_pass_only() {
         let case = FixtureCase {
             ppr_vad_query: None,
