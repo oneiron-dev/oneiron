@@ -151,9 +151,12 @@ impl Store {
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),
             retrieval_telemetry_capture: config.retrieval_telemetry_capture,
             authority_local_clock: Mutex::new(AuthorityLocalClock::default()),
+            authority_fold_cache: Mutex::new(None),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             clock,
             diagnostics: Diagnostics::default(),
+            proactivity_updates: tokio::sync::watch::channel(0).0,
+            proactivity_suspended: Mutex::new(None),
             #[cfg(feature = "sync")]
             attempt_updates: tokio::sync::broadcast::channel(256).0,
             #[cfg(feature = "sync")]

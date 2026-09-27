@@ -160,7 +160,11 @@ impl Vault {
                     body: data.to_vec(),
                 },
             )
-        })
+        })?;
+        if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            self.store.notify_proactivity_changes();
+        }
+        Ok(())
     }
 
     /// Retrieves an entity blob by ID.

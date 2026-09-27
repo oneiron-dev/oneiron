@@ -130,9 +130,15 @@ pub struct OutboundCapabilityManifest {
     pub manifest_version: &'static str,
     pub connector: String,
     pub connector_family: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<&'static str>,
     pub verified_at: &'static str,
     pub schema_on_demand: String,
     pub foreign_content_posture: &'static str,
+    /// Message operations that project a delivered receipt to comm.last_touch.
+    /// Connector-owned data, not an engine union of raw verb names.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub message_verbs: Vec<String>,
     pub verbs: Vec<OutboundVerbContract>,
 }
 
@@ -222,6 +228,16 @@ pub fn outbound_capability_manifest(
     outbound_capability_manifests()
         .iter()
         .find(|manifest| manifest.connector == connector)
+}
+
+/// Whether a registered connector/verb pair uses the exact stored spelling.
+/// Capability lookup accepts normalized caller spellings, but a counterparty-
+/// bound TASK must freeze the manifest spelling: its durable receipt feeds the
+/// comm projector, whose channel-class keys are exact.
+pub(crate) fn is_canonical_outbound_verb(connector: &str, verb: &str) -> bool {
+    outbound_capability_manifest(connector).is_some_and(|manifest| {
+        manifest.connector == connector && manifest.verbs.iter().any(|entry| entry.kind == verb)
+    })
 }
 
 /// Resolves one verb contract or returns a typed unsupported-capability error.

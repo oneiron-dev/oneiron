@@ -14,7 +14,6 @@ use super::window_packing_excludes_entity;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
@@ -158,7 +157,7 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         }
 
-        if skip_companion_register_sync_mirror(&raw)? {
+        if skip_companion_register_sync_mirror(&raw) {
             let removed = remove_entity_crdt_carriers(&entities_map, &edges_map, id)?;
             if removed {
                 super::egress::require_history_free_window(vault, window_key)?;
@@ -180,7 +179,14 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             // construction when the key carries nothing (`map_get_bytes` →
             // `None`), so hoisting it past the short circuit is semantics-
             // preserving.
-            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw);
+            let dominates = authority_row_dominates_map_carrier(&entities_map, id, &hex_id, &raw)
+                || crate::sync::receipt_ingest::local_receipt_dominates(
+                    vault,
+                    window_key,
+                    &entities_map,
+                    id,
+                    &raw,
+                )?;
             if !map_contains_binary(&entities_map, &hex_id) || dominates {
                 // Pack rows mirror the canonical wire header/body (origin
                 // handle/generation, exact identity/payload), not the
@@ -289,20 +295,15 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     Ok(count)
 }
 
-pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> Result<bool> {
+pub(super) fn skip_companion_register_sync_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
-        return Ok(false);
+        return false;
     };
-    if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC {
-        return Ok(true);
-    }
-    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-        || !crate::companion::is_identity_facet_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-    {
-        return Ok(false);
-    }
-    decode_companion_record_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-        .map(|record| record.sensitivity == crate::federation::Sensitivity::Restricted)
+    header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
+        || crate::companion::is_retired_identity_carrier(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )
 }
 
 /// Local-only diagnostics and credentials refused by the same-vault locality predicate.
@@ -357,7 +358,7 @@ fn local_entity_is_unsyncable_companion(vault: &Vault, id: &EntityId) -> Result<
     let Some(raw) = vault.get_raw_unsealed(id)? else {
         return Ok(false);
     };
-    skip_companion_register_sync_mirror(&raw)
+    Ok(skip_companion_register_sync_mirror(&raw))
 }
 
 /// Removes an entity's already-present CRDT body and every incident edge.

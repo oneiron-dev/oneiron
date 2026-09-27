@@ -172,6 +172,40 @@ impl IndexedRevisionEmbedder for EditingEmbedder<'_> {
 }
 
 #[test]
+fn scoped_asset_text_indexed_read_survives_live_body_restamp() {
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    crate::test_util::authorize_readers(&vault, &["reader"]);
+    let id = EntityId::now();
+    put(&vault, &id, "indexed scope old");
+    let indexed = vault.pin_entity_revision(&id).unwrap();
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("reader").unwrap());
+    assert!(
+        reader
+            .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Indexed, None)
+            .unwrap()
+            .value
+            .is_some()
+    );
+    put(&vault, &id, "indexed scope live");
+    let retained = reader
+        .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Pinned(indexed), None)
+        .unwrap()
+        .value
+        .unwrap();
+    assert_eq!(retained.2, body("indexed scope old"));
+    assert_eq!(
+        reader
+            .get_entity_parts_with_mode_with_receipt(&id, ReadMode::Indexed, None)
+            .unwrap()
+            .value
+            .unwrap()
+            .2,
+        body("indexed scope old")
+    );
+}
+
+#[test]
 fn concurrent_edit_discards_embedding_without_advancing_indexed_frontier() {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());

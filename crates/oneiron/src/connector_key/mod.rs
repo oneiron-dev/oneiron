@@ -100,3 +100,12 @@ pub use slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
     SlateRow, SlateToolManifest, draft_connector_slate,
 };
+
+/// Scoped connector-pack admission reads the key under its own writer txn.
+pub(crate) fn read_key_for_pack_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &crate::EntityId,
+) -> crate::Result<Option<ConnectorKeyRecord>> {
+    txn::read_connector_key_in_txn(&vault.store, txn, id)
+}
