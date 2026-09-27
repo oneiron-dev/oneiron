@@ -49,6 +49,8 @@ pub(crate) use self::open::{embedded_owner_actor_id, encode_embedded_owner_actor
 
 /// Main vault API wrapping LMDB storage and configuration.
 pub struct Vault {
+    /// Live seat prefixes are vault-owned, never process-global.
+    pub(crate) model_seats: std::sync::Mutex<crate::llm::seat::SeatPool>,
     pub(crate) message_streams: crate::memory::MessageStreamRuntime,
     #[cfg(feature = "sync")]
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,

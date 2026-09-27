@@ -1,0 +1,13 @@
+{
+  "default_reasoning_ladder": ["low", "medium", "high", "xhigh"],
+  "default_plain_ladder": ["none"],
+  "gemini_ladder": ["none"],
+  "model_ladders": {},
+  "vault_default": null,
+  "purpose_defaults": {},
+  "global_default": null,
+  "vault_ceiling": "xhigh",
+  "precedence": "narrow_only",
+  "facet_max_bytes": 256,
+  "line_max_bytes": 4096
+}

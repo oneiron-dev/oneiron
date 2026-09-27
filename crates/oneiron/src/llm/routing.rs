@@ -180,6 +180,7 @@ impl RoutedSeat {
         request.model = self.model.clone();
         request.envelope.locality = self.locality;
         request.envelope.tier.per_seat = Some(self.tier.clone());
+        request.envelope.seat_effort = Some(self.effort);
         Ok(())
     }
 }
@@ -250,7 +251,7 @@ fn seat_key(id: &str) -> Result<Vec<u8>> {
     }
     Ok([SEAT_PREFIX, id.as_bytes()].concat())
 }
-fn purpose_key(purpose: &CallPurpose) -> String {
+pub(crate) fn purpose_key(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Other { name } => format!("other:{name}"),
         other => serde_json::to_value(other)
@@ -741,6 +742,9 @@ impl Vault {
             effort,
             &settings.inference_overrides,
         )?;
+        // Schema verdicts are independent calls: replace the generating
+        // seat's wire pin with this verdict's actual judged effort.
+        request.envelope.seat_effort = Some(effort);
         request.messages = payload.messages()?;
         Ok(request)
     }
