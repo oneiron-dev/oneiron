@@ -118,7 +118,7 @@ impl SeatJudge for Judge {
 #[test]
 fn task_judgment_uses_descriptions_not_static_role_and_reuses_eligible_warm_seat() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.set_model_manifest(&manifest())?;
+    crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
         "provider/a@r1",
@@ -160,7 +160,7 @@ fn fold_changes_model_only_by_new_seat_and_old_pin_survives() -> Result<()> {
     let mut policy = SeatPolicy::bundled()?;
     policy.precedence = SeatPrecedence::SeatOverride;
     config.seat_policy = Some(policy);
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     let a = register(
         &vault,
         "provider/a@r1",
@@ -198,7 +198,7 @@ fn fold_changes_model_only_by_new_seat_and_old_pin_survives() -> Result<()> {
 #[test]
 fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.set_model_manifest(&manifest())?;
+    crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let remote = register(
         &vault,
         "provider/a@r1",
@@ -262,7 +262,7 @@ fn route_facet_override_and_ineligible_judgment_fail_closed() -> Result<()> {
     pinned
         .routes
         .insert(ModelSlot::Llm, ModelLocality::OnDevice);
-    vault.set_model_manifest(&pinned)?;
+    crate::test_util::pin_model_manifest(&vault, &pinned)?;
     assert!(
         pool.birth(&vault, &task(), &Judge { choice: remote })
             .is_err()
@@ -306,7 +306,7 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
         CallClass, CallEnvelope, CallPurpose, LlmRequest, ResponseFormat, TierPrecedence,
     };
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.set_model_manifest(&manifest())?;
+    crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
         "provider/a@r1",
@@ -356,7 +356,7 @@ fn failed_fold_keeps_old_prefix_and_seat_binding_controls_request() -> Result<()
 #[test]
 fn stale_fold_cannot_reactivate_a_retired_seat() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.set_model_manifest(&manifest())?;
+    crate::test_util::pin_model_manifest(&vault, &manifest())?;
     let a = register(
         &vault,
         "provider/a@r1",
@@ -398,7 +398,7 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
     let run_id = crate::test_util::entity(0xb7);
     let first = {
         let vault = Vault::open(dir.path(), crate::VaultConfig::device())?;
-        vault.set_model_manifest(&manifest())?;
+        crate::test_util::pin_model_manifest(&vault, &manifest())?;
         let a = register(
             &vault,
             "provider/a@r1",
@@ -459,7 +459,7 @@ fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening()
         .purpose_defaults
         .insert("answer_gen".into(), ReasoningEffort::Medium);
     config.seat_policy = Some(policy.clone());
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     let model = register(
         &vault,
         "provider/worker@r1",
@@ -508,7 +508,7 @@ fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening()
         .purpose_defaults
         .insert("answer_gen".into(), ReasoningEffort::High);
     config.seat_policy = Some(policy.clone());
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     task.warm_scope = "policy-worker-2".into();
     let next = vault.birth_model_seat(
         crate::test_util::entity(0xd2),
@@ -530,7 +530,7 @@ fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening()
         ],
     );
     config.seat_policy = Some(policy);
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     task.warm_scope = "policy-worker-3".into();
     task.override_effort = Some(ReasoningEffort::XHigh);
     let run_id = crate::test_util::entity(0xd3);
@@ -547,7 +547,7 @@ fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening()
 fn default_nested_narrowing_and_manifest_description_budgets() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let mut config = manifest();
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     let model = register(
         &vault,
         "provider/worker@r1",
@@ -581,7 +581,7 @@ fn default_nested_narrowing_and_manifest_description_budgets() -> Result<()> {
     policy.line_max_bytes = 5000;
     policy.facet_max_bytes = 512;
     config.seat_policy = Some(policy);
-    vault.set_model_manifest(&config)?;
+    crate::test_util::pin_model_manifest(&vault, &config)?;
     vault.set_model_description(&description)?;
     assert_eq!(vault.model_description(&model)?, Some(description));
     Ok(())
