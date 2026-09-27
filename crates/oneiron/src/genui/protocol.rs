@@ -260,7 +260,11 @@ impl Of336Component {
                         "fallbackText": fallback_text
                     }),
                 );
-                append_care_register_actions(&mut elements, &mut root_children, &component.actions());
+                append_care_register_actions(
+                    &mut elements,
+                    &mut root_children,
+                    &component.actions(),
+                );
             }
         }
 
