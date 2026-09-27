@@ -2421,3 +2421,134 @@ fn ready_parent_budget_continues_after_reopen_without_other_traffic() {
             .contains(&key.as_str().to_owned())
     );
 }
+
+#[cfg(feature = "sync")]
+fn late_conversation_endpoint_replays_cross_window_childof(live_delta: bool, reopen: bool) {
+    let (_dir, source, _unused, actor) = fixture();
+    let room = EntityId::now();
+    source
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            1,
+        )
+        .unwrap();
+    let mut first_input = input(room, None, true, actor);
+    first_input.learned_at = 946_684_800;
+    first_input.occurred = time(946_684_800);
+    let first = source.append_dag_record(&first_input).unwrap().id;
+    let mut second_input = input(room, Some(first), true, actor);
+    second_input.learned_at = 946_684_801;
+    second_input.occurred = time(946_684_801);
+    let second = source.append_dag_record(&second_input).unwrap().id;
+    let room_key = crate::sync::types::WindowKey::new("1970-01");
+    let turn_key = crate::sync::types::WindowKey::new("2000-01");
+    let room_doc = crate::sync::schema::create_window_doc("late-room-window", &room_key);
+    let turn_doc = crate::sync::schema::create_window_doc("late-turn-window", &turn_key);
+    crate::sync::window::reverse_rematerialize(&source, &room_doc, &room_key).unwrap();
+    crate::sync::window::reverse_rematerialize(&source, &turn_doc, &turn_key).unwrap();
+    assert!(room_doc.get_map("entities").get(&room.to_hex()).is_some());
+    for id in [first, second] {
+        assert!(turn_doc.get_map("entities").get(&id.to_hex()).is_some());
+        assert!(
+            turn_doc
+                .get_map("edges")
+                .get(&crate::sync::bridge::format_edge_key(
+                    &id,
+                    EdgeKind::ChildOf,
+                    &room
+                ))
+                .is_some()
+        );
+    }
+    assert_eq!(
+        source
+            .resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut peer =
+        std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+    let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
+    if live_delta {
+        let received = crate::sync::schema::create_window_doc("received-turn-window", &turn_key);
+        let _observer = crate::sync::bridge::register_observer_b(
+            &received,
+            &peer,
+            &materializer,
+            turn_key.as_str(),
+        );
+        received
+            .import(&turn_doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &turn_doc, &materializer, &turn_key)
+            .unwrap();
+    }
+    assert!(peer.get(&first).unwrap().is_some());
+    assert!(peer.get(&second).unwrap().is_some());
+    assert!(peer.get(&room).unwrap().is_none());
+    assert!(!peer.edge_exists(&first, EdgeKind::ChildOf, &room).unwrap());
+    assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    if reopen {
+        let loaded = crate::sync::window::LoadedWindow::from_doc(
+            turn_doc,
+            turn_key.clone(),
+            &peer,
+            &materializer,
+        );
+        loaded.persist_state(&peer).unwrap();
+        drop(loaded);
+        drop(peer);
+        peer = std::sync::Arc::new(Vault::open(dir.path(), crate::VaultConfig::device()).unwrap());
+        let report =
+            crate::sync::drain_remat_markers(&peer, "received-turn-window", &materializer).unwrap();
+        assert!(report.still_pending.contains(&turn_key.as_str().to_owned()));
+    }
+    if live_delta {
+        let received = crate::sync::schema::create_window_doc("received-room-window", &room_key);
+        let _observer = crate::sync::bridge::register_observer_b(
+            &received,
+            &peer,
+            &materializer,
+            room_key.as_str(),
+        );
+        received
+            .import(&room_doc.export(loro::ExportMode::all_updates()).unwrap())
+            .unwrap();
+    } else {
+        crate::sync::window::forward_rematerialize(&peer, &room_doc, &materializer, &room_key)
+            .unwrap();
+    }
+    assert!(peer.get(&room).unwrap().is_some());
+    assert!(peer.edge_exists(&first, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&second, EdgeKind::ChildOf, &room).unwrap());
+    assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
+    assert_eq!(
+        peer.resolve_dag_scope(&scope(room, ScopePath::Branch(second), false))
+            .unwrap()
+            .records,
+        [first, second]
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_forward() {
+    late_conversation_endpoint_replays_cross_window_childof(false, false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_observer() {
+    late_conversation_endpoint_replays_cross_window_childof(true, false);
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn conversation_endpoint_last_cross_window_after_reopen() {
+    late_conversation_endpoint_replays_cross_window_childof(true, true);
+}

@@ -30182,7 +30182,7 @@
      "path": "src/sync/bridge/childof.rs",
      "purpose": "ChildOf replay set, component ordering, and ordered edge-op application",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8
      }
     },
     {
@@ -30231,7 +30231,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 3
      }
     },

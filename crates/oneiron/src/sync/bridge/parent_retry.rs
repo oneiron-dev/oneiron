@@ -149,7 +149,10 @@ pub(in crate::sync) fn has_pending_source_in_txn(
     }
     let anchor_prefix = format!("{ANCHOR}{window}:{}:", source.to_hex());
     let mut anchors = vault.store.sync_state.prefix_iter(txn, &anchor_prefix)?;
-    Ok(anchors.next().transpose()?.is_some())
+    if anchors.next().transpose()?.is_some() {
+        return Ok(true);
+    }
+    super::childof::has_pending_child_of_source_in_txn(vault, txn, window, source)
 }
 
 /// Remove an exact obligation and every dependency-index entry it owns.
@@ -610,6 +613,7 @@ pub(in crate::sync) fn wake_in_txn(
         }
     }
     let mut changed = facts.to_vec();
+    changed.extend(super::childof::wake_pending_child_of(vault, txn, facts)?);
     for row in anchor_rows {
         if let Some(anchor) = replay_spawned_by(vault, txn, &row)? {
             changed.push(anchor);
@@ -626,6 +630,9 @@ pub(in crate::sync) fn wake_in_txn(
 /// Parent obligations. Neither a process restart nor a consumed event loses
 /// a missing dependency or a ready Parent.
 pub(in crate::sync) fn retry_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+    // A pending ChildOf can be the prerequisite for both a Parent and a
+    // spawned session anchor. Replay it through winner arbitration first.
+    super::childof::retry_all_pending_child_of(vault, txn)?;
     let anchors: Vec<String> = {
         let iter = vault.store.sync_state.prefix_iter(&*txn, ANCHOR)?;
         iter.map(|entry| entry.map(|(key, _)| key.to_string()))

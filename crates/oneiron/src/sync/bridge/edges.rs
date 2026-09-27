@@ -246,6 +246,16 @@ pub(super) fn materialize_edges_from_delta(
                                     vault, wtxn, window_key, &src, &tgt, buf,
                                 )?;
                             }
+                            if kind == EdgeKind::ChildOf
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
+                            {
+                                super::childof::defer_child_of(
+                                    vault, wtxn, window_key, &src, &tgt, buf,
+                                )?;
+                            }
                             tracing::debug!(
                                 edge = %key,
                                 "observer-b: edge deferred — endpoint absent or tombstoned"
@@ -392,6 +402,9 @@ pub(super) fn materialize_edges_from_delta(
                         )?;
                         continue;
                     };
+                    if kind == EdgeKind::ChildOf {
+                        super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
+                    }
                     // A bare peer removal is not proof that the DAG door
                     // retired an immutable structural edge. A soft-deleted
                     // shell retains its ancestry; only an already-absent
@@ -477,7 +490,16 @@ pub(super) fn materialize_edges_from_delta(
                 }
             }
         }
+        let considered_child_of: Vec<_> = ops.iter().filter_map(|op| match op {
+            BatchOp::EdgeWithCreatedAt { src, kind: EdgeKind::ChildOf, tgt, .. } => Some((*src, *tgt)),
+            _ => None,
+        }).collect();
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones_map)?;
+        for (src, tgt) in considered_child_of {
+            // The candidate has reached the winner arbiter or its terminal
+            // rejection, so no earlier missing-endpoint obligation remains.
+            super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
+        }
         let facts: Vec<_> = delta.updated.iter().filter_map(|(key, value)| {
             if !matches!(value, Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))) {
                 return None;

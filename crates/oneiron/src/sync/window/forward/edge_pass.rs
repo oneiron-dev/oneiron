@@ -208,6 +208,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                             &tgt,
                             buf,
                         )?;
+                    } else if kind == crate::edge::EdgeKind::ChildOf {
+                        bridge::defer_child_of(vault, wtxn, window_key.as_str(), &src, &tgt, buf)?;
                     }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
@@ -287,6 +289,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     .get(&*wtxn, &in_key)?
                     .is_some_and(|value| value == buf);
                 if out_matches && in_matches {
+                    if kind == crate::edge::EdgeKind::ChildOf {
+                        bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                    }
                     return Ok(EdgeRematOutcome::Unchanged);
                 }
 
@@ -299,6 +304,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         EdgeValueFields::from_decoded(decoded),
                     )
                     .apply(wtxn)?;
+                if kind == crate::edge::EdgeKind::ChildOf {
+                    bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                }
                 Ok(EdgeRematOutcome::Written)
             });
             match result {

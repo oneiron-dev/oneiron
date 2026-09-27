@@ -18,6 +18,7 @@ mod app_reads;
 pub use app_reads::{scoped_subscription_pending, scoped_subscription_receipts};
 
 mod childof;
+pub(in crate::sync) use childof::{defer_child_of, settle_child_of};
 mod companion_identity;
 mod edges;
 mod entities;
