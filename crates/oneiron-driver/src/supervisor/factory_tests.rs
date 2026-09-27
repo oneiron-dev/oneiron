@@ -883,6 +883,204 @@ async fn successful_wave_handoff_reopens_on_retry_and_reclaimed_lease() {
     assert_eq!(report.passes_completed, 0);
 }
 
+struct IndependentWavePlanner {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl oneiron::WavePlanner for IndependentWavePlanner {
+    fn cut_plan(
+        &self,
+        request: oneiron::WavePlanRequest,
+    ) -> oneiron::WaveResult<oneiron::WavePlan> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(oneiron::WavePlan {
+            schema_version: oneiron::wave_orchestration::WAVE_PLAN_SCHEMA_VERSION,
+            plan_ref: format!("independent-{}", request.epic_task_ref.to_hex()),
+            epic_task_ref: request.epic_task_ref,
+            tasks: ["a", "b"]
+                .into_iter()
+                .map(|key| oneiron::PlannedTask {
+                    local_key: key.into(),
+                    label: key.into(),
+                    spec: serde_json::json!({"work": key}),
+                    assignee_ref: None,
+                    blocked_by: vec![],
+                })
+                .collect(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0xA4, oneiron::registry::ENTITY_TYPE_PERSON);
+    let epic = |label: &str| {
+        vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .tasks_create(
+                &TaskCreateSpec::new(rmpv::Value::from(label), None, None, Some(100))
+                    .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+            )
+            .expect("epic")
+            .task_ref
+            .expect("epic id")
+    };
+    vault
+        .enqueue_wave_plan(epic("first epic"), "first", serde_json::Value::Null, 100)
+        .expect("first plan");
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rejected = Arc::new(std::sync::Mutex::new(None));
+    let rejection = Arc::clone(&rejected);
+    let (sent, mut accepted) = tokio::sync::mpsc::unbounded_channel();
+    let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
+        .with_wave_planner(
+            Arc::new(IndependentWavePlanner {
+                calls: Arc::clone(&calls),
+            }),
+            Box::new(move |vault, candidate| {
+                let first = *rejection
+                    .lock()
+                    .expect("rejected lock")
+                    .get_or_insert(candidate.task);
+                if candidate.task == first {
+                    return Ok(WaveHandoffOutcome::Deferred);
+                }
+                let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
+                    unreachable!()
+                };
+                let Some(row) = vault.claim_wave_dispatch_attempt(
+                    candidate.task,
+                    id,
+                    generation,
+                    "executor",
+                    u64::MAX,
+                )?
+                else {
+                    return Ok(WaveHandoffOutcome::NoLongerCurrent);
+                };
+                assert_eq!(row.id, id, "only this candidate can be leased");
+                assert_eq!(
+                    row.task_ref.as_deref(),
+                    Some(candidate.task.to_hex().as_str())
+                );
+                sent.send(candidate.task).expect("observer");
+                Ok(WaveHandoffOutcome::Accepted(WaveHandoffReceipt::Local {
+                    lease_owner: "executor".into(),
+                }))
+            }),
+        );
+    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let mut config = test_config();
+    config.backoff = RestartBackoffConfig {
+        initial: Duration::from_millis(10),
+        max: Duration::from_millis(10),
+    };
+    let supervisor = WakeSupervisor::new(&vault, push, factory, config).with_wave_dispatch_limits(
+        crate::WaveDispatchLimits {
+            page_size: 1,
+            retry_quantum: 1,
+            retry_initial: Duration::from_millis(10),
+            retry_max: Duration::from_millis(20),
+        },
+    );
+    let stop = supervisor.shutdown_handle();
+    let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
+        tokio::join!(supervisor.run(), async {
+            let sibling = tokio::time::timeout(Duration::from_secs(5), accepted.recv())
+                .await
+                .expect("B did not pass A")
+                .expect("B delivery");
+            assert_ne!(Some(sibling), *rejected.lock().expect("rejected lock"));
+            wake.push_wake(
+                oneiron::WakeTrigger::Compaction,
+                oneiron::DreamerConsolidationScope::Micro,
+            )
+            .expect("ordinary wake");
+            vault
+                .enqueue_wave_plan(epic("second epic"), "second", serde_json::Value::Null, 100)
+                .expect("new plan");
+            let next = tokio::time::timeout(Duration::from_secs(5), accepted.recv())
+                .await
+                .expect("new plan blocked by A")
+                .expect("new delivery");
+            assert_ne!(next, sibling);
+            stop.shutdown();
+        })
+    })
+    .await
+    .expect("wave breaker closed");
+    drop(wake);
+    drop(hint);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        report.passes_completed >= 1,
+        "ordinary wake must run amid deferred wave item"
+    );
+}
+
+#[test]
+fn wave_point_claim_never_claims_neighbor_or_stale_generation() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, WaveDispatchGeneration};
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0xA5, oneiron::registry::ENTITY_TYPE_PERSON);
+    let epic = vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("epic id");
+    vault
+        .enqueue_wave_plan(epic, "claim", serde_json::Value::Null, 100)
+        .expect("plan");
+    let result = crate::WaveHost::new(
+        &vault,
+        IndependentWavePlanner {
+            calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        },
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .run_plan_once("planner", 100)
+    .expect("run")
+    .expect("receipt");
+    let a = result.task_refs["a"];
+    let b = result.task_refs["b"];
+    let Some(WaveDispatchGeneration::Attempt { id, generation }) =
+        vault.wave_dispatch_generation(a, 101).expect("generation")
+    else {
+        panic!("local A route")
+    };
+    assert!(
+        vault
+            .claim_wave_dispatch_attempt(b, id, generation, "worker", u64::MAX)
+            .expect("wrong task")
+            .is_none()
+    );
+    assert!(
+        vault
+            .claim_wave_dispatch_attempt(a, id, generation + 1, "worker", u64::MAX)
+            .expect("stale generation")
+            .is_none()
+    );
+    let claim = vault
+        .claim_wave_dispatch_attempt(a, id, generation, "worker", u64::MAX)
+        .expect("point claim")
+        .expect("claimed");
+    assert_eq!(claim.id, id);
+    assert_eq!(claim.task_ref.as_deref(), Some(a.to_hex().as_str()));
+    assert!(matches!(
+        vault
+            .wave_dispatch_generation(b, 101)
+            .expect("B still queued"),
+        Some(WaveDispatchGeneration::Attempt { .. })
+    ));
+}
+
 #[test]
 fn mirror_pushes_working_state_before_task_settles() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
