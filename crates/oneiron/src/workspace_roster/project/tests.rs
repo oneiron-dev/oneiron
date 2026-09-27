@@ -1,3 +1,7 @@
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::edge::EdgeKind;
+use rmpv::Value;
+
 use super::*;
 #[test]
 fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
@@ -62,7 +66,7 @@ fn project_root_child_members_and_home_room_are_atomic() -> Result<()> {
             .is_err()
     );
     let mut cycle = root.clone();
-    cycle.parent = Some(child_id.to_hex());
+    cycle.parents.push(child_id.to_hex());
     assert!(vault.put_project(root_id, &cycle, 12).is_err());
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -138,7 +142,10 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         } else if door == 1 {
             vault.delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)?;
         } else {
-            assert!(vault.delete_entity(&id)?);
+            assert!(vault.delete_entity_with_options(
+                &id,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )?);
         }
         if door != 1 {
             assert!(vault.project(id)?.is_none());
@@ -193,7 +200,12 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
                 1 => vault
                     .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
                     .unwrap_err(),
-                _ => vault.delete_entity(&id).unwrap_err(),
+                _ => vault
+                    .delete_entity_with_options(
+                        &id,
+                        crate::deletion::DeleteEntityOptions { purge: true },
+                    )
+                    .unwrap_err(),
             };
             assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
             assert_eq!(vault.project(id)?, Some(before.clone()));
@@ -225,7 +237,10 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
             1,
         )?;
         if hard {
-            vault.delete_entity(&parent)?;
+            vault.delete_entity_with_options(
+                &parent,
+                crate::deletion::DeleteEntityOptions { purge: true },
+            )?;
         } else {
             vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
         }
@@ -347,7 +362,7 @@ fn approved_project_card_mints_one_atomic_branch_and_grant() -> Result<()> {
     let receipt = vault.mint_project_from_card(&card, &tap, &owner)?;
     let id = EntityId::from_hex(&receipt.project_id)?;
     let project = vault.project(id)?.expect("minted project");
-    assert_eq!(project.parent.as_deref(), Some(root.to_hex().as_str()));
+    assert_eq!(project.parents, vec![root.to_hex()]);
     assert_eq!(project.why.as_deref(), Some(card.goal.why.as_str()));
     assert_eq!(
         project.born_from.as_deref(),
@@ -600,6 +615,320 @@ fn project_born_from_is_message_at_typed_batch_and_replay_doors() -> Result<()> 
         .put_replicated(&id, vault.project_type_byte()?, at, 21, &bytes)
         .commit()?;
     assert_eq!(vault.project(id)?.unwrap().born_from, project.born_from);
+    Ok(())
+}
+
+#[test]
+fn project_dag_accepts_two_parents_and_diamond_but_rejects_secondary_cycles() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let left = EntityId::now();
+    let right = EntityId::now();
+    for parent in [left, right] {
+        vault.put_project(
+            parent,
+            &ProjectRecord::new(parent, Some(root), root, leader),
+            1,
+        )?;
+    }
+    let shared = EntityId::now();
+    let mut child = ProjectRecord::new(shared, Some(left), root, leader);
+    child.role = ProjectRole::Corpus;
+    child.parents.push(right.to_hex());
+    vault.put_project(shared, &child, 2)?;
+    assert_eq!(vault.project(shared)?.unwrap().parents, child.parents);
+    let linked = vault.targets(&shared, crate::edge::EdgeKind::BelongsTo, None)?;
+    assert_eq!(linked.len(), 2);
+    assert!(linked.contains(&left) && linked.contains(&right));
+    for edge in vault.edges_out(&shared)? {
+        assert_eq!(edge.weight, HUB_MEMBERSHIP_WEIGHT);
+    }
+    let mut cyclic = vault.project(right)?.unwrap();
+    cyclic.parents.push(shared.to_hex());
+    assert_eq!(
+        vault.put_project(right, &cyclic, 3).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(vault.project(right)?.unwrap().parents, vec![root.to_hex()]);
+    let mut duplicate = child.clone();
+    duplicate.parents.push(left.to_hex());
+    assert_eq!(
+        vault.put_project(shared, &duplicate, 3).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    for parent in [left, right] {
+        assert_eq!(
+            vault.batch().delete(&parent).commit().unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidProjectBody
+        );
+    }
+    child.parents.retain(|parent| parent != &right.to_hex());
+    vault.put_project(shared, &child, 4)?;
+    assert_eq!(
+        vault.targets(&shared, crate::edge::EdgeKind::BelongsTo, None)?,
+        vec![left]
+    );
+    vault.batch().delete(&right).commit()?;
+    Ok(())
+}
+
+fn stored_claim(vault: &Vault) -> Result<EntityId> {
+    let subject = EntityId::now();
+    vault.put_entity(
+        &subject,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let claim = EntityId::now();
+    vault.put_claim(
+        &claim,
+        &ClaimBody::new(
+            "test.project_membership",
+            ClaimSubject::Entity(subject),
+            Value::from("fixture"),
+            0.9,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        ),
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
+    Ok(claim)
+}
+
+#[test]
+fn generic_edges_cannot_invent_or_retire_project_parents() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let child = EntityId::now();
+    vault.put_project(
+        child,
+        &ProjectRecord::new(child, Some(root), root, leader),
+        1,
+    )?;
+    for result in [
+        vault.put_edge(&root, EdgeKind::BelongsTo, &child, 0.05),
+        vault
+            .batch()
+            .edge(&root, EdgeKind::BelongsTo, &child, 0.05)
+            .commit(),
+        vault
+            .batch()
+            .delete_edge(&child, EdgeKind::BelongsTo, &root)
+            .commit(),
+        vault
+            .delete_edge(&child, EdgeKind::BelongsTo, &root)
+            .map(|_| ()),
+        vault.set_edge_weight(&child, EdgeKind::BelongsTo, &root, 1.0),
+    ] {
+        assert_eq!(
+            result.unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidProjectBody
+        );
+    }
+    assert!(!vault.edge_exists(&root, EdgeKind::BelongsTo, &child)?);
+    assert!(vault.edge_exists(&child, EdgeKind::BelongsTo, &root)?);
+    let other = EntityId::now();
+    vault.put_project(
+        other,
+        &ProjectRecord::new(other, Some(root), root, leader),
+        2,
+    )?;
+    let mut new_body = vault.project(child)?.unwrap();
+    new_body.parents = vec![other.to_hex()];
+    vault.put_project(child, &new_body, 3)?;
+    assert!(!vault.edge_exists(&child, EdgeKind::BelongsTo, &root)?);
+    assert_eq!(
+        vault
+            .put_edge(&child, EdgeKind::BelongsTo, &root, 0.05)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(
+        vault.targets(&child, EdgeKind::BelongsTo, None)?,
+        vec![other]
+    );
+    // Ordinary non-project belongs_to edges remain writable.
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_edge(&a, EdgeKind::BelongsTo, &b, 0.7)?;
+    assert!(vault.delete_edge(&a, EdgeKind::BelongsTo, &b)?);
+    Ok(())
+}
+
+#[test]
+fn generic_and_replay_edges_cannot_link_claims_to_hubs() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let claim = stored_claim(&vault)?;
+    assert_eq!(
+        vault.get_entity_type(&claim)?,
+        Some(crate::registry::ENTITY_TYPE_CLAIM)
+    );
+    for result in [
+        vault.put_project_member(claim, root),
+        vault.put_edge(&claim, EdgeKind::BelongsTo, &root, 0.05),
+        vault
+            .batch()
+            .edge(&claim, EdgeKind::BelongsTo, &root, 0.05)
+            .commit(),
+        vault.with_write_txn(|txn| {
+            vault
+                .batch_in()
+                .edge_with_value_fields(
+                    &claim,
+                    EdgeKind::BelongsTo,
+                    &root,
+                    crate::batch::EdgeValueFields {
+                        weight: 0.05,
+                        created_at: 2,
+                        vad: crate::affect::Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                )
+                .apply(txn)
+        }),
+    ] {
+        assert!(result.is_err());
+    }
+    assert!(!vault.edge_exists(&claim, EdgeKind::BelongsTo, &root)?);
+    assert!(!vault.edge_exists(&root, EdgeKind::BelongsTo, &claim)?);
+    assert_eq!(
+        vault
+            .put_edge(&EntityId::now(), EdgeKind::BelongsTo, &root, 0.05)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    // A future project ID can receive an ordinary edge while it is untyped,
+    // but its project body must not later turn that edge into a CLAIM hub link.
+    let future = EntityId::now();
+    vault.put_edge(&claim, EdgeKind::BelongsTo, &future, 0.05)?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    assert_eq!(
+        vault
+            .put_project(
+                future,
+                &ProjectRecord::new(future, Some(root), root, leader),
+                3,
+            )
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(future)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn collection_membership_is_low_weight_and_never_accepts_claims() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let asset = EntityId::now();
+    vault.put_entity(
+        &asset,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"document",
+    )?;
+    vault.put_project_member(asset, root)?;
+    let edge = vault
+        .edges_out(&asset)?
+        .into_iter()
+        .find(|edge| edge.kind == crate::edge::EdgeKind::BelongsTo && edge.target == root)
+        .expect("asset belongs to collection");
+    assert_eq!(edge.weight, HUB_MEMBERSHIP_WEIGHT);
+    assert_eq!(
+        vault.sources(&root, crate::edge::EdgeKind::BelongsTo, None)?,
+        vec![asset]
+    );
+    let claim = stored_claim(&vault)?;
+    let err = vault.put_project_member(claim, root).unwrap_err();
+    assert!(matches!(err, Error::InvalidConfig(_)));
+    let err = vault
+        .put_project_member(asset, EntityId::now())
+        .unwrap_err();
+    assert!(matches!(err, Error::InvalidConfig(_)));
+    Ok(())
+}
+
+#[test]
+fn project_body_updates_preserve_venture_org_edge_and_retire_only_old_project_parent() -> Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let second_parent = EntityId::now();
+    vault.put_project(
+        second_parent,
+        &ProjectRecord::new(second_parent, Some(root), root, leader),
+        1,
+    )?;
+    let venture = EntityId::now();
+    let original = ProjectRecord::new(venture, Some(root), root, leader);
+    vault.put_project(venture, &original, 2)?;
+    let org = EntityId::now();
+    vault.put_entity(
+        &org,
+        crate::registry::ENTITY_TYPE_ORG,
+        TimeRange { start: 3, end: 3 },
+        3,
+        b"org",
+    )?;
+    vault.put_edge(&venture, EdgeKind::BelongsTo, &org, 0.7)?;
+    let org_edge = vault
+        .edges_out(&venture)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::BelongsTo && edge.target == org)
+        .expect("venture belongs to org");
+    let check = |vault: &Vault, parent: EntityId| -> Result<()> {
+        let edges = vault.edges_out(&venture)?;
+        let org_after = edges
+            .iter()
+            .find(|edge| edge.kind == EdgeKind::BelongsTo && edge.target == org)
+            .expect("org link survives");
+        assert_eq!(org_after.weight, org_edge.weight);
+        assert_eq!(org_after.created_at, org_edge.created_at);
+        assert_eq!(org_after.vad, org_edge.vad);
+        assert_eq!(org_after.provenance, org_edge.provenance);
+        assert_eq!(vault.targets(&venture, EdgeKind::BelongsTo, None)?.len(), 2);
+        assert!(vault.edge_exists(&venture, EdgeKind::BelongsTo, &parent)?);
+        Ok(())
+    };
+    check(&vault, root)?;
+    vault.put_project(venture, &original, 4)?;
+    check(&vault, root)?;
+    let mut edited = original;
+    edited.roster.push(EntityId::now().to_hex());
+    vault.put_project(venture, &edited, 5)?;
+    check(&vault, root)?;
+    // Same shared projection door as replay, with a replicated body op.
+    vault
+        .batch()
+        .put_replicated(
+            &venture,
+            vault.project_type_byte()?,
+            TimeRange { start: 6, end: 6 },
+            6,
+            &encode(&edited)?,
+        )
+        .commit()?;
+    check(&vault, root)?;
+    edited.parents = vec![second_parent.to_hex()];
+    vault.put_project(venture, &edited, 7)?;
+    check(&vault, second_parent)?;
+    assert!(!vault.edge_exists(&venture, EdgeKind::BelongsTo, &root)?);
     Ok(())
 }
 
