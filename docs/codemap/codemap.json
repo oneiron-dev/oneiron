@@ -32402,6 +32402,28 @@
     },
     {
      "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "TaskAskOptionLink",
+      "TaskAskOptionLinkView"
+     ],
+     "path": "src/task_verb/ask_option_link.rs",
+     "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
+     "surface": {
+      "fn": 5,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/task_verb/ask_option_link/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_outcome_tests.rs",
@@ -32437,13 +32459,23 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/word_admission.rs",
+     "purpose": "Single answer admission path for authenticated actors and bearer-bound friends",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -32729,7 +32761,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 1,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -36573,7 +36605,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 60,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -36694,8 +36726,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2177,
-   "test_files": 735
+   "source_files": 2179,
+   "test_files": 736
   },
   "oneiron-android": {
    "files": [

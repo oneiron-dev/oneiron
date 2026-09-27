@@ -235,7 +235,7 @@ pub(super) fn question_digest(
     Ok(Some(*hash.finalize().as_bytes()))
 }
 
-fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -> Result<bool> {
+pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -> Result<bool> {
     if question_digest(vault, txn, &group.effective.what)? != Some(group.question_digest) {
         return Ok(true);
     }
@@ -321,7 +321,10 @@ fn reduce(
         .unwrap_or_default();
     let mut latest = BTreeMap::new();
     for entry in evidence.iter() {
-        if entry.source == TaskAskSource::Human {
+        if matches!(
+            entry.source,
+            TaskAskSource::Human | TaskAskSource::ForeignStated
+        ) {
             latest.insert(entry.person_ref, entry.answer.word_ref);
         }
     }
@@ -344,23 +347,25 @@ fn reduce(
             }
             TaskAskSource::Inform => TaskAskEvidenceReason::Inform,
             TaskAskSource::Executor => TaskAskEvidenceReason::Executor,
-            TaskAskSource::Human
+            TaskAskSource::Human | TaskAskSource::ForeignStated
                 if latest.get(&entry.person_ref) != Some(&entry.answer.word_ref) =>
             {
                 TaskAskEvidenceReason::Superseded
             }
-            TaskAskSource::Human
+            TaskAskSource::Human | TaskAskSource::ForeignStated
                 if !need.contains(&entry.person_ref)
                     && !decision_seats.contains(&entry.person_ref)
                     && !required.contains(&entry.person_ref) =>
             {
                 TaskAskEvidenceReason::OutsideElectorate
             }
-            TaskAskSource::Human if !sources.is_subset(&entry.word.provenance_refs) => {
+            TaskAskSource::Human | TaskAskSource::ForeignStated
+                if !sources.is_subset(&entry.word.provenance_refs) =>
+            {
                 unmet_sources.extend(sources.difference(&entry.word.provenance_refs).copied());
                 TaskAskEvidenceReason::MissingSource
             }
-            TaskAskSource::Human => TaskAskEvidenceReason::Counted,
+            TaskAskSource::Human | TaskAskSource::ForeignStated => TaskAskEvidenceReason::Counted,
         };
         entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted {
             spec.what

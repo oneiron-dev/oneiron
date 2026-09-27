@@ -567,6 +567,8 @@ impl TaskAskWord {
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskSource {
     Human,
+    /// Bearer-bound external word attributed to the intended person, not an instruction.
+    ForeignStated,
     Inform,
     Executor,
 }

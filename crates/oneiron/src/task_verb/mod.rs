@@ -5,6 +5,7 @@
 
 mod ask_band;
 mod ask_facade;
+mod ask_option_link;
 mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
@@ -116,6 +117,7 @@ pub(crate) use ask_facade::settle_waiting_asks;
 pub(crate) use ask_record::{ask_notice_at_in, guard_ask_fact_put};
 pub(crate) use ask_settlement::settle_ask_if_due;
 
+pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};
 pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
