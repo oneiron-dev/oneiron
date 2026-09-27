@@ -133,7 +133,8 @@ pub struct ProjectRoom {
     pub member_ids: Vec<String>,
     /// Membership never grants additional memory scope.
     pub claims_scope_ref: String,
-    #[serde(default)]
+    /// Absent on an ordinary room, so its body and API shape stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<RoomOriginCard>,
 }
 /// A reference to the original thread, not a second copy of its messages.
