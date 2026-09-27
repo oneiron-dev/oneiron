@@ -50,6 +50,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.actor_writes);
     }
 
+    if let Some(limits) = resolution.goal_limits {
+        hash_str(hasher, "goal_limits");
+        for field in limits.fields() {
+            hash_u64(hasher, field);
+        }
+    }
+
     if let Some(threshold) = resolution.proposal_check_threshold {
         hash_str(hasher, "proposal_check_threshold");
         hash_u64(hasher, threshold);

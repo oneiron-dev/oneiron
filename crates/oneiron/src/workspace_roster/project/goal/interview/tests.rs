@@ -299,10 +299,98 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
         },
         18,
     )?;
-    assert_eq!(vault.project(project)?.unwrap().goal, Some(id.to_hex()));
-    assert_eq!(vault.project_goal_record(project)?, Some(expected.clone()));
+    let first_claim_count = vault.count_entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
+    let first = GoalInterviewTurns {
+        question,
+        answer,
+        draft,
+        confirmation,
+    };
+    assert_eq!(
+        vault.write_project_goal_from_room_intake(&owner, project, attempt, first, 19)?,
+        id
+    );
+    assert_eq!(
+        vault.count_entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?,
+        first_claim_count
+    );
+    // New interview B supersedes A. A's old confirmation can no longer roll
+    // back B, even after restart or on a delayed retry.
+    let question_b = speak(
+        &vault,
+        room,
+        human,
+        EdgeActorClass::Human,
+        "Another goal",
+        None,
+        20,
+    );
+    agent_memory.rooms_claim(room, question_b, 21).unwrap();
+    let question_b = speak(
+        &vault,
+        room,
+        agent,
+        EdgeActorClass::Agent,
+        "What changed?",
+        Some(question_b),
+        22,
+    );
+    let mut next = expected;
+    next.primary_axes[0].bound = ">= 95".into();
+    let answer_b_json = serde_json::to_string(&next).unwrap();
+    let answer_b = speak(
+        &vault,
+        room,
+        human,
+        EdgeActorClass::Human,
+        &answer_b_json,
+        Some(question_b),
+        23,
+    );
+    agent_memory.rooms_claim(room, answer_b, 24).unwrap();
+    let draft_b = speak(
+        &vault,
+        room,
+        agent,
+        EdgeActorClass::Agent,
+        &answer_b_json,
+        Some(answer_b),
+        25,
+    );
+    let confirm_b = speak(
+        &vault,
+        room,
+        human,
+        EdgeActorClass::Human,
+        &format!(
+            "confirm {}",
+            blake3::hash(answer_b_json.as_bytes()).to_hex()
+        ),
+        Some(draft_b),
+        26,
+    );
+    let second = vault.write_project_goal_from_room_intake(
+        &owner,
+        project,
+        attempt,
+        GoalInterviewTurns {
+            question: question_b,
+            answer: answer_b,
+            draft: draft_b,
+            confirmation: confirm_b,
+        },
+        27,
+    )?;
+    assert_ne!(id, second);
+    assert!(
+        vault
+            .write_project_goal_from_room_intake(&owner, project, attempt, first, 28)
+            .is_err()
+    );
+    assert_eq!(vault.project_goal_record(project)?, Some(next.clone()));
+    assert_eq!(vault.project(project)?.unwrap().goal, Some(second.to_hex()));
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(reopened.project_goal_record(project)?, Some(expected));
+    assert_eq!(reopened.project_goal_record(project)?, Some(next));
     Ok(())
 }

@@ -226,10 +226,12 @@ pub(crate) fn guard_pointer_put(
     if previous.as_ref().and_then(|p| p.goal.as_ref()) == next.goal.as_ref() {
         return Ok(());
     }
-    let Some(new_ref) = next.goal.as_ref() else {
-        return Err(invalid());
-    };
-    let goal = EntityId::from_hex(new_ref).map_err(|_| invalid())?;
+    let goal = next
+        .goal
+        .as_deref()
+        .map(EntityId::from_hex)
+        .transpose()
+        .map_err(|_| invalid())?;
     if replicated {
         return Err(invalid());
     }
@@ -243,12 +245,23 @@ pub(crate) fn guard_pointer_put(
             .unwrap_or([0; 16])
             .as_slice(),
     );
-    expected.extend_from_slice(goal.as_bytes());
+    expected.extend_from_slice(goal.map_or([0; 16], |id| *id.as_bytes()).as_slice());
     expected.extend_from_slice(blake3::hash(bytes).as_bytes());
     if store.vault_meta.get(txn, &key(POINTER_KEY, id))?.as_deref() != Some(expected.as_slice()) {
         return Err(invalid());
     }
-    trusted_active_claim(store, txn, goal, id)?;
+    if let Some(goal) = goal {
+        trusted_active_claim(store, txn, goal, id)?;
+    } else {
+        let old = previous
+            .as_ref()
+            .and_then(|p| p.goal.as_deref())
+            .ok_or_else(invalid)
+            .and_then(|s| EntityId::from_hex(s).map_err(|_| invalid()))?;
+        if store.vault_meta.get(txn, &key(CLAIM_KEY, old))?.is_none() {
+            return Err(invalid());
+        }
+    }
     Ok(())
 }
 
@@ -271,6 +284,97 @@ pub(super) fn arm_pointer(
 }
 pub(super) fn disarm_pointer(store: &Store, txn: &mut RwTxn<'_>, project: EntityId) -> Result<()> {
     store.vault_meta.delete(txn, &key(POINTER_KEY, project))?;
+    Ok(())
+}
+
+/// Before tombstone publication, ungated calls must refuse goal deletions.
+/// The caller's `gated` proof is minted by the owner deletion facade; this
+/// check is re-run with that facade's own authority recheck in the write txn.
+pub(crate) fn precheck_delete(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: EntityId,
+    gated: bool,
+) -> Result<()> {
+    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_some() {
+        if !gated {
+            return Err(invalid());
+        }
+        let (body, bytes) = current_claim(store, txn, id)?;
+        let marker = store
+            .vault_meta
+            .get(txn, &key(CLAIM_KEY, id))?
+            .ok_or_else(invalid)?;
+        if marker.first() != Some(&1)
+            || marker.get(1..) != Some(blake3::hash(&bytes).as_bytes())
+            || body.predicate != PREDICATE
+        {
+            return Err(invalid());
+        }
+    }
+    if let Some(kind) = super::super::project_type(store)
+        && store.entities.get(txn, id.as_bytes())?.is_some_and(|raw| {
+            EntityMetadataHeader::parse(&raw).is_some_and(|header| header.entity_type == kind)
+        })
+        && let Some(project) =
+            super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
+        && project.goal.is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Remove a goal's current pointer and admission marker as part of the SAME
+/// destructive txn. The facade prechecked and revalidated owner authority
+/// before publishing; replicated tombstones reuse the established delete rail.
+pub(crate) fn retire_for_delete(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    let store = &vault.store;
+    if store.vault_meta.get(txn, &key(CLAIM_KEY, id))?.is_none() {
+        return Ok(());
+    }
+    let (body, _) = current_claim(store, txn, id)?;
+    let ClaimSubject::Entity(project_id) = body.subject else {
+        return Err(invalid());
+    };
+    // A soft-erased claim keeps its shell; its hub edge cannot outlive the
+    // admission marker. Hard purge also tolerates this already-removed edge.
+    vault
+        .batch_in()
+        .delete_edge(&id, crate::edge::EdgeKind::ClaimOf, &project_id)
+        .apply(txn)?;
+    let mut project: super::super::ProjectRecord =
+        super::super::record(store, txn, project_id, vault.project_type_byte()?)?
+            .ok_or_else(invalid)?;
+    if project.goal.as_deref() == Some(id.to_hex().as_str()) {
+        project.goal = None;
+        let bytes = super::super::encode(&project)?;
+        let mut marker = Vec::with_capacity(64);
+        marker.extend_from_slice(id.as_bytes());
+        marker.extend_from_slice(&[0; 16]);
+        marker.extend_from_slice(blake3::hash(&bytes).as_bytes());
+        store
+            .vault_meta
+            .put(txn, &key(POINTER_KEY, project_id), &marker)?;
+        vault
+            .batch_in()
+            .put(
+                &project_id,
+                vault.project_type_byte()?,
+                crate::TimeRange { start: 0, end: 0 },
+                0,
+                &bytes,
+            )
+            .apply(txn)?;
+        store
+            .vault_meta
+            .delete(txn, &key(POINTER_KEY, project_id))?;
+    }
+    store.vault_meta.delete(txn, &key(CLAIM_KEY, id))?;
     Ok(())
 }
 

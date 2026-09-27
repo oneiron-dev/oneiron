@@ -126,7 +126,38 @@ impl Vault {
             if confirmation != format!("confirm {}", blake3::hash(draft.as_bytes()).to_hex()) {
                 return Err(invalid());
             }
-            self.write_project_goal_in_txn(txn, owner, project_id, &record, now)
+            // A confirmation is single-use. Its stored claim is stable on an
+            // identical retry; an older retry after a newer goal never rolls
+            // the project back to historical words.
+            let completion_key = [
+                b"project.goal_intake.confirmation/".as_slice(),
+                turns.confirmation.as_bytes(),
+            ]
+            .concat();
+            if let Some(raw) = self.store.vault_meta.get(txn, &completion_key)? {
+                let id = EntityId::from_bytes(raw.as_ref().try_into().map_err(|_| invalid())?)?;
+                return if project.goal.as_deref() == Some(id.to_hex().as_str()) {
+                    Ok(id)
+                } else {
+                    Err(invalid())
+                };
+            }
+            // A draft from before the current goal cannot authorize replacing
+            // that goal, even if it was only confirmed after the replacement.
+            let raw = self
+                .store
+                .entities
+                .get(txn, project_id.as_bytes())?
+                .ok_or_else(invalid)?;
+            let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+            if project.goal.is_some() && header.learned_at > rows[0].at {
+                return Err(invalid());
+            }
+            let id = self.write_project_goal_in_txn(txn, owner, project_id, &record, now)?;
+            self.store
+                .vault_meta
+                .put(txn, &completion_key, id.as_bytes())?;
+            Ok(id)
         })
     }
 }

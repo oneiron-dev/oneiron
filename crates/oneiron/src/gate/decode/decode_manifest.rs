@@ -58,6 +58,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +104,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | "goal_limits"
         ) {
             return None;
         }
@@ -238,6 +240,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let goal_limits = match single_map_value(&entries, "goal_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::workspace_roster::GoalLimits::decode(value)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,6 +276,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        goal_limits,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

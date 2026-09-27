@@ -17166,7 +17166,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -34487,20 +34487,20 @@
      "path": "src/workspace_roster/project/goal.rs",
      "purpose": "Human-authenticated project goal intake; proposals never write this record",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "re-export": 1,
       "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/goal/admission.rs",
      "purpose": "Vault-private, exact-byte admission for goal claims and project goal pointers",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -34525,6 +34525,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/goal/limits.rs",
+     "purpose": "DEC-0005 admission limits",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -34547,7 +34557,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 8,
       "re-export": 1,
@@ -36738,7 +36748,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36754,7 +36764,7 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2180,
+   "source_files": 2181,
    "test_files": 737
   },
   "oneiron-android": {

@@ -56,6 +56,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             ]),
         ),
         (
+            Value::from("goal_limits"),
+            crate::workspace_roster::GoalLimits::default().encode(),
+        ),
+        (
             Value::from(POLICY_RULES_KEY),
             Value::Array(vec![
                 Value::Map(vec![

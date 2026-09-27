@@ -15,10 +15,13 @@ use std::collections::BTreeSet;
 pub(crate) const PREDICATE: &str = "project.goal_intake";
 mod admission;
 mod interview;
+mod limits;
 pub(crate) use admission::{
     admitted_claim_of_project, guard_claim_put, guard_goal_delete, guard_pointer_put,
+    precheck_delete as precheck_goal_delete, retire_for_delete as retire_goal_for_delete,
 };
 pub use interview::GoalInterviewTurns;
+pub(crate) use limits::GoalLimits;
 
 fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> {
     if body.predicate != PREDICATE
@@ -84,8 +87,6 @@ impl GoalRecord {
     fn validate(&self) -> Result<()> {
         if self.goal.trim().is_empty()
             || self.why.trim().is_empty()
-            || self.goal.len() > 4096
-            || self.why.len() > 4096
             || self.primary_axes.is_empty()
             || self.floor_axes.is_empty()
             || self.cost_axes.is_empty()
@@ -103,9 +104,6 @@ impl GoalRecord {
             if axis.name.trim().is_empty()
                 || axis.measure.trim().is_empty()
                 || axis.bound.trim().is_empty()
-                || axis.name.len() > 128
-                || axis.measure.len() > 1024
-                || axis.bound.len() > 1024
                 || !names.insert(axis.name.as_str())
             {
                 return Err(invalid());
@@ -120,12 +118,36 @@ impl GoalRecord {
                     || p.over.trim().is_empty()
                     || p.reason.trim().is_empty()
                     || p.prefer == p.over
-                    || p.prefer.len() > 1024
-                    || p.over.len() > 1024
-                    || p.reason.len() > 1024
             })
-            || self.preferences.len() > 64
-            || names.len() > 32
+        {
+            return Err(invalid());
+        }
+        Ok(())
+    }
+
+    fn validate_limits(&self, limits: GoalLimits) -> Result<()> {
+        let len = |s: &str| u64::try_from(s.len()).unwrap_or(u64::MAX);
+        if len(&self.goal) > limits.goal_bytes
+            || len(&self.why) > limits.why_bytes
+            || u64::try_from(self.primary_axes.len() + self.floor_axes.len() + self.cost_axes.len())
+                .unwrap_or(u64::MAX)
+                > limits.axes
+            || u64::try_from(self.preferences.len()).unwrap_or(u64::MAX) > limits.preferences
+            || self
+                .primary_axes
+                .iter()
+                .chain(&self.floor_axes)
+                .chain(&self.cost_axes)
+                .any(|axis| {
+                    len(&axis.name) > limits.axis_name_bytes
+                        || len(&axis.measure) > limits.axis_detail_bytes
+                        || len(&axis.bound) > limits.axis_detail_bytes
+                })
+            || self.preferences.iter().any(|pref| {
+                len(&pref.prefer) > limits.axis_detail_bytes
+                    || len(&pref.over) > limits.axis_detail_bytes
+                    || len(&pref.reason) > limits.axis_detail_bytes
+            })
         {
             return Err(invalid());
         }
@@ -160,6 +182,11 @@ impl Vault {
     ) -> Result<EntityId> {
         owner.revalidate_in_txn(self, txn)?;
         record.validate()?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        if policy.diagnostics().loaded_manifest_forces_fail_closed() {
+            return Err(invalid());
+        }
+        record.validate_limits(policy.goal_limits())?;
         let id = EntityId::now();
         let envelope = WriteEnvelope::new(
             WriteActor::new(owner.actor(), EdgeActorClass::Human),

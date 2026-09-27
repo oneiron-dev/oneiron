@@ -404,3 +404,202 @@ fn intake_does_not_supersede_a_claim_named_by_a_corrupt_project_pointer() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn goal_limits_are_policy_rows_and_narrow_only_at_admission() -> Result<()> {
+    let defaults = crate::workspace_roster::GoalLimits::default();
+    assert!(crate::workspace_roster::GoalLimits::decode(&defaults.encode()).is_some());
+    let mut malformed = defaults.encode();
+    let Value::Map(fields) = &mut malformed else {
+        unreachable!()
+    };
+    fields.push((Value::from("preferences"), Value::from(999_u64)));
+    assert!(crate::workspace_roster::GoalLimits::decode(&malformed).is_none());
+    let Value::Map(fields) = &mut malformed else {
+        unreachable!()
+    };
+    fields.pop();
+    fields.push((Value::from("unknown"), Value::from(1_u64)));
+    assert!(crate::workspace_roster::GoalLimits::decode(&malformed).is_none());
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let project = vault.root_project()?;
+    let human = EntityId::now();
+    vault.put_entity(
+        &human,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"human",
+    )?;
+    let owner = vault.authenticate_owner(
+        human,
+        &human.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let record = transcript_record();
+    vault.write_project_goal_from_intake(&owner, project, &record, 2)?;
+    let mut narrowed = defaults;
+    narrowed.preferences = 1;
+    let mut manifest = rmpv::decode::read_value(&mut std::io::Cursor::new(
+        crate::gate::default_policy_manifest(),
+    ))
+    .map_err(|_| invalid())?;
+    let Value::Map(ref mut rows) = manifest else {
+        unreachable!()
+    };
+    *rows
+        .iter_mut()
+        .find(|(k, _)| k.as_str() == Some("goal_limits"))
+        .ok_or_else(invalid)? = (Value::from("goal_limits"), narrowed.encode());
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).map_err(|_| invalid())?;
+    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &bytes)?;
+    assert_eq!(
+        crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?
+            .goal_limits()
+            .preferences,
+        1
+    );
+    // A narrowed rule cannot unwrite a historically admitted goal.
+    assert_eq!(vault.project_goal_record(project)?, Some(record.clone()));
+    let mut too_many = record.clone();
+    too_many.preferences.push(GoalPreference {
+        prefer: "speed".into(),
+        over: "cost".into(),
+        reason: "human pick".into(),
+    });
+    assert!(
+        vault
+            .write_project_goal_from_intake(&owner, project, &too_many, 3)
+            .is_err()
+    );
+    assert_eq!(vault.project_goal_record(project)?, Some(record));
+    Ok(())
+}
+
+#[test]
+fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Result<()> {
+    use crate::memory::SafeDeleteReason;
+    for hard in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        let root_record = vault.project(root)?.unwrap();
+        let human = EntityId::now();
+        vault.put_entity(
+            &human,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+        let project = EntityId::now();
+        vault.put_project(
+            project,
+            &ProjectRecord::new(
+                project,
+                Some(root),
+                root,
+                EntityId::from_hex(&root_record.leader)?,
+            ),
+            1,
+        )?;
+        let owner = vault.authenticate_owner(
+            human,
+            &human.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let first =
+            vault.write_project_goal_from_intake(&owner, project, &transcript_record(), 2)?;
+        let mut revised = transcript_record();
+        revised.primary_axes[0].bound = ">= 95".into();
+        let current = vault.write_project_goal_from_intake(&owner, project, &revised, 3)?;
+        assert!(vault.delete_entity(&current).is_err());
+        assert!(vault.batch().delete(&current).commit().is_err());
+        assert!(
+            vault
+                .delete_entity_with_reason(&current, crate::DeleteReason::UserHardDelete)
+                .is_err()
+        );
+        assert_eq!(vault.project_goal_record(project)?, Some(revised));
+        let result = vault
+            .memory(human, EdgeActorClass::Human)
+            .safe_delete(
+                &current.to_hex(),
+                if hard {
+                    SafeDeleteReason::UserHardDelete
+                } else {
+                    SafeDeleteReason::UserDelete
+                },
+            )
+            .map_err(|_| invalid())?;
+        assert!(result.existed);
+        if hard {
+            assert!(result.receipt_ref.is_some());
+            assert!(vault.get_raw(&current)?.is_none());
+        } else {
+            assert_eq!(
+                vault.get_raw(&current)?.unwrap().len(),
+                crate::batch::ENTITY_METADATA_HEADER_LEN
+            );
+        }
+        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project(project)?.unwrap().goal.is_none());
+        let mut edited = vault.project(project)?.unwrap();
+        edited.budget = Some(EntityId::now().to_hex());
+        vault.put_project(project, &edited, 4)?;
+        // Deleting a closed old claim cannot clear a newer project head.
+        vault
+            .memory(human, EdgeActorClass::Human)
+            .safe_delete(&first.to_hex(), SafeDeleteReason::UserDelete)
+            .map_err(|_| invalid())?;
+        assert!(vault.project_goal_record(project)?.is_none());
+        drop(vault);
+        let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        assert!(reopened.project_goal_record(project)?.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::UserHardDelete,
+    ] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let project = vault.root_project()?;
+        let human = EntityId::now();
+        vault.put_entity(
+            &human,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+        let owner = vault.authenticate_owner(
+            human,
+            &human.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let goal =
+            vault.write_project_goal_from_intake(&owner, project, &transcript_record(), 2)?;
+        let tombstone = crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: 3,
+            request_id: [0x77; 16],
+        }
+        .encode();
+        vault.apply_replayed_tombstone(&goal, &tombstone)?;
+        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project(project)?.unwrap().goal.is_none());
+        vault.apply_replayed_tombstone(&goal, &tombstone)?;
+        assert!(vault.project_goal_record(project)?.is_none());
+    }
+    Ok(())
+}

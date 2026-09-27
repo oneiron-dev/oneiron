@@ -115,10 +115,11 @@ pub use project::{
     PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
 };
 pub(crate) use project::{
-    HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put, guard_goal_delete,
-    guard_goal_pointer_put, is_project_entity, is_project_type, reconcile_project_rooms,
-    seed_root_project, validate_project_body, validate_project_edge_delete,
-    validate_project_edge_put, validate_project_graph, validate_room_body,
+    GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,
+    guard_goal_delete, guard_goal_pointer_put, is_project_entity, is_project_type,
+    precheck_goal_delete, reconcile_project_rooms, retire_goal_for_delete, seed_root_project,
+    validate_project_body, validate_project_edge_delete, validate_project_edge_put,
+    validate_project_graph, validate_room_body,
 };
 
 mod rooms;

@@ -155,6 +155,13 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.goal_limits {
+                    resolution.goal_limits = Some(
+                        resolution
+                            .goal_limits
+                            .map_or(limits, |old| old.restrict(limits)),
+                    );
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {
