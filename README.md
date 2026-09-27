@@ -116,8 +116,8 @@ For agent setup, scoped formatting/tests, and host requirements, start with
 [`AGENTS.md`](./AGENTS.md). [`WORKFLOW.md`](./WORKFLOW.md) covers parallel worktrees,
 build ownership, and full verification. `scripts/verify.sh --list` shows the
 scripted gate without building. The generated [`code map`](./docs/CODEMAP.md)
-links to each crate's file index; regenerate it with
-`python3 scripts/codemap/codemap.py` when mapped source facts change.
+links to each crate's file index; `main` regenerates it after every push, and
+`python3 scripts/codemap/codemap.py` writes a fresh local copy to read (never commit it).
 
 ## Upgrade Notes
 

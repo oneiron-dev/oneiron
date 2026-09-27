@@ -5,8 +5,10 @@
 # regenerate hint (including missing artifacts); an unreadable file or empty
 # scan is CODEMAP-ERROR (exit 1). Never a silent pass.
 #
-# To move the pin: run `python3 scripts/codemap/codemap.py` in the same PR
-# that adds, moves, or deletes a Rust file, and commit the regenerated files.
+# Only main writes the map: .github/workflows/codemap.yml regenerates and
+# commits it after every push to main, and PRs never touch it. scripts/verify.sh
+# runs this check only with CODEMAP_CHECK=1. Run the generator locally only to
+# read a fresh map, never to commit it.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || { echo "CODEMAP-ERROR: cannot cd to repo root"; exit 1; }
 exec python3 scripts/codemap/codemap.py --check
