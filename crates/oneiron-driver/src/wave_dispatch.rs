@@ -248,7 +248,13 @@ impl WaveDispatchPump {
                 Ok(None) => {
                     self.failed.retain(|key, _| key.task != task);
                 }
-                Err(error) => tracing::error!(?error, ?task, "wave TASK generation read failed"),
+                Err(error) => {
+                    // Keep scanning this page and later pages, but revisit a
+                    // transiently unreadable TASK after a bounded delay.
+                    self.dirty = true;
+                    self.scan_retry = Some(Instant::now() + self.limits.retry_initial);
+                    tracing::error!(?error, ?task, "wave TASK generation read failed");
+                }
             }
         }
         self.cursor = page.next_after;
@@ -367,7 +373,10 @@ fn verify_receipt(
     receipt: &WaveHandoffReceipt,
 ) -> Result<bool> {
     match (candidate.route, receipt) {
-        (WaveDispatchRoute::External, WaveHandoffReceipt::External) => Ok(true),
+        (WaveDispatchRoute::External, WaveHandoffReceipt::External) => Ok(matches!(
+            vault.wave_dispatch_generation(candidate.task, 0)?,
+            Some(WaveDispatchGeneration::External)
+        )),
         (
             WaveDispatchRoute::Attempt { id, generation },
             WaveHandoffReceipt::Local { lease_owner },
