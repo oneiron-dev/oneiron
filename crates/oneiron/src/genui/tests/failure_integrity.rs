@@ -246,7 +246,7 @@ fn failed_agent_run(vault: &crate::Vault, agent_ref: EntityId) -> Result<(Attemp
     use crate::agent_dispatch::{
         AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
     };
-    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome, FailAttempt, FailOutcome};
+    use crate::attempt_queue::{ClaimAttempt, ClaimOutcome};
 
     let AgentDispatchOutcome::Dispatched(status) =
         AgentDispatcher::new(vault).dispatch(DispatchAgent {
@@ -268,16 +268,33 @@ fn failed_agent_run(vault: &crate::Vault, agent_ref: EntityId) -> Result<(Attemp
         panic!("expected a claim");
     };
     assert_eq!(claimed.id, status.attempt.id);
-    let FailOutcome::Failed(failed) = queue.fail(FailAttempt {
-        id: claimed.id,
-        lease_owner: "card-agent-worker".to_owned(),
-        attempt_count: claimed.attempt_count,
-        reason: "detector.stable_code".to_owned(),
-        now: 30,
-    })?
+    let crate::failure_ladder::FailureLadderOutcome::Healer(healed) =
+        crate::failure_ladder::FailureLadder::new(vault).handle_attempt_failure(
+            crate::failure_ladder::HandleAttemptFailure {
+                attempt_id: claimed.id,
+                lease_owner: "card-agent-worker".to_owned(),
+                attempt_count: claimed.attempt_count,
+                evidence: crate::failure_ladder::TypedFailureEvidence {
+                    evidence_ref: Some(crate::test_util::entity(0x53).to_hex()),
+                    verdict: crate::failure_ladder::TypedFailureVerdict::NonRetryable,
+                    tier: Some(crate::failure_ladder::DetectorTier::T3Judge),
+                    stable_reason: "detector.stable_code".to_owned(),
+                },
+                blocked_reports: Vec::new(),
+                pre_fail_checkpoint_ref: crate::test_util::entity(0x51),
+                qa_thread_ref: crate::test_util::entity(0x52),
+                retry_at: 35,
+                now: 30,
+            },
+            crate::failure_ladder::FailureScopePolicy::auto(crate::failure_ladder::FailureScope {
+                agent_ref: agent_ref.to_hex(),
+                skill_ref: None,
+            }),
+        )?
     else {
-        panic!("expected a terminal failure");
+        panic!("expected a typed terminal failure");
     };
+    let failed = healed.surface.failed_attempt;
     assert_eq!(failed.state, crate::attempt_queue::AttemptState::Failed);
     assert_eq!(queue.get(failed.id)?, Some(failed.clone()));
     let tree = crate::run_tree::RunTreeAdapter::new(vault).read_run("run-card-agent")?;

@@ -167,17 +167,15 @@ fn card_attempt_in_state(
             Ok(completed)
         }
         AttemptState::Failed => {
-            let FailOutcome::Failed(failed) = queue.fail(FailAttempt {
-                id: current.id,
-                lease_owner: LEASE_OWNER.to_owned(),
-                attempt_count: current.attempt_count,
-                reason: "detector.stable_code".to_owned(),
-                now: 30,
-            })?
+            let FailureLadderOutcome::Healer(healed) = FailureLadder::new(vault)
+                .handle_attempt_failure(
+                    failure_input(&current, permanent(), 30),
+                    auto_policy(agent_ref),
+                )?
             else {
-                panic!("expected a fresh failure");
+                panic!("expected a fresh typed failure");
             };
-            Ok(failed)
+            Ok(healed.surface.failed_attempt)
         }
         AttemptState::Scheduled => {
             let RetryOutcome::Retried(scheduled) = queue.retry(RetryAttempt {

@@ -322,7 +322,7 @@ impl<'a> AgentDispatcher<'a> {
         self.dispatchable_definition_in_txn(&txn, target)
     }
 
-    pub(super) fn dispatchable_definition_in_txn(
+    pub(crate) fn dispatchable_definition_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         target: &AgentDispatchTarget,

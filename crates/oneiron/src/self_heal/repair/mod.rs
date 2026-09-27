@@ -54,6 +54,12 @@ pub enum RepairOperation {
         skill_ref: EntityId,
         patch_ref: String,
     },
+    /// Case-bound, agent-targeted healer diagnosis. It is never an effect;
+    /// each route is a review-only proposal, including fork-resume.
+    FixAgent {
+        case_ref: String,
+        route: crate::failure_ladder::HealerRepairRoute,
+    },
     /// Dev-time code review only; no repository or patch access is provided.
     DevPatch { repo_ref: String, patch_ref: String },
     /// Dev-time schema review only; no migration capability is provided.
@@ -74,6 +80,7 @@ impl RepairOperation {
             Self::NarrowPolicy { .. } => "narrow_policy",
             Self::ProposeClaim { .. } => "propose_claim",
             Self::SkillEdit { .. } => "skill_edit",
+            Self::FixAgent { .. } => "fix_agent",
             Self::DevPatch { .. } => "dev_patch",
             Self::SchemaPatch { .. } => "schema_patch",
         }

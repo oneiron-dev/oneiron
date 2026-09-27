@@ -57,7 +57,7 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Retire paid-step receipts when their attempt can no longer replay.
-    pub(in crate::dreamer_runner) fn cleanup_step_receipts_in_txn(
+    pub(crate) fn cleanup_step_receipts_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         attempt_id: AttemptId,

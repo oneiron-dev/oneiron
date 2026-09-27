@@ -33,6 +33,7 @@ pub(crate) fn validate_repair_proposal(proposal: &RepairProposal, session_tag: &
             Ok(())
         }
         RepairOperation::SkillEdit { patch_ref, .. } => validate_ref(patch_ref),
+        RepairOperation::FixAgent { case_ref, .. } => validate_ref(case_ref),
         RepairOperation::DevPatch {
             repo_ref,
             patch_ref,

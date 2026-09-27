@@ -16,7 +16,7 @@ use super::parse_card_ref;
 /// Validate reference spellings, then bind the selected repair to its context.
 /// Artifact kinds and skill-manifest relations have no validation substrate
 /// here. These strings remain references, not executable authority.
-pub(super) fn require_diagnosed_route(
+pub(crate) fn require_diagnosed_route(
     vault: &Vault,
     failing_attempt_id: AttemptId,
     pre_fail_checkpoint_ref: EntityId,
