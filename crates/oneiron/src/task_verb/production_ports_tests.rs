@@ -5,7 +5,7 @@ use crate::linear_sync::*;
 use crate::wave_orchestration::*;
 use crate::{EntityId, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::BTreeMap, rc::Rc};
 
 #[test]
 fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -> WaveResult<()> {
@@ -125,8 +125,18 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
 struct Tracker {
     changes: Rc<RefCell<Vec<LinearIssueChange>>>,
     cursors: Rc<RefCell<Vec<Option<String>>>>,
+    current: Rc<RefCell<BTreeMap<String, LinearIssueChange>>>,
+    updates: Rc<RefCell<usize>>,
 }
 impl LinearChangeSource for Tracker {
+    fn current_issue(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<LinearIssueChange> {
+        self.current
+            .borrow()
+            .get(&issue.issue_id)
+            .cloned()
+            .ok_or_else(|| LinearSyncError::Transport("missing current tracker issue".into()))
+    }
+
     fn changes_since(&mut self, cursor: Option<&str>) -> LinearSyncResult<LinearChangePage> {
         self.cursors.borrow_mut().push(cursor.map(str::to_owned));
         Ok(LinearChangePage {
@@ -142,7 +152,7 @@ impl LinearEgress for Tracker {
         task: EntityId,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
-        Ok(LinearIssueChange {
+        let change = LinearIssueChange {
             event_id: format!("create-{}", task.to_hex()),
             issue: LinearIssueRef {
                 issue_id: task.to_hex(),
@@ -151,7 +161,11 @@ impl LinearEgress for Tracker {
             },
             updated_at_ms: 1000,
             fields: fields.clone(),
-        })
+        };
+        self.current
+            .borrow_mut()
+            .insert(change.issue.issue_id.clone(), change.clone());
+        Ok(change)
     }
     fn update_issue(
         &mut self,
@@ -159,13 +173,86 @@ impl LinearEgress for Tracker {
         issue: &LinearIssueRef,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
-        Ok(LinearIssueChange {
+        *self.updates.borrow_mut() += 1;
+        let change = LinearIssueChange {
             event_id: format!("update-{}", issue.issue_id),
             issue: issue.clone(),
             updated_at_ms: 2000,
             fields: fields.clone(),
-        })
+        };
+        self.current
+            .borrow_mut()
+            .insert(issue.issue_id.clone(), change.clone());
+        Ok(change)
     }
+}
+
+#[test]
+fn scheduled_mirror_preflights_linked_issue_before_full_snapshot_push() -> LinearSyncResult<()> {
+    let dir = tempfile::tempdir().map_err(crate::Error::from)?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let task = vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(Value::from("work"), Some("base".into()), None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: owner }),
+        )
+        .expect("task")
+        .task_ref
+        .unwrap();
+    let tracker = Tracker {
+        changes: Rc::new(RefCell::new(Vec::new())),
+        cursors: Rc::new(RefCell::new(Vec::new())),
+        current: Rc::new(RefCell::new(BTreeMap::new())),
+        updates: Rc::new(RefCell::new(0)),
+    };
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    assert_eq!(
+        adapter.synchronize(100)?.0[0].status,
+        LinearMirrorStatus::Linked
+    );
+    let initial = adapter.tasks().task_snapshot(task)?;
+    let issue = adapter.tasks().link(task)?.expect("link").issue;
+    let mut local = initial.fields.clone();
+    local.title = "local".into();
+    adapter
+        .tasks_mut()
+        .apply_issue_fields(task, initial.revision, &local, 101)?;
+    let mut remote = initial.fields;
+    remote.title = "remote".into();
+    remote.status = "remote-status".into();
+    tracker.current.borrow_mut().insert(
+        issue.issue_id.clone(),
+        LinearIssueChange {
+            event_id: "remote-before-scheduled-push".into(),
+            issue: issue.clone(),
+            updated_at_ms: 2000,
+            fields: remote.clone(),
+        },
+    );
+    // The remote event is NOT in a cursor page; only the exact-issue preflight
+    // can prevent the scheduled full snapshot from overwriting it.
+    let (pushed, _) = adapter.synchronize(102)?;
+    assert_eq!(pushed[0].status, LinearMirrorStatus::Conflict);
+    assert_eq!(*tracker.updates.borrow(), 0);
+    assert_eq!(tracker.current.borrow()[&issue.issue_id].fields, remote);
+    let stored = adapter.tasks().task_snapshot(task)?;
+    assert_eq!(stored.fields.title, "local");
+    assert_eq!(stored.fields.status, "remote-status");
+    assert!(!adapter.tasks().dirty_tasks()?.is_empty());
+    Ok(())
 }
 
 #[test]
@@ -192,6 +279,8 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     let tracker = Tracker {
         changes: Rc::new(RefCell::new(Vec::new())),
         cursors: Rc::new(RefCell::new(Vec::new())),
+        current: Rc::new(RefCell::new(BTreeMap::new())),
+        updates: Rc::new(RefCell::new(0)),
     };
     let mut adapter = LinearSyncAdapter::new(
         VaultLinearTaskStore::new(&vault),
@@ -211,12 +300,17 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
     );
     let mut new_fields = original.fields.clone();
     new_fields.description = Some("tracker description".into());
-    tracker.changes.borrow_mut().push(LinearIssueChange {
+    let inbound = LinearIssueChange {
         event_id: "inbound-edit".into(),
         issue: link.issue.clone(),
         updated_at_ms: 3000,
         fields: new_fields.clone(),
-    });
+    };
+    tracker
+        .current
+        .borrow_mut()
+        .insert(link.issue.issue_id.clone(), inbound.clone());
+    tracker.changes.borrow_mut().push(inbound);
     let (_, pulled) = adapter.synchronize(101)?;
     assert_eq!(pulled.applied, 1);
     assert_eq!(adapter.tasks().task_snapshot(task)?.fields, new_fields);

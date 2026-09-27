@@ -451,6 +451,7 @@ fn agent_knowledge_files() -> Result<(Vec<HubFile>, crate::batch::export::Export
         files,
         crate::batch::export::ExportEntity {
             id: EntityId::now().to_hex(),
+            short_ref: None,
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred_start: 1,
             occurred_end: 1,
