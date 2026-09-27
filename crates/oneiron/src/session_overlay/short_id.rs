@@ -69,11 +69,21 @@ impl SessionOverlay {
             let existing = Zeroizing::new(existing);
             let (short_id, old_content_hash) = parse_session_short_id_value(&existing)?;
             let mut short_id = Zeroizing::new(short_id.to_owned());
+            #[cfg(test)]
+            crate::session_overlay::hygiene_tests::register_short_id_buffer(
+                crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
+                short_id.as_bytes(),
+            );
             if old_content_hash != content_hash {
                 let stale_key = Zeroizing::new(encode_session_short_id_forward_key(
                     &short_id,
                     old_content_hash,
                 ));
+                #[cfg(test)]
+                crate::session_overlay::hygiene_tests::register_short_id_buffer(
+                    crate::session_overlay::hygiene_tests::ShortIdScratch::StaleForwardKey,
+                    &stale_key,
+                );
                 self.delete_with_base_backing(OverlayKeyspace::ShortIds, &stale_key, false)?;
             }
             self.put_session_short_id_rows(id, &short_id, content_hash)?;
@@ -89,6 +99,11 @@ impl SessionOverlay {
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("session short id counter"))?;
         let mut short_id = Zeroizing::new(format!("{SESSION_SHORT_ID_SIGIL}{next}"));
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_short_id_buffer(
+            crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
+            short_id.as_bytes(),
+        );
         self.put_session_short_id_rows(id, &short_id, content_hash)?;
         Ok((std::mem::take(&mut *short_id), content_hash))
     }
@@ -104,6 +119,11 @@ impl SessionOverlay {
     ) -> Result<()> {
         let forward_key =
             Zeroizing::new(encode_session_short_id_forward_key(short_id, content_hash));
+        #[cfg(test)]
+        crate::session_overlay::hygiene_tests::register_short_id_buffer(
+            crate::session_overlay::hygiene_tests::ShortIdScratch::NewForwardKey,
+            &forward_key,
+        );
         self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
         self.put(
             OverlayKeyspace::ShortIdsReverse,

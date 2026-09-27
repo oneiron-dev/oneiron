@@ -764,7 +764,14 @@ fn session_short_ids_are_unique_and_outside_the_base_namespace() -> Result<()> {
     let mut seen = BTreeSet::new();
     for index in 0_u8..5 {
         let id = EntityId::now();
-        let (short_id, content_hash) = overlay.alloc_session_short_id(&id, &[index])?;
+        let (short_id, content_hash) = if index == 0 {
+            super::hygiene_tests::observe_short_id_scratch(
+                super::hygiene_tests::ShortIdScratch::NewForwardKey,
+                || overlay.alloc_session_short_id(&id, &[index]),
+            )?
+        } else {
+            overlay.alloc_session_short_id(&id, &[index])?
+        };
 
         assert!(
             !parses_as_base_short_id(&short_id),
@@ -807,10 +814,10 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
 
     let id = EntityId::now();
     let (first, first_hash) = overlay.alloc_session_short_id(&id, b"body-one")?;
-    let first_key = encode_session_short_id_forward_key(&first, first_hash);
-    let (second, second_hash) = super::hygiene_tests::observe_pattern(&first_key, || {
-        overlay.alloc_session_short_id(&id, b"body-two")
-    })?;
+    let (second, second_hash) = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-two"),
+    )?;
 
     assert_eq!(first, second, "the room alias must be stable for an entity");
     assert_ne!(
@@ -846,17 +853,18 @@ fn reallocating_keeps_the_alias_and_retires_the_stale_forward_row() -> Result<()
 
     drop(snapshot);
     segment.commit()?;
-    let second_key = encode_session_short_id_forward_key(&second, second_hash);
     assert_ne!(second_hash, session_short_id_content_hash(b"body-three"));
     // No txn segment: the stale-key delete fails before staging. Both the
     // encoded key and the borrowed alias must scrub on this error exit.
-    let failure = super::hygiene_tests::observe_pattern(&second_key, || {
-        overlay.alloc_session_short_id(&id, b"body-three")
-    });
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::StaleForwardKey,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
     assert!(matches!(failure, Err(Error::InvariantViolation(_))));
-    let failure = super::hygiene_tests::observe_pattern(second.as_bytes(), || {
-        overlay.alloc_session_short_id(&id, b"body-three")
-    });
+    let failure = super::hygiene_tests::observe_short_id_scratch(
+        super::hygiene_tests::ShortIdScratch::Alias,
+        || overlay.alloc_session_short_id(&id, b"body-three"),
+    );
     assert!(matches!(failure, Err(Error::InvariantViolation(_))));
     Ok(())
 }
