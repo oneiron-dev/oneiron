@@ -3,14 +3,18 @@ use super::{
     ScopedRead, ScopedReadReceipt, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport,
     WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
-use crate::claim::{decode_claim_body, encode_claim_body};
+use crate::claim::{ClaimSubject, decode_claim_body, encode_claim_body};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::ports::TombstoneStoreRead;
+use crate::store::Store;
 use crate::{EdgeKind, EntityId, Vault};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 const SCHEDULE_PREFIX: &[u8] = b"weave:schedule:v1:";
 const DIGEST_PREFIX: &[u8] = b"weave:digest:v1:";
+const SOURCE_PREFIX: &[u8] = b"weave:digest_source:v1:";
 
 fn invalid() -> Error {
     Error::InvalidConfig("invalid weave digest row".into())
@@ -268,6 +272,118 @@ impl WireDigest {
     }
 }
 
+/// Include the copied claim and every typed reference carried by its saved
+/// projection. This is an index over byte carriers, not a read authorization.
+fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
+    let mut sources = BTreeSet::new();
+    for section in &report.sections {
+        for item in &section.items {
+            match item {
+                WeaveItem::Claim { id, body } => {
+                    sources.insert(*id);
+                    match body.subject {
+                        ClaimSubject::Entity(subject) => {
+                            sources.insert(subject);
+                        }
+                        ClaimSubject::Edge { source, target, .. } => {
+                            sources.insert(source);
+                            sources.insert(target);
+                        }
+                    }
+                }
+                WeaveItem::Project { id, goal } => {
+                    sources.insert(*id);
+                    if let Some(goal) = goal {
+                        sources.insert(EntityId::from_hex(goal).map_err(|_| invalid())?);
+                    }
+                }
+                WeaveItem::Budget {
+                    project,
+                    budget_ref,
+                } => {
+                    sources.insert(*project);
+                    sources.insert(*budget_ref);
+                }
+                WeaveItem::Link { source, target, .. } => {
+                    sources.insert(*source);
+                    sources.insert(*target);
+                }
+            }
+        }
+    }
+    Ok(sources)
+}
+
+fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {
+    [SOURCE_PREFIX, source.as_bytes(), digest_key].concat()
+}
+
+/// A hard delete cannot leave a copied report body in vault metadata. This
+/// source-prefix index is populated in the same transaction as publication,
+/// and invalidated by the common deletion door in its erasure transaction.
+pub(crate) fn invalidate_weave_digest_source_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    let prefix = [SOURCE_PREFIX, source.as_bytes()].concat();
+    let keys = store
+        .vault_meta
+        .prefix_iter(&*txn, &prefix)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<Result<Vec<_>>>()?;
+    for index_key in keys {
+        let digest_key = index_key
+            .strip_prefix(prefix.as_slice())
+            .ok_or(Error::CorruptedIndex("weave digest source index"))?;
+        if !digest_key.starts_with(DIGEST_PREFIX)
+            || digest_key.len() != DIGEST_PREFIX.len() + 1 + 16 + 8
+        {
+            return Err(Error::CorruptedIndex("weave digest source index"));
+        }
+        if let Some(raw) = store.vault_meta.get(&*txn, digest_key)? {
+            // Even an undecodable saved row is deleted. If it cannot be
+            // decoded, orphan index keys contain references but no body bytes.
+            if let Ok(wire) = serde_json::from_slice::<WireDigest>(&raw)
+                && let Ok(report) = wire.into_report()
+                && let Ok(sources) = report_sources(&report.value)
+            {
+                for other in sources {
+                    store
+                        .vault_meta
+                        .delete(txn, &source_key(&other, digest_key))?;
+                }
+            }
+            store.vault_meta.delete(txn, digest_key)?;
+        }
+        store.vault_meta.delete(txn, &index_key)?;
+    }
+    Ok(())
+}
+
+/// Refuse a stale saved body even if a metadata index row is lost or a
+/// deletion tombstone has committed before its active-store purge.
+fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveReport) -> Result<bool> {
+    for source in report_sources(report)? {
+        if store.port_deletion_state(txn, &source)?.deleted {
+            return Ok(false);
+        }
+    }
+    for section in &report.sections {
+        for item in &section.items {
+            if let WeaveItem::Claim { id, .. } = item
+                && store
+                    .entities
+                    .get(txn, id.as_bytes())?
+                    .is_none_or(|raw| raw.len() <= crate::batch::ENTITY_METADATA_HEADER_LEN)
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
 impl Vault {
     /// Owner-authorized local schedule. Hosts enqueue due rows; this door owns no timer.
     pub fn set_weave_digest_schedule(
@@ -342,14 +458,20 @@ impl Vault {
             .get(&txn, &key)?
             .map(|bytes| {
                 let wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-                Ok(StoredWeaveDigest {
+                let rendered_at = wire.rendered_at;
+                let report = wire.into_report()?;
+                if !sources_live_in_txn(&self.store, &txn, &report.value)? {
+                    return Ok(None);
+                }
+                Ok(Some(StoredWeaveDigest {
                     reader,
                     scheduled_for,
-                    rendered_at: wire.rendered_at,
-                    report: wire.into_report()?,
-                })
+                    rendered_at,
+                    report,
+                }))
             })
             .transpose()
+            .map(Option::flatten)
     }
 }
 
@@ -361,6 +483,21 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         now: u64,
     ) -> Result<Option<StoredWeaveDigest>> {
+        self.render_due_weave_digest_with(reader, now, || Ok(()))
+    }
+
+    // The callback is used only by same-module tests to place a concurrent
+    // mutation precisely between projection and the publication transaction.
+    fn render_due_weave_digest_with(
+        &self,
+        reader: WeaveReader<'_>,
+        now: u64,
+        before_commit: impl FnOnce() -> Result<()>,
+    ) -> Result<Option<StoredWeaveDigest>> {
+        let owner = match &reader {
+            WeaveReader::Owner(owner) => Some(*owner),
+            _ => None,
+        };
         let id = match &reader {
             WeaveReader::Person(id) => WeaveDigestReader::Person(*id),
             WeaveReader::Owner(owner) => WeaveDigestReader::Owner(owner.actor()),
@@ -410,6 +547,7 @@ impl ScopedRead<'_> {
             )
             .ok_or_else(invalid)?;
         let report = self.weave_report(reader, &row.recipe)?;
+        let sources = report_sources(&report.value)?;
         let wire = WireDigest::from_report(now, &report)?;
         let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
         let next = serde_json::to_vec(&WireSchedule {
@@ -422,9 +560,50 @@ impl ScopedRead<'_> {
             row.next_due_at.to_be_bytes().to_vec(),
         ]
         .concat();
+        before_commit()?;
         self.vault.with_write_txn(|txn| {
+            if let Some(owner) = owner {
+                owner.revalidate_in_txn(self.vault, txn)?;
+            }
+            // Verified credentials and the actor's current floor must still
+            // authorize the copied projection at the commit linearization point.
+            let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
             if self.vault.store.vault_meta.get(&*txn, &key)?.as_deref() != Some(saved.as_slice()) {
                 return Ok(None);
+            }
+            if !sources_live_in_txn(&self.vault.store, txn, &report.value)? {
+                return Ok(None);
+            }
+            for section in &report.value.sections {
+                for item in &section.items {
+                    if let WeaveItem::Claim { id, body } = item {
+                        let fresh = self.vault.store.entities.get(&*txn, id.as_bytes())?;
+                        let encoded = encode_claim_body(body)?;
+                        if fresh.is_none_or(|raw| {
+                            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+                                != Some(encoded.as_slice())
+                        }) || !self
+                            .is_entity_retrievable_with_policy_in(txn, &policy, &filter, id)?
+                        {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+            if let Some(raw) = self.vault.store.vault_meta.get(&*txn, &digest_key)? {
+                let previous: WireDigest = serde_json::from_slice(&raw).map_err(|_| invalid())?;
+                for source in report_sources(&previous.into_report()?.value)? {
+                    self.vault
+                        .store
+                        .vault_meta
+                        .delete(txn, &source_key(&source, &digest_key))?;
+                }
+            }
+            for source in &sources {
+                self.vault
+                    .store
+                    .vault_meta
+                    .put(txn, &source_key(source, &digest_key), &[])?;
             }
             self.vault.store.vault_meta.put(txn, &digest_key, &bytes)?;
             self.vault.store.vault_meta.put(txn, &key, &next)?;

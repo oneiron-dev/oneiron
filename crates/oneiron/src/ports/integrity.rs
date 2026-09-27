@@ -116,6 +116,7 @@ pub(crate) fn invalidate_source_in_txn(
     document: &EntityId,
 ) -> Result<()> {
     use super::JobQueue;
+    crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     let prefix = [DEP, document.as_bytes()].concat();
     let dependents = scan_dependents(store, txn, &prefix)?;
     for dependent in dependents {

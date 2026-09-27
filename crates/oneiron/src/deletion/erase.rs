@@ -634,6 +634,7 @@ impl Vault {
         // counts as local state to erase, mirroring the local
         // `delete_entity_without_header` semantics.
         if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+            crate::claim::invalidate_weave_digest_source_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::agent_def::retire_birth_sources_for_entity_in_txn(&self.store, wtxn, id)?;
             crate::receipt::retire_receipt_archives_for_erased_id(&self.store, wtxn, id)?;

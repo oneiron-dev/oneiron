@@ -380,6 +380,7 @@ impl Vault {
         // CRDT tombstone above is already published, so the id IS
         // hard-deleted), guarded so an existing marker is never overwritten.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
+            crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
             if self.store.sync_state.get(&wtxn, &marker_key)?.is_none() {
                 self.store
                     .sync_state

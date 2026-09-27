@@ -233,3 +233,200 @@ fn schedule_refuses_cross_role_recipes_and_cross_reader_render() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn hard_delete_scrubs_copied_digest_bytes_and_saved_read_refuses_erased_source() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0x61);
+    let person_id = entity(0x62);
+    let other_id = entity(0x63);
+    for id in [owner_id, person_id, other_id] {
+        person(&vault, id)?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let erased = entity(0x64);
+    let intact = entity(0x65);
+    for (id, subject) in [(erased, person_id), (intact, other_id)] {
+        vault.put_claim(
+            &id,
+            &ClaimBody::new(
+                "report.digest",
+                ClaimSubject::Entity(subject),
+                Value::from("copied body"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            ),
+            TimeRange { start: 1, end: 1 },
+            1,
+        )?;
+    }
+    crate::test_util::authorize_readers(&vault, &[&person_id.to_hex(), &other_id.to_hex()]);
+    for subject in [person_id, other_id] {
+        let reader = WeaveDigestReader::Person(subject);
+        vault.set_weave_digest_schedule(
+            &owner,
+            &WeaveDigestSchedule {
+                reader,
+                cadence: WeaveDigestCadence::Daily,
+                next_due_at: 1,
+                recipe: recipe(WeaveSectionKind::Changes),
+            },
+        )?;
+        vault
+            .scoped_read(ScopedReadActorKey::new(subject.to_hex()).unwrap())
+            .render_due_weave_digest(WeaveReader::Person(subject), 1)?
+            .unwrap();
+    }
+    let digest_key = [
+        WeaveDigestReader::Person(person_id).key(DIGEST_PREFIX),
+        1u64.to_be_bytes().to_vec(),
+    ]
+    .concat();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &digest_key)?
+            .is_some()
+    );
+    assert!(vault.delete_entity(&erased)?);
+    assert!(
+        vault
+            .read_weave_digest(&owner, WeaveDigestReader::Person(person_id), 1)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &digest_key)?
+            .is_none()
+    );
+    assert!(
+        vault
+            .read_weave_digest(&owner, WeaveDigestReader::Person(other_id), 1)?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn deletion_between_projection_and_commit_cannot_republish_erased_body() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0x71);
+    let person_id = entity(0x72);
+    person(&vault, owner_id)?;
+    person(&vault, person_id)?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let erased = entity(0x73);
+    vault.put_claim(
+        &erased,
+        &ClaimBody::new(
+            "report.digest",
+            ClaimSubject::Entity(person_id),
+            Value::from("never republish"),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
+        ),
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    crate::test_util::authorize_readers(&vault, &[&person_id.to_hex()]);
+    let reader = WeaveDigestReader::Person(person_id);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader,
+            cadence: WeaveDigestCadence::Daily,
+            next_due_at: 2,
+            recipe: recipe(WeaveSectionKind::Changes),
+        },
+    )?;
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(person_id.to_hex()).unwrap());
+    let result = scoped.render_due_weave_digest_with(WeaveReader::Person(person_id), 2, || {
+        vault.delete_entity(&erased)?;
+        Ok(())
+    })?;
+    assert!(result.is_none());
+    assert!(vault.read_weave_digest(&owner, reader, 2)?.is_none());
+    assert_eq!(
+        vault
+            .weave_digest_schedule(&owner, reader)?
+            .unwrap()
+            .next_due_at,
+        2
+    );
+    assert!(
+        scoped
+            .render_due_weave_digest(WeaveReader::Person(person_id), 2)?
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_inactivation_between_projection_and_commit_preserves_due_row() -> Result<()> {
+    let (_tmp, vault) = open_test_vault_with(embedding_test_config());
+    let owner_id = entity(0x81);
+    person(&vault, owner_id)?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        &owner_id.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let reader = WeaveDigestReader::Owner(owner_id);
+    vault.set_weave_digest_schedule(
+        &owner,
+        &WeaveDigestSchedule {
+            reader,
+            cadence: WeaveDigestCadence::Weekly,
+            next_due_at: 3,
+            recipe: recipe(WeaveSectionKind::SieveScore),
+        },
+    )?;
+    let scoped = vault.scoped_read(ScopedReadActorKey::new(owner_id.to_hex()).unwrap());
+    let before = vault
+        .store
+        .vault_meta
+        .get(&vault.store.env.read_txn()?, &reader.key(SCHEDULE_PREFIX))?
+        .unwrap()
+        .to_vec();
+    assert!(
+        scoped
+            .render_due_weave_digest_with(WeaveReader::Owner(&owner), 3, || {
+                vault.delete_entity(&owner_id)?;
+                Ok(())
+            })
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &reader.key(SCHEDULE_PREFIX))?
+            .unwrap(),
+        before
+    );
+    let digest_key = [reader.key(DIGEST_PREFIX), 3u64.to_be_bytes().to_vec()].concat();
+    assert!(
+        vault
+            .store
+            .vault_meta
+            .get(&vault.store.env.read_txn()?, &digest_key)?
+            .is_none()
+    );
+    Ok(())
+}

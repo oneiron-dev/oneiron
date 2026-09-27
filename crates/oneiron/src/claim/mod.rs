@@ -84,6 +84,7 @@ pub use scope_stamp::{
     PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
+pub(crate) use scoped_read::invalidate_weave_digest_source_in_txn;
 pub use scoped_read::*;
 pub use source_trust::*;
 pub use status::*;

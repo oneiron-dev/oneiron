@@ -24,6 +24,7 @@ mod point_reads;
 mod receipt;
 mod retrieval_visibility;
 mod weave_digest;
+pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
     StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule,
 };
