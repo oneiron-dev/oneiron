@@ -517,9 +517,6 @@ fn next_entry(
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
         || fold.vault_root_is_conflicted()
-        || fold.authority_forks.iter().any(|fork| {
-            fork.signer == issuer.public_key() && fork.status == AuthorityForkStatus::Quarantined
-        })
         || !roster_has_live_owner(&fold.roster, &issuer.public_key())
     {
         return Err(invalid_authority());

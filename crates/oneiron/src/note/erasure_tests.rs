@@ -94,7 +94,12 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
     #[cfg(not(feature = "sync"))]
     {
         // The copied citation is local delete scope even with no source row.
-        vault.delete_entity(&source).unwrap();
+        vault
+            .delete_entity_with_options(
+                &source,
+                crate::deletion::DeleteEntityOptions { purge: true },
+            )
+            .unwrap();
         let sweep = crate::sweep::run_hard_erase_sweep(&vault).unwrap();
         assert_eq!(sweep.jobs_processed, 0);
         assert!(sweep.jobs_deferred > 0);
@@ -188,7 +193,10 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
             .unwrap();
         let source_raw = vault.get_raw(&source).unwrap().unwrap();
         vault
-            .delete_entity(&if erase_claim { first_claim } else { source })
+            .delete_entity_with_options(
+                &if erase_claim { first_claim } else { source },
+                crate::deletion::DeleteEntityOptions { purge: true },
+            )
             .unwrap();
         let after = vault.note_document(brief).unwrap();
         assert_eq!(after.markdown, before.markdown);
