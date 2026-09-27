@@ -10,6 +10,7 @@ use crate::outbound_intent_ledger::{
     BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId, IntentLedgerError,
     OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
 };
+use crate::receipt::ReceiptRecord;
 
 pub(crate) type OutboundEffectError = IntentLedgerError;
 
@@ -28,6 +29,9 @@ pub(crate) struct OutboundEffectResult {
     pub(crate) gate_reason_codes: Vec<String>,
     pub(crate) gate_receipt_reasons: Vec<String>,
     pub(crate) budget_charge: Option<EffectorBudgetCharge>,
+    /// OF-327 suppression is not a Gate denial or a Gate reason code.
+    pub(crate) dedupe_suppressed: bool,
+    pub(crate) suppression_receipt: Option<ReceiptRecord>,
 }
 
 /// The only two commands accepted by the effectful entry.
@@ -60,6 +64,10 @@ pub(crate) struct PreparedEffect {
     pub(crate) budget_class: BudgetClass,
     pub(crate) authorization: PreparedAuthorization,
     pub(crate) verified_actor: Option<(EntityId, EdgeActorClass)>,
+    /// OF-327 semantic identity; absent for non-dispatch effects.
+    pub(crate) dedupe_key: Option<String>,
+    /// The caller-facing receipt to commit if this admission is suppressed.
+    pub(crate) suppression_receipt: Option<ReceiptRecord>,
 }
 
 impl PreparedEffect {

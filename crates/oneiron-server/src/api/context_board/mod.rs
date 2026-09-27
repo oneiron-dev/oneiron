@@ -235,6 +235,13 @@ pub(crate) async fn context_board_hydrate(
         None => (None, None, None),
     };
 
+    let installed_packs: Vec<(String, String)> = server
+        .vault
+        .installed_packs()
+        .map_err(|error| super::core_engine_error("pack inventory failed", error))?
+        .into_iter()
+        .map(|row| (row.pack_name, row.content_hash))
+        .collect();
     let read = super::scoped_read_for_core_auth(&server.vault, &auth)?;
     let reads = session_read_set(
         &server,
@@ -244,7 +251,16 @@ pub(crate) async fn context_board_hydrate(
     .await?;
     let changed = reads
         .as_deref()
-        .map(|reads| reads.refresh(&read, 16))
+        .map(|reads| {
+            let mut changed = reads.refresh(&read, 16)?;
+            let installs = reads.pack_changes(
+                &installed_packs,
+                16_usize.saturating_sub(changed.rows.len()),
+            );
+            changed.rows.extend(installs.rows);
+            changed.overflow += installs.overflow;
+            Ok::<_, oneiron::Error>(changed)
+        })
         .transpose()
         .map_err(|error| super::core_engine_error("board lifecycle resolution failed", error))?
         .unwrap_or_default()
@@ -316,6 +332,17 @@ pub(crate) async fn context_board_hydrate(
             )
             .into());
         }
+    }
+    if let Some(mut reads) = session_read_set(
+        &server,
+        caller,
+        req.session
+            .as_ref()
+            .and_then(|session| session.session_id.as_deref()),
+    )
+    .await?
+    {
+        reads.observe_pack_inventory(&installed_packs);
     }
     Ok(Json(response))
 }
