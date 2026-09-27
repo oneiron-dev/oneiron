@@ -29,6 +29,7 @@ mod door_types;
 mod verb_class;
 
 pub(crate) use self::door_credential::DoorCredential;
+pub(crate) use self::door_policy::admit_materialization_in_txn;
 pub(crate) use self::door_service::CredentialDoorService;
 pub(crate) use self::door_types::{
     CredentialDoorError, DOOR_ONE_SHOT_MAX_LIFETIME_SECS, DOOR_RECEIVE_PACK_EFFECTOR,

@@ -160,7 +160,7 @@ fn sample_request() -> LlmRequest {
                 },
             },
             tier: TierPrecedence {
-                per_call: None,
+                per_seat: None,
                 vault_policy: None,
                 purpose_default: None,
                 global_default: ModelTierRef("standard".to_owned()),
@@ -400,4 +400,61 @@ fn repeated_tool_headers_are_idempotent_after_fragmented_header() {
     let mut mismatch = OpenAiCompatStreamAccumulator::new();
     mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"double","arguments":"{"}}]}}]})).unwrap();
     assert!(matches!(mismatch.push_chunk(json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"double","arguments":"}"}}]}}]})), Err(LlmError::Fatal(FatalLlmError::InvalidRequest))));
+}
+
+fn routed_seat(effort: oneiron::llm::ReasoningEffort) -> oneiron::llm::routing::RoutedSeat {
+    oneiron::llm::routing::RoutedSeat {
+        id: "pinned".into(),
+        role: "writer".into(),
+        model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
+        wire: oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
+        locality: ModelLocality::ThirdParty,
+        effort,
+        tier: ModelTierRef("cheap".into()),
+        inference_overrides: BTreeMap::from([("temperature".into(), json!(0.2))]),
+        receipt: "pinned fixture".into(),
+    }
+}
+
+#[test]
+fn routed_seat_refuses_provider_options_that_shadow_wire_effort_and_temperature() {
+    let seat = routed_seat(oneiron::llm::ReasoningEffort::Low);
+    let config = OpenAiCompatConfig::new(catalog_with([
+        LlmCapability::JsonResponse,
+        LlmCapability::Reasoning,
+    ]));
+    for provider in [
+        json!({"reasoning_effort":"high","temperature":0.9}),
+        json!({"reasoning":{"effort":"high"}}),
+        json!({"temperature":0.9}),
+    ] {
+        let mut request = sample_request();
+        request.provider_options.insert("openai".into(), provider);
+        assert!(seat.bind(&mut request).is_err());
+    }
+    let mut request = sample_request();
+    request.params.insert("temperature".into(), json!(0.9));
+    request
+        .params
+        .insert("reasoning_effort".into(), json!("high"));
+    seat.bind(&mut request).unwrap();
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert_eq!(wire.body["temperature"], json!(0.2));
+    assert_eq!(wire.body["reasoning_effort"], json!("low"));
+    assert_eq!(wire.body["model"], json!("gpt-4.1"));
+}
+
+#[test]
+fn none_effort_seat_admits_a_real_non_reasoning_adapter_request() {
+    let seat = routed_seat(oneiron::llm::ReasoningEffort::None);
+    let config = OpenAiCompatConfig::new(catalog_with([LlmCapability::JsonResponse]));
+    let mut request = sample_request();
+    request
+        .params
+        .insert("reasoning_effort".into(), json!("high"));
+    seat.bind(&mut request).unwrap();
+    let wire = build_openai_chat_request(&config, &request, false).unwrap();
+    assert_eq!(seat.effort, oneiron::llm::ReasoningEffort::None);
+    assert!(wire.body.get("reasoning_effort").is_none());
+    assert_eq!(wire.body["temperature"], json!(0.2));
 }
