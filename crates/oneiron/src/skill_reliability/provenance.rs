@@ -3,13 +3,15 @@
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSource};
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::skill::{SkillContentHash, SkillRecord};
+use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill::{SkillContentHash, SkillRecord, decode_skill_record};
 use crate::skill_hub::PREDICATE_SKILL_HUB_PROVENANCE;
 
 use super::codec::map_str;
 use super::posterior::{ProvenanceTrustClass, SkillReliabilityPosterior};
-use super::read::{active_claims_in_txn, read_skill};
+use super::read::active_claims_in_txn;
 
 /// `skill.scan_verdict` body keys + the values that decide whether canonical
 /// bytes were actually CLEARED. Duplicated rather than imported:
@@ -35,12 +37,31 @@ pub fn skill_provenance_trust_class(
     vault: &Vault,
     skill: &EntityId,
 ) -> Result<ProvenanceTrustClass> {
-    let record = read_skill(vault, skill)?;
-    provenance_trust_class(vault, skill, &record)
+    let rtxn = vault.store.env.read_txn()?;
+    skill_provenance_trust_class_in_txn(vault, &rtxn, skill)
+}
+
+fn skill_provenance_trust_class_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<ProvenanceTrustClass> {
+    let raw = vault
+        .store
+        .port_entity_record(rtxn, skill)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.entity_type != ENTITY_TYPE_SKILL {
+        return Err(super::codec::invalid(
+            "skill reliability names a non-skill entity",
+        ));
+    }
+    let record = decode_skill_record(&raw.body)?;
+    provenance_trust_class(vault, rtxn, skill, &record)
 }
 
 fn provenance_trust_class(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     record: &SkillRecord,
 ) -> Result<ProvenanceTrustClass> {
@@ -59,11 +80,14 @@ fn provenance_trust_class(
     // vouches for says only "a scanner looked at some bytes" — there is no
     // trust relationship behind it to be optimistic about — and a hub alias
     // over bytes nobody scanned is what `UnvettedImport` NAMES.
-    let vetted = hub_vouches_for_content(vault, skill, content_hash)?
-        && vault
-            .skill_scan_verdicts_for_content_hash(content_hash)?
-            .iter()
-            .any(scan_verdict_cleared_the_bytes);
+    let vetted = hub_vouches_for_content(vault, rtxn, skill, content_hash)?
+        && crate::skill_hub::skill_scan_verdicts_for_content_hash_in_store(
+            &vault.store,
+            rtxn,
+            content_hash,
+        )?
+        .iter()
+        .any(scan_verdict_cleared_the_bytes);
     Ok(if vetted {
         ProvenanceTrustClass::VettedImport
     } else {
@@ -98,12 +122,12 @@ fn scan_verdict_cleared_the_bytes(body: &ClaimBody) -> bool {
 /// per-skill half: it is what says a HUB carried these bytes to this vault.
 fn hub_vouches_for_content(
     vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
     content_hash: SkillContentHash,
 ) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
     let hash_hex = content_hash.to_hex();
-    for (_, body, _) in active_claims_in_txn(vault, &rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
+    for (_, body, _) in active_claims_in_txn(vault, rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)? {
         if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str()) {
             return Ok(true);
         }
@@ -116,6 +140,15 @@ pub fn skill_reliability_prior(
     vault: &Vault,
     skill: &EntityId,
 ) -> Result<SkillReliabilityPosterior> {
-    skill_provenance_trust_class(vault, skill)
+    let rtxn = vault.store.env.read_txn()?;
+    skill_reliability_prior_in_txn(vault, &rtxn, skill)
+}
+
+pub(super) fn skill_reliability_prior_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<SkillReliabilityPosterior> {
+    skill_provenance_trust_class_in_txn(vault, rtxn, skill)
         .map(SkillReliabilityPosterior::seeded_from_provenance)
 }
