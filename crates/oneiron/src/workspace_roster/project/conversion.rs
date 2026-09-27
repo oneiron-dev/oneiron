@@ -1,6 +1,7 @@
 //! Atomic conversion of a room thread into a project and its origin card.
 use super::*;
 use crate::edge::EdgeKind;
+use crate::gate::{LeaderFallback, RosterSelection};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TASK};
 use crate::workspace_roster::rooms;
 
@@ -216,7 +217,6 @@ impl Vault {
                 }
                 tasks.push(raw.clone());
             }
-            use crate::gate::{LeaderFallback, RosterSelection};
             let default_holder = match policy.leader_fallback {
                 LeaderFallback::TaskHolderThenSourceLeader => holder,
                 LeaderFallback::SourceLeaderOnly => None,

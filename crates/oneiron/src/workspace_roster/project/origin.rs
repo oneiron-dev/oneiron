@@ -135,10 +135,10 @@ pub(super) fn validate_binding(
         crate::conversation_dag::edge_ids(store, txn, &thread, EdgeKind::PartOf, true, 65536)?
     {
         let bytes = present(store, txn, child, ENTITY_TYPE_MESSAGE)?;
-        if let Some(parent) = marker_parent(&bytes)? {
-            if marker.replace(parent).is_some_and(|prior| prior != parent) {
-                return Err(reject());
-            }
+        if let Some(parent) = marker_parent(&bytes)?
+            && marker.replace(parent).is_some_and(|prior| prior != parent)
+        {
+            return Err(reject());
         }
     }
     let parent = marker.ok_or_else(pending)?;
@@ -178,10 +178,10 @@ pub(super) fn index_origin(
     if prior.as_ref().is_some_and(|old| old != &expected) {
         return Err(reject());
     }
-    if let Some(owner) = store.vault_meta.get(txn, &key)? {
-        if owner.as_ref() != id.as_bytes() {
-            return Err(reject());
-        }
+    if let Some(owner) = store.vault_meta.get(txn, &key)?
+        && owner.as_ref() != id.as_bytes()
+    {
+        return Err(reject());
     }
     store.vault_meta.put(txn, &key, id.as_bytes())?;
     store

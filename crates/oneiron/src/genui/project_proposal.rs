@@ -268,10 +268,6 @@ impl ProjectProposalCard {
 
     /// A confirmed card tap calls the same thread conversion verb as other
     /// clients; the host-held card supplies the message identity, not the tap.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "host-held card, owner proof, thread and project IDs, and time are distinct inputs"
-    )]
     pub fn convert_thread(
         &self,
         vault: &Vault,

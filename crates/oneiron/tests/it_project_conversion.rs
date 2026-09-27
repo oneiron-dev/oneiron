@@ -360,7 +360,7 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
         "proposal-1",
         "principal:owner",
         fresh_message.to_hex(),
-        card.goal.clone(),
+        card.goal,
         ProjectProposalPicks {
             leader_agent_def_ref: selected_leader.to_hex(),
             board_human_refs: vec![owner_id.to_hex()],
