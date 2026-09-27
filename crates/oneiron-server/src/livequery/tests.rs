@@ -74,6 +74,8 @@ fn notify(tier: &LiveQueries, world: &str, by: OriginMark) {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 1,
+
+            entity_blob_hashes: Default::default(),
         },
         &by,
     );
@@ -444,6 +446,8 @@ fn tee_defers_facade_work_until_the_subscription_loop_runs() {
         &MaterializedDiffSummary {
             containers: vec![],
             bytes: 0,
+
+            entity_blob_hashes: Default::default(),
         },
         &OriginMark::default(),
     );
@@ -468,6 +472,8 @@ fn deferred_own_write_does_not_hide_a_later_foreign_write() {
             &MaterializedDiffSummary {
                 containers: vec![],
                 bytes: 0,
+
+                entity_blob_hashes: Default::default(),
             },
             &OriginMark {
                 conn_id: Some(conn),

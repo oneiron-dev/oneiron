@@ -105,6 +105,8 @@ impl Hub {
             let diff = oneiron::sync::bridge::MaterializedDiffSummary {
                 containers: vec![path.clone()],
                 bytes: 0,
+
+                entity_blob_hashes: Default::default(),
             };
             for queries in &sessions {
                 queries.on_indexed_published(&path, &diff);

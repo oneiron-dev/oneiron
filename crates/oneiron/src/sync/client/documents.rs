@@ -100,6 +100,8 @@ impl SyncClient {
             &crate::sync::bridge::MaterializedDiffSummary {
                 containers: vec![format!("w:{window}/entities/{}", note.to_hex())],
                 bytes: 0,
+
+                entity_blob_hashes: Default::default(),
             },
             &crate::sync::bridge::OriginMark {
                 conn_id: None,

@@ -385,6 +385,9 @@ pub struct MaterializedDiffSummary {
     pub containers: Vec<String>,
     /// Total changed key and binary-value bytes, for accounting only.
     pub bytes: usize,
+    /// Hash of each entity-map blob in this commit. Correlates an Observer B
+    /// write with its bridge mirror without treating later local writes as echoes.
+    pub entity_blob_hashes: std::collections::BTreeMap<String, [u8; 32]>,
 }
 
 /// Transport correlation only; never actor authority.
@@ -541,10 +544,17 @@ fn entity_document_diff(
 ) -> MaterializedDiffSummary {
     let mut containers = std::collections::BTreeSet::new();
     let mut bytes = 0usize;
+    let mut entity_blob_hashes = std::collections::BTreeMap::new();
     for (key, value) in &delta.updated {
         bytes = bytes.saturating_add(key.len());
         if let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = value {
             bytes = bytes.saturating_add(blob.len());
+            if container == "entities"
+                && let Ok(id) = crate::EntityId::from_hex(key)
+            {
+                entity_blob_hashes
+                    .insert(format!("e:{}", id.to_hex()), *blake3::hash(blob).as_bytes());
+            }
         }
         containers.insert(format!("{path}/{key}"));
         if container == "edges" {
@@ -559,5 +569,6 @@ fn entity_document_diff(
     MaterializedDiffSummary {
         containers: containers.into_iter().collect(),
         bytes,
+        entity_blob_hashes,
     }
 }

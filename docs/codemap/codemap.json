@@ -41467,7 +41467,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/livequery/subscriptions.rs",
@@ -42695,7 +42695,7 @@
     "livequery": {
      "files": 17,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "App-tier framing and coarse live-query state, separate from WindowSync"
     },
@@ -42784,7 +42784,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
    "test_files": 97

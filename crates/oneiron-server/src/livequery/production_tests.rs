@@ -991,6 +991,8 @@ async fn indexed_publication_wakes_an_open_entity_subscription() {
         &MaterializedDiffSummary {
             containers: vec![path.clone()],
             bytes: 0,
+
+            entity_blob_hashes: Default::default(),
         },
         &OriginMark::default(),
     );
@@ -1103,6 +1105,8 @@ async fn earlier_index_commit_wakes_its_subscriber_when_later_provider_fails() {
             &oneiron::sync::bridge::MaterializedDiffSummary {
                 containers: vec![path.clone()],
                 bytes: 0,
+
+                entity_blob_hashes: Default::default(),
             },
             &oneiron::sync::bridge::OriginMark::default(),
         );
@@ -1188,30 +1192,34 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
         clients.push(queries);
     }
     let path = format!("e:{}", id.to_hex());
-    let diff = MaterializedDiffSummary {
-        containers: vec![path.clone()],
-        bytes: 0,
-    };
-    let notify = |by: OriginMark| {
+    let blob_hash = || *blake3::hash(&server.vault().get_raw(&id).unwrap().unwrap()).as_bytes();
+    let notify = |by: OriginMark, hash: [u8; 32]| {
+        let diff = MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+            entity_blob_hashes: [(path.clone(), hash)].into(),
+        };
         for client in &clients {
             client.on_materialized(&path, &diff, &by);
         }
     };
     put("originwake writer");
-    notify(OriginMark {
-        conn_id: Some(1),
-        origin: Some("conn:1".into()),
-    });
-    // The replication mirror is not a second writer of this revision.
-    notify(OriginMark {
-        conn_id: None,
-        origin: Some(oneiron::sync::bridge::BRIDGE_ORIGIN.into()),
-    });
-    for client in &clients {
-        client.refresh().unwrap();
-        assert!(client.pending(7).unwrap().is_empty());
-    }
-    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let writer_hash = blob_hash();
+    notify(
+        OriginMark {
+            conn_id: Some(1),
+            origin: Some("conn:1".into()),
+        },
+        writer_hash,
+    );
+    // Publish before the timer drains either the original edit or its mirror.
+    notify(
+        OriginMark {
+            conn_id: None,
+            origin: Some(oneiron::sync::bridge::BRIDGE_ORIGIN.into()),
+        },
+        writer_hash,
+    );
     let report = server
         .vault()
         .refresh_staged_indexed_at_idle(u64::MAX)
@@ -1222,8 +1230,7 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
     }
     assert!(
         clients[0].pending(7).unwrap().is_empty(),
-        "no echo to writer: {:?}",
-        clients[0].pending(7).unwrap()
+        "no coalesced writer echo"
     );
     let foreign = clients[1].pending(7).unwrap();
     assert_eq!(foreign.len(), 1);
@@ -1237,18 +1244,54 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
     );
     clients[1].ack(7, &foreign[0].cursor).unwrap();
 
-    // A later index batch contains both clients' edits. Neither client may
-    // suppress the other client's contribution as its own optimistic write.
+    // A distinct bridge-only LMDB commit is foreign, not a duplicate mirror.
+    put("originwake independent");
+    let independent_hash = blob_hash();
+    assert_ne!(independent_hash, writer_hash);
+    notify(
+        OriginMark {
+            conn_id: None,
+            origin: Some(oneiron::sync::bridge::BRIDGE_ORIGIN.into()),
+        },
+        independent_hash,
+    );
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    hub.indexed_published(&report.refreshed);
+    for client in &clients {
+        client.refresh().unwrap();
+        let tail = client.pending(7).unwrap();
+        assert_eq!(tail.len(), 1);
+        assert!(
+            tail[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .contains("originwake independent")
+        );
+        client.ack(7, &tail[0].cursor).unwrap();
+    }
+
+    // Mixed clients in one indexed batch remain foreign to both writers.
     put("originwake interim");
-    notify(OriginMark {
-        conn_id: Some(1),
-        origin: Some("conn:1".into()),
-    });
+    notify(
+        OriginMark {
+            conn_id: Some(1),
+            origin: Some("conn:1".into()),
+        },
+        blob_hash(),
+    );
     put("originwake foreign");
-    notify(OriginMark {
-        conn_id: Some(2),
-        origin: Some("conn:2".into()),
-    });
+    notify(
+        OriginMark {
+            conn_id: Some(2),
+            origin: Some("conn:2".into()),
+        },
+        blob_hash(),
+    );
     for client in &clients {
         client.refresh().unwrap();
         assert!(client.pending(7).unwrap().is_empty());
@@ -1271,4 +1314,105 @@ async fn delayed_index_publication_filters_own_echo_but_delivers_foreign_and_mix
                 .contains("originwake foreign")
         );
     }
+}
+
+#[tokio::test]
+async fn settled_out_of_view_births_do_not_exhaust_lag_origin_retention() {
+    use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
+
+    let (_dir, server) = server();
+    let hub = connection::Hub::for_server(&server);
+    let source = Arc::new(BoundSource::new(
+        Arc::downgrade(&server),
+        auth(&server, "human"),
+        "bounded-lag-origins".into(),
+    ));
+    let queries = hub.install_source(auth(&server, "human"), "bounded-lag-origins".into(), source);
+    let watched = EntityId::from_hex("dededededededededededededededede").unwrap();
+    let put = |id: EntityId, text: &str| {
+        server
+            .vault()
+            .batch()
+            .put(
+                &id,
+                oneiron::registry::ENTITY_TYPE_ASSET_TEXT,
+                oneiron::temporal::TimeRange { start: AT, end: AT },
+                AT,
+                &rmp_serde::to_vec_named(&json!({"content": text})).unwrap(),
+            )
+            .text(&id, &[("content", text)])
+            .commit()
+            .unwrap();
+    };
+    put(watched, "lagcachemarker first");
+    let opened = queries
+        .open(
+            9,
+            ScopedView {
+                query: Some("lagcachemarker".into()),
+                ..Default::default()
+            },
+            Channel::View,
+            None,
+            None,
+        )
+        .unwrap();
+    queries.ack(9, &opened[0].cursor).unwrap();
+    for number in 0_u64..700 {
+        let mut bytes = [0x73_u8; 16];
+        bytes[8..].copy_from_slice(&number.to_be_bytes());
+        let id = EntityId::from_bytes(bytes).unwrap();
+        put(id, "unrelated birth");
+        assert!(server.vault().indexed_revision(&id).unwrap().is_some());
+        let path = format!("e:{}", id.to_hex());
+        queries.on_materialized(
+            &path,
+            &MaterializedDiffSummary {
+                containers: vec![path.clone()],
+                bytes: 0,
+                entity_blob_hashes: Default::default(),
+            },
+            &OriginMark {
+                conn_id: Some(1),
+                origin: Some("conn:1".into()),
+            },
+        );
+        queries.refresh().unwrap();
+        assert!(
+            queries.pending(9).unwrap().is_empty(),
+            "unrelated settled birth {number} caused a gap"
+        );
+    }
+    put(watched, "lagcachemarker second");
+    let path = format!("e:{}", watched.to_hex());
+    queries.on_materialized(
+        &path,
+        &MaterializedDiffSummary {
+            containers: vec![path.clone()],
+            bytes: 0,
+            entity_blob_hashes: Default::default(),
+        },
+        &OriginMark::default(),
+    );
+    queries.refresh().unwrap();
+    // Until idle publication, the indexed view is unchanged.
+    assert!(queries.pending(9).unwrap().is_empty());
+    server.vault().set_indexed_idle_delay_ms(0).unwrap();
+    let report = server
+        .vault()
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .unwrap();
+    hub.indexed_published(&report.refreshed);
+    queries.refresh().unwrap();
+    let tail = queries.pending(9).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].kind, "data");
+    assert!(
+        tail[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .to_string()
+            .contains("lagcachemarker second")
+    );
 }

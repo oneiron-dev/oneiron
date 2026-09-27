@@ -27,6 +27,12 @@ pub(crate) struct DerivedView {
 /// must not return raw full-window updates as app-tier data.
 pub(crate) trait LiveQuerySource: Send + Sync {
     fn derive(&self, view: &ScopedView, channel: Channel) -> Result<DerivedView, AppError>;
+    /// True only while this entity's live body is ahead of its indexed body.
+    /// Called outside Observer B; births, metadata-only puts and edges need no
+    /// delayed-origin retention.
+    fn indexed_lag(&self, _path: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
     /// Probe insertions and changed memberships not yet in the served read set.
     fn membership_changed(
         &self,
@@ -587,9 +593,12 @@ impl LiveQueries {
         if self.invalidation_gap.swap(false, Ordering::AcqRel) {
             self.index_origins
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .map_err(|_| state_error())?
                 .clear();
             self.require_resync();
+            return Ok(());
+        }
+        if changes.is_empty() {
             return Ok(());
         }
         let mut ready = Vec::new();
@@ -603,9 +612,61 @@ impl LiveQueries {
                 }
             }
         }
-        if let Err(error) = self.materialized(&ready) {
+        if let Err(error) = self
+            .retain_lagged_origins(&ready)
+            .and_then(|()| self.materialized(&ready))
+        {
             self.require_resync();
             return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Retain only edits whose indexed body still lags. Scanning the already
+    /// queued notices here avoids a vault read in Observer B's Loro callback.
+    fn retain_lagged_origins(
+        &self,
+        changes: &[(String, MaterializedDiffSummary, OriginMark)],
+    ) -> Result<(), AppError> {
+        let mut origins = self.index_origins.lock().map_err(|_| state_error())?;
+        let mut candidates = BTreeMap::<String, OriginMark>::new();
+        for (path, diff, by) in changes {
+            for changed in std::iter::once(path).chain(diff.containers.iter()) {
+                if changed
+                    .strip_prefix("e:")
+                    .is_some_and(|id| oneiron::EntityId::from_hex(id).is_ok())
+                {
+                    candidates
+                        .entry(changed.clone())
+                        .and_modify(|prior| merge_origin(prior, by))
+                        .or_insert_with(|| by.clone());
+                }
+            }
+        }
+        // Retire settled/deleted/superseded bodies, even if an idle pass never
+        // sent a publication (births and metadata-only writes are examples).
+        let paths: Vec<_> = origins.keys().cloned().collect();
+        for path in paths {
+            if !self.source.indexed_lag(&path)? {
+                origins.remove(&path);
+            }
+        }
+        for (path, by) in candidates {
+            if self.source.indexed_lag(&path)? {
+                origins
+                    .entry(path)
+                    .and_modify(|prior| merge_origin(prior, &by))
+                    .or_insert(by);
+            }
+        }
+        let bytes: usize = origins
+            .iter()
+            .map(|(path, by)| path.len() + by.origin.as_ref().map_or(0, String::len) + 64)
+            .sum();
+        if origins.len() > LIVEQUERY_RING_CAPACITY || bytes > 64 * 1024 {
+            origins.clear();
+            self.invalidation_gap.store(true, Ordering::Release);
+            return Err(state_error());
         }
         Ok(())
     }
@@ -637,22 +698,32 @@ impl LiveQueries {
 
 impl LiveQueries {
     pub(super) fn on_indexed_published(&self, path: &str, diff: &MaterializedDiffSummary) {
-        let by = self
+        // If index publication beats the timer, the contributing writes still
+        // sit in the invalidation queue, not the retained lag map. Fold both.
+        let queued = self
+            .invalidations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|(changed, diff, _)| {
+                changed == path || diff.containers.iter().any(|item| item == path)
+            })
+            .map(|(_, _, by)| by.clone())
+            .collect::<Vec<_>>();
+        let cached = self
             .index_origins
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(path)
-            .unwrap_or_default();
-        self.enqueue_invalidation(path, diff, &by, false);
+            .remove(path);
+        let mut contributors = cached.into_iter().chain(queued);
+        let mut by = contributors.next().unwrap_or_default();
+        for contributor in contributors {
+            merge_origin(&mut by, &contributor);
+        }
+        self.enqueue_invalidation(path, diff, &by);
     }
 
-    fn enqueue_invalidation(
-        &self,
-        path: &str,
-        diff: &MaterializedDiffSummary,
-        by: &OriginMark,
-        capture_origin: bool,
-    ) {
+    fn enqueue_invalidation(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
         let Ok(mut pending) = self.invalidations.lock() else {
             self.invalidation_gap.store(true, Ordering::Release);
             return;
@@ -701,42 +772,31 @@ impl LiveQueries {
                 containers.insert(format!("e:{}", id.to_hex()));
             }
         }
-        // Bridge mirror notices describe the same committed write a second
-        // time; they must not turn its client origin into a mixed-origin write.
-        if capture_origin
-            && !matches!(
-                by.origin.as_deref(),
-                Some("deletion_tombstone" | oneiron::sync::bridge::BRIDGE_ORIGIN)
-            )
+        // A bridge mirror of the same entity blob is one write, not a
+        // foreign contribution. A distinct bridge blob (or an edge change)
+        // remains foreign. Match the committed blob, never merely the path.
+        let mut origin = by.clone();
+        if by.origin.as_deref() == Some(oneiron::sync::bridge::BRIDGE_ORIGIN)
+            && !diff.entity_blob_hashes.is_empty()
         {
-            let mut origins = self
-                .index_origins
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for changed in &containers {
-                if changed
-                    .strip_prefix("e:")
-                    .is_some_and(|id| oneiron::EntityId::from_hex(id).is_ok())
-                {
-                    origins
-                        .entry(changed.clone())
-                        .and_modify(|prior| {
-                            if prior.conn_id != by.conn_id || prior.origin != by.origin {
-                                *prior = OriginMark::default();
-                            }
-                        })
-                        .or_insert_with(|| by.clone());
+            let mut matched = Vec::new();
+            for (entity, hash) in &diff.entity_blob_hashes {
+                let found = pending.iter().rev().find(|(_, prior, previous)| {
+                    previous.origin.as_deref() != Some(oneiron::sync::bridge::BRIDGE_ORIGIN)
+                        && prior.entity_blob_hashes.get(entity) == Some(hash)
+                });
+                if let Some((_, _, previous)) = found {
+                    matched.push(previous.clone());
+                } else {
+                    matched.clear();
+                    break;
                 }
             }
-            let size: usize = origins
-                .iter()
-                .map(|(path, by)| path.len() + by.origin.as_ref().map_or(0, String::len) + 64)
-                .sum();
-            if origins.len() > LIVEQUERY_RING_CAPACITY || size > 64 * 1024 {
-                origins.clear();
-                pending.clear();
-                self.invalidation_gap.store(true, Ordering::Release);
-                return;
+            if let Some(first) = matched.first() {
+                origin = first.clone();
+                for contributor in matched.iter().skip(1) {
+                    merge_origin(&mut origin, contributor);
+                }
             }
         }
         pending.push_back((
@@ -744,15 +804,23 @@ impl LiveQueries {
             MaterializedDiffSummary {
                 containers: containers.into_iter().collect(),
                 bytes: diff.bytes,
+
+                entity_blob_hashes: diff.entity_blob_hashes.clone(),
             },
-            by.clone(),
+            origin,
         ));
     }
 }
 
 impl LiveQueryTee for LiveQueries {
     fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
-        self.enqueue_invalidation(path, diff, by, true);
+        self.enqueue_invalidation(path, diff, by);
+    }
+}
+
+fn merge_origin(prior: &mut OriginMark, next: &OriginMark) {
+    if prior.conn_id != next.conn_id || prior.origin != next.origin {
+        *prior = OriginMark::default();
     }
 }
 
