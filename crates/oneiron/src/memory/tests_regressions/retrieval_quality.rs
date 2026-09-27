@@ -27,13 +27,11 @@ fn retrieval_quality_facade_metadata_defaults_preserve_old_pack_json() {
     );
     let wire = serde_json::to_value(&pack).expect("facade JSON");
     assert_eq!(wire["retrieval_meta"]["quality"], "passthrough");
-    assert_eq!(wire["retrieval_meta"]["confidenceAdjustment"], -0.35);
-    assert!(
-        wire["retrieval_meta"]
-            .get("confidence_adjustment")
-            .is_none()
-    );
+    assert_eq!(wire["retrieval_meta"]["confidence_adjustment"], -0.35);
+    assert!(wire["retrieval_meta"].get("confidenceAdjustment").is_none());
     assert!(wire["retrieval_meta"].get("degradation").is_none());
+    let round_trip: MemoryPack = serde_json::from_value(wire).expect("facade JSON round-trip");
+    assert_eq!(round_trip.retrieval_meta, pack.retrieval_meta);
 }
 
 #[test]
