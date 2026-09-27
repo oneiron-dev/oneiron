@@ -181,6 +181,41 @@ fn skills_found_and_agent_candidates_shed_before_memory_snippets() {
 }
 
 #[test]
+fn new_pack_install_appears_on_existing_session_changed_line_without_push() {
+    let mut session = SessionReadSet::default();
+    let old = vec![("alice.tools".to_owned(), "ab".repeat(32))];
+    let updated = vec![
+        ("alice.tools".to_owned(), "cd".repeat(32)),
+        ("alice.connector".to_owned(), "ef".repeat(32)),
+    ];
+    assert!(session.pack_changes(&updated, 16).rows.is_empty());
+    session.observe_pack_inventory(&old);
+    let changed = session.pack_changes(&updated, 16);
+    assert_eq!(changed.rows.len(), 2);
+    assert!(
+        changed
+            .render()
+            .iter()
+            .any(|row| row.contains("alice.connector: installed:"))
+    );
+    assert!(changed.ride(None).is_none());
+    let frame = changed
+        .ride(Some(BoardStreamFrame {
+            epoch: 7,
+            kind: FrameKind::Keyframe("<board>\nnote: current\nlegend: kinds\n</board>".into()),
+        }))
+        .expect("existing frame");
+    let FrameKind::Keyframe(text) = frame.kind else {
+        panic!("keyframe")
+    };
+    assert!(text.find("note:").unwrap() < text.find("alice.connector: installed:").unwrap());
+    assert!(text.find("alice.connector: installed:").unwrap() < text.find("legend:").unwrap());
+    let reopened: SessionReadSet =
+        serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+    assert_eq!(reopened.pack_changes(&updated, 16), changed);
+}
+
+#[test]
 fn changed_rider_replaces_the_whole_block_and_clears_on_next_existing_frame() {
     let changes = ChangedLine {
         rows: vec![("cl1".into(), ServedLifecycle::Retracted)],

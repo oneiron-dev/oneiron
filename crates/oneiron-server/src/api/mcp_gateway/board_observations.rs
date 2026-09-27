@@ -36,6 +36,7 @@ pub(super) async fn state(
     server: &SyncServer,
     actor: &McpResolvedActor,
 ) -> Result<(SessionReadSet, ChangedLine), McpGatewayError> {
+    let packs = super::board_setup::mcp_visible_pack_inventory(server, actor)?;
     let observations = read_set(server, actor).await.clone();
     let read = mcp_scoped_read(&server.vault, actor)?;
     let mut changed = observations
@@ -54,8 +55,11 @@ pub(super) async fn state(
     }
     changed.install_overflow = visible.len().saturating_sub(16);
     changed.install_rows = visible.into_iter().take(16).collect();
-    changed.overflow = changed.rows.len().saturating_sub(16);
+    changed.overflow += changed.rows.len().saturating_sub(16);
     changed.rows.truncate(16);
+    let installs = observations.pack_changes(&packs, 16_usize.saturating_sub(changed.rows.len()));
+    changed.rows.extend(installs.rows);
+    changed.overflow += installs.overflow;
     Ok((observations, changed))
 }
 
