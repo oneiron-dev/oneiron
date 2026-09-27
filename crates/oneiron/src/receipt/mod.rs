@@ -60,8 +60,8 @@ pub(crate) use self::kernel::{
     retain_newest_receipt,
 };
 pub(crate) use self::ledgers::{
-    SendReceiptOutcome, delivered_send_receipt_for_task, persist_send_receipt,
-    stamp_attempt_pack_receipt_in_txn,
+    SendReceiptOutcome, delivered_send_receipt_for_task, durable_send_receipts,
+    persist_send_receipt, stamp_attempt_pack_receipt_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::ledgers::{

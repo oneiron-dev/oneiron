@@ -74,6 +74,7 @@ fn connector_send_task() -> ConnectorSendTask {
             trigger_ref: "tr_1".to_owned(),
             job_ref: None,
         },
+        counterparty_ref: None,
         originating_session_ref: None,
         attempt_started_node_id: None,
         outcome: None,
