@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::owned_body::guard_storage_owned_body;
+use super::put_staging::{PutCarrierContext, validate_put_carriers};
 use heed::RwTxn;
 
 use super::{
@@ -70,9 +70,8 @@ pub(in crate::batch) fn apply_put(
         None
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
-    super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
-    guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
-    super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
+    let carriers = PutCarrierContext::new(entity_type, occurred, learned_at, replicated, origin);
+    validate_put_carriers(store, wtxn, id, data, carriers)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     super::put_staging::validate_source_carriers(
         store,
