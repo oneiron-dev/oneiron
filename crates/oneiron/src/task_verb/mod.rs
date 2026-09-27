@@ -6,6 +6,7 @@
 mod ask_band;
 mod ask_facade;
 mod ask_guest;
+mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_soft_confirm;
@@ -122,6 +123,7 @@ pub use ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
     TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskGuest,
     TaskAskHandle, TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
+    TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight, TaskAskPreflightRecipient,
     TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
     TaskAskSettlementReason, TaskAskSoftConfirmNotice, TaskAskSource, TaskAskSpec, TaskAskStatus,
     TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,

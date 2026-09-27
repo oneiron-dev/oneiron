@@ -194,7 +194,7 @@ pub(super) fn link_imports(
                         .map(|receipt| BlockedOutput { receipt });
                     Ok((reply,))
                 }),
-            "self.ask_human" | "self.askHuman" => root.func_wrap(wit,
+            "ask" => root.func_wrap(wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (PromptInput,)| {
                     cx.data_mut().begin_call()?;
                     let reply: Reply<WaitOutput> = cx.data_mut().call(public, json!({"prompt":input.prompt}))
