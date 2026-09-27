@@ -215,7 +215,7 @@ fn trunk_session_membership_cannot_be_added_by_local_or_replayed_overwrite() {
         let body = vault.get(&id).unwrap().unwrap();
         vault
             .batch()
-            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 21, &body)
+            .put_replicated(&id, ENTITY_TYPE_TURN, time(20), 20, &body)
             .commit()
             .unwrap();
     }
@@ -255,7 +255,7 @@ fn typed_dag_records_refuse_generic_overwrite_and_delete_recreation() {
     }
     vault
         .batch()
-        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 21, &original)
+        .put_replicated(&root, ENTITY_TYPE_TURN, time(20), 20, &original)
         .commit()
         .unwrap();
     let sentinel = EntityId::now();
@@ -411,6 +411,285 @@ fn replayed_thread_edges_and_late_turn_body_rebuild_cached_meta() {
     assert_eq!(peer.thread_meta(trunk).unwrap(), Some(meta));
 }
 
+#[test]
+fn typed_addressing_first_insert_is_checked_before_adoption_for_both_put_origins() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = vault.append_dag_record(&direct).unwrap().id;
+    let original = vault.get(&direct).unwrap().unwrap();
+    let mut entries = match rmpv::decode::read_value(&mut original.as_slice()).unwrap() {
+        rmpv::Value::Map(entries) => entries,
+        _ => unreachable!(),
+    };
+    for bad in [
+        ("addr", rmpv::Value::from("private")),
+        ("addr", rmpv::Value::from("broadcast")),
+        ("addr", rmpv::Value::from("reply")),
+        ("to", rmpv::Value::Array(vec![])),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from(conv.to_hex())]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![
+                rmpv::Value::from(person.to_hex()),
+                rmpv::Value::from(person.to_hex()),
+            ]),
+        ),
+        (
+            "to",
+            rmpv::Value::Array(vec![rmpv::Value::from("not-an-id")]),
+        ),
+    ] {
+        let (_, value) = entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap();
+        let prior = std::mem::replace(value, bad.1);
+        let mut payload = Vec::new();
+        rmpv::encode::write_value(&mut payload, &rmpv::Value::Map(entries.clone())).unwrap();
+        entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some(bad.0))
+            .unwrap()
+            .1 = prior;
+        for replicated in [false, true] {
+            let id = EntityId::now();
+            let batch = vault.batch();
+            let batch = if replicated {
+                batch.put_replicated(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            } else {
+                batch.put(&id, ENTITY_TYPE_TURN, time(1), 1, &payload)
+            };
+            assert_eq!(
+                batch.commit().unwrap_err().kind(),
+                ErrorKind::InvalidConversationDag
+            );
+            assert_eq!(vault.get_entity_type(&id).unwrap(), None);
+        }
+    }
+    let opaque = EntityId::now();
+    vault
+        .put_entity(&opaque, ENTITY_TYPE_TURN, time(1), 1, b"opaque turn")
+        .unwrap();
+    assert_eq!(
+        vault.get_entity_type(&opaque).unwrap(),
+        Some(ENTITY_TYPE_TURN)
+    );
+}
+
+#[test]
+fn received_address_carrier_reconstructs_only_body_mandated_edges_at_adoption() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("recipient"),
+        )
+        .unwrap();
+    let mut direct = input(conv, None, true, actor);
+    direct.address = AddressMode::Direct;
+    direct.recipients = vec![person];
+    let direct = source.append_dag_record(&direct).unwrap().id;
+    let dir = tempfile::tempdir().unwrap();
+    let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    for id in [conv, direct] {
+        let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+        let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                h.entity_type,
+                time(h.occurred_start),
+                h.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()
+            .unwrap();
+    }
+    peer.batch()
+        .edge_checked(&direct, &conv, 1.0)
+        .commit()
+        .unwrap();
+    assert_eq!(
+        peer.migrate_conversation_dag(&conv).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
+    // A pending recipient must skip only this room during maintenance, not
+    // abort migration of another complete conversation on the same vault.
+    let healthy = EntityId::now();
+    let legacy = EntityId::now();
+    peer.put_entity(
+        &healthy,
+        ENTITY_TYPE_CONVERSATION,
+        time(1),
+        1,
+        &body("healthy"),
+    )
+    .unwrap();
+    peer.batch()
+        .put(&legacy, ENTITY_TYPE_TURN, time(2), 2, &body("legacy"))
+        .edge_checked(&legacy, &healthy, 1.0)
+        .commit()
+        .unwrap();
+    let (migrated, skipped) = peer.migrate_all_conversation_dags().unwrap();
+    assert_eq!(migrated, 1);
+    assert_eq!(skipped, [conv]);
+    assert_eq!(peer.head(&healthy).unwrap(), Some(legacy));
+    let raw = source.get_raw_unsealed(&person).unwrap().unwrap();
+    let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+    peer.batch()
+        .put_replicated(
+            &person,
+            h.entity_type,
+            time(h.occurred_start),
+            h.learned_at,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )
+        .commit()
+        .unwrap();
+    assert!(peer.migrate_conversation_dag(&conv).unwrap());
+    assert_eq!(
+        peer.targets(&direct, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    assert_eq!(peer.head(&conv).unwrap(), Some(direct));
+}
+
+#[test]
+fn deleted_recipient_does_not_block_conversation_adoption_or_resurrect_edges() {
+    let (_dir, source, conv, actor) = fixture();
+    let person = EntityId::now();
+    source
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let record = source.append_dag_record(&input).unwrap().id;
+    for reason in [
+        crate::DeleteReason::UserDelete,
+        crate::DeleteReason::GdprDelete,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let peer = crate::Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        for id in [conv, record, person] {
+            let raw = source.get_raw_unsealed(&id).unwrap().unwrap();
+            let h = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+            peer.batch()
+                .put_replicated(
+                    &id,
+                    h.entity_type,
+                    crate::TimeRange {
+                        start: h.occurred_start,
+                        end: h.occurred_end,
+                    },
+                    h.learned_at,
+                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                )
+                .commit()
+                .unwrap();
+        }
+        peer.batch()
+            .edge_checked(&record, &conv, 1.0)
+            .commit()
+            .unwrap();
+        peer.delete_entity_with_reason(&person, reason).unwrap();
+        assert!(peer.migrate_conversation_dag(&conv).unwrap());
+        assert_eq!(peer.head(&conv).unwrap(), Some(record));
+        assert!(
+            peer.targets(&record, EdgeKind::AddressedTo, None)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            peer.get(&record).unwrap().unwrap(),
+            source.get(&record).unwrap().unwrap()
+        );
+    }
+}
+
+#[test]
+fn replicated_addressed_record_cannot_change_its_edge_timestamp() {
+    let (_dir, vault, conv, actor) = fixture();
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            time(1),
+            1,
+            &body("person"),
+        )
+        .unwrap();
+    let mut input = input(conv, None, true, actor);
+    input.address = AddressMode::Direct;
+    input.recipients = vec![person];
+    let id = vault.append_dag_record(&input).unwrap().id;
+    let original = vault.get_raw_unsealed(&id).unwrap().unwrap();
+    let payload = &original[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    assert_eq!(
+        vault
+            .batch()
+            .put_replicated(
+                &id,
+                ENTITY_TYPE_TURN,
+                input.occurred,
+                input.learned_at + 1,
+                payload
+            )
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
+    assert_eq!(
+        vault.targets(&id, EdgeKind::AddressedTo, None).unwrap(),
+        [person]
+    );
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_TURN,
+            input.occurred,
+            input.learned_at,
+            payload,
+        )
+        .commit()
+        .unwrap();
+    assert_eq!(vault.get_raw_unsealed(&id).unwrap().unwrap(), original);
+}
+
 #[cfg(feature = "sync")]
 #[test]
 fn received_parent_survives_public_window_replay_and_adoption() {
@@ -501,6 +780,13 @@ fn missing_received_session_skips_one_room_and_migrates_later_legacy_room() {
     .unwrap();
     assert!(peer.get(&worker).unwrap().is_some());
     assert!(peer.get(&session).unwrap().is_none());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&delayed)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "missing received SESSION must not grant ChildOf preview fallback"
+    );
     let root = EntityId::now();
     peer.batch()
         .put(
@@ -2261,6 +2547,13 @@ fn pending_parent_blocks_adoption_until_root_arrives() {
     let materializer = std::sync::Arc::new(crate::sync::bridge::Materializer::new());
     crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
     assert!(peer.get(&child).unwrap().is_some());
+    assert_eq!(
+        peer.conversation_last_message_snippet(&room)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag,
+        "pending received Parent must not grant ChildOf preview fallback"
+    );
     assert!(
         crate::sync::pending_remat_windows(&peer)
             .unwrap()
