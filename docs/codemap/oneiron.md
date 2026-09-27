@@ -1647,7 +1647,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/maintain/builder.rs` | src | m | 2 struct · 11 fn · 1 crate-vis | MaintenanceBuilder, MaintenanceReport | Builder flags, run() dispatch, and the aggregate maintenance report |
 | `src/maintain/hnsw_rebuild.rs` | src | m | 7 crate-vis | — | HNSW prepare/validate/commit rebuilds plus the SLIM dropped-marker rehydrate |
 | `src/maintain/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | — |
-| `src/maintain/short_ids.rs` | src | m | 1 crate-vis | — | Short-id hash refresh, orphan reap, and alias-backing guards |
 | `src/maintain/tests.rs` | test | XL | — | — | — |
 | `src/maintain/text_ops.rs` | src | s | 4 crate-vis | — | Text-index clear, PPR cleanup, and postings compaction |
 | `src/memory/archive_purge.rs` | src | s | 2 struct · 4 fn | ArchivePurgeEntry, ArchivePurgePreview | Owner-only archive impact preview and confirmed ARCH-0038 erasure |
@@ -1984,15 +1983,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/lmdb_aux.rs` | src | s | — | — | LMDB audit, dependency, content-addressed blob and queue adapters |
 | `src/ports/lmdb_claim.rs` | src | s | — | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
 | `src/ports/lmdb_entity.rs` | src | m | 3 crate-vis | — | LMDB entity, edge and place adapters |
-| `src/ports/lmdb_index.rs` | src | s | — | — | Search, short-id and deletion-ledger adapters |
+| `src/ports/lmdb_index.rs` | src | m | — | — | Search, short-id and deletion-ledger adapters |
 | `src/ports/lmdb_operational_edges.rs` | src | s | — | — | Provenance cache updates after the claim lifecycle has authorized the change |
 | `src/ports/lmdb_operational_entities.rs` | src | s | — | — | Canonical adapter for narrow metadata-preserving operational entity updates |
 | `src/ports/lmdb_phonetic.rs` | src | s | — | — | Phonetic candidate retrieval over canonical and session snapshots |
 | `src/ports/lmdb_query.rs` | src | m | 1 crate-vis | — | LMDB/session adapters for the read halves |
 | `src/ports/lmdb_retrieval.rs` | src | s | 2 crate-vis | — | Configured text-query adapter, including composed session targets |
+| `src/ports/lmdb_short_id_maintenance.rs` | src | m | 1 crate-vis | — | LMDB adapter for short-id hash refresh, orphan reap, and alias-backing guards |
 | `src/ports/lmdb_timeline.rs` | src | s | 1 crate-vis | — | Time-ordered entity cursors with exclusive resume positions |
 | `src/ports/lmdb_visibility.rs` | src | s | — | — | Transaction-local visibility ledger for canonical and composed session views |
-| `src/ports/maintenance.rs` | src | s | 4 crate-vis | — | Narrow operational writes of the entity and edge ports |
+| `src/ports/maintenance.rs` | src | s | 5 crate-vis | — | Narrow operational writes of the entity and edge ports |
 | `src/ports/manual_clock.rs` | src | s | 1 struct · 3 fn | ManualClock | Deterministic, explicitly advanced clock for hosts and tests |
 | `src/ports/memory.rs` | src | m | 8 crate-vis | — | In-memory transactional conformance adapter |
 | `src/ports/memory/auxiliary.rs` | src | m | — | — | In-memory secondary indexes, immutable audit rows, blobs and queue leases |
@@ -2007,7 +2007,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/migration_conformance.rs` | test | s | — | — | — |
 | `src/ports/tests/mod.rs` | test | s | — | — | One behavioral suite, two transaction implementations |
 | `src/ports/tests/step21_conformance.rs` | test | m | — | — | — |
-| `src/ports/tests/step22_conformance.rs` | test | s | — | — | — |
+| `src/ports/tests/step22_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
 | `src/ports/time.rs` | src | s | 1 struct · 2 trait · 6 fn · 6 crate-vis | Clock, IdGen, StoreClock | Per-store clock and id source |

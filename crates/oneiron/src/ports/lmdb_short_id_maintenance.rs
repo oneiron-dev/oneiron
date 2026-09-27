@@ -1,4 +1,4 @@
-//! Short-id hash refresh, orphan reap, and alias-backing guards.
+//! LMDB adapter for short-id hash refresh, orphan reap, and alias-backing guards.
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,15 +14,16 @@ use crate::store::ShortIdAliasTarget;
 /// the pinned ARCH-0019 directions: `short_ids_reverse` (entity id ->
 /// `short_id ‖ content_hash`) is the entity-keyed source of truth; `short_ids`
 /// (`short_id ‖ content_hash` -> entity id) is repaired or pruned from it.
-pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
+pub(super) fn recompute_short_id_hashes(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<(u64, u64)> {
     struct ShortIdHashUpdate {
         reverse_key: Vec<u8>,
         updated_value: Vec<u8>,
         owned_old_forward_key: Option<Vec<u8>>,
         new_forward_key: Vec<u8>,
     }
-
-    let mut wtxn = vault.store.env.write_txn()?;
 
     // Pass 1: walk the entity-keyed reverse rows. Refresh drifted content
     // hashes (rewriting BOTH rows — the hash is part of the forward KEY),
@@ -38,7 +39,7 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
     // (reverse key, paired forward key when recoverable) rows to reap.
     let mut reverse_orphans: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
 
-    for entry in vault.store.short_ids_reverse.iter(&wtxn)? {
+    for entry in vault.store.short_ids_reverse.iter(wtxn)? {
         let (key, value) = entry?;
 
         let id = match parse_entity_id(&key, ERR_SHORT_IDS_REVERSE_KEY) {
@@ -68,8 +69,8 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
         };
         let current_forward_key = encode_short_id_forward_key(short_id, current_hash);
 
-        let Some(blob) = vault.store.entities.get(&wtxn, id.as_bytes())? else {
-            let owned_forward_key = match vault.store.short_ids.get(&wtxn, &current_forward_key)? {
+        let Some(blob) = vault.store.entities.get(wtxn, id.as_bytes())? else {
+            let owned_forward_key = match vault.store.short_ids.get(wtxn, &current_forward_key)? {
                 Some(forward_id) if forward_id == key => Some(current_forward_key),
                 Some(_) => {
                     tracing::warn!(
@@ -94,10 +95,10 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             updated_value.extend_from_slice(short_id.as_bytes());
             updated_value.push(new_hash);
             let new_forward_key = encode_short_id_forward_key(short_id, new_hash);
-            if let Some(forward_id) = vault.store.short_ids.get(&wtxn, &new_forward_key)?
+            if let Some(forward_id) = vault.store.short_ids.get(wtxn, &new_forward_key)?
                 && forward_id != key
             {
-                if forward_key_is_claimed_by_reverse(vault, &wtxn, &forward_id, &new_forward_key)? {
+                if forward_key_is_claimed_by_reverse(vault, wtxn, &forward_id, &new_forward_key)? {
                     tracing::warn!(
                         "short-id maintenance pruned backed reverse row with owned refreshed forward alias"
                     );
@@ -110,7 +111,7 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
                 continue;
             }
             let owned_old_forward_key =
-                match vault.store.short_ids.get(&wtxn, &current_forward_key)? {
+                match vault.store.short_ids.get(wtxn, &current_forward_key)? {
                     Some(forward_id) if forward_id == key => Some(current_forward_key),
                     Some(_) => {
                         tracing::warn!(
@@ -130,12 +131,12 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             continue;
         }
 
-        match vault.store.short_ids.get(&wtxn, &current_forward_key)? {
+        match vault.store.short_ids.get(wtxn, &current_forward_key)? {
             Some(forward_id) if forward_id == key => {}
             Some(forward_id) => {
                 if forward_key_is_claimed_by_reverse(
                     vault,
-                    &wtxn,
+                    wtxn,
                     &forward_id,
                     &current_forward_key,
                 )? {
@@ -160,17 +161,17 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
         vault
             .store
             .short_ids_reverse
-            .put(&mut wtxn, &update.reverse_key, &update.updated_value)?;
+            .put(wtxn, &update.reverse_key, &update.updated_value)?;
         if let Some(old_forward_key) = &update.owned_old_forward_key {
-            vault.store.short_ids.delete(&mut wtxn, old_forward_key)?;
+            vault.store.short_ids.delete(wtxn, old_forward_key)?;
         }
         vault
             .store
             .short_ids
-            .put(&mut wtxn, &update.new_forward_key, &update.reverse_key)?;
+            .put(wtxn, &update.new_forward_key, &update.reverse_key)?;
     }
     for (forward_key, id) in &forward_repairs {
-        vault.store.short_ids.put(&mut wtxn, forward_key, id)?;
+        vault.store.short_ids.put(wtxn, forward_key, id)?;
     }
 
     // ONE-1930: an alias names its target by FORWARD KEY, and the content hash
@@ -188,7 +189,7 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
         })
         .collect();
     if !moved_targets.is_empty() {
-        for (legacy_id, target) in vault.store.short_id_aliases(&wtxn)? {
+        for (legacy_id, target) in vault.store.short_id_aliases(wtxn)? {
             let ShortIdAliasTarget::EntityForwardKey(old_key) = &target else {
                 continue;
             };
@@ -196,7 +197,7 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
                 continue;
             };
             vault.store.retarget_short_id_alias(
-                &mut wtxn,
+                wtxn,
                 &legacy_id,
                 &target,
                 &ShortIdAliasTarget::EntityForwardKey((*new_key).to_vec()),
@@ -207,18 +208,15 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
         // `Some(forward_key)` entries are queued only from validly keyed
         // reverse rows; corrupt-keyed rows prune only themselves.
         if let Some(forward_key) = forward_key {
-            vault.store.short_ids.delete(&mut wtxn, forward_key)?;
+            vault.store.short_ids.delete(wtxn, forward_key)?;
         }
-        vault
-            .store
-            .short_ids_reverse
-            .delete(&mut wtxn, reverse_key)?;
+        vault.store.short_ids_reverse.delete(wtxn, reverse_key)?;
     }
 
     // Pass 2: forward rows without a healthy reverse counterpart are orphans.
     // Runs after pass-1 writes so repaired/refreshed rows are not re-pruned.
     let mut forward_orphans = Vec::new();
-    for entry in vault.store.short_ids.iter(&wtxn)? {
+    for entry in vault.store.short_ids.iter(wtxn)? {
         let (key, value) = entry?;
 
         // The forward KEY shares the `(short_id ‖ content_hash)` shape with
@@ -237,7 +235,7 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
             Err(other) => return Err(other),
         };
 
-        let reverse_value = vault.store.short_ids_reverse.get(&wtxn, id.as_bytes())?;
+        let reverse_value = vault.store.short_ids_reverse.get(wtxn, id.as_bytes())?;
         match reverse_value.as_deref() {
             Some(reverse_value) if *reverse_value == *key => {}
             _ if reserved_forward_keys.contains(key.as_ref()) => {
@@ -246,17 +244,16 @@ pub(super) fn recompute_short_id_hashes(vault: &Vault) -> Result<(u64, u64)> {
                 );
             }
             canonical => {
-                if !forward_row_is_alias_backed(vault, &wtxn, &key, canonical)? {
+                if !forward_row_is_alias_backed(vault, wtxn, &key, canonical)? {
                     forward_orphans.push(key.to_vec());
                 }
             }
         }
     }
     for forward_key in &forward_orphans {
-        vault.store.short_ids.delete(&mut wtxn, forward_key)?;
+        vault.store.short_ids.delete(wtxn, forward_key)?;
     }
 
-    wtxn.commit()?;
     Ok((
         hash_updates.len() as u64,
         (reverse_orphans.len() + forward_orphans.len()) as u64,
@@ -307,3 +304,21 @@ fn forward_key_is_claimed_by_reverse(
 const ERR_SHORT_IDS_REVERSE_KEY: &str = "short_ids_reverse key";
 
 const ERR_SHORT_IDS_FORWARD_VALUE: &str = "short_ids value";
+
+impl super::ShortIdStoreMaintenance for Vault {
+    fn port_short_id_recompute_hashes(&self, txn: &mut heed::RwTxn<'_>) -> Result<(u64, u64)> {
+        recompute_short_id_hashes(self, txn)
+    }
+
+    fn port_short_id_mapping_exists(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &crate::EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .store
+            .short_ids_reverse
+            .get(txn, id.as_bytes())?
+            .is_some())
+    }
+}

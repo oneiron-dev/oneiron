@@ -7,8 +7,8 @@ use crate::{EntityId, Vault};
 use super::attempt_lease;
 use super::hnsw_rebuild::{decode_u64_opt, rebuild_hnsw};
 use super::rebuild_hnsw_if_dropped;
-use super::short_ids::recompute_short_id_hashes;
 use super::text_ops::{cleanup_ppr_cache, clear_text_index, compact_postings};
+use crate::ports::ShortIdStoreMaintenance;
 
 /// Builder for running maintenance operations against a vault.
 #[must_use = "MaintenanceBuilder performs no work until `.run()` is called"]
@@ -278,7 +278,9 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if self.do_recompute_hashes {
-            let (updated, deleted) = recompute_short_id_hashes(self.vault)?;
+            let mut txn = self.vault.store.env.write_txn()?;
+            let (updated, deleted) = self.vault.port_short_id_recompute_hashes(&mut txn)?;
+            txn.commit()?;
             report.short_id_hashes_updated = updated;
             report.orphan_short_ids_deleted = deleted;
         }

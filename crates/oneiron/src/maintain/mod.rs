@@ -1,7 +1,6 @@
 mod attempt_lease;
 mod builder;
 mod hnsw_rebuild;
-mod short_ids;
 mod text_ops;
 
 pub use self::builder::{MaintenanceBuilder, MaintenanceReport};
