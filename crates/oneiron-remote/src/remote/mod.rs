@@ -51,6 +51,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Total request timeout, sized for a 32 MiB blob round trip.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Full-vault exports can be much larger than one ordinary verb response.
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// The remote half of [`crate::OneironClient`].
 pub(crate) struct RemoteClient {
@@ -58,6 +60,9 @@ pub(crate) struct RemoteClient {
     authorization: HeaderValue,
     holder: Option<Box<(CapabilitySlip, SigningKey)>>,
     agent: Client,
+    // Export is a single large document. Keep an export-specific total timeout,
+    // not the ordinary verbs' response-byte ceiling or short timeout.
+    export_agent: Client,
     stream_agent: reqwest::Client,
 }
 
@@ -81,6 +86,7 @@ impl Clone for RemoteClient {
             authorization: self.authorization.clone(),
             holder: self.holder.clone(),
             agent: self.agent.clone(),
+            export_agent: self.export_agent.clone(),
             stream_agent: self.stream_agent.clone(),
         }
     }
@@ -100,6 +106,12 @@ impl RemoteClient {
         let base_url = normalize_origin(url)?;
         let authorization = bearer_header(bearer)?;
         let agent = blocking_agent()?;
+        let export_agent = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(EXPORT_TIMEOUT)
+            .build()
+            .map_err(|error| transport_error(format!("could not build export client: {error}")))?;
         let holder = match holder {
             Some(key) => {
                 let slip = CapabilitySlip::from_token(bearer).map_err(|_| {
@@ -126,6 +138,7 @@ impl RemoteClient {
             authorization,
             holder,
             agent,
+            export_agent,
         })
     }
 
@@ -159,38 +172,50 @@ impl RemoteClient {
         let url = self.verb_url(verb)?;
         let body = serialize_request(request)?;
         let credential = self.credential_headers()?;
-        let response = self
-            .agent
-            .post(url)
-            .headers(credential)
-            .header(ACCEPT, HeaderValue::from_static("application/json"))
-            .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
-            .body(body)
-            .send()
-            .map_err(|error| transport_error(describe_send_failure(&error)))?;
+        let response = (if verb == "export" {
+            &self.export_agent
+        } else {
+            &self.agent
+        })
+        .post(url)
+        .headers(credential)
+        .header(ACCEPT, HeaderValue::from_static("application/json"))
+        .header(CONTENT_TYPE, HeaderValue::from_static("application/json"))
+        .body(body)
+        .send()
+        .map_err(|error| transport_error(describe_send_failure(&error)))?;
 
         let status = response.status();
         if !status.is_success() {
             return Err(read_error_envelope(response, status));
         }
-        let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
-            match failure {
-                ReadFailure::TooLarge => transport_error(format!(
-                    "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
-                )),
-                ReadFailure::Io(message) => {
-                    transport_error(format!("the server's response was truncated: {message}"))
+        // The ordinary facade has a strict success-body ceiling. Export alone
+        // streams JSON directly into its required result: there is no second
+        // whole-body buffer, and the response size is the archive's own size.
+        // The export-specific total timeout still refuses a stalled peer.
+        if verb == "export" {
+            serde_json::from_reader(response).map_err(|error| {
+                transport_error(format!(
+                    "the server answered {status} for {verb} with an incomplete or invalid export: {error}"
+                ))
+            })
+        } else {
+            let bytes = read_capped(response, MAX_REMOTE_RESPONSE_BYTES).map_err(|failure| {
+                match failure {
+                    ReadFailure::TooLarge => transport_error(format!(
+                        "the server's response exceeded the {MAX_REMOTE_RESPONSE_BYTES}-byte read ceiling"
+                    )),
+                    ReadFailure::Io(message) => {
+                        transport_error(format!("the server's response was truncated: {message}"))
+                    }
                 }
-            }
-        })?;
-        serde_json::from_slice(&bytes).map_err(|error| {
-            // A 2xx whose body is not the DTO is NOT a success. Saying so is
-            // the difference between a caller seeing a typed failure and a
-            // caller seeing a default-constructed result they will trust.
-            transport_error(format!(
-                "the server answered {status} for {verb} with a body this verb could not decode: {error}"
-            ))
-        })
+            })?;
+            serde_json::from_slice(&bytes).map_err(|error| {
+                transport_error(format!(
+                    "the server answered {status} for {verb} with a body this verb could not decode: {error}"
+                ))
+            })
+        }
     }
 
     pub(crate) async fn llm_post(

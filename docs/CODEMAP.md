@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2172 | 733 | 2 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 2173 | 734 | 2 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 1 | 0 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 99 | 18 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 15 | 10 | 0 |
@@ -152,7 +152,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `llm` | dir | 83 | m | yes | Engine-facing LLM invocation seam |
 | `m8_forward_oracle` | dir | 6 | m | — | M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets |
 | `maintain` | dir | 6 | m | — | — |
-| `memory` | dir | 89 | m | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `memory` | dir | 91 | m | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 8 | m | — | Durable batched speculation over real detached worktrees |
 | `note` | file+dir | 28 | m | yes | Attributed NOTE records with built-in, plugin and registered PACK kinds |
 | `off_record` | dir | 12 | m | yes | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
@@ -357,7 +357,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `embedded` | file | 1 | m | The embedded backend: path resolution, the process-local vault registry, and the single-writer lease… |
 | `error` | file | 1 | s | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
 | `llm` | file | 1 | s | Own-server raw LLM transport over the SDK's single authenticated HTTP client |
-| `remote` | dir | 5 | s | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
+| `remote` | dir | 5 | m | The remote backend: the ONE HTTP stack the SDK owns (ONE-1441 I13, D2) |
 
 ## oneiron-seal
 

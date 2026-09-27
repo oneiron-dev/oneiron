@@ -1,4 +1,4 @@
-use super::{RemoteClient, normalize_origin, parse_error_envelope};
+use super::{MAX_REMOTE_RESPONSE_BYTES, RemoteClient, normalize_origin, parse_error_envelope};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -232,4 +232,68 @@ fn origin_normalization_preserves_a_path_prefix() {
         joined.as_str(),
         "https://example.invalid/oneiron/v1/core/facade/recall"
     );
+}
+
+/// Both SDK projections use the remote route. Export, unlike ordinary
+/// verbs, must consume a complete archive larger than the 64 MiB ceiling.
+#[test]
+fn connected_export_dispatches_generic_and_streams_large_typed_document() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        for large in [false, true] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(&mut stream);
+            let mut first = String::new();
+            reader.read_line(&mut first).unwrap();
+            assert!(first.starts_with("POST /v1/core/facade/export HTTP/1.1"));
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap();
+                }
+            }
+            let mut request = vec![0; length];
+            reader.read_exact(&mut request).unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&request).unwrap()["format"],
+                "json"
+            );
+            drop(reader);
+            let prefix = br#"{"format":"json","rendered":""#;
+            let suffix = b"\"}";
+            let count = if large {
+                MAX_REMOTE_RESPONSE_BYTES + 1
+            } else {
+                4
+            };
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", prefix.len() + count + suffix.len()).unwrap();
+            stream.write_all(prefix).unwrap();
+            let block = [b'x'; 64 * 1024];
+            let mut remaining = count;
+            while remaining > 0 {
+                let n = remaining.min(block.len());
+                stream.write_all(&block[..n]).unwrap();
+                remaining -= n;
+            }
+            stream.write_all(suffix).unwrap();
+        }
+    });
+    let client = crate::OneironClient::connect(&origin, "local-secret").unwrap();
+    let generic = client
+        .agent_verb("export", serde_json::json!({"format":"json"}))
+        .unwrap();
+    assert_eq!(generic["rendered"], "xxxx");
+    let large = client.export(Some("json")).unwrap();
+    assert_eq!(large.format, "json");
+    assert_eq!(large.rendered.len(), MAX_REMOTE_RESPONSE_BYTES + 1);
+    assert!(large.rendered.bytes().all(|byte| byte == b'x'));
+    server.join().unwrap();
 }
