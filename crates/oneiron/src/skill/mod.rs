@@ -11,6 +11,7 @@ mod identity;
 mod lifecycle;
 mod pack_load;
 mod record;
+pub(crate) mod resident;
 mod validate;
 
 #[cfg(test)]
@@ -29,6 +30,7 @@ pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES,
     SKILL_RECORD_BODY_KEYS, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
 };
+pub(crate) use self::resident::resident_of;
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
 
 // The flat skill.rs module provided these names to the sibling test module
