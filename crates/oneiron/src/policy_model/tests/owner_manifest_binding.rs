@@ -66,8 +66,10 @@ fn active_owner_rows_resolve_scoped_world_override() -> Result<()> {
         .iter()
         .map(|row| row.text.as_str())
         .collect();
-    assert!(texts.contains(&"Avoid casual language."));
-    assert!(!texts.contains(&"Avoid formal language."));
+    assert_eq!(
+        texts,
+        vec!["Avoid formal language.\nAvoid casual language."]
+    );
     Ok(())
 }
 
@@ -119,17 +121,23 @@ fn project_scope_overrides_world_and_vault_by_row_ref() -> Result<()> {
             .collect())
     };
     assert_eq!(rubric(None, None)?, vec!["Vault mode."]);
-    assert_eq!(rubric(Some("work"), None)?, vec!["Work mode."]);
+    assert_eq!(rubric(Some("work"), None)?, vec!["Vault mode.\nWork mode."]);
     assert_eq!(
         rubric(Some("work"), Some("p-1"))?,
-        vec!["World-specific project mode."]
+        vec!["Vault mode.\nWork mode.\nProject mode.\nWorld-specific project mode."]
     );
-    assert_eq!(rubric(Some("other"), Some("p-1"))?, vec!["Project mode."]);
+    assert_eq!(
+        rubric(Some("other"), Some("p-1"))?,
+        vec!["Vault mode.\nProject mode."]
+    );
     assert_eq!(
         rubric(Some("work"), Some("p-2"))?,
-        vec!["Work mode.", "Another project row."]
+        vec!["Vault mode.\nWork mode.", "Another project row."]
     );
-    assert_eq!(rubric(Some("work"), Some("absent"))?, vec!["Work mode."]);
+    assert_eq!(
+        rubric(Some("work"), Some("absent"))?,
+        vec!["Vault mode.\nWork mode."]
+    );
     Ok(())
 }
 
@@ -172,8 +180,180 @@ fn project_pattern_verdict_uses_project_action_not_world_action() -> Result<()> 
         vault
             .classify_policy_model(request.with_project_ref("p-1"))?
             .decision,
-        PolicyClassifyDecision::RouteToHelp,
+        PolicyClassifyDecision::Block,
     );
+    Ok(())
+}
+
+fn precedence_row(composition: &str) -> (Value, Value) {
+    (
+        Value::from("owner_policy_precedence"),
+        Value::Map(vec![
+            (Value::from("composition"), Value::from(composition)),
+            (Value::from("vault_cap"), Value::Boolean(true)),
+        ]),
+    )
+}
+
+#[test]
+fn manifest_precedence_switches_world_project_composition_but_never_relaxes_vault() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let rows = vec![
+        owner_row_with_action("owner:mode", "Vault cap.", "block"),
+        scoped_owner_row("owner:mode", "World rule.", "work"),
+        project_owner_row("owner:mode", "Project rule.", "p-1"),
+    ];
+    let manifest =
+        |composition| documented_owner_manifest(rows.clone(), vec![precedence_row(composition)]);
+    put_policy_manifest_bytes(
+        &vault,
+        gate::default_policy_manifest_id()?,
+        &manifest("nested_narrowing"),
+    )?;
+    let request = PolicyClassifyRequest::outbound_content("ordinary reply")
+        .with_world_ref("work")
+        .with_project_ref("p-1");
+    let policy = |vault: &Vault| -> Result<(String, crate::gate::OwnerRowAction)> {
+        let txn = vault.store.env.read_txn()?;
+        let resolved = gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let row = resolved
+            .active_owner_policy_rows_for_scope(Some("work"), Some("p-1"))
+            .into_iter()
+            .find(|row| row.row_ref == "owner:mode")
+            .expect("owner row");
+        Ok((row.text, row.action))
+    };
+    assert_eq!(
+        policy(&vault)?,
+        (
+            "Vault cap.\nWorld rule.\nProject rule.".into(),
+            crate::gate::OwnerRowAction::Block
+        )
+    );
+    let prompt = vault.policy_model_prompt(&request)?.expect("owner prompt");
+    assert_eq!(
+        prompt.rubric_rows[0].text,
+        "Vault cap.\nWorld rule.\nProject rule."
+    );
+    let nested_hash = gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?
+        .read_frontier_hash()?;
+    put_policy_manifest_bytes(
+        &vault,
+        gate::default_policy_manifest_id()?,
+        &manifest("most_specific_vault_capped"),
+    )?;
+    assert_eq!(
+        policy(&vault)?,
+        (
+            "Vault cap.\nProject rule.".into(),
+            crate::gate::OwnerRowAction::Block
+        )
+    );
+    assert_ne!(
+        nested_hash,
+        gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)?
+            .read_frontier_hash()?
+    );
+    assert_eq!(
+        vault
+            .policy_model_prompt(&request)?
+            .expect("owner prompt")
+            .rubric_rows[0]
+            .text,
+        "Vault cap.\nProject rule."
+    );
+    let mut combined = project_owner_row("owner:mode", "World-project rule.", "p-1");
+    let Value::Map(ref mut fields) = combined else {
+        unreachable!()
+    };
+    fields.push((Value::from("world_ref"), Value::from("work")));
+    let mut combined_rows = rows;
+    combined_rows.push(combined);
+    put_policy_manifest_bytes(
+        &vault,
+        gate::default_policy_manifest_id()?,
+        &documented_owner_manifest(
+            combined_rows,
+            vec![precedence_row("most_specific_vault_capped")],
+        ),
+    )?;
+    assert_eq!(
+        policy(&vault)?,
+        (
+            "Vault cap.\nWorld-project rule.".into(),
+            crate::gate::OwnerRowAction::Block
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn conflicting_manifest_precedence_folds_to_nested_narrowing() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(
+        &vault,
+        gate::default_policy_manifest_id()?,
+        &enabled_owner_manifest(vec![]),
+    )?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x97),
+        &documented_owner_manifest(
+            vec![
+                owner_row("owner:mode", "Vault."),
+                scoped_owner_row("owner:mode", "World.", "work"),
+                project_owner_row("owner:mode", "Project.", "p-1"),
+            ],
+            vec![precedence_row("most_specific_vault_capped")],
+        ),
+    )?;
+    let txn = vault.store.env.read_txn()?;
+    let resolved = gate::resolve_policy_manifest(&vault.store, &txn)?;
+    let row = resolved
+        .active_owner_policy_rows_for_scope(Some("work"), Some("p-1"))
+        .into_iter()
+        .find(|row| row.row_ref == "owner:mode")
+        .expect("owner row");
+    assert_eq!(row.text, "Vault.\nWorld.\nProject.");
+    Ok(())
+}
+
+#[test]
+fn malformed_precedence_fails_closed_instead_of_selecting_project() -> Result<()> {
+    for bad in [
+        Value::Map(vec![
+            (
+                Value::from("composition"),
+                Value::from("most_specific_vault_capped"),
+            ),
+            (Value::from("vault_cap"), Value::Boolean(false)),
+        ]),
+        Value::Map(vec![
+            (Value::from("composition"), Value::from("invalid")),
+            (Value::from("vault_cap"), Value::Boolean(true)),
+        ]),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        put_policy_manifest_bytes(
+            &vault,
+            test_id(0x98),
+            &documented_owner_manifest(
+                vec![
+                    owner_row("owner:mode", "Vault."),
+                    project_owner_row("owner:mode", "Project.", "p-1"),
+                ],
+                vec![(Value::from("owner_policy_precedence"), bad)],
+            ),
+        )?;
+        let txn = vault.store.env.read_txn()?;
+        let resolved = gate::resolve_policy_manifest(&vault.store, &txn)?;
+        assert!(resolved.is_fail_closed());
+        assert!(
+            resolved
+                .active_owner_policy_rows_for_scope(None, Some("p-1"))
+                .is_empty()
+        );
+    }
     Ok(())
 }
 

@@ -83,6 +83,13 @@ pub(crate) fn resolve_policy_manifest(
                     .owner_policy_rows
                     .extend(decoded.owner_policy_rows);
                 resolution.owner_policy_rows_dropped |= decoded.owner_policy_rows_dropped;
+                resolution.owner_policy_precedence = if resolution.packs.is_empty() {
+                    decoded.owner_policy_precedence
+                } else {
+                    resolution
+                        .owner_policy_precedence
+                        .restrict(decoded.owner_policy_precedence)
+                };
                 resolution.owner_policy_enabled |= decoded.owner_policy_enabled;
                 resolution
                     .owner_policy_patterns

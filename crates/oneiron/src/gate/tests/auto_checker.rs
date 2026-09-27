@@ -484,7 +484,10 @@ fn integrated_no_checker_frontier(posture: &str) -> [u8; 32] {
     for _ in 0..5 {
         len(&mut bytes, 0); // rules, actor ceilings, delegations, revokes, scoped grants
     }
-    bytes.extend_from_slice(&[0; 2]); // owner-policy enabled / rows dropped
+    bytes.push(0); // owner-policy enabled
+    text(&mut bytes, "owner_policy_precedence");
+    text(&mut bytes, "nested_narrowing");
+    bytes.push(0); // owner-policy rows dropped
     len(&mut bytes, 0); // owner-policy rows
     bytes.extend_from_slice(&[0; 3]); // document, output contract, patterns dropped
     len(&mut bytes, 0); // owner-policy patterns

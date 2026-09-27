@@ -141,6 +141,9 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         owner.revalidate_in_txn(self, txn)?;
+        // An optional notification table is made explicit on admission, so
+        // an authenticated install is immediately editable by the owner.
+        let data = super::default_manifest::with_default_owner_policy_notifications(data)?;
         if super::decode::decode_policy_manifest(&data).is_none() {
             return Err(Error::InvalidConfig("malformed policy manifest".into()));
         }

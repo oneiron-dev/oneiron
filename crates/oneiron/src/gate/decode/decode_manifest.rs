@@ -5,8 +5,8 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::gate::ceiling::{
-    ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
-    PolicySignature, SourceTrustCeiling,
+    ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow,
+    PolicyOwnerPrecedence, PolicyPack, PolicySignature, SourceTrustCeiling,
 };
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
@@ -14,9 +14,9 @@ use crate::gate::constants::{
     POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
     POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
+    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -43,6 +43,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) single_valued_predicates: std::collections::BTreeSet<String>,
     pub(in crate::gate) scoped_grants: Vec<PolicyScopedGrant>,
     pub(in crate::gate) owner_policy_rows: Vec<PolicyOwnerPolicyRow>,
+    pub(in crate::gate) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(in crate::gate) owner_policy_rows_dropped: bool,
     pub(in crate::gate) owner_policy_enabled: bool,
     pub(in crate::gate) owner_policy_document: Option<String>,
@@ -88,6 +89,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "single_valued_predicates"
                 | POLICY_SCOPED_GRANTS_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
+                | POLICY_OWNER_POLICY_PRECEDENCE_KEY
                 | super::super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY
                 | POLICY_OWNER_POLICY_ENABLED_KEY
                 | POLICY_OWNER_POLICY_DOCUMENT_KEY
@@ -121,10 +123,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
             let mut scopes = std::collections::BTreeSet::new();
             for row in rows {
                 let Value::Map(fields) = row else { return None };
-                if fields.len() != 2
-                    || fields
-                        .iter()
-                        .any(|(k, _)| !matches!(k.as_str(), Some("scope" | "delivery")))
+                if fields.len() != 3
+                    || fields.iter().any(|(k, _)| {
+                        !matches!(
+                            k.as_str(),
+                            Some("scope" | "delivery" | "digest_interval_seconds")
+                        )
+                    })
                 {
                     return None;
                 }
@@ -142,6 +147,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 };
                 if !matches!(scope, "vault" | "override")
                     || !matches!(delivery, "push_other_holders" | "log_only")
+                    || !matches!(single_map_value(fields, "digest_interval_seconds"),
+                        MapValue::Present(value) if value.as_u64().is_some_and(|secs| (1..=31_536_000).contains(&secs)))
                     || !scopes.insert(scope)
                 {
                     return None;
@@ -204,6 +211,38 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 Some(rows) => (rows, false),
                 None => (Vec::new(), true),
             },
+        };
+    // Invalid policy must not fall back to the permissive scope selection.
+    let owner_policy_precedence =
+        match single_map_value(&entries, POLICY_OWNER_POLICY_PRECEDENCE_KEY) {
+            MapValue::Missing => PolicyOwnerPrecedence::default(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(Value::Map(fields)) => {
+                if fields.len() != 2
+                    || fields
+                        .iter()
+                        .any(|(key, _)| !matches!(key.as_str(), Some("composition" | "vault_cap")))
+                {
+                    return None;
+                }
+                if !matches!(
+                    single_map_value(fields, "vault_cap"),
+                    MapValue::Present(Value::Boolean(true))
+                ) {
+                    return None;
+                }
+                match single_map_value(fields, "composition") {
+                    MapValue::Present(Value::String(value)) => match value.as_str()? {
+                        "nested_narrowing" => PolicyOwnerPrecedence::NestedNarrowing,
+                        "most_specific_vault_capped" => {
+                            PolicyOwnerPrecedence::MostSpecificVaultCapped
+                        }
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            }
+            MapValue::Present(_) => return None,
         };
     let owner_policy_document = match single_map_value(&entries, POLICY_OWNER_POLICY_DOCUMENT_KEY) {
         MapValue::Missing => None,
@@ -301,6 +340,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         scoped_grants,
         single_valued_predicates,
         owner_policy_rows,
+        owner_policy_precedence,
         owner_policy_rows_dropped,
         owner_policy_enabled,
         owner_policy_document,
