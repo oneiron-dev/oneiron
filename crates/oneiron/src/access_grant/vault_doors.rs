@@ -19,7 +19,10 @@ impl Vault {
         id: &EntityId,
         grant: &AccessGrant,
     ) -> Result<()> {
-        if matches!(grant.scope, AccessGrantScope::ChannelIdentity { .. }) {
+        if matches!(
+            grant.scope,
+            AccessGrantScope::ChannelIdentity { .. } | AccessGrantScope::DiaryCoreference { .. }
+        ) {
             return Err(invalid_grant());
         }
         if let Some(raw) = self
@@ -31,6 +34,7 @@ impl Vault {
             && matches!(
                 decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?.scope,
                 AccessGrantScope::ChannelIdentity { .. }
+                    | AccessGrantScope::DiaryCoreference { .. }
             )
         {
             return Err(invalid_grant());

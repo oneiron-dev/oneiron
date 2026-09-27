@@ -247,6 +247,7 @@ fn scoped_text_port_gates_candidates_before_limit_on_both_backends() -> Result<(
                     rank: &rank,
                     filter_all: true,
                     matches_scope: &mut scope,
+                    private_note_ids: None,
                 },
             )?;
             assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), expected);
