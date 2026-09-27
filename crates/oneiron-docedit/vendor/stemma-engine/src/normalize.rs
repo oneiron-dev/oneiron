@@ -2029,7 +2029,8 @@ fn is_zero_width_body_marker(element: &Element) -> bool {
 /// carries the drop-class row marker (`w:trPr/w:del` on accept,
 /// `w:trPr/w:ins` on reject — a STACKED row carries both and so drops in
 /// both full resolutions). The revision pass then removes the rowless shell
-/// (§17.4.37), so a paragraph-mark join must treat the table as absent.
+/// (§17.4.37). A plain body donor directly before inserted rows instead
+/// enters the first row in Word and disappears with it on reject.
 /// Byte-level counterpart of the model path's `table_emptied_by_accept_reject`
 /// (tracked_model.rs): both extract each row's `(has_ins, has_del)` from their
 /// own representation (here the `w:trPr/w:ins` / `w:trPr/w:del` markers) and
@@ -2044,6 +2045,54 @@ fn table_emptied_by_resolution(tbl: &Element, keep_inserted: bool) -> bool {
         _ => None,
     });
     crate::resolution_rules::table_emptied_by_resolution(rows, keep_inserted)
+}
+
+/// Word for Mac 16.113.2 moves a plain donor paragraph into the first
+/// inserted table row when rejecting its inserted paragraph mark. If every row
+/// is then rejected, the donor disappears WITH the row, not into the paragraph
+/// following the table. Restrict this rule to the Word-oracled plain-text,
+/// body-level shape; other carriers and nested tables keep their existing path.
+fn plain_donor_before_inserted_table(p: &Element, tbl: &Element) -> bool {
+    if !is_w_tag(p, "p") || !is_w_tag(tbl, "tbl") {
+        return false;
+    }
+    let rows: Vec<_> = tbl
+        .children
+        .iter()
+        .filter_map(|child| match child {
+            XMLNode::Element(row) if is_w_tag(row, "tr") => Some(row),
+            _ => None,
+        })
+        .collect();
+    if rows.is_empty()
+        || !rows
+            .iter()
+            .all(|row| has_row_tracking(row, "ins") && !has_row_tracking(row, "del"))
+    {
+        return false;
+    }
+    let mut has_text = false;
+    for child in &p.children {
+        let XMLNode::Element(el) = child else {
+            continue;
+        };
+        if is_w_tag(el, "pPr") {
+            if el.children.iter().any(|node| {
+                matches!(node, XMLNode::Element(prop)
+                if is_w_tag(prop, "sectPr") || is_w_tag(prop, "numPr"))
+            }) {
+                return false;
+            }
+        } else if is_w_tag(el, "r") {
+            has_text |= el.children.iter().any(|node| {
+                matches!(node, XMLNode::Element(text)
+                if is_w_tag(text, "t") && !text.children.is_empty())
+            });
+        } else {
+            return false;
+        }
+    }
+    has_text
 }
 
 /// Whether this resolution EMPTIES the paragraph: it HAS content children and
@@ -2124,11 +2173,25 @@ fn join_mark_resolved_paragraphs(
             i += 1;
             continue;
         }
+        // The Word-oracled inserted-table case is NOT an abstract join across
+        // the final (rowless) table: Word first moves this donor into the row's
+        // cell, then drops that row. Its final reading loses the donor too.
+        if !keep_inserted
+            && is_w_tag(parent, "body")
+            && matches!(
+                (parent.children.get(i), parent.children.get(i + 1)),
+                (Some(XMLNode::Element(donor)), Some(XMLNode::Element(table)))
+                    if plain_donor_before_inserted_table(donor, table)
+            )
+        {
+            parent.children.remove(i);
+            stats.revisions_resolved += 1;
+            continue;
+        }
         // Find the join target: the next paragraph sibling, stepping over
         // zero-width markers, non-element nodes, and tables this resolution
-        // empties of every row (they vanish on the same pass — Word rejoins
-        // one logical paragraph split around all-tracked tables; mirrors the
-        // model path's `table_emptied_by_accept_reject` step-over), but
+        // empties of every row (unless the Word-oracled plain donor was
+        // already absorbed by an adjacent inserted row above), but
         // stopping at any other element — surviving content blocks the join.
         let mut next_p = None;
         for (offset, c) in parent.children[(i + 1)..].iter().enumerate() {

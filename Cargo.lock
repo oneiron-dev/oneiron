@@ -7227,7 +7227,7 @@ dependencies = [
  "postcard",
  "proptest",
  "qrcode",
- "quick-xml",
+ "quick-xml 0.42.0",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",

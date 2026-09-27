@@ -7,12 +7,17 @@ The upstream work is dual-licensed MIT OR Apache-2.0. We elect Apache-2.0;
 the original `LICENSE-APACHE` and `LICENSE-MIT` are retained here and in both
 upstream crate roots, along with original source headers and attribution.
 
-Changes from that commit: no edits to upstream `src/` or fixtures. We omit its
-MCP, API server, CLI, and session runtimes (these are separate upstream crates).
+Changes from that commit: the first import copied upstream `src/`, tests,
+and fixtures unchanged. ONE-2522 later changed `vendor/stemma-engine/src/normalize.rs`,
+`src/tracked_model.rs`, and `src/resolution_rules.rs`: on Word-oracled rejection,
+a plain paragraph before an inserted-row table is absorbed into that row and
+removed with it, not rejoined past the table. The old synthetic assertions
+were corrected in the two paragraph-join suite files. Actual Word-for-Mac
+saved outputs were added under `testdata/word-oracle/` as reference fixtures;
+see `docs/docx-oracle/word-mini-20260927.json` for their digests and custody.
+We omit upstream's MCP, API server, CLI, and session runtimes (separate crates).
 The `oneiron-docedit` wrapper adds a stateless caller-facing Word revision
 entry and blocking export-linker check. The upstream engine's `runtime.rs`
 remains because its stateless serialization helpers and error types back the
 pure `api::Document` facade; the wrapper does not expose a session store.
-Stemma's tests and fixture bytes are copied without modification so the
-conformance baseline remains runnable. Upstream packages are not separately
-published by this workspace.
+Upstream packages are not separately published by this workspace.

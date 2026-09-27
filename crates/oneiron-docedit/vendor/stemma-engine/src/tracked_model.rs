@@ -5251,17 +5251,44 @@ fn row_survives_accept_reject(status: &Option<TrackingStatus>, keep_inserted: bo
 /// (valid per CT_Tbl, row group `minOccurs="0"`) is untouched by the resolution
 /// and does NOT vanish.
 ///
-/// A paragraph-mark merge must join ACROSS such a vanishing table, because Word
-/// does: rejecting the paragraph-mark insertions that split one logical
-/// paragraph around inserted, all-tracked tables rejoins it into one paragraph
-/// (§17.13.5.20 — rejecting an inserted paragraph mark removes it, joining the
-/// content with the following paragraph; the interleaved tables disappear on the
-/// same reject, so "following" is the next surviving paragraph past them).
+/// A plain donor immediately before an all-inserted table is the Word-backed
+/// exception to stepping across an eventually vanishing table: rejecting its
+/// inserted paragraph mark absorbs its text into the first inserted cell;
+/// rejecting that row removes the text too (Mac mini oracle, OF-503).
 ///
-/// The "had rows and none survive" composition — and its per-row survival — is
-/// the shared `resolution_rules::table_emptied_by_resolution`, the same rule the
-/// byte path's `table_emptied_by_resolution` (normalize.rs) consults; extraction
-/// stays model-local (each row's marks from its `tracking_status`).
+/// Narrow Word-oracled donor transfer: a plain paragraph before an inserted
+/// table row moves INTO that row when its inserted mark is rejected. If all
+/// rows are inserted, rejecting them then removes the donor with the table.
+/// The mini's saved result is pinned in docs/docx-oracle/word-mini-20260927.json.
+fn plain_donor_before_inserted_table(p: &ParagraphNode, table: &TableNode) -> bool {
+    if p.literal_prefix.is_some() || p.section_properties.is_some() {
+        return false;
+    }
+    let mut has_text = false;
+    for segment in &p.segments {
+        if !segment.inlines.is_empty() && !matches!(segment.status, TrackingStatus::Normal) {
+            return false;
+        }
+        for inline in &segment.inlines {
+            let InlineNode::Text(text) = inline else {
+                return false;
+            };
+            has_text |= !text.text.is_empty();
+        }
+    }
+    has_text
+        && !table.rows.is_empty()
+        && table.rows.iter().all(|row| {
+            matches!(
+                row.tracking_status.as_ref(),
+                Some(TrackingStatus::Inserted(_))
+            )
+        })
+}
+
+/// The "had rows and none survive" composition and per-row survival are shared
+/// with the byte path's `table_emptied_by_resolution` (normalize.rs); this
+/// extractor reads each model row's `tracking_status`.
 fn table_emptied_by_accept_reject(t: &TableNode, keep_inserted: bool) -> bool {
     let rows = t.rows.iter().map(|row| {
         row.tracking_status
@@ -5274,7 +5301,7 @@ fn table_emptied_by_accept_reject(t: &TableNode, keep_inserted: bool) -> bool {
 /// Whether a top-level block is removed ENTIRELY by the accept/reject
 /// resolution — either dropped at the block level, or a table emptied of every
 /// row. A paragraph-mark merge steps over such blocks when searching for its
-/// join target (they occupy no position in the resolved flow).
+/// join target except for the Word-oracled plain-donor/inserted-row case.
 fn tracked_block_removed_by_accept_reject(tb: &TrackedBlock, keep_inserted: bool) -> bool {
     !block_survives_retain(&tb.status, keep_inserted)
         || matches!(&tb.block, BlockNode::Table(t) if table_emptied_by_accept_reject(t, keep_inserted))
@@ -5580,6 +5607,22 @@ fn merge_marked_paragraphs_tracked(blocks: &mut Vec<TrackedBlock>, keep_inserted
         };
         if !needs_merge {
             i += 1;
+            continue;
+        }
+        // Word moves this donor into the immediately following inserted row
+        // before rejecting the row. In the fully rejected reading both vanish;
+        // jumping past the table to the later paragraph would retain text Word
+        // removed. This is the body-level counterpart of normalize.rs.
+        let absorbed = !keep_inserted
+            && matches!(
+                (&blocks[i].block, blocks.get(i + 1)),
+                (BlockNode::Paragraph(donor), Some(next))
+                    if matches!(next.status, TrackingStatus::Normal)
+                        && matches!(&next.block, BlockNode::Table(table)
+                            if plain_donor_before_inserted_table(donor, table))
+            );
+        if absorbed {
+            blocks.remove(i);
             continue;
         }
         // Find the join target: the next SURVIVING paragraph, stepping over
@@ -7179,8 +7222,8 @@ fn tracked_block_survives_selected(
 /// Selective-path counterpart of `table_emptied_by_accept_reject`: a table this
 /// selection empties completely (it had rows and every one is dropped by the
 /// selection), so `project_blocks_for_selected_resolution` removes the rowless
-/// shell. A paragraph-mark merge joins ACROSS such a table, matching the full
-/// accept/reject path and Word.
+/// shell. A plain donor that Word absorbs into a selected inserted row is
+/// removed with the row instead of joining across to the later paragraph.
 fn table_emptied_by_selected(
     t: &TableNode,
     action: ResolveSelectionAction,
@@ -7247,6 +7290,23 @@ fn merge_marked_paragraphs_tracked_selected(
         };
         if !needs_merge {
             i += 1;
+            continue;
+        }
+        // Selecting both the inserted mark and every inserted row has the
+        // same final Word reading as full reject: the donor first enters the
+        // doomed row and is removed with it. A partial selection keeps the
+        // row and must not discard the donor here.
+        let absorbed = action == ResolveSelectionAction::Reject
+            && matches!(
+                (&blocks[i].block, blocks.get(i + 1)),
+                (BlockNode::Paragraph(donor), Some(next))
+                    if matches!(next.status, TrackingStatus::Normal)
+                        && matches!(&next.block, BlockNode::Table(table)
+                            if plain_donor_before_inserted_table(donor, table)
+                                && table_emptied_by_selected(table, action, selected_revision_ids))
+            );
+        if absorbed {
+            blocks.remove(i);
             continue;
         }
         // Same join-target search as the full accept/reject path: step over

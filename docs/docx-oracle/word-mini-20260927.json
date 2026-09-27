@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "recorded_at_utc": "2026-09-27T02:23:29+00:00",
+  "recorded_at_utc": "2026-09-27T05:08:16+00:00",
   "oracle_host": "Oletymac.local (Mac mini; Office host)",
   "word_version": "16.113.2",
   "custody": "~/Library/Containers/com.microsoft.Word/Data/lin-2522/ on Mac mini; binary fixtures and Word outputs are not committed",
@@ -303,18 +303,42 @@
       "input_document_xml_sha256": "844a50103f0278570d6ccd800315d1d504db47b976a09e1b589ddadd5887f9d5",
       "word_reject_all_first_pass_sha256": "89afa7918aa2417703a9d1df359754aefa391f3a02a635c0f54fd6761121830b",
       "word_reject_remaining_row_sha256": "0e3a61de72b6cb4d8c8051612a02e1af2dbf4e0c5bd0faa8e7d61a828ef69b71",
-      "fork_reject_all_sha256": "3d5771288837f6b62704f08325e10f1cdb3bedd0abde0f2cb888364eb64a6cff",
       "word_text": [
         "beta."
       ],
       "fork_text": [
-        "Alpha beta."
+        "beta."
       ],
-      "matches_word": false,
+      "matches_word": true,
       "word_revision_objects_before": 1,
       "word_revision_objects_after_first_reject_all": 1,
       "word_revision_objects_after_explicit_remaining_reject": 0,
-      "reason": "Word moves Alpha into the inserted table cell on first reject and removes that cell when the remaining insertion is explicitly rejected; upstream stemma suite expects Alpha beta. instead."
+      "reason": "Word moves the plain donor into the inserted table cell before rejecting the row; fork now removes that donor with the row, matching Word beta. on its saved full-reject reference.",
+      "fork_reject_all_before_fix_sha256": "3d5771288837f6b62704f08325e10f1cdb3bedd0abde0f2cb888364eb64a6cff",
+      "fork_reject_all_after_fix_sha256": "58a0ba6338562f7addd12727bb23c523b0b4587ec755f6a348a75337942b585c",
+      "fork_fixed_word_saved_sha256": "d3a291d9b900e6ff359e634979ebb3fc10fa260707f896c18cbecb81f45b44c0",
+      "fixed_word_roundtrip": {
+        "host": "Oletymac.local",
+        "word_version": "16.113.2",
+        "container_path": "~/Library/Containers/com.microsoft.Word/Data/lin-2522/fixtures/",
+        "repair_dialog_observed": false,
+        "sheets_after_open_and_save": 0,
+        "revision_objects_before_and_after_save": 0,
+        "paragraphs_before_and_after_save": 1,
+        "logical_paragraph_text_sha256_before_and_after_save": "49a242e6143002e52b3dbff2bddfc8ae93eb20fda3ba6a63117ff43386039590",
+        "word_saved_document_xml_sha256": "7c64000089d6cda62cab3ad22f83324f6a7b7020f866a07301d739fa70b68555"
+      }
+    },
+    "multi_table_edge": {
+      "word_saved_full_reject_sha256": "5893a7655b19176c6c32f8343cfa6b2dcb077067fbae8c111aaee31219c32f4a",
+      "word_text": [
+        "Gamma"
+      ],
+      "fork_text": [
+        "Gamma"
+      ],
+      "matches_word": true,
+      "note": "Word reject-all first leaves an inserted row; a second reject-all removes the remaining row. Word output copied to vendor/stemma-engine/testdata/word-oracle/multi-table-join-rejected.docx; full and selective fork resolutions are asserted against it."
     }
   },
   "libreoffice": {
@@ -326,6 +350,6 @@
     "Five pinned public inputs are a bounded sample, not stemma’s full conformance corpus.",
     "No screenshot/visual paint inspection; native Word revision objects are the application evidence.",
     "POI/docx4j cases do not exercise anchored comments.",
-    "The inserted-table paragraph-join edge differs from Word; do not claim complete docengine:docx-pass."
+    "Inserted-table full-reject now matches Word beta.; nested table case lacked a reliable final Word resolution and remains outside this narrow fix."
   ]
 }

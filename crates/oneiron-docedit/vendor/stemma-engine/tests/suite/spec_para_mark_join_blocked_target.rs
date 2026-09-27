@@ -13,17 +13,18 @@
 //!    is resolved away, so Word removes the paragraph entirely. Leaving an
 //!    empty husk splits the flow Word shows. Wild shape: an inserted heading
 //!    paragraph directly before a retained table, rejected.
-//! 2. The table BETWEEN donor and the next paragraph is emptied of every row
-//!    by the same resolution (all rows `w:trPr/w:ins` on reject). The table
-//!    vanishes on this pass, so the join proceeds ACROSS it — one logical
-//!    paragraph rejoins.
+//! 2. The next table's rows are all inserted and removed by rejection. Word
+//!    first absorbs the plain donor into the inserted cell and then discards
+//!    that cell; stepping across to the later paragraph would keep text Word
+//!    removes. The expected output is saved by Word on the Mac mini.
 //!
 //! Every test asserts wire/model parity (`normalize_docx`/`reject_all_docx`
 //! vs `Document::project` + export): the model path already implements these
 //! rules (`paragraph_emptied_by_accept_reject`, `table_emptied_by_accept_reject`
 //! in tracked_model.rs); this file pins the byte path to them.
 //!
-//! Daily tier: synthesized in-memory DOCX, no corpus, no real-Word oracle.
+//! Daily tier: synthesized input with saved Word-for-Mac output for the
+//! inserted-table case (docs/docx-oracle/word-mini-20260927.json).
 
 use std::io::Write;
 
@@ -163,29 +164,38 @@ fn accept_drops_fully_deleted_paragraph_before_surviving_table() {
 // ── 2. Join across a table the same resolution empties ──────────────────────
 
 #[test]
-fn reject_joins_across_table_emptied_by_same_reject() {
-    // Donor has SURVIVING content and an insert-marked pilcrow; the table
-    // between donor and the next paragraph is all inserted rows. Reject
-    // removes the break AND the table: one logical paragraph rejoins.
-    let body = r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" w:author="A" w:date="2024-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Alpha </w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:ins w:id="2" w:author="A" w:date="2024-01-01T00:00:00Z"/></w:trPr><w:tc><w:tcPr/><w:p><w:r><w:t>inserted cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>beta.</w:t></w:r></w:p>"#.to_string();
-    let wire = wire_resolve(&body, false);
-    let xml = document_xml_of(&wire);
-    assert!(
-        !xml.contains("<w:tbl"),
-        "all-inserted table must vanish on reject: {xml}"
-    );
-    let text = body_text(&wire);
-    assert!(
-        text.contains("Alpha beta."),
-        "the paragraph must rejoin across the vanished table: {text:?}"
-    );
-    let model = model_resolve(&body, false);
-    assert_eq!(
-        text,
-        body_text(&model),
-        "wire and model reject must agree on the join-across shape"
-    );
-    assert!(validate(&wire).ok, "wire output must validate");
+fn reject_drops_donor_absorbed_by_removed_table_like_word() {
+    // Word for Mac 16.113.2: reject-all first joins Alpha into the inserted
+    // table cell; rejecting the remaining row insertion removes that cell AND
+    // Alpha. The saved reference is an actual Word output, not a model oracle:
+    // docs/docx-oracle/word-mini-20260927.json paragraph_join.inserted_table_edge
+    // (SHA-256 0e3a61de72b6cb4d8c8051612a02e1af2dbf4e0c5bd0faa8e7d61a828ef69b71).
+    let word = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/word-oracle/paragraph-join-rejected.docx"
+    ));
+    let word_text = body_text(word);
+    assert_eq!(word_text.trim(), "beta.");
+    assert_eq!(paragraph_count(&document_xml_of(word)), 1);
+
+    let body = r#"<w:p><w:pPr><w:rPr><w:ins w:id="1" w:author="A" w:date="2024-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">Alpha </w:t></w:r></w:p><w:tbl><w:tblPr/><w:tblGrid><w:gridCol/></w:tblGrid><w:tr><w:trPr><w:ins w:id="2" w:author="A" w:date="2024-01-01T00:00:00Z"/></w:trPr><w:tc><w:tcPr/><w:p><w:r><w:t>inserted cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>beta.</w:t></w:r></w:p>"#;
+    let wire = wire_resolve(body, false);
+    let model = model_resolve(body, false);
+    for output in [&wire, &model] {
+        assert_eq!(
+            body_text(output),
+            word_text,
+            "reject must match Word's saved reading"
+        );
+        let xml = document_xml_of(output);
+        assert_eq!(
+            paragraph_count(&xml),
+            1,
+            "reject must match Word's paragraph count"
+        );
+        assert!(!xml.contains("<w:tbl"), "inserted table must vanish: {xml}");
+        assert!(validate(output).ok, "rejected DOCX must pass the linker");
+    }
 }
 
 // ── 3. Negative controls ─────────────────────────────────────────────────────

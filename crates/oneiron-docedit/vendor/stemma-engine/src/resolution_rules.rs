@@ -113,11 +113,11 @@ pub(crate) fn is_zero_width_body_marker_name(local: &str) -> bool {
 
 /// Whether a full resolution EMPTIES a table completely: it had at least one
 /// row and NONE survive this resolution, so the revision pass then removes the
-/// rowless shell (§17.4.37 / Word parity). A paragraph-mark join must treat
-/// such a table as absent and step ACROSS it (Word rejoins one logical
-/// paragraph split around an all-tracked table). A table that was already
-/// rowless is untouched by the resolution and does NOT vanish, so it does not
-/// satisfy this rule.
+/// rowless shell (§17.4.37). A paragraph-mark join can step across it in
+/// cases outside the plain-donor/inserted-row Word-oracled shape; there Word
+/// first absorbs the donor into the row and removes it with the row. A table
+/// that was already rowless is untouched by resolution and does not satisfy
+/// this rule.
 ///
 /// `rows` yields each row's `(has_ins_mark, has_del_mark)`; per-row survival
 /// goes through [`tracked_class_survives`], so this composition cannot drift

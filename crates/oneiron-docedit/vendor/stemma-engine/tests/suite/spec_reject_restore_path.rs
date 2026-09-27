@@ -467,15 +467,11 @@ fn accept_all_pilcrow_deletion_leaves_no_del_residue() {
 
 // ── A paragraph-mark merge blocked by an intervening table ───────────────────
 //
-// ECMA-376 §17.13.5.20: rejecting an inserted paragraph mark REMOVES the mark,
-// joining the paragraph's content with the FOLLOWING paragraph. "Blocked" is not
-// a spec concept. When one logical paragraph was split into N by inserted
-// paragraph marks, and the redline interleaved all-tracked tables between the
-// fragments, rejecting resolves BOTH: every table loses all its rows (so the
-// rowless shell is removed) AND every inserted mark is undone — so the fragments
-// rejoin into ONE paragraph across the vanished tables. Word does exactly this
-// (wild-witnessed: a 6-way-split legal note rejoins to a single paragraph, and
-// our reject-all reproduced Word's 1346-paragraph body exactly).
+// Word for Mac 16.113.2 resolves a paragraph-mark insertion before a table by
+// moving its donor into the first inserted row, THEN dropping that row. The
+// fully rejected result loses the donor; abstractly stepping over the vanished
+// table to a later paragraph incorrectly retains it. Both full and selective
+// resolution are compared to a saved Word output below.
 
 /// Reimport the export and return `(top-level paragraph count, table count)`.
 fn body_block_counts(bytes: &[u8]) -> (usize, usize) {
@@ -540,9 +536,17 @@ const SPLIT_AROUND_VANISHING_TABLES: &str = r#"<w:p>
   <w:p><w:r><w:t>Gamma</w:t></w:r></w:p>"#;
 
 #[test]
-fn reject_joins_split_across_vanishing_tables() {
-    // reject_all AND selective-reject-all: the two vanished tables let the three
-    // fragments rejoin into exactly ONE paragraph, and nothing is left pending.
+fn reject_drops_donors_absorbed_into_inserted_table_rows() {
+    // Word for Mac 16.113.2 moves Alpha and Beta into the following inserted
+    // table cells before rejecting those rows. Its saved, fully-rejected output
+    // contains only Gamma (docs/docx-oracle/word-mini-20260927.json).
+    let word = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/testdata/word-oracle/multi-table-join-rejected.docx"
+    ));
+    let expected = body_paragraph_texts(word);
+    assert_eq!(expected, vec!["Gamma".to_string()]);
+    assert_eq!(body_block_counts(word), (1, 0));
     for bytes in [
         runtime_reject(SPLIT_AROUND_VANISHING_TABLES),
         selective_resolve_all(
@@ -552,19 +556,11 @@ fn reject_joins_split_across_vanishing_tables() {
     ] {
         assert_eq!(
             body_paragraph_texts(&bytes),
-            vec!["Alpha Beta Gamma".to_string()],
-            "the three fragments rejoin into one paragraph across the vanished tables"
+            expected,
+            "the fully rejected reading must match Word, not a final-state step-over"
         );
-        assert_eq!(
-            body_block_counts(&bytes),
-            (1, 0),
-            "one paragraph, zero tables"
-        );
-        assert_eq!(
-            reimport_revision_count(&bytes),
-            0,
-            "reimport enumerates zero revisions"
-        );
+        assert_eq!(body_block_counts(&bytes), (1, 0));
+        assert_eq!(reimport_revision_count(&bytes), 0);
         assert!(validate(&bytes).ok, "rejected export validates clean");
     }
 }
