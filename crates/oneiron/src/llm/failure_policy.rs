@@ -55,6 +55,10 @@ pub struct DreamerFailureDecision {
     /// Additional restrictions on top of claim and effect authority gates.
     pub consolidation_eligible: bool,
     pub effector_eligible: bool,
+    /// A trusted manifest declared this class, or the manifest fold itself
+    /// failed closed. An absent class is not a permit; an independent,
+    /// authenticated Dreamer stage rule can supply its own narrower answer.
+    pub(crate) manifest_restricts: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,6 +130,7 @@ pub(crate) fn decide_failure(
     DreamerFailureDecision {
         class,
         route: class.route(),
+        manifest_restricts: !matched.is_empty(),
         // Missing rows do not license failed outputs. Multiple trusted packs
         // compose by intersection, never last-writer-wins.
         consolidation_eligible: !matched.is_empty()

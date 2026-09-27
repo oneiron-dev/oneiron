@@ -112,7 +112,9 @@ impl PolicyManifestResolution {
         class: DreamerFailureClass,
     ) -> DreamerFailureDecision {
         if self.diagnostics.is_fail_closed() {
-            decide_failure(&[], class)
+            let mut denied = decide_failure(&[], class);
+            denied.manifest_restricts = true;
+            denied
         } else {
             decide_failure(&self.dreamer_failure_rules, class)
         }
