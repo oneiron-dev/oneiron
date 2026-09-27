@@ -1994,10 +1994,10 @@
       "VerifiedSlip"
      ],
      "path": "src/authority/slip.rs",
-     "purpose": "Version-two capability slips: chained keyed MACs, offline narrowing and holder proof",
+     "purpose": "Host-signed, log-backed capability slips with MAC-checked offline narrowing and holder proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 5
      }
     },
@@ -2067,8 +2067,8 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 7,
-      "fn": 16,
+      "crate-vis": 8,
+      "fn": 17,
       "struct": 1
      }
     },

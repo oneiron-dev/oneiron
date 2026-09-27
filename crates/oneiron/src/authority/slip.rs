@@ -1,5 +1,8 @@
-//! Version-two capability slips: chained keyed MACs, offline narrowing and holder proof.
-use super::{AuthorityFold, invalid_authority};
+//! Host-signed, log-backed capability slips with MAC-checked offline narrowing and holder proof.
+use super::{
+    AuthorityFold, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, invalid_authority,
+    verify_authority_signature,
+};
 use crate::error::Result;
 use crate::federation::Scope;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -50,14 +53,17 @@ pub struct SlipCaveat {
     pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
 }
 
-/// One serializable slip. Only the FINAL MAC travels: a prior MAC would let a
-/// recipient remove the caveat after it. Debug deliberately omits token material.
+/// One serializable slip. The host signs the immutable mint; only the FINAL
+/// caveat MAC travels, so a recipient cannot strip an upstream narrowing.
+/// Debug deliberately omits signature and token material.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilitySlip {
     pub version: u8,
     pub claims: SlipClaims,
     pub caveats: Vec<SlipCaveat>,
+    issuer_key: [u8; 32],
+    host_signature: Vec<u8>,
     mac: [u8; 32],
 }
 impl std::fmt::Debug for CapabilitySlip {
@@ -193,14 +199,18 @@ impl VerifiedSlip {
 }
 
 impl CapabilitySlip {
-    pub(super) fn mint(claims: SlipClaims, secret: &[u8]) -> Result<Self> {
+    pub(super) fn mint(claims: SlipClaims, issuer: &super::HostSlipIssuer) -> Result<Self> {
         claims.validate()?;
-        let key = blake3::derive_key(MAC_CONTEXT, secret);
+        let key = blake3::derive_key(MAC_CONTEXT, issuer.secret());
         let mac = *blake3::keyed_hash(&key, &canonical(&claims)?).as_bytes();
+        let issuer_key = issuer.binding_key();
+        let host_signature = issuer.sign_slip(&host_transcript(2, &claims, &issuer_key, &mac)?);
         Ok(Self {
             version: 2,
             claims,
             caveats: Vec::new(),
+            issuer_key,
+            host_signature,
             mac,
         })
     }
@@ -242,8 +252,8 @@ impl CapabilitySlip {
         }
         Ok(slip)
     }
-    /// Checks the MAC chain, current authority ancestry and holder possession.
-    /// `challenge` is supplied by the receiving door, never taken from the slip.
+    /// Checks the host signature, private caveat MAC chain, live authority
+    /// ancestry, and holder possession. The receiving door supplies `challenge`.
     pub fn verify(
         &self,
         secret: &[u8],
@@ -253,12 +263,81 @@ impl CapabilitySlip {
         holder_signature: &[u8],
     ) -> Result<VerifiedSlip> {
         let verified = self.verify_authority(secret, fold, now)?;
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(verified)
+    }
+    /// Verify an uncaveated logged slip with ONLY the issuing host public key.
+    /// Offline caveats need the private MAC root to prove that no narrowing was
+    /// stripped; they fail closed here rather than granting the base scope.
+    pub fn verify_with_host_key(
+        &self,
+        host_key: &AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        if !self.caveats.is_empty() || now < self.claims.issued_at || now >= self.claims.expires_at
+        {
+            return Err(invalid_authority());
+        }
+        // The issuer signature commits to the INITIAL MAC as well as the
+        // claims. A holder of an attenuated token cannot strip the caveats:
+        // their final MAC differs and they do not know the signed initial MAC.
+        self.verify_host_signature(host_key, fold, &self.mac)?;
+        let mut claims = self.claims.clone();
+        claims.ttl_secs = claims.ttl_secs.min(claims.expires_at - now);
+        let verified = VerifiedSlip { claims, pact: None };
+        self.verify_holder(challenge, holder_signature)?;
+        Ok(verified)
+    }
+    fn verify_holder(&self, challenge: &[u8], holder_signature: &[u8]) -> Result<()> {
         let key =
             VerifyingKey::from_bytes(&self.claims.binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(holder_signature).map_err(|_| invalid_authority())?;
         key.verify_strict(&self.binding_transcript(challenge)?, &signature)
-            .map_err(|_| invalid_authority())?;
-        Ok(verified)
+            .map_err(|_| invalid_authority())
+    }
+    /// The issuer in the token must be the signer of THIS mint in the
+    /// fold-verified log, not merely another enrolled host key.
+    fn verify_host_signature(
+        &self,
+        host_key: &AuthorityKey,
+        fold: &AuthorityFold,
+        base_mac: &[u8; 32],
+    ) -> Result<()> {
+        self.claims.validate()?;
+        if self.version != 2
+            || self.caveats.len() > MAX_CAVEATS
+            || canonical(self)?.len() > MAX_WIRE_BYTES
+            || fold.vault_id != Some(self.claims.vault_id)
+            || *host_key != AuthorityKey::Ed25519(self.issuer_key)
+        {
+            return Err(invalid_authority());
+        }
+        let mint = fold
+            .slips
+            .mints
+            .get(&self.claims.slip_id)
+            .ok_or_else(invalid_authority)?;
+        if mint.action.claims != self.claims
+            || mint.signer != *host_key
+            || !fold.slip_is_live(&self.claims.slip_id)
+        {
+            return Err(invalid_authority());
+        }
+        let signature = AuthoritySignature {
+            suite: AuthoritySignatureSuite::Ed25519,
+            public_key: host_key.clone(),
+            signature: self.host_signature.clone(),
+        };
+        if !verify_authority_signature(
+            &signature,
+            &host_transcript(self.version, &self.claims, &self.issuer_key, base_mac)?,
+        ) {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
     /// Transcript to sign with the throwaway binding private key for this request.
     pub fn binding_transcript(&self, challenge: &[u8]) -> Result<Vec<u8>> {
@@ -277,24 +356,9 @@ impl CapabilitySlip {
         fold: &AuthorityFold,
         now: u64,
     ) -> Result<VerifiedSlip> {
-        self.claims.validate()?;
-        if self.version != 2
-            || self.caveats.len() > MAX_CAVEATS
-            || canonical(self)?.len() > MAX_WIRE_BYTES
-            || fold.vault_id != Some(self.claims.vault_id)
-        {
-            return Err(invalid_authority());
-        }
-        let mint = fold
-            .slips
-            .mints
-            .get(&self.claims.slip_id)
-            .ok_or_else(invalid_authority)?;
-        if mint.action.claims != self.claims || !fold.slip_is_live(&self.claims.slip_id) {
-            return Err(invalid_authority());
-        }
         let key = blake3::derive_key(MAC_CONTEXT, secret);
         let mut mac = *blake3::keyed_hash(&key, &canonical(&self.claims)?).as_bytes();
+        self.verify_host_signature(&AuthorityKey::Ed25519(self.issuer_key), fold, &mac)?;
         let mut effective = self.claims.clone();
         let mut pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)> = None;
         // An absent named-record bound is universal on generic record reads.
@@ -375,6 +439,17 @@ impl CapabilitySlip {
         verified.witness_pact(fold)?;
         Ok(verified)
     }
+}
+
+fn host_transcript(
+    version: u8,
+    claims: &SlipClaims,
+    issuer_key: &[u8; 32],
+    base_mac: &[u8; 32],
+) -> Result<Vec<u8>> {
+    let mut transcript = b"oneiron/capability-slip/host-signature/v2\0".to_vec();
+    transcript.extend_from_slice(&canonical(&(version, issuer_key, claims, base_mac))?);
+    Ok(transcript)
 }
 
 pub(super) fn canonical<T: Serialize>(value: &T) -> Result<Vec<u8>> {
