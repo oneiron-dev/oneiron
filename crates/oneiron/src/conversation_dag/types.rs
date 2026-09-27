@@ -36,6 +36,16 @@ pub struct ResolvedScope {
     pub records: Vec<EntityId>,
 }
 
+/// Addressing labels a recipient; it never changes who may read the record.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AddressMode {
+    /// No named recipients (the default).
+    #[default]
+    Broadcast,
+    /// One or more named recipients, not a private message.
+    Direct,
+}
+
 /// Input to the append-only conversation record door.
 #[derive(Debug, Clone)]
 pub struct AppendRecord {
@@ -45,6 +55,10 @@ pub struct AppendRecord {
     pub parent: Option<EntityId>,
     /// Reply target; its content revision is captured in the append transaction.
     pub reply_to: Option<EntityId>,
+    /// Addressing only; reply_to selects the separate reply mode.
+    pub address: AddressMode,
+    /// Named people; they need not be room members.
+    pub recipients: Vec<EntityId>,
     /// Advance HEAD; requires parent == HEAD and a non-sub-session record.
     pub advance: bool,
     /// Record type. This revision admits TURN only; MESSAGE has its own door.

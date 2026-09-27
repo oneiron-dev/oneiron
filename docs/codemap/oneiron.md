@@ -956,7 +956,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation_dag/test_support.rs` | src | s | 2 fn | — | Test-only policy fixture shared by engine and HTTP acceptance tests |
 | `src/conversation_dag/tests/mod.rs` | test | L | — | — | Observable DAG invariants, legacy adoption and rejection atomicity |
 | `src/conversation_dag/tests/replay.rs` | test | m | — | — | Observable session-carrier replay without exporting local membership indexes |
-| `src/conversation_dag/types.rs` | src | s | 6 struct · 1 enum | AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector | Door inputs and snapshot results |
+| `src/conversation_dag/types.rs` | src | s | 6 struct · 2 enum | AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector | Door inputs and snapshot results |
 | `src/conversation_dag/writes.rs` | src | m | 5 fn · 3 crate-vis | — | Atomic append, explicit HEAD moves and canonical-index repair |
 | `src/corpus.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | CorpusId, CorpusScope | Corpus scope for CLAIM records (ONE-1914): the AUDIENCE a claim belongs to, carried as a typed nested entry… |
 | `src/corpus/tests.rs` | test | m | — | — | — |

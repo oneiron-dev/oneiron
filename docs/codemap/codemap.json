@@ -11900,6 +11900,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AddressMode",
       "AppendRecord",
       "AppendedRecord",
       "DagPage",
@@ -11911,7 +11912,7 @@
      "path": "src/conversation_dag/types.rs",
      "purpose": "Door inputs and snapshot results",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "struct": 6
      }
     },
@@ -39007,7 +39008,7 @@
      "path": "src/api/conversation_dag/types.rs",
      "purpose": "Closed wire inputs for conversation topology and merge operations",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {

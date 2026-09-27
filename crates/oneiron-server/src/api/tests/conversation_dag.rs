@@ -157,6 +157,62 @@ async fn dag_routes_roundtrip_trunk_thread_fork_scope_migration_and_auth() {
 }
 
 #[tokio::test]
+async fn dag_addressing_route_validates_recipients_without_limiting_listing() {
+    let (_dir, server, actor) = setup();
+    let conv = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let records = format!(
+        "/v1/core/conversations/{}/records",
+        conv["id"].as_str().unwrap()
+    );
+    let recipient = EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &recipient,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&json!({"name": "outsider"})).unwrap(),
+        )
+        .unwrap();
+    let (status, error) = route_json(
+        server.clone(),
+        json_request(
+            "POST",
+            &records,
+            json!({"advance": true, "addr": "direct", "body": {"txt": "hello"}, "actor": actor}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_error_envelope(&error, "BAD_REQUEST");
+    let direct = post(
+        &server,
+        &records,
+        json!({"advance": true, "addr": "direct", "to": [recipient.to_hex()],
+            "body": {"txt": "hello"}, "actor": actor}),
+    )
+    .await;
+    assert_eq!(direct["item"]["addr"], "direct");
+    assert_eq!(direct["item"]["to"], json!([recipient.to_hex()]));
+    assert_eq!(
+        server
+            .vault
+            .targets(
+                &EntityId::from_hex(direct["id"].as_str().unwrap()).unwrap(),
+                oneiron::EdgeKind::AddressedTo,
+                None
+            )
+            .unwrap(),
+        [recipient]
+    );
+    assert_eq!(
+        get(&server, &records).await["main_line"],
+        json!([direct["id"]])
+    );
+}
+
+#[tokio::test]
 async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply() {
     let (_dir, server, actor) = setup();
     let conv = post(
@@ -201,6 +257,8 @@ async fn summary_routes_return_all_300_covers_drill_and_engine_bound_late_reply(
                 conversation: conv_id,
                 parent: Some(parent),
                 reply_to: None,
+                address: oneiron::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
                 advance: false,
                 kind: ENTITY_TYPE_TURN,
                 occurred: TimeRange {

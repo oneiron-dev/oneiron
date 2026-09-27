@@ -26,7 +26,8 @@ pub(crate) use graph::{
 pub use reply::{ReplyStrip, Thread};
 pub(crate) use scopes::resolve_in_txn;
 pub use types::{
-    AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath, ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, ResolvedScope, ScopePath,
+    ScopeSelector,
 };
 pub(crate) use writes::append_in_txn;
 

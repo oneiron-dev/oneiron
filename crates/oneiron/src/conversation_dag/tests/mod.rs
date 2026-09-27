@@ -179,6 +179,107 @@ proptest! {
 }
 
 #[test]
+fn addressing_is_stamped_and_validated_atomically() {
+    let (_dir, vault, conv, actor) = fixture();
+    let recipient = EntityId::now();
+    let another = EntityId::now();
+    for id in [recipient, another] {
+        vault
+            .put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                time(1),
+                1,
+                &body("person"),
+            )
+            .unwrap();
+    }
+    let mut direct_input = input(conv, None, true, actor);
+    direct_input.address = AddressMode::Direct;
+    for recipients in [
+        vec![],
+        vec![recipient, recipient],
+        vec![EntityId::now()],
+        vec![conv],
+    ] {
+        direct_input.recipients = recipients;
+        assert_eq!(
+            vault.append_dag_record(&direct_input).unwrap_err().kind(),
+            if direct_input.recipients.len() == 1 && direct_input.recipients[0] != conv {
+                ErrorKind::EntityNotFound
+            } else {
+                ErrorKind::InvalidConversationDag
+            }
+        );
+        assert!(
+            vault
+                .sources(&conv, EdgeKind::ChildOf, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+    direct_input.recipients = vec![recipient, another];
+    let direct = vault.append_dag_record(&direct_input).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &direct, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "direct");
+    assert_eq!(
+        decoded["to"],
+        serde_json::json!([recipient.to_hex(), another.to_hex()])
+    );
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&direct, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>(),
+        [recipient, another].into()
+    );
+    let mut reply = input(conv, Some(direct), true, actor);
+    reply.reply_to = Some(direct);
+    reply.recipients = vec![recipient];
+    let reply_id = vault.append_dag_record(&reply).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &reply_id, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "reply");
+    assert_eq!(decoded["to"], serde_json::json!([recipient.to_hex()]));
+    drop(txn);
+    assert_eq!(
+        vault
+            .targets(&reply_id, EdgeKind::AddressedTo, None)
+            .unwrap(),
+        [recipient]
+    );
+    assert_eq!(
+        vault.targets(&reply_id, EdgeKind::RepliesTo, None).unwrap(),
+        [direct]
+    );
+    let mut broadcast = input(conv, Some(reply_id), true, actor);
+    broadcast.recipients = vec![recipient];
+    assert_eq!(
+        vault.append_dag_record(&broadcast).unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    broadcast.recipients.clear();
+    let next = vault.append_dag_record(&broadcast).unwrap().id;
+    let txn = vault.store.env.read_txn().unwrap();
+    let body = super::graph::require_type(&vault.store, &txn, &next, ENTITY_TYPE_TURN).unwrap();
+    let decoded: serde_json::Value = rmp_serde::from_slice(&body).unwrap();
+    assert_eq!(decoded["addr"], "broadcast");
+    assert_eq!(decoded["to"], serde_json::json!([]));
+    drop(txn);
+    assert!(
+        vault
+            .targets(&next, EdgeKind::AddressedTo, None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn append_refuses_cross_conversation_off_trunk_actor_and_policy_without_writes() {
     let (_dir, vault, conv, actor) = fixture();
     let root = vault
