@@ -62,6 +62,7 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
         &scope.conversation,
         ENTITY_TYPE_CONVERSATION,
     )?;
+    let mut verified_worker_branch = None;
     let session = match scope.path {
         ScopePath::SubSession(session) => {
             require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
@@ -75,7 +76,7 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             Some(session)
         }
         ScopePath::Branch(anchor) => {
-            prove_branch_anchor(&vault.store, txn, scope, anchor)?;
+            verified_worker_branch = prove_branch_anchor(&vault.store, txn, scope, anchor)?;
             scope.session
         }
         ScopePath::Canonical => scope.session,
@@ -96,7 +97,9 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
         }
         if is_sub_session_record(&vault.store, txn, covered)?
             && !matches!(scope.path, ScopePath::SubSession(_))
-            && !(matches!(scope.path, ScopePath::Branch(_)) && scope.session.is_some())
+            && !(matches!(scope.path, ScopePath::Branch(_))
+                && verified_worker_branch.is_some()
+                && verified_worker_branch == session)
         {
             return Err(invalid("summary cover belongs to another path"));
         }

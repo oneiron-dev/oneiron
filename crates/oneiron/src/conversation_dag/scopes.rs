@@ -144,9 +144,9 @@ pub(crate) fn resolve_in_txn(
     for id in &records {
         if graph::is_sub_session_record(&vault.store, txn, id)?
             && !(matches!(scope.path, ScopePath::Branch(_))
-                && scope.session.is_some()
+                && worker_branch.is_some()
                 && crate::compaction::turn_session_membership_in_txn(&vault.store, txn, id)?
-                    == scope.session)
+                    == worker_branch)
         {
             return Err(invalid("use SubSession to select sub-session records"));
         }
