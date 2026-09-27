@@ -43,6 +43,23 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    // Absent rows preserve the existing frontier. A trusted, restrictive
+    // change moves it, including holder-specific changes.
+    if resolution.voice_ref_limits
+        != crate::voice_identity::ref_limits::VoiceRefLimitPolicy::default()
+    {
+        hash_str(hasher, "voice_ref_limits");
+        for value in resolution.voice_ref_limits.vault.fields() {
+            hash_u64(hasher, value);
+        }
+        hash_u64(hasher, resolution.voice_ref_limits.holders.len() as u64);
+        for (holder, limits) in &resolution.voice_ref_limits.holders {
+            hash_bytes(hasher, holder.as_bytes());
+            for value in limits.fields() {
+                hash_u64(hasher, value);
+            }
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

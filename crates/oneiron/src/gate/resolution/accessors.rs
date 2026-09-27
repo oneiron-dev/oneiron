@@ -44,6 +44,18 @@ impl PolicyManifestResolution {
             .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
     }
 
+    /// Trusted vault policy narrowed by the holder's own limits and shipped defaults.
+    pub(crate) fn voice_ref_limits(
+        &self,
+        owner: &crate::EntityId,
+    ) -> Option<crate::voice_identity::ref_limits::VoiceRefLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            None
+        } else {
+            Some(self.voice_ref_limits.effective(owner))
+        }
+    }
+
     #[must_use]
     pub(crate) fn on_budget_exhausted(&self) -> BudgetExhaustionPolicy {
         self.on_budget_exhausted.unwrap_or_default()

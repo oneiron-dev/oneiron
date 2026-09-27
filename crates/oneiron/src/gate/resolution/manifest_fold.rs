@@ -155,6 +155,9 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(limits) = decoded.voice_ref_limits {
+                    resolution.voice_ref_limits.narrow(limits);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

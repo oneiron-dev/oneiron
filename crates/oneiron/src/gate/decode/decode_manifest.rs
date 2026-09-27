@@ -21,6 +21,7 @@ use crate::gate::constants::{
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_map_util::{
     MapValue, parse_signature_value, parse_signatures, required_string, required_value,
@@ -58,6 +59,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +105,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | "voice_ref_limits"
         ) {
             return None;
         }
@@ -238,6 +241,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(VoiceRefLimitPolicy::decode(value)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,6 +277,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        voice_ref_limits,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

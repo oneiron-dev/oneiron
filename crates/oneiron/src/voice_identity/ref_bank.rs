@@ -8,6 +8,8 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::ref_limits::VoiceRefLimits;
+
 const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PACK_PREFIX: &[u8] = b"voice:owner_ref:v1:";
 const IDENTITY_PREFIX: &[u8] = b"voice:ref_identity:v1:";
@@ -106,30 +108,69 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8], message: &str) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| invalid(message))
 }
+fn limits_for(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<VoiceRefLimits> {
+    crate::gate::resolve_policy_manifest(store, txn)?
+        .voice_ref_limits(owner)
+        .ok_or_else(|| invalid("invalid voice reference policy"))
+}
+
+fn validate_provider_value(value: &str, max_bytes: u64) -> Result<()> {
+    if value.trim().is_empty() || value.contains('\0') || value.len() as u64 > max_bytes {
+        return Err(invalid("invalid voice provider value"));
+    }
+    Ok(())
+}
+
+fn validate_target_record(
+    record: &VoiceTargetRecord,
+    voice_id: &str,
+    target: &str,
+    limits: VoiceRefLimits,
+) -> Result<()> {
+    if record.voice_id != voice_id
+        || record.target != target
+        || record.cloned_at == 0
+        || record.source_packs.is_empty()
+        || validate_provider_value(&record.vendor_voice_id, limits.max_vendor_voice_id_bytes)
+            .is_err()
+    {
+        return Err(invalid("corrupt voice target clone"));
+    }
+    Ok(())
+}
+
 impl VoiceRefPack {
-    pub fn validate(&self) -> Result<()> {
+    fn validate(&self, limits: VoiceRefLimits) -> Result<()> {
         valid_id(&self.id)?;
         valid_id(&self.voice_id)?;
         if self.version != 1 {
             return Err(invalid("unsupported voice reference pack version"));
         }
         if let VoiceRefOrigin::Designed { vendor } = &self.origin {
-            valid_id(vendor)?;
+            validate_provider_value(vendor, limits.max_design_vendor_bytes)?;
         }
         if self.clips.is_empty()
-            || self.clips.len() > 32
-            || self.clips.iter().map(|c| c.audio.len()).sum::<usize>() > 16 * 1024 * 1024
+            || self.clips.len() as u64 > limits.max_clips_per_pack
+            || self
+                .clips
+                .iter()
+                .try_fold(0u64, |total, c| total.checked_add(c.audio.len() as u64))
+                .is_none_or(|bytes| bytes > limits.max_audio_bytes_per_pack)
         {
             return Err(invalid("invalid voice reference pack size"));
         }
         let mut names = BTreeSet::new();
         for clip in &self.clips {
             if clip.register.trim().is_empty()
-                || clip.register.len() > 128
+                || clip.register.len() as u64 > limits.max_register_bytes
                 || !names.insert(&clip.register)
                 || !clip.media_type.starts_with("audio/")
                 || clip.audio.is_empty()
-                || clip.transcript.len() > 16_384
+                || clip.transcript.len() as u64 > limits.max_transcript_bytes
             {
                 return Err(invalid("invalid voice reference clip"));
             }
@@ -163,11 +204,11 @@ impl Vault {
     /// Creates an identity on its first captured/designed pack, then adds immutable packs.
     /// Generated refs need an existing source identity and remain separate tagged packs.
     pub fn store_voice_ref_pack(&self, pack: &VoiceRefPack) -> Result<()> {
-        pack.validate()?;
         let pack_key = key(PACK_PREFIX, &pack.id)?;
         let identity_key = key(IDENTITY_PREFIX, &pack.voice_id)?;
         let bytes = encode(pack)?;
         let mut txn = self.store.env.write_txn()?;
+        pack.validate(limits_for(&self.store, &txn, &pack.owner)?)?;
         if let Some(existing) = self.store.vault_meta.get(&txn, &pack_key)? {
             if existing != bytes {
                 return Err(invalid("voice reference pack id already exists"));
@@ -235,10 +276,6 @@ impl Vault {
         vendor_voice_id: &str,
         cloned_at: u64,
     ) -> Result<VoiceTargetRecord> {
-        valid_id(vendor_voice_id)?;
-        if cloned_at == 0 {
-            return Err(invalid("invalid clone time"));
-        }
         let mut txn = self.store.env.write_txn()?;
         let selected = select_clone(
             &self.store,
@@ -259,24 +296,20 @@ impl Vault {
             cloned_at,
         };
         let target_key = target_key(&request.voice_id, &request.target)?;
+        let owner = read_identity(&self.store, &txn, &request.voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))?
+            .owner;
+        let limits = limits_for(&self.store, &txn, &owner)?;
+        validate_target_record(&record, &request.voice_id, &request.target, limits)?;
         if let Some(raw) = self.store.vault_meta.get(&txn, &target_key)? {
             let existing: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
-            if existing.voice_id != request.voice_id
-                || existing.target != request.target
-                || existing.vendor_voice_id.trim().is_empty()
-                || existing.cloned_at == 0
-            {
-                return Err(invalid("corrupt voice target clone"));
-            }
+            validate_target_record(&existing, &request.voice_id, &request.target, limits)?;
             if existing.source_packs == request.source_packs
                 && existing.ref_digest == request.ref_digest
             {
                 return Ok(existing); // A current target pointer is not replaced without new refs.
             }
         }
-        let owner = read_identity(&self.store, &txn, &request.voice_id)?
-            .ok_or_else(|| invalid("unknown voice identity"))?
-            .owner;
         self.store
             .vault_meta
             .put(&mut txn, &target_key, &encode(&record)?)?;
@@ -300,13 +333,16 @@ impl Vault {
             return Ok(None);
         };
         let record: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
-        if record.voice_id != voice_id
-            || record.target != target
-            || record.vendor_voice_id.trim().is_empty()
-        {
-            return Err(invalid("corrupt voice target clone"));
-        }
         let selected = select_clone(&self.store, &txn, voice_id, target, include_generated)?;
+        let owner = read_identity(&self.store, &txn, voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))?
+            .owner;
+        validate_target_record(
+            &record,
+            voice_id,
+            target,
+            limits_for(&self.store, &txn, &owner)?,
+        )?;
         if record.source_packs != selected.source_packs || record.ref_digest != selected.ref_digest
         {
             return Ok(None);
@@ -402,9 +438,59 @@ fn read_pack(
         return Ok(None);
     };
     let pack: VoiceRefPack = decode(&bytes, "corrupt voice reference pack")?;
-    pack.validate()?;
+    pack.validate(limits_for(store, txn, &pack.owner)?)?;
     if pack.id != id {
         return Err(invalid("voice reference key mismatch"));
     }
     Ok(Some(pack))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_reader_and_writer_reject_the_same_corrupt_rows() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let owner = EntityId::now();
+        vault.store_voice_ref_pack(&VoiceRefPack {
+            version: 1,
+            id: "source".into(),
+            voice_id: "our-voice".into(),
+            owner,
+            origin: VoiceRefOrigin::Captured,
+            clips: vec![VoiceRegisterClip {
+                register: "neutral".into(),
+                media_type: "audio/wav".into(),
+                audio: vec![1],
+                transcript: String::new(),
+            }],
+        })?;
+        let request = vault.prepare_voice_clone("our-voice", "host", false)?;
+        let valid = vault.record_voice_target_clone(&request, "provider-id", 42)?;
+        for (case, mut bad) in [valid.clone(), valid.clone(), valid]
+            .into_iter()
+            .enumerate()
+        {
+            match case {
+                0 => bad.cloned_at = 0,
+                1 => bad.vendor_voice_id = " ".into(),
+                _ => bad.vendor_voice_id = "x".repeat(4_097),
+            }
+            // The writer must not silently replace corrupt persisted data either.
+            let key = target_key("our-voice", "host")?;
+            let mut txn = vault.store.env.write_txn()?;
+            vault.store.vault_meta.put(&mut txn, &key, &encode(&bad)?)?;
+            txn.commit()?;
+            assert!(matches!(
+                vault.voice_target_clone("our-voice", "host", false),
+                Err(Error::InvalidConfig(_))
+            ));
+            assert!(matches!(
+                vault.record_voice_target_clone(&request, "replacement", 43),
+                Err(Error::InvalidConfig(_))
+            ));
+        }
+        Ok(())
+    }
 }
