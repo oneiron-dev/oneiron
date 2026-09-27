@@ -54,6 +54,17 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     refs.extend(&body.parents);
+    let origin = match (&body.born_from, &body.origin_room, &body.origin_thread) {
+        (None, None, None) => None,
+        (Some(message), Some(room), Some(thread)) => {
+            refs.extend([message, room, thread]);
+            Some((message, room, thread))
+        }
+        _ => return Err(invalid()),
+    };
+    if origin.is_some() != body.origin_at.is_some() || origin.is_some() && body.parents.is_empty() {
+        return Err(invalid());
+    }
     refs.extend(body.goal.iter());
     refs.extend(body.budget.iter());
     for list in [
@@ -172,6 +183,12 @@ pub(crate) fn reconcile_project_rooms(
             project_id: id.to_hex(),
             member_ids: body.roster.clone(),
             claims_scope_ref: body.claims_scope_ref.clone(),
+            origin: body.born_from.as_ref().map(|message| RoomOriginCard {
+                message: message.clone(),
+                room: body.origin_room.clone().expect("validated origin room"),
+                thread: body.origin_thread.clone().expect("validated origin thread"),
+                at: body.origin_at.expect("validated origin position"),
+            }),
         };
         let previous: Option<ProjectRoom> =
             match record(store, txn, room_id, ENTITY_TYPE_CONVERSATION) {
@@ -254,6 +271,13 @@ pub(crate) fn reconcile_project_rooms(
             || project.home_room != id.to_hex()
             || project.roster != room.member_ids
             || project.claims_scope_ref != room.claims_scope_ref
+            || project.born_from.as_deref()
+                != room.origin.as_ref().map(|origin| origin.message.as_str())
+            || project.origin_room.as_deref()
+                != room.origin.as_ref().map(|origin| origin.room.as_str())
+            || project.origin_thread.as_deref()
+                != room.origin.as_ref().map(|origin| origin.thread.as_str())
+            || project.origin_at != room.origin.as_ref().map(|origin| origin.at)
         {
             return Err(invalid_room());
         }

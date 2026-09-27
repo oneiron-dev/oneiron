@@ -11,7 +11,7 @@ use crate::lens::{
     CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
     GeneratedUiCard, LensAtom, LensNode, LensRenderId, ReceiptAtom, SelfUiActionId,
 };
-use crate::{Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -226,6 +226,33 @@ impl ProjectProposalCard {
             budget_share_bps: self.budget_share_bps,
             starting_skill_refs: self.starting_skill_refs.clone(),
         })
+    }
+
+    /// A confirmed card tap calls the same thread conversion verb as other
+    /// clients; the host-held card supplies the message identity, not the tap.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "host-held card, owner proof, thread and project IDs, and time are distinct inputs"
+    )]
+    pub fn convert_thread(
+        &self,
+        vault: &Vault,
+        request: &ConsentActionRequest,
+        owner: &AuthenticatedOwner,
+        room: EntityId,
+        thread: EntityId,
+        project: EntityId,
+        now: u64,
+    ) -> Result<crate::workspace_roster::ProjectRecord> {
+        let intent = self.evaluate_action(request, owner)?;
+        vault.convert_thread_to_project(
+            room,
+            thread,
+            EntityId::from_hex(&intent.source_message_ref)?,
+            project,
+            None,
+            now,
+        )
     }
 
     #[must_use]

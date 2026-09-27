@@ -82,6 +82,23 @@ pub(crate) use create_validation::{
 };
 pub(crate) use rate_limit::task_create_owner;
 
+/// Stored execution holder of a live typed TASK, if one exists.
+pub(crate) fn open_thread_task_holder_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<Option<crate::EntityId>> {
+    let body =
+        wire_decode::task_verb_body_in(vault, txn, task)?.ok_or(crate::Error::EntityNotFound)?;
+    if body.terminal().is_some() {
+        return Ok(None);
+    }
+    match body.assignee.and_then(TaskAssignee::entity_ref) {
+        Some(holder) => Ok(Some(holder)),
+        None => Ok(Some(crate::EntityId::from_hex(&body.owner_ref)?)),
+    }
+}
+
 pub(crate) use owner_index::index_owner_fact;
 
 #[cfg(test)]

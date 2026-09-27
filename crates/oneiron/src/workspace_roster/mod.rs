@@ -116,8 +116,11 @@ pub(crate) use project::{
     validate_project_edge_delete, validate_project_edge_put, validate_project_graph,
     validate_room_body,
 };
-pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange};
+pub use project::{
+    MessageHangs, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
+    RoomOriginCard,
+};
 
 mod rooms;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTurn};
+pub use rooms::{RoomClaimOutcome, RoomClaimReceipt, RoomPage, RoomTrunkItem, RoomTurn};

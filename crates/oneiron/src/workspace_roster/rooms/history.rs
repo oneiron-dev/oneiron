@@ -79,6 +79,33 @@ pub(in crate::workspace_roster) fn delete_room_metadata(
     Ok(())
 }
 impl Memory<'_> {
+    /// Bounded first trunk page: the original thread is a pointer card,
+    /// followed by trunk turns. Thread replies never consume trunk slots.
+    pub fn room_trunk(&self, room: EntityId) -> MemoryResult<Vec<RoomTrunkItem>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let project_room = require_member(self.vault(), &txn, room, self.actor())?;
+        let origin = project_room.origin;
+        let mut entries = Vec::with_capacity(PAGE_LIMIT + usize::from(origin.is_some()));
+        if let Some(origin) = origin {
+            entries.push(RoomTrunkItem::Origin(origin));
+        }
+        for row in self
+            .vault()
+            .store
+            .vault_meta
+            .prefix_iter(&txn, &key(HEADS, room))?
+            .take(PAGE_LIMIT)
+        {
+            let (_, raw) = row?;
+            entries.push(RoomTrunkItem::Turn(turn_in(
+                self.vault(),
+                &txn,
+                stored_id(&raw)?,
+            )?));
+        }
+        Ok(entries)
+    }
+
     /// First bounded page in chronological order. Continue with the last turn's
     /// id through `rooms_messages_page`; room membership is rechecked per page.
     pub fn rooms_messages(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {

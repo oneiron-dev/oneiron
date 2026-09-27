@@ -17448,7 +17448,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -32356,7 +32356,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 16
      }
@@ -34077,6 +34077,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "MessageHangs"
+     ],
+     "path": "src/workspace_roster/project/conversion.rs",
+     "purpose": "Atomic conversion of a room thread into a project and its origin card",
+     "surface": {
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/deletion.rs",
      "purpose": "Delete the derived home room at the common entity deindex door",
@@ -34101,7 +34114,8 @@
       "ProjectRecord",
       "ProjectRole",
       "ProjectRoom",
-      "ProjectRoomChange"
+      "ProjectRoomChange",
+      "RoomOriginCard"
      ],
      "path": "src/workspace_roster/project/mod.rs",
      "purpose": "Project responsibility records and their derived home-room membership",
@@ -34110,11 +34124,12 @@
       "crate-vis": 13,
       "enum": 1,
       "fn": 8,
-      "struct": 3
+      "re-export": 1,
+      "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/projection.rs",
@@ -34158,7 +34173,7 @@
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -34168,13 +34183,14 @@
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomPage",
+      "RoomTrunkItem",
       "RoomTurn"
      ],
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 7,
+      "enum": 2,
       "fn": 5,
       "struct": 3
      }
@@ -34724,6 +34740,14 @@
      "notable": [],
      "path": "tests/it/snapshot_custody_binding.rs",
      "purpose": "ONE-1534 (OPS-SERVE): the custody contract for the scoped Wasabi snapshot credential, pinned through the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_project_conversion.rs",
+     "purpose": "—",
      "surface": {}
     },
     {
@@ -36297,7 +36321,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36313,8 +36337,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2143,
-   "test_files": 732
+   "source_files": 2144,
+   "test_files": 733
   },
   "oneiron-android": {
    "files": [

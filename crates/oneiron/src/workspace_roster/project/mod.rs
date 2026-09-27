@@ -1,5 +1,7 @@
 //! Project responsibility records and their derived home-room membership.
 //! PROJECT uses the compiled-pack registration door, not a new core kind.
+mod conversion;
+pub use conversion::MessageHangs;
 mod deletion;
 mod edges;
 mod projection;
@@ -56,6 +58,14 @@ pub struct ProjectRecord {
     pub budget: Option<String>,
     pub asks: Vec<String>,
     pub home_room: String,
+    #[serde(default)]
+    pub born_from: Option<String>,
+    #[serde(default)]
+    pub origin_room: Option<String>,
+    #[serde(default)]
+    pub origin_thread: Option<String>,
+    #[serde(default)]
+    pub origin_at: Option<u64>,
 }
 impl ProjectRecord {
     pub fn new(
@@ -80,6 +90,10 @@ impl ProjectRecord {
             budget: None,
             asks: vec![],
             home_room: home_room_id(id).to_hex(),
+            born_from: None,
+            origin_room: None,
+            origin_thread: None,
+            origin_at: None,
         }
     }
 }
@@ -94,6 +108,17 @@ pub struct ProjectRoom {
     pub member_ids: Vec<String>,
     /// Membership never grants additional memory scope.
     pub claims_scope_ref: String,
+    #[serde(default)]
+    pub origin: Option<RoomOriginCard>,
+}
+/// A reference to the original thread, not a second copy of its messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomOriginCard {
+    pub room: String,
+    pub thread: String,
+    pub message: String,
+    pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
