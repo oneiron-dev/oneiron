@@ -1146,6 +1146,7 @@ fn test_prompt_stamp() -> PromptRecompileStamp {
         compiled_at_secs: 1_700_000_000,
         source_fingerprint: "feedbead".to_owned(),
         resolved_fingerprint: "deadbeef".to_owned(),
+        assembled_fingerprint: None,
         source_paths: vec!["eiri/v3.md".to_owned()],
     }
 }

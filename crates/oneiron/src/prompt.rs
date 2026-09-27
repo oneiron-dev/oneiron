@@ -17,7 +17,11 @@ pub struct PromptRecompileStamp {
     pub prompt_path: String,
     pub compiled_at_secs: u64,
     pub source_fingerprint: String,
+    /// Hash of resolved package files, before host sections or memory assembly.
     pub resolved_fingerprint: String,
+    /// Hash of the exact system message sent to the model. `None` for a
+    /// resolved file that has not yet been assembled into a session request.
+    pub assembled_fingerprint: Option<String>,
     pub source_paths: Vec<String>,
 }
 
@@ -98,12 +102,13 @@ pub fn assemble_session_prompt(
     package_root: impl AsRef<Path>,
     parts: SessionPromptParts,
 ) -> Result<SessionPromptAssembly, io::Error> {
-    let resolved = resolve_prompt(prompt_path, package_root)?;
+    let mut resolved = resolve_prompt(prompt_path, package_root)?;
     let system_prompt = assemble_system_prompt(
         &resolved.text,
         &parts.host_sections,
         &parts.activated_memory,
     );
+    resolved.stamp.assembled_fingerprint = Some(hash_hex(system_prompt.as_bytes()));
     let mut messages = Vec::with_capacity(parts.history.len() + 1);
     messages.push(LlmMessage {
         role: LlmMessageRole::System,
@@ -270,6 +275,7 @@ fn recompile_stamp(
         compiled_at_secs: crate::unix_seconds_now(),
         source_fingerprint: source_fingerprint(source_hashes, package_root),
         resolved_fingerprint: hash_hex(resolved.as_bytes()),
+        assembled_fingerprint: None,
         source_paths,
     }
 }
