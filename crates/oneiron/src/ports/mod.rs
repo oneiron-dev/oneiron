@@ -25,6 +25,7 @@ mod lmdb_claim;
 mod lmdb_entity;
 pub(crate) use lmdb_entity::reindex_named_entities;
 mod lmdb_index;
+mod lmdb_short_id_maintenance;
 mod mutation;
 mod records;
 pub(crate) use mutation::{
