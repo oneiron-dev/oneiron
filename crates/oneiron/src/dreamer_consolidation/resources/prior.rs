@@ -25,17 +25,29 @@ impl BranchResources<'_> {
             })
             .collect();
         for id in documents {
-            if self.sources.contains_key(&id)
-                || self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM)
-            {
+            if self.sources.contains_key(&id) {
                 continue;
             }
-            // Uncited stored heads are merge context. The wake snapshot owns
-            // evidence citations, while this prior still uses the scoped read
-            // door and the existing write-time source fence.
-            let value = self.read.get_entity_parts_with_receipt(&id, None)?.value;
-            let (kind, learned_at, bytes) =
-                value.ok_or_else(|| invalid_consolidation("prior head is not actor-readable"))?;
+            let (kind, learned_at, bytes) = if let Some(wake) = self.prepared_wake {
+                let Some(row) = wake.source(&id) else {
+                    continue;
+                };
+                if row.0 != ENTITY_TYPE_CLAIM {
+                    continue;
+                }
+                if !self.read.is_entity_readable(&id)? {
+                    return Err(invalid_consolidation("prior head read revoked"));
+                }
+                row
+            } else {
+                if self.read.vault().get_entity_type(&id)? != Some(ENTITY_TYPE_CLAIM) {
+                    continue;
+                }
+                self.read
+                    .get_entity_parts_with_receipt(&id, None)?
+                    .value
+                    .ok_or_else(|| invalid_consolidation("prior head is not actor-readable"))?
+            };
             let resource = document_version(id, &bytes);
             if kind != ENTITY_TYPE_CLAIM || !self.scope.allows_read(&resource) {
                 return Err(invalid_consolidation("prior head exact read refused"));
@@ -66,12 +78,12 @@ impl BranchResources<'_> {
                     resource,
                     entity_type: kind,
                     learned_at,
+                    #[cfg(test)]
                     trust_class: Some(crate::dreamer_consolidation::provenance::source_meet(
                         prior.body.source.unwrap_or(crate::ClaimSource::Imported),
                         crate::claim::claim_evidence_taint(&prior.body)
                             .unwrap_or(prior.body.source.unwrap_or(crate::ClaimSource::Imported)),
                     )),
-                    body: bytes,
                 },
             );
             self.priors.insert(id, prior);

@@ -3,6 +3,7 @@ use super::*;
 use crate::dreamer_consolidation::resources::{BranchResources, document_version};
 use crate::dreamer_promotion::{DreamerRunContext, PromotionWriterSink};
 use crate::llm::Scope;
+use std::future::Future;
 
 struct Fixture {
     attempt: crate::dreamer_runner::DreamerAdmittedAttempt,
@@ -20,6 +21,14 @@ pub(super) fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> 
         ("warned".into(), true.into()),
     ]);
     let manifest = Value::Map(vec![
+        (
+            "retry_source_policy".into(),
+            Value::Array(vec![Value::Map(vec![
+                ("selector".into(), "vault".into()),
+                ("max_sources".into(), 1_024_u64.into()),
+                ("precedence".into(), "nested_narrowing".into()),
+            ])]),
+        ),
         (
             "schema_version".into(),
             crate::gate::POLICY_SCHEMA_VERSION.into(),
@@ -198,7 +207,7 @@ fn execute_at_pin<'a>(
     backend: &dyn LlmBackend,
     sink: &mut dyn ConsolidationSink,
     scope: Scope,
-    pin: Option<&'a WakeEvidenceSnapshot>,
+    pin: Option<&'a PreparedWake>,
 ) -> Result<DreamerAttemptExecution> {
     let guard = crate::BudgetGuard::with_reserve_units(
         "wake",
@@ -223,7 +232,8 @@ fn execute_at_pin<'a>(
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
-            ledger_pin: pin,
+            prepared_wake: pin,
+            prepared_attempt: None,
         },
     ))
 }
@@ -257,7 +267,7 @@ fn parent_classifies_admitted_claim_from_stored_body() -> Result<()> {
     let (partition, turns, _) = decode_partition_payload(&fx.attempt.status.payload.input)?;
     // The head grant is supplied at execution, not in the queued payload.
     // The driver must capture that CLAIM at the SAME wake ledger revision.
-    let snapshot = WakeEvidenceSnapshot::capture_with_grants(
+    let snapshot = PreparedWake::capture_with_grants(
         &vault,
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
@@ -330,7 +340,7 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         run_id: Some("pinned-locator-test".into()),
         now: 22,
     })?;
-    let pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
     let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope: DreamerConsolidationScope::Micro,
         local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
@@ -388,7 +398,8 @@ fn pinned_extraction_persists_parent_verified_locators_taint_and_integrity_marke
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 23_000,
-        ledger_pin: Some(&pin),
+        prepared_wake: Some(&pin),
+        prepared_attempt: None,
     };
     let mut executor = ConsolidationExecutor {
         backend: &backend,
@@ -647,7 +658,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         .to_string(),
     );
     let first_backend = ScriptedBackend::new(vec![Ok(response.clone())]);
-    let first_pin = WakeEvidenceSnapshot::capture_with_grants(
+    let first_pin = PreparedWake::capture_with_grants(
         &vault,
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
@@ -680,7 +691,7 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     )?;
     // The exact CLAIM grant exists only in the saved execution scope. A new
     // executor with no host bound must still pin it before retry admission.
-    let second_pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let second_pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
     let next = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
         scope: DreamerConsolidationScope::Micro,
         local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
@@ -727,7 +738,8 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: retry_at * 1_000,
-        ledger_pin: Some(&second_pin),
+        prepared_wake: Some(&second_pin),
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&next, &mut ctx))?,
@@ -736,6 +748,125 @@ fn saved_execution_scope_pins_claim_across_retry_wakes() -> Result<()> {
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
     assert!(sink.accepted[0].evidence_turn_refs.contains(&fx.head));
+    Ok(())
+}
+
+#[test]
+fn wrapper_first_wake_consumes_explicit_host_claim_scope() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fx = fixture(&vault)?;
+    let store = DreamerRunnerStore::new(&vault);
+    let (partition, _, watermark) = decode_partition_payload(&fx.attempt.status.payload.input)?;
+    let queued =
+        store.enqueue_consolidation(crate::dreamer_runner::EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            input: super::super::partition::encode_partition_payload(&ConsolidationPartitionPlan {
+                key: partition,
+                turns: vec![WorkingSetTurn {
+                    turn_id: fx.turn,
+                    role: DreamerTurnRole::User,
+                    learned_at: 10,
+                    conversation: Some(partition.conversation_ref),
+                }],
+                watermark_last_learned_at: watermark,
+            }),
+            parent_attempt: None,
+            dedupe_key: Some("wrapped-host-claim".into()),
+            run_id: Some("wrapped-host-claim".into()),
+            now: 22,
+        })?;
+    let attempt_id = match queued {
+        EnqueueDreamerAttemptOutcome::Enqueued(row)
+        | EnqueueDreamerAttemptOutcome::Existing(row) => row.attempt.id,
+    };
+    vault.set_consolidation_selection(&selection::SelectionConfig {
+        soak_ms: 0,
+        evidence_minimum: 2,
+        ..Default::default()
+    })?;
+    let backend = ScriptedBackend::new(vec![Ok(text_response(
+        serde_json::json!({"candidates":[{
+            "subject":fx.subject.to_hex(), "predicate":"profile.nickname", "value":"Lex",
+            "evidence_refs":[
+                {"source_id":fx.turn.to_hex(),"byte_range":[0,1]},
+                {"source_id":fx.head.to_hex(),"claim_id":fx.head.to_hex()}
+            ]
+        }]})
+        .to_string(),
+    ))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let run = DreamerRunContext {
+        run_id: "wrapped-host-claim".into(),
+        attempt_id,
+        agent_actor: vault.dreamer_authority()?,
+        now_ms: 23_000,
+    };
+    let mut sink = PromotionWriterSink::new(&vault, run);
+    let inner = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        sink: &mut sink,
+        scope: None,
+    };
+    let mut wrapper = crate::commitment_wake::CommitmentWakeExecutor::new(
+        inner,
+        None,
+        vault.dreamer_authority()?,
+    )?;
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut driver = crate::dreamer_wake::DreamerWakeDriver::new(&vault, "wake", deadline);
+    let input = crate::dreamer_wake::RunWakePass {
+        trigger: crate::dreamer_wake::WakeTrigger::Compaction,
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        lease_owner: "wrapped-worker".into(),
+        budget_total_units: 10_000,
+        reserve_units: 100,
+        now: 23,
+        host_scope: Some(fx.scope.clone()),
+    };
+    let report = {
+        let cancellation = crate::dreamer_wake::WakeCancellation::new();
+        let mut future = Box::pin(driver.run_wake_pass(input, &mut wrapper, &cancellation));
+        let waker = std::task::Waker::noop();
+        let mut cx = std::task::Context::from_waker(waker);
+        let mut completed = None;
+        for _ in 0..128 {
+            if let std::task::Poll::Ready(result) = future.as_mut().poll(&mut cx) {
+                completed = Some(result?);
+                break;
+            }
+        }
+        completed.expect("wake must reach an attempt boundary")
+    };
+    drop(wrapper);
+    assert_eq!(report.completed, 1);
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    let [written] = sink.outcome.landed.as_slice() else {
+        panic!("one host-scoped claim")
+    };
+    let stored = vault.get_claim(written)?.expect("claim");
+    let Value::Map(fields) = stored.evidence.expect("claim evidence") else {
+        panic!("evidence")
+    };
+    let verified = fields
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("candidate_evidence"))
+        .map(|(_, value)| value)
+        .expect("verified evidence");
+    assert!(
+        super::super::decode_verified_locators(verified)?
+            .iter()
+            .any(|(locator, _)| locator.claim_id == Some(fx.head))
+    );
     Ok(())
 }
 
@@ -780,7 +911,7 @@ fn pinned_exact_head_attachment_retains_visible_range_and_original_head() -> Res
     let start = text.find("Oleksii").expect("quote");
     let end = start + "Oleksii".len();
     let digest = swarm_evidence_content_hash(&text.as_bytes()[start..end]);
-    let pin = WakeEvidenceSnapshot::capture_with_grants(
+    let pin = PreparedWake::capture_with_grants(
         &vault,
         DreamerConsolidationScope::Micro,
         Some(&fx.scope),
@@ -889,11 +1020,8 @@ fn pinned_exact_head_attachment_accepts_other_claim_with_restrictive_meet() -> R
     ));
     let body = vault.get(&cited)?.expect("claim source body");
     let digest = swarm_evidence_content_hash(&body);
-    let pin = WakeEvidenceSnapshot::capture_with_grants(
-        &vault,
-        DreamerConsolidationScope::Micro,
-        Some(&scope),
-    )?;
+    let pin =
+        PreparedWake::capture_with_grants(&vault, DreamerConsolidationScope::Micro, Some(&scope))?;
     let response = text_response(
         serde_json::json!({"candidates":[{
             "subject":fx.subject.to_hex(), "predicate":"profile.name", "value":"Oleksii",
@@ -993,7 +1121,7 @@ fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<(
         let mut scope = fx.scope.clone();
         scope.readable.insert(document_version(cited, &bytes));
         let digest = swarm_evidence_content_hash(&bytes);
-        let pin = WakeEvidenceSnapshot::capture_with_grants(
+        let pin = PreparedWake::capture_with_grants(
             &vault,
             DreamerConsolidationScope::Micro,
             Some(&scope),
@@ -1087,6 +1215,21 @@ fn claim_cited_conflict_meets_taint_and_preserves_gap_and_survivor() -> Result<(
                     claim_id: Some(cited),
                     byte_range: None,
                 }]
+            );
+            assert_eq!(
+                super::super::decode_verified_locators(
+                    gap.verified_evidence
+                        .as_ref()
+                        .expect("parent-verified gap evidence")
+                )?,
+                vec![(
+                    SwarmEvidenceRef {
+                        source_id: cited,
+                        claim_id: Some(cited),
+                        byte_range: None,
+                    },
+                    digest
+                )],
             );
         }
     }

@@ -38,10 +38,13 @@ impl PolicyManifestResolution {
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
     }
 
-    /// Resolved vault retry budget, narrowed by additional holder policies.
-    #[must_use]
-    pub(crate) fn dreamer_retry_source_limit(&self) -> usize {
-        self.dreamer_retry_source_limit.unwrap_or(1_024)
+    /// Resolve the required vault ceiling and every matching actor/scope row.
+    pub(crate) fn retry_budget_for(
+        &self,
+        actor: crate::EntityId,
+        scope: Option<&crate::llm::Scope>,
+    ) -> crate::Result<crate::gate::retry_source_policy::ResolvedRetryBudget> {
+        crate::gate::retry_source_policy::resolve(&self.retry_source_policy, actor, scope)
     }
 
     #[must_use]

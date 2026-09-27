@@ -270,10 +270,10 @@ impl<'a> DreamerWakeDriver<'a> {
 
         // Keep one MVCC revision for the wake's evidence accounting. Any source
         // changed before commit is rejected by the existing write fence.
-        let ledger_pin = crate::dreamer_consolidation::WakeEvidenceSnapshot::capture_with_grants(
+        let prepared_wake = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
             self.vault,
             input.scope,
-            exec.wake_ledger_scope(),
+            input.host_scope.as_ref(),
         )?;
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
@@ -457,7 +457,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 // leased and its reservation held.
                 Err(publish_error)
             } else if admitted.status.attempt.kind == input.scope.attempt_kind()
-                && !ledger_pin.contains_attempt(attempt_id)
+                && !prepared_wake.contains_attempt(attempt_id)
             {
                 // Enqueued after the frozen wake revision: never admit it to
                 // this snapshot or fall back to a newer per-attempt read.
@@ -465,10 +465,13 @@ impl<'a> DreamerWakeDriver<'a> {
                     completed_units: 0,
                     retry_at: input.now.saturating_add(1),
                 })
-            } else if let Some(reason) = ledger_pin.retry_failure(attempt_id) {
-                // Park and refund only this retry; healthy sibling work continues.
+            } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
+                reason,
+                ..
+            }) = prepared_wake.preparation(attempt_id)
+            {
                 Ok(DreamerAttemptExecution::Park {
-                    reason: reason.to_owned(),
+                    reason: (*reason).to_owned(),
                 })
             } else {
                 let mut ctx = WakeAttemptContext {
@@ -476,7 +479,13 @@ impl<'a> DreamerWakeDriver<'a> {
                     deadline: &self.deadline,
                     budget_id: &self.budget_id,
                     now_ms: input.now.saturating_mul(1_000),
-                    ledger_pin: Some(&ledger_pin),
+                    prepared_wake: Some(&prepared_wake),
+                    prepared_attempt: match prepared_wake.preparation(attempt_id) {
+                        Some(crate::dreamer_consolidation::AttemptPreparation::Ready(plan)) => {
+                            Some(plan)
+                        }
+                        _ => None,
+                    },
                 };
                 // Panic containment at the per-attempt boundary (ONE-1683): a
                 // panicking executor unwinding past the driver would skip

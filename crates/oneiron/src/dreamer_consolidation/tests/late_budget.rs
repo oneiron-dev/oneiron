@@ -27,6 +27,7 @@ fn wake_input(node_id: u64, now: u64) -> RunWakePass {
         budget_total_units: 10_000,
         reserve_units: 500,
         now,
+        host_scope: None,
     }
 }
 
@@ -590,35 +591,42 @@ fn manifest_retry_source_budget_limits_pinned_attempt_and_holder_cannot_widen() 
     else {
         panic!("manifest map")
     };
-    let cap = fields
+    let holder = vault.dreamer_actor_for_attempt(retry.id)?.entity_ref();
+    fields
         .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
-        .expect("shipped cap");
-    cap.1 = Value::from(1_u64);
+        .find(|(key, _)| key.as_str() == Some("retry_source_policy"))
+        .expect("shipped policy")
+        .1 = Value::Array(vec![
+        Value::Map(vec![
+            ("selector".into(), "vault".into()),
+            ("max_sources".into(), Value::from(1_u64)),
+            ("precedence".into(), "nested_narrowing".into()),
+        ]),
+        Value::Map(vec![
+            ("selector".into(), "holder".into()),
+            ("source_id".into(), holder.to_hex().into()),
+            ("max_sources".into(), Value::from(100_u64)),
+        ]),
+    ]);
     let encode = |fields: &[(Value, Value)]| -> Vec<u8> {
         let mut out = Vec::new();
         rmpv::encode::write_value(&mut out, &Value::Map(fields.to_vec())).expect("manifest codec");
         out
     };
     crate::test_util::put_policy_manifest_bytes(&vault, default_id, &encode(&fields))?;
-    let pinned = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let pinned = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
     assert!(
         pinned.retry_failure(retry.id).is_some(),
         "vault's one-source row must hold a two-source retry"
     );
-    // A separate holder pack cannot widen the vault's effective cap.
-    fields
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("pack_id"))
-        .expect("pack id")
-        .1 = "holder-budget".into();
-    fields
-        .iter_mut()
-        .find(|(key, _)| key.as_str() == Some("dreamer_retry_source_limit"))
-        .expect("cap")
-        .1 = Value::from(100_u64);
-    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &encode(&fields))?;
-    let pinned = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
-    assert!(pinned.retry_failure(retry.id).is_some());
+    // The holder's larger work preference cannot widen the vault ceiling.
+    let txn = vault.store.env.read_txn()?;
+    assert_eq!(
+        crate::gate::resolve_policy_manifest(&vault.store, &txn)?
+            .retry_budget_for(holder, None)?
+            .max_sources(),
+        1
+    );
+    drop(txn);
     Ok(())
 }

@@ -1,74 +1,92 @@
 //! Store-backed mechanical inputs for the consolidation executor.
-use super::conflict::{
-    SwarmChildReturn, SwarmEvidenceRef, VerifiedSwarmEvidence, candidate_facts,
-    collapse_sibling_evidence, evidence_trust_meet,
-};
+use super::ConflictSet;
+#[cfg(test)]
+use super::PromotionCandidate;
+use super::conflict::candidate_facts;
+#[cfg(test)]
+use super::evidence::EvidenceLocator;
+use super::evidence::{ExtractedCandidate, VerifiedCandidate};
 use super::resources::BranchResources;
-use super::routing::{attach_duplicate_evidence, judge_queue};
+use super::routing::{candidate_keys, judge_queue};
 use super::selection::{SelectionCandidate, SelectionConfig, StrengthSignals, select_candidates};
-use super::{ConflictSet, PromotionCandidate};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct AssembledCandidates {
-    pub(super) candidates: Vec<PromotionCandidate>,
+    pub(super) candidates: Vec<VerifiedCandidate>,
     pub(super) conflicts: Vec<ConflictSet>,
     pub(super) held: bool,
     pub(super) retry_at_ms: u64,
 }
 
+#[cfg(test)]
 pub(super) fn assemble(
     vault: &Vault,
     resources: &BranchResources<'_>,
     candidates: Vec<PromotionCandidate>,
     now: u64,
 ) -> Result<AssembledCandidates> {
-    resources.validate_candidates(resources.scope(), &candidates)?;
+    let raw = candidates
+        .into_iter()
+        .map(|candidate| {
+            let refs = candidate
+                .evidence_turn_refs
+                .iter()
+                .copied()
+                .map(EvidenceLocator::whole_turn)
+                .collect();
+            ExtractedCandidate::new(candidate, refs)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    assemble_extracted(vault, resources, raw, now)
+}
+
+/// Raw judgements enter once, with typed refs. The parent verifies and owns
+/// the evidence set BEFORE selecting or routing any candidate.
+pub(super) fn assemble_extracted(
+    vault: &Vault,
+    resources: &BranchResources<'_>,
+    candidates: Vec<ExtractedCandidate>,
+    now: u64,
+) -> Result<AssembledCandidates> {
     let config = vault.consolidation_selection()?;
     let rules = resources.key_rules();
-    let mut candidates = attach_duplicate_evidence(candidates, rules)?;
-    // The returned ids are citations, not evidence facts. Hydrate ALL sibling
-    // citations at one actor-scoped ledger revision before selection counts
-    // independent signals or the write can inherit a trust class.
-    let children: Vec<_> = candidates
-        .iter()
-        .map(|candidate| {
-            Ok(SwarmChildReturn {
-                evidence: super::conflict::candidate_locators(candidate)?,
-                candidates: Vec::new(),
-            })
-        })
-        .collect::<Result<_>>()?;
-    let all_refs: Vec<_> = children
-        .iter()
-        .flat_map(|child| child.evidence.iter().copied())
-        .collect();
-    let collapsed = collapse_sibling_evidence(resources, &children)?;
-    let identities: BTreeMap<_, _> = collapsed
-        .independent
-        .iter()
-        .map(|entry| ((entry.source_id, entry.content_hash), *entry))
-        .collect();
-    let verified_rows = resources.verify_evidence_refs(&all_refs)?;
-    let verified: BTreeMap<_, _> = all_refs
-        .into_iter()
-        .zip(verified_rows)
-        .map(|(locator, entry)| {
-            let canonical = identities[&(entry.source_id, entry.content_hash)];
-            (locator, canonical)
-        })
-        .collect();
-    for candidate in &mut candidates {
-        candidate.evidence_turn_refs.sort_unstable();
-        candidate.evidence_turn_refs.dedup();
-        candidate.evidence_meet = super::provenance::source_meet(
-            candidate.evidence_meet,
-            evidence_trust_meet(
-                super::conflict::candidate_locators(candidate)?
-                    .iter()
-                    .filter_map(|locator| verified.get(locator)),
-            ),
+    let mut grouped = BTreeMap::new();
+    for extracted in candidates {
+        let key = (
+            candidate_keys(extracted.proposal(), rules)?,
+            extracted.proposal().supersedes,
         );
+        match grouped.entry(key) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(extracted);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                let (incoming, refs) = extracted.into_parts();
+                let (mut kept, mut old_refs) = slot.get().clone().into_parts();
+                old_refs.extend(refs);
+                kept.evidence_turn_refs.extend(incoming.evidence_turn_refs);
+                kept.evidence_turn_refs.sort_unstable();
+                kept.evidence_turn_refs.dedup();
+                for hop in incoming.provenance_chain {
+                    if !kept.provenance_chain.contains(&hop) {
+                        kept.provenance_chain.push(hop);
+                    }
+                }
+                kept.evidence_meet =
+                    super::provenance::source_meet(kept.evidence_meet, incoming.evidence_meet);
+                kept.learned_at = kept.learned_at.min(incoming.learned_at);
+                *slot.get_mut() = ExtractedCandidate::new(kept, old_refs)?;
+            }
+        }
+    }
+    let candidates: Vec<VerifiedCandidate> = grouped
+        .into_values()
+        .map(|raw| VerifiedCandidate::from_extracted(resources, raw))
+        .collect::<Result<_>>()?;
+    for candidate in &candidates {
+        resources
+            .validate_candidates(resources.scope(), std::slice::from_ref(&candidate.proposal))?;
     }
     let mut inputs = Vec::new();
     let mut embeddings = BTreeMap::new();
@@ -76,7 +94,7 @@ pub(super) fn assemble(
         let (fan_in, new_refs, vector) =
             resources.candidate_signals(resources.scope(), candidate)?;
         inputs.push(selection_input(
-            resources, candidate, &verified, now, &config, fan_in, new_refs,
+            resources, candidate, now, &config, fan_in, new_refs,
         )?);
         if let Some(vector) = vector {
             embeddings.insert(candidate.claim_id, vector);
@@ -100,15 +118,16 @@ pub(super) fn assemble(
         .min()
         .unwrap_or(now)
         .max(now.saturating_add(1));
-    let mut by_id: BTreeMap<EntityId, PromotionCandidate> =
+    let mut by_id: BTreeMap<EntityId, VerifiedCandidate> =
         candidates.into_iter().map(|c| (c.claim_id, c)).collect();
     let ready: Vec<_> = plan
         .ready
         .iter()
         .filter_map(|id| by_id.remove(id))
         .collect();
-    let conflicts = judge_queue(&ready, &embeddings, rules, config.cosine_threshold)?;
-    let conflicts = resources.route_priors(&ready, conflicts, rules)?;
+    let ready_data: Vec<_> = ready.iter().map(|row| row.proposal.clone()).collect();
+    let conflicts = judge_queue(&ready_data, &embeddings, rules, config.cosine_threshold)?;
+    let conflicts = resources.route_priors(&ready_data, conflicts, rules)?;
     Ok(AssembledCandidates {
         candidates: ready,
         conflicts,
@@ -119,39 +138,29 @@ pub(super) fn assemble(
 
 fn selection_input(
     resources: &BranchResources<'_>,
-    candidate: &PromotionCandidate,
-    verified: &BTreeMap<SwarmEvidenceRef, VerifiedSwarmEvidence>,
+    candidate: &VerifiedCandidate,
     now: u64,
     config: &SelectionConfig,
     fan_in: u64,
     new_refs: u64,
 ) -> Result<SelectionCandidate> {
-    let facts = candidate_facts(&candidate.candidate)?;
-    let mut seen = BTreeSet::new();
+    let facts = candidate_facts(&candidate.proposal.candidate)?;
     let mut earliest = None;
     let mut latest = 0;
-    let mut count = 0;
     let mut sessions = BTreeSet::new();
-    for locator in super::conflict::candidate_locators(candidate)? {
-        let entry = verified
-            .get(&locator)
-            .ok_or_else(|| super::support::invalid_consolidation("unverified evidence signal"))?;
-        if !seen.insert((entry.source_id, entry.content_hash)) {
-            continue;
-        }
-        let id = locator.source_id;
+    for (id, _hash, claim) in candidate.evidence.signal_sources() {
         let learned_at = resources
             .evidence_time(resources.scope(), &id)?
             .saturating_mul(1_000);
         earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
         latest = latest.max(learned_at);
-        count += 1;
-        if locator.claim_id.is_some() {
+        if claim {
             sessions.insert(id.to_hex());
         } else if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
             sessions.insert(speaker.trim().to_lowercase());
         }
     }
+    let count = candidate.evidence.count();
     let signals = StrengthSignals {
         type_prior: config
             .type_priors

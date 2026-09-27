@@ -1594,7 +1594,8 @@ fn no_fabricated_belief_writes() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
@@ -1638,6 +1639,7 @@ fn gap_dedupe_and_decay() -> Result<()> {
         subject: conversation,
         evidence_turn_refs: vec![turn],
         evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -1910,7 +1912,8 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
-            ledger_pin: None,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let expected_spend = if expire_on_call == 1 { 120 } else { 100 };
         assert!(matches!(
@@ -1996,7 +1999,8 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     block_on_ready(executor.execute(&admitted, &mut ctx))?;
 
@@ -2052,7 +2056,8 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms: 21_000,
-            ledger_pin: None,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
         let expected_spend = if fatal_merge { 50 } else { 100 };
@@ -2099,6 +2104,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             subject,
             evidence_turn_refs: turns,
             evidence_refs: Vec::new(),
+            verified_evidence: None,
             first_seen: 0,
             last_seen: 0,
             escalations: 0,
@@ -2195,13 +2201,13 @@ fn most_restrictive_trust() {
 }
 
 #[test]
-fn wake_ledger_pin_rereads_original_bytes_and_refuses_write_drift() -> Result<()> {
+fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (admitted, turns, conversation) =
         admitted_attempt_fixture(&vault, &store, 0x2E, &[("assistant", "original")])?;
     let turn = turns[0];
-    let pin = WakeEvidenceSnapshot::capture(&vault, DreamerConsolidationScope::Micro)?;
+    let pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
     let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
     let resources = super::resources::BranchResources::open_at_pin(
         &vault,
@@ -2445,7 +2451,8 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2509,7 +2516,8 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2540,6 +2548,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         subject,
         evidence_turn_refs: turns,
         evidence_refs: Vec::new(),
+        verified_evidence: None,
         first_seen: 0,
         last_seen: 0,
         escalations: 0,
@@ -2583,7 +2592,8 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms,
-            ledger_pin: None,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2654,7 +2664,8 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             deadline: &deadline,
             budget_id: "wake",
             now_ms,
-            ledger_pin: None,
+            prepared_wake: None,
+            prepared_attempt: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2773,7 +2784,8 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let seeded = claim_predicates_in_store(&vault)?;
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;

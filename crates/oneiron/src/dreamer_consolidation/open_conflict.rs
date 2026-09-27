@@ -1,5 +1,6 @@
 //! A judge outage is an open question, persisted through the shared write gate.
-use super::{ConflictSet, PromotionCandidate, conflict_open_marker_id};
+use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
+use super::{ConflictSet, conflict_open_marker_id};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, Result,
     SourceLineage, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -11,31 +12,22 @@ pub(super) fn park_open_conflict(
     actor: WriteActor,
     attempt: crate::attempt_queue::AttemptId,
     conflict: &ConflictSet,
-    members: &[&PromotionCandidate],
+    members: &[&VerifiedCandidate],
     fence: &super::resources::ConsolidationFence,
     now: u64,
 ) -> Result<EntityId> {
     let id = conflict_open_marker_id(conflict, attempt);
-    let refs: std::collections::BTreeSet<_> = members
-        .iter()
-        .flat_map(|c| c.evidence_turn_refs.iter().copied())
-        .collect();
-    let mut meet = ClaimSource::Generated;
-    let mut locators = Vec::new();
+    let mut verified: Option<VerifiedEvidenceSet> = None;
     for member in members {
-        meet = super::source_meet(meet, fence.evidence_source(member)?);
-        locators.extend(fence.verified_locators(member)?);
+        verified = Some(verified.map_or_else(
+            || member.evidence.clone(),
+            |old| old.union(&member.evidence),
+        ));
     }
-    locators.sort_by_key(|(locator, hash)| (locator.source_id, *hash, *locator));
-    locators.dedup_by_key(|(locator, hash)| (locator.source_id, *hash));
-    let evidence = super::encode_consolidation_evidence_with_locators(
-        &super::ConsolidationEvidenceEnvelope {
-            refs: refs.into_iter().collect(),
-            chain: Vec::new(),
-            source_meet: meet,
-        },
-        &locators,
-    );
+    let verified = verified
+        .ok_or_else(|| super::support::invalid_consolidation("open conflict has no evidence"))?;
+    let meet = verified.meet();
+    let evidence = verified.envelope(Vec::new());
     let envelope = WriteEnvelope::with_lineage(
         actor,
         meet,

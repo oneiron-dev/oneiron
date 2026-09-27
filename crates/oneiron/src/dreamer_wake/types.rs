@@ -64,6 +64,9 @@ pub struct RunWakePass {
     pub budget_total_units: u64,
     pub reserve_units: u64,
     pub now: u64,
+    /// Exact caller attenuation for this wake. It is prepared once at the
+    /// root, never inferred from a decorated executor's optional metadata.
+    pub host_scope: Option<crate::llm::Scope>,
 }
 
 /// Why the pass stopped.
@@ -158,7 +161,9 @@ pub struct WakeAttemptContext<'a> {
     pub now_ms: u64,
     /// One frozen LMDB ledger revision for this entire wake, if the driver
     /// supplied it. Standalone direct executor calls own a local snapshot.
-    pub ledger_pin: Option<&'a crate::dreamer_consolidation::WakeEvidenceSnapshot>,
+    pub prepared_wake: Option<&'a crate::dreamer_consolidation::PreparedWake>,
+    /// Selected immutable branch plan. Non-consolidation jobs have None.
+    pub prepared_attempt: Option<&'a crate::dreamer_consolidation::PreparedConsolidationAttempt>,
 }
 
 impl WakeAttemptContext<'_> {
@@ -243,12 +248,6 @@ fn landing_request_notice(record: &AttemptRecord) -> Option<LandingRequestNotice
 /// never parking a second time.
 #[allow(async_fn_in_trait)]
 pub trait DreamerAttemptExecutor {
-    /// Exact host-supplied claim documents to include at the same wake pin;
-    /// admission still requires the queued/host scope and actor read policy.
-    fn wake_ledger_scope(&self) -> Option<&crate::llm::Scope> {
-        None
-    }
-
     async fn execute(
         &mut self,
         attempt: &DreamerAdmittedAttempt,

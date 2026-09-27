@@ -147,7 +147,8 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
                 deadline: &deadline,
                 budget_id: "wake",
                 now_ms: 21_000,
-                ledger_pin: None,
+                prepared_wake: None,
+                prepared_attempt: None,
             },
         ))?;
         assert!(matches!(

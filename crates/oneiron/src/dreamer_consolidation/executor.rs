@@ -2,17 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) mod extraction;
 mod merge_resolution;
-mod retry;
 
 use merge_resolution::{MergeResolution, decode_merge_resolution};
 
+use super::evidence::{ExtractedCandidate, VerifiedCandidate, VerifiedEvidenceSet};
 use super::resources::BranchResources;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
-use super::conflict::{
-    ConflictIdentity, ConflictSet, SwarmEvidenceRef, candidate_facts, deterministic_claim_id,
-};
+use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::failure_rules::{self, FailureRules, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind, scan_reflection_gaps, upsert_gap_queue};
 use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
@@ -73,13 +71,13 @@ pub struct ConsolidationExecutor<'a> {
 /// real decision (#485-1, #485-2).
 enum PartitionRun {
     Completed {
-        candidates: Vec<PromotionCandidate>,
+        candidates: Vec<VerifiedCandidate>,
     },
     Trapped,
     /// The response was charged but the run must stop before publishing it.
     Checkpoint,
     Held {
-        candidates: Vec<PromotionCandidate>,
+        candidates: Vec<VerifiedCandidate>,
         retry_at_ms: u64,
     },
 }
@@ -157,7 +155,6 @@ impl ConsolidationExecutor<'_> {
         } else {
             Vec::new()
         };
-        resources.validate_candidates(resources.scope(), &candidates)?;
         resources.require_output(resources.scope())?;
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
@@ -200,14 +197,15 @@ impl ConsolidationExecutor<'_> {
     /// `ContradictionLeftStanding`; contradictions never land silently).
     async fn resolve_conflicts(
         &mut self,
-        candidates: Vec<PromotionCandidate>,
+        candidates: Vec<ExtractedCandidate>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
         rules: Option<&FailureRules>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
-        let assembled = super::assembly::assemble(ctx.vault, resources, candidates, ctx.now_ms)?;
+        let assembled =
+            super::assembly::assemble_extracted(ctx.vault, resources, candidates, ctx.now_ms)?;
         let candidates = assembled.candidates;
         let conflicts = assembled.conflicts;
         let policy = {
@@ -226,11 +224,11 @@ impl ConsolidationExecutor<'_> {
         }
 
         let mut dropped: BTreeSet<usize> = BTreeSet::new();
-        let mut merged: Vec<PromotionCandidate> = Vec::new();
-        let mut escalated: Vec<ReflectionGap> = Vec::new();
+        let mut merged: Vec<VerifiedCandidate> = Vec::new();
+        let mut escalated: Vec<(ReflectionGap, VerifiedEvidenceSet)> = Vec::new();
 
         for conflict in &conflicts {
-            let members: Vec<&PromotionCandidate> = conflict
+            let members: Vec<&VerifiedCandidate> = conflict
                 .candidate_indexes
                 .iter()
                 .map(|index| &candidates[*index])
@@ -239,9 +237,10 @@ impl ConsolidationExecutor<'_> {
                 .prior_head
                 .map(|id| resources.prior(id))
                 .transpose()?;
-            if super::judge_context::fast_path(&policy, conflict, &members, prior) {
+            let member_data: Vec<_> = members.iter().map(|member| &member.proposal).collect();
+            if super::judge_context::fast_path(&policy, conflict, &member_data, prior) {
                 let mut candidate = (*members[0]).clone();
-                candidate.supersedes = conflict.prior_head;
+                candidate.proposal.supersedes = conflict.prior_head;
                 dropped.extend(conflict.candidate_indexes.iter().copied());
                 merged.push(candidate);
                 continue;
@@ -253,7 +252,7 @@ impl ConsolidationExecutor<'_> {
                 .collect::<Result<Vec<_>>>()?;
             let mut request = self.merge_request(
                 &conflict.identity,
-                &members,
+                &member_data,
                 &prior_heads,
                 resources.scope(),
             )?;
@@ -399,10 +398,10 @@ impl ConsolidationExecutor<'_> {
             return Ok(PartitionRun::Checkpoint);
         }
         if !escalated.is_empty() {
-            resources.upsert_gaps(resources.scope(), escalated, ctx.now_ms)?;
+            resources.upsert_verified_gaps(resources.scope(), escalated, ctx.now_ms)?;
         }
 
-        let mut surviving: Vec<PromotionCandidate> = candidates
+        let mut surviving: Vec<VerifiedCandidate> = candidates
             .into_iter()
             .enumerate()
             .filter_map(|(index, candidate)| (!dropped.contains(&index)).then_some(candidate))
@@ -500,19 +499,22 @@ impl ConsolidationExecutor<'_> {
 
 fn merged_candidate(
     conflict: &ConflictSet,
-    members: &[&PromotionCandidate],
+    members: &[&VerifiedCandidate],
     priors: &[super::conflict::PriorHead],
     value: Value,
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
-) -> Result<PromotionCandidate> {
+) -> Result<VerifiedCandidate> {
     let mut evidence: Vec<EntityId> = Vec::new();
-    let mut locators = Vec::new();
+    let mut combined: Option<VerifiedEvidenceSet> = None;
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
     let mut confidence = 0.0_f32;
     for member in members {
-        locators.extend(super::conflict::candidate_locators(member)?);
+        combined = Some(combined.map_or_else(
+            || member.evidence.clone(),
+            |old| old.union(&member.evidence),
+        ));
         for turn in &member.evidence_turn_refs {
             if !evidence.contains(turn) {
                 evidence.push(*turn);
@@ -530,8 +532,6 @@ fn merged_candidate(
     }
     evidence.sort();
     evidence.dedup();
-    locators.sort_unstable();
-    locators.dedup();
     for prior in priors
         .iter()
         .filter(|p| conflict.prior_heads.contains(&p.claim_id))
@@ -566,49 +566,61 @@ fn merged_candidate(
         candidate = candidate.with_world(world);
     }
     candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
-    candidate = super::conflict::with_candidate_locators(candidate, &locators);
-    Ok(PromotionCandidate {
-        claim_id,
-        candidate,
-        evidence_turn_refs: evidence,
-        provenance_chain: chain,
-        supersedes: conflict.prior_head,
-        evidence_meet: meet,
-        occurred: TimeRange {
-            start: now_ms,
-            end: now_ms,
+    let combined = combined
+        .ok_or_else(|| invalid_consolidation("merge has no verified members"))?
+        .restrict(meet);
+    Ok(VerifiedCandidate {
+        proposal: PromotionCandidate {
+            claim_id,
+            candidate,
+            evidence_turn_refs: evidence,
+            provenance_chain: chain,
+            supersedes: conflict.prior_head,
+            evidence_meet: meet,
+            occurred: TimeRange {
+                start: now_ms,
+                end: now_ms,
+            },
+            learned_at: now_ms,
         },
-        learned_at: now_ms,
+        evidence: combined,
     })
 }
 
 fn contradiction_gap(
     conflict: &ConflictSet,
-    members: &[&PromotionCandidate],
+    members: &[&VerifiedCandidate],
     now_ms: u64,
-) -> Result<ReflectionGap> {
+) -> Result<(ReflectionGap, VerifiedEvidenceSet)> {
     let mut evidence: Vec<EntityId> = Vec::new();
-    let mut locators = Vec::new();
+    let mut combined: Option<VerifiedEvidenceSet> = None;
     for member in members {
-        locators.extend(super::conflict::candidate_locators(member)?);
+        combined = Some(combined.map_or_else(
+            || member.evidence.clone(),
+            |old| old.union(&member.evidence),
+        ));
         for turn in &member.evidence_turn_refs {
             if !evidence.contains(turn) {
                 evidence.push(*turn);
             }
         }
     }
-    locators.sort_unstable();
-    locators.dedup();
-    Ok(ReflectionGap {
-        kind: ReflectionGapKind::ContradictionLeftStanding,
-        subject: conflict.identity.subject,
-        evidence_turn_refs: evidence,
-        evidence_refs: locators,
-        first_seen: now_ms,
-        last_seen: now_ms,
-        escalations: 0,
-        decayed: false,
-    })
+    let combined =
+        combined.ok_or_else(|| invalid_consolidation("conflict has no verified evidence"))?;
+    Ok((
+        ReflectionGap {
+            kind: ReflectionGapKind::ContradictionLeftStanding,
+            subject: conflict.identity.subject,
+            evidence_turn_refs: evidence,
+            evidence_refs: combined.locators(),
+            verified_evidence: Some(combined.envelope(Vec::new())),
+            first_seen: now_ms,
+            last_seen: now_ms,
+            escalations: 0,
+            decayed: false,
+        },
+        combined,
+    ))
 }
 
 fn attempt_id_for_steps(
@@ -619,10 +631,6 @@ fn attempt_id_for_steps(
 }
 
 impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
-    fn wake_ledger_scope(&self) -> Option<&crate::llm::Scope> {
-        self.scope.as_ref()
-    }
-
     async fn execute(
         &mut self,
         attempt: &crate::dreamer_runner::DreamerAdmittedAttempt,
@@ -637,12 +645,20 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "executor actor is not the queued Dreamer authority",
             ));
         }
-        let branch_scope = super::branch_scope::resolve_scope(
-            ctx.vault,
-            attempt.status.payload.parent_attempt,
-            super::branch_scope::decode_branch_scope(&attempt.status.payload.input)?,
-            self.scope.as_ref(),
-        )?;
+        let special = matches!(
+            attempt.status.payload.attempt_type.as_str(),
+            DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE | DREAMER_GAP_SCAN_ATTEMPT_TYPE,
+        );
+        let branch_scope = if special {
+            super::branch_scope::resolve_scope(
+                ctx.vault,
+                attempt.status.payload.parent_attempt,
+                super::branch_scope::decode_branch_scope(&attempt.status.payload.input)?,
+                self.scope.as_ref(),
+            )?
+        } else {
+            None
+        };
         // ED-04 (ONE-1760): the recurring-substitution miner is a
         // consolidation-scope job like the gap scan — deterministic, no LLM
         // step, so it spends no units. The payload shape and the pass itself
@@ -709,28 +725,80 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
 
+        // Direct executor calls and wake-driver calls consume the SAME
+        // preparation code. The driver supplies a preselected branch; a direct
+        // caller prepares a one-pass view before any model call or write.
+        let direct_wake;
+        let wake = if let Some(wake) = ctx.prepared_wake {
+            wake
+        } else {
+            direct_wake = super::PreparedWake::prepare_one(
+                ctx.vault,
+                match attempt.status.attempt.kind.as_str() {
+                    crate::dreamer_runner::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND => {
+                        crate::dreamer_runner::DreamerConsolidationScope::Micro
+                    }
+                    crate::dreamer_runner::DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND => {
+                        crate::dreamer_runner::DreamerConsolidationScope::Meso
+                    }
+                    crate::dreamer_runner::DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND => {
+                        crate::dreamer_runner::DreamerConsolidationScope::Macro
+                    }
+                    _ => {
+                        return Err(invalid_consolidation(
+                            "attempt is not a consolidation partition",
+                        ));
+                    }
+                },
+                self.scope.as_ref(),
+                attempt.status.attempt.id,
+            )?;
+            &direct_wake
+        };
+        let plan = match ctx.prepared_attempt.or_else(|| {
+            match wake.preparation(attempt.status.attempt.id) {
+                Some(super::AttemptPreparation::Ready(plan)) => Some(plan),
+                _ => None,
+            }
+        }) {
+            Some(plan) => plan,
+            None => {
+                return match wake.preparation(attempt.status.attempt.id) {
+                    Some(super::AttemptPreparation::Refused {
+                        reason,
+                        scope_error: true,
+                    }) => Err(crate::Error::InvalidConfig((*reason).into())),
+                    Some(super::AttemptPreparation::Refused { reason, .. }) => {
+                        Err(invalid_consolidation(reason))
+                    }
+                    _ => Err(invalid_consolidation(
+                        "consolidation attempt was not prepared at the wake revision",
+                    )),
+                };
+            }
+        };
+        if plan.attempt_id() != attempt.status.attempt.id
+            || !plan.matches_queued(&attempt.status.payload.input)
+            || (ctx.prepared_wake.is_some()
+                && self.scope.as_ref().is_some()
+                && self.scope.as_ref() != plan.scope())
+        {
+            return Err(invalid_consolidation(
+                "executor scope/identity differs from prepared attempt",
+            ));
+        }
         let branch_scope = super::branch_scope::pin_execution_scope(
             ctx.vault,
             attempt.status.attempt.id,
-            branch_scope.as_ref(),
+            plan.scope(),
         )?;
-        let payload = retry::refreshed_input(
-            ctx.vault,
-            self.actor,
-            &attempt.status,
-            branch_scope.as_ref(),
-            ctx.ledger_pin,
-        )?;
-        let (partition, turns, _) = decode_partition_payload(&payload)?;
-        let resources = BranchResources::open_at_pin(
-            ctx.vault,
-            self.actor,
-            partition,
-            &turns,
-            attempt.status.attempt.id,
-            branch_scope.as_ref(),
-            ctx.ledger_pin,
-        )?;
+        if branch_scope.as_ref() != plan.scope() {
+            return Err(invalid_consolidation(
+                "prepared branch scope changed after the wake pin",
+            ));
+        }
+        let payload = plan.input().clone();
+        let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake)?;
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
         match self
@@ -751,7 +819,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
             Ok(PartitionRun::Completed { candidates }) => {
-                resources.accept(resources.scope(), self.sink, candidates)?;
+                resources.accept_verified(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
                 })
@@ -760,7 +828,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 candidates,
                 retry_at_ms,
             }) => {
-                resources.accept(resources.scope(), self.sink, candidates)?;
+                resources.accept_verified(resources.scope(), self.sink, candidates)?;
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),

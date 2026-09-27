@@ -65,7 +65,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
         scope: &crate::llm::Scope,
         attempt_id: crate::attempt_queue::AttemptId,
         now_ms: u64,
-    ) -> Result<Vec<PromotionCandidate>> {
+    ) -> Result<Vec<super::super::evidence::ExtractedCandidate>> {
         let text: String = response
             .message
             .content
@@ -132,7 +132,7 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 .map(decode_model_locator)
                 .collect::<Result<_>>()?;
             let mut evidence_turn_refs: Vec<_> =
-                locators.iter().map(|entry| entry.source_id).collect();
+                locators.iter().map(|entry| entry.source_id()).collect();
             evidence_turn_refs.sort_unstable();
             evidence_turn_refs.dedup();
 
@@ -157,7 +157,6 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
             if !fields.is_empty() {
                 candidate = candidate.with_scope(Value::Map(fields));
             }
-            let candidate = super::super::conflict::with_candidate_locators(candidate, &locators);
             let facts = candidate_facts(&candidate)?;
             let claim_id = deterministic_claim_id(
                 attempt_id,
@@ -169,22 +168,25 @@ Each evidence ref names a source id and either a UTF-8 byte range in the display
                 rel,
                 facts.topic.as_deref(),
             );
-            candidates.push(PromotionCandidate {
-                claim_id,
-                candidate,
-                evidence_turn_refs,
-                // Extraction output from the working set carries no external
-                // chain; a peer-derived candidate gets its hops from
-                // `peer_answer_provenance_chain` at the landing seam.
-                provenance_chain: Vec::new(),
-                supersedes: None,
-                evidence_meet: ClaimSource::Generated,
-                occurred: TimeRange {
-                    start: now_ms,
-                    end: now_ms,
+            candidates.push(super::super::evidence::ExtractedCandidate::new(
+                PromotionCandidate {
+                    claim_id,
+                    candidate,
+                    evidence_turn_refs,
+                    // Extraction output from the working set carries no external
+                    // chain; a peer-derived candidate gets its hops from
+                    // `peer_answer_provenance_chain` at the landing seam.
+                    provenance_chain: Vec::new(),
+                    supersedes: None,
+                    evidence_meet: ClaimSource::Generated,
+                    occurred: TimeRange {
+                        start: now_ms,
+                        end: now_ms,
+                    },
+                    learned_at: now_ms,
                 },
-                learned_at: now_ms,
-            });
+                locators,
+            )?);
         }
         Ok(candidates)
     }
@@ -244,7 +246,11 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
             let cited: Vec<_> = locators
                 .iter()
                 .copied()
-                .filter(|locator| locator.source_id == id)
+                .filter(|locator| locator.source_id() == id)
+                .collect();
+            let cited: Vec<_> = cited
+                .into_iter()
+                .map(|locator| locator.reference())
                 .collect();
             let Ok(verified) = resources.verify_evidence_refs(&cited) else {
                 continue;
@@ -263,7 +269,9 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
     disagreements
 }
 
-fn decode_model_locator(value: &serde_json::Value) -> Result<SwarmEvidenceRef> {
+fn decode_model_locator(
+    value: &serde_json::Value,
+) -> Result<super::super::evidence::EvidenceLocator> {
     let object = value
         .as_object()
         .ok_or_else(|| invalid_consolidation("evidence locator must be an object"))?;
@@ -305,14 +313,13 @@ fn decode_model_locator(value: &serde_json::Value) -> Result<SwarmEvidenceRef> {
             ))
         })
         .transpose()?;
-    if claim_id.is_some() == byte_range.is_some() {
-        return Err(invalid_consolidation(
+    match (claim_id, byte_range) {
+        (Some(claim), None) => super::super::evidence::EvidenceLocator::claim(source_id, claim),
+        (None, Some((start, end))) => {
+            super::super::evidence::EvidenceLocator::turn_range(source_id, start, end)
+        }
+        _ => Err(invalid_consolidation(
             "evidence must cite a claim or a byte range",
-        ));
+        )),
     }
-    Ok(SwarmEvidenceRef {
-        source_id,
-        claim_id,
-        byte_range,
-    })
 }

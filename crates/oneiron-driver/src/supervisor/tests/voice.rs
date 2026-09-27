@@ -208,7 +208,8 @@ async fn factory_backend_and_executor_share_the_voice_pass_meter() {
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 11_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     let mut executor = factory.executor(&guard).unwrap();
     let execution = executor.execute(&admitted, &mut ctx);

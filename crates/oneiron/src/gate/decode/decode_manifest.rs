@@ -58,7 +58,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
-    pub(in crate::gate) dreamer_retry_source_limit: Option<usize>,
+    pub(in crate::gate) retry_source_policy:
+        Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -104,7 +105,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
-                | "dreamer_retry_source_limit"
+                | "retry_source_policy"
         ) {
             return None;
         }
@@ -240,11 +241,14 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
-    let dreamer_retry_source_limit = match single_map_value(&entries, "dreamer_retry_source_limit")
-    {
-        MapValue::Missing => None,
+    let retry_source_policy = match single_map_value(&entries, "retry_source_policy") {
+        MapValue::Missing => Vec::new(),
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => Some(usize::try_from(value.as_u64().filter(|n| *n > 0)?).ok()?),
+        MapValue::Present(Value::Array(rows)) => rows
+            .iter()
+            .map(crate::gate::retry_source_policy::RetrySourcePolicyRow::parse)
+            .collect::<Option<Vec<_>>>()?,
+        MapValue::Present(_) => return None,
     };
 
     let unknown_axis_seen =
@@ -277,7 +281,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
-        dreamer_retry_source_limit,
+        retry_source_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

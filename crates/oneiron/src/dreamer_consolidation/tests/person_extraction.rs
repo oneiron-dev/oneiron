@@ -62,7 +62,8 @@ fn production_executor_mints_only_explicit_evidenced_people_and_never_relabels()
         deadline: &deadline,
         budget_id: "wake",
         now_ms: 21_000,
-        ledger_pin: None,
+        prepared_wake: None,
+        prepared_attempt: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&admitted, &mut ctx))?,

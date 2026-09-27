@@ -40,8 +40,12 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_SCHEMA_VERSION),
         ),
         (
-            Value::from("dreamer_retry_source_limit"),
-            Value::from(1_024_u64),
+            Value::from("retry_source_policy"),
+            Value::Array(vec![Value::Map(vec![
+                (Value::from("selector"), Value::from("vault")),
+                (Value::from("max_sources"), Value::from(1_024_u64)),
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+            ])]),
         ),
         (
             Value::from(POLICY_PACK_ID_KEY),

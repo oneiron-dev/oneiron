@@ -8,6 +8,7 @@ use super::conflict::{
     SwarmEvidenceRef, VerifiedSwarmEvidence, candidate_facts, deterministic_claim_id,
     swarm_evidence_content_hash, turn_trust_class,
 };
+use super::wake_plan::PreparedWake;
 
 mod prior;
 mod signals;
@@ -30,247 +31,18 @@ use crate::{Result, Vault};
 pub(crate) use write::ConsolidationFence;
 pub use write::ScopedConsolidationWrite;
 
-/// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
-/// wake starts any writes. The read transaction closes immediately after this
-/// bounded projection; a wake never holds an LMDB reader slot across writes.
-#[derive(Debug, Default)]
-pub struct WakeEvidenceSnapshot {
-    sources: BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
-    attempts: BTreeSet<[u8; 16]>,
-    retry_turns: BTreeMap<[u8; 16], Vec<super::WorkingSetTurn>>,
-    retry_failures: BTreeMap<[u8; 16], &'static str>,
-}
-
-impl WakeEvidenceSnapshot {
-    #[cfg(test)]
-    pub(crate) fn capture(
-        vault: &Vault,
-        scope: crate::dreamer_runner::DreamerConsolidationScope,
-    ) -> Result<Self> {
-        Self::capture_with_grants(vault, scope, None)
-    }
-
-    pub(crate) fn capture_with_grants(
-        vault: &Vault,
-        scope: crate::dreamer_runner::DreamerConsolidationScope,
-        caller_scope: Option<&Scope>,
-    ) -> Result<Self> {
-        use crate::ports::EdgeDirection;
-        let txn = vault.store.env.read_txn()?;
-        let retry_limit =
-            crate::gate::resolve_policy_manifest(&vault.store, &txn)?.dreamer_retry_source_limit();
-        let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
-        let mut ids = BTreeSet::new();
-        let mut attempts = BTreeSet::new();
-        let mut retries = Vec::new();
-        let mut retry_failures = BTreeMap::new();
-        for attempt in records {
-            if attempt.kind != scope.attempt_kind() || attempt.state.is_terminal() {
-                continue;
-            }
-            attempts.insert(*attempt.id.as_bytes());
-            // A malformed queued row is not a source grant. Its own executor
-            // still refuses it, without failing unrelated wake work here.
-            let Ok(payload) =
-                crate::dreamer_runner::decode_dreamer_attempt_payload(&attempt.payload)
-            else {
-                continue;
-            };
-            let Ok((partition, turns, watermark)) =
-                super::partition::decode_partition_payload(&payload.input)
-            else {
-                continue;
-            };
-            ids.insert(partition.conversation_ref);
-            ids.extend(turns.iter().copied());
-            let queued_scope = match super::branch_scope::decode_branch_scope(&payload.input) {
-                Ok(scope) => scope,
-                Err(_) => {
-                    retry_failures.insert(*attempt.id.as_bytes(), "invalid queued branch scope");
-                    continue;
-                }
-            };
-            let effective_scope = match super::branch_scope::execution_scope_in(
-                vault,
-                &txn,
-                attempt.id,
-                payload.parent_attempt,
-                queued_scope,
-                caller_scope,
-            ) {
-                Ok(scope) => scope,
-                Err(_) => {
-                    retry_failures.insert(*attempt.id.as_bytes(), "invalid retry execution scope");
-                    continue;
-                }
-            };
-            if attempt.retry_of.is_some() && effective_scope.is_none() {
-                let peers = match vault.filtered_edge_peers(
-                    &txn,
-                    EdgeDirection::In,
-                    &partition.conversation_ref,
-                    EdgeKind::ChildOf,
-                    Some(ENTITY_TYPE_TURN),
-                    "selection retry wake source scan",
-                ) {
-                    Ok(peers) => peers,
-                    Err(crate::Error::IndexOverflow(_)) => {
-                        retry_failures.insert(
-                            *attempt.id.as_bytes(),
-                            "selection retry graph limit exceeded",
-                        );
-                        continue;
-                    }
-                    Err(error) => return Err(error),
-                };
-                ids.extend(peers.iter().copied());
-                retries.push((*attempt.id.as_bytes(), partition, turns, watermark, peers));
-            }
-            if let Some(bound) = effective_scope {
-                for resource in &bound.readable {
-                    if let ScopeResource::DocumentVersion { document, .. } = resource
-                        && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
-                    {
-                        ids.insert(*document);
-                    }
-                }
-            }
-        }
-        // A host-supplied attenuation may carry additional exact prior CLAIM
-        // grants not serialized into queued input. Pin them at this SAME txn;
-        // BranchResources still admits only the effective exact scope.
-        if let Some(bound) = caller_scope {
-            for resource in &bound.readable {
-                if let ScopeResource::DocumentVersion { document, .. } = resource
-                    && vault.get_entity_type_in_txn(&txn, document)? == Some(ENTITY_TYPE_CLAIM)
-                {
-                    ids.insert(*document);
-                }
-            }
-        }
-        if ids.is_empty() {
-            return Ok(Self {
-                attempts,
-                retry_failures,
-                ..Self::default()
-            });
-        }
-        let actor = vault.dreamer_authority()?;
-        let key = ScopedReadActorKey::with_actor_class(
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
-        let read = vault.scoped_read(key);
-        let source_ids: Vec<_> = ids.into_iter().collect();
-        let rows = read.get_entities_parts_in_txn(&txn, &source_ids)?;
-        let sources: BTreeMap<_, _> = source_ids
-            .into_iter()
-            .zip(rows)
-            .filter_map(|(id, row)| row.map(|body| (id, body)))
-            .collect();
-        let mut retry_turns = BTreeMap::new();
-        for (attempt, partition, original, watermark, peers) in retries {
-            let Some(parent) = sources.get(&partition.conversation_ref) else {
-                retry_failures.insert(attempt, "selection retry parent not readable");
-                continue;
-            };
-            let parent = decode_turn_body(&parent.2);
-            let original: BTreeSet<_> = original.into_iter().collect();
-            let mut turns = Vec::new();
-            for id in peers {
-                let Some((kind, learned_at, bytes)) = sources.get(&id) else {
-                    continue;
-                };
-                if *kind != ENTITY_TYPE_TURN {
-                    continue;
-                }
-                let facts = decode_turn_body(bytes);
-                let role = dreamer_turn_role(
-                    facts.speaker.as_deref(),
-                    &vault.config.assistant_display_names,
-                );
-                if dreamer_extraction_role_admissible(role)
-                    && facts.world_ref.or(parent.world_ref) == partition.world_ref
-                    && facts.facet_ref.or(parent.facet_ref) == partition.facet_ref
-                    && (original.contains(&id) || *learned_at >= watermark)
-                {
-                    turns.push((*learned_at, id));
-                }
-            }
-            turns.sort_unstable();
-            if turns.len() > retry_limit
-                || !original
-                    .iter()
-                    .all(|id| turns.iter().any(|(_, got)| got == id))
-            {
-                retry_failures.insert(
-                    attempt,
-                    "selection retry source limit or membership changed",
-                );
-                continue;
-            }
-            retry_turns.insert(
-                attempt,
-                turns
-                    .into_iter()
-                    .map(|(learned_at, turn_id)| {
-                        let facts = decode_turn_body(&sources[&turn_id].2);
-                        super::WorkingSetTurn {
-                            turn_id,
-                            role: dreamer_turn_role(
-                                facts.speaker.as_deref(),
-                                &vault.config.assistant_display_names,
-                            ),
-                            learned_at,
-                            conversation: Some(partition.conversation_ref),
-                        }
-                    })
-                    .collect(),
-            );
-        }
-        Ok(Self {
-            sources,
-            attempts,
-            retry_turns,
-            retry_failures,
-        })
-    }
-
-    /// Only work known at the wake's single revision may execute on it.
-    pub(crate) fn contains_attempt(&self, id: AttemptId) -> bool {
-        self.attempts.contains(id.as_bytes())
-    }
-
-    /// A source-admission failure is local to one scheduled retry.
-    pub(crate) fn retry_failure(&self, id: AttemptId) -> Option<&'static str> {
-        self.retry_failures.get(id.as_bytes()).copied()
-    }
-
-    pub(in crate::dreamer_consolidation) fn retry_turns(
-        &self,
-        id: AttemptId,
-    ) -> Option<&[super::WorkingSetTurn]> {
-        self.retry_turns.get(id.as_bytes()).map(Vec::as_slice)
-    }
-
-    fn source(&self, id: &EntityId) -> Option<(u8, u64, Vec<u8>)> {
-        self.sources.get(id).cloned()
-    }
-}
-
 #[derive(Clone)]
 struct SourcePin {
     resource: ScopeResource,
     entity_type: u8,
     learned_at: u64,
+    #[cfg(test)]
     trust_class: Option<crate::claim::ClaimSource>,
-    body: Vec<u8>,
 }
 
 pub(super) struct BranchResources<'a> {
     read: ScopedRead<'a>,
-    ledger_pin: Option<&'a WakeEvidenceSnapshot>,
+    prepared_wake: Option<&'a PreparedWake>,
     partition: ConsolidationPartitionKey,
     sources: BTreeMap<EntityId, SourcePin>,
     turns: BTreeSet<EntityId>,
@@ -298,6 +70,34 @@ impl<'a> BranchResources<'a> {
         Self::open_at_pin(vault, actor, partition, turns, attempt, requested, None)
     }
 
+    /// Consume the exact already-prepared branch; no new scope or source
+    /// discovery is performed here. The live structural checks and write fence
+    /// still refuse revocation or drift.
+    pub(super) fn open_prepared(
+        vault: &'a Vault,
+        actor: WriteActor,
+        plan: &super::PreparedConsolidationAttempt,
+        wake: &'a PreparedWake,
+    ) -> Result<Self> {
+        let resources = Self::open_at_pin(
+            vault,
+            actor,
+            plan.partition(),
+            plan.turn_ids(),
+            plan.attempt_id(),
+            plan.scope(),
+            Some(wake),
+        )?;
+        for (id, pin) in &resources.sources {
+            if plan.version(id) != Some(&pin.resource) {
+                return Err(invalid_consolidation(
+                    "prepared source version changed or was not admitted",
+                ));
+            }
+        }
+        Ok(resources)
+    }
+
     pub(super) fn open_at_pin(
         vault: &'a Vault,
         actor: WriteActor,
@@ -305,7 +105,7 @@ impl<'a> BranchResources<'a> {
         turns: &[EntityId],
         attempt: AttemptId,
         requested: Option<&Scope>,
-        ledger_pin: Option<&'a WakeEvidenceSnapshot>,
+        prepared_wake: Option<&'a PreparedWake>,
     ) -> Result<Self> {
         let actor_key = ScopedReadActorKey::with_actor_class(
             actor.entity_ref().to_hex(),
@@ -327,7 +127,7 @@ impl<'a> BranchResources<'a> {
         let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
             .chain(turns.iter().copied())
             .collect();
-        let source_rows = if let Some(pin) = ledger_pin {
+        let source_rows = if let Some(pin) = prepared_wake {
             source_ids.iter().map(|id| pin.source(id)).collect()
         } else {
             read.get_entities_parts_with_receipt(&source_ids, None)?
@@ -344,6 +144,7 @@ impl<'a> BranchResources<'a> {
             }
             let resource = document_version(*id, &body);
             readable.insert(resource.clone());
+            #[cfg(test)]
             let trust_class = (entity_type == ENTITY_TYPE_TURN)
                 .then(|| {
                     let facts = decode_turn_body(&body);
@@ -362,8 +163,8 @@ impl<'a> BranchResources<'a> {
                     resource,
                     entity_type,
                     learned_at,
+                    #[cfg(test)]
                     trust_class,
-                    body,
                 },
             );
         }
@@ -389,7 +190,7 @@ impl<'a> BranchResources<'a> {
         let scope = requested.cloned().unwrap_or(granted);
         let mut resources = Self {
             read,
-            ledger_pin,
+            prepared_wake,
             partition,
             sources,
             turns: turns.iter().copied().collect(),
@@ -409,6 +210,13 @@ impl<'a> BranchResources<'a> {
         }
         resources.admit_priors()?;
         Ok(resources)
+    }
+
+    pub(super) fn source_version(&self, id: &EntityId) -> Result<ScopeResource> {
+        self.sources
+            .get(id)
+            .map(|pin| pin.resource.clone())
+            .ok_or_else(|| invalid_consolidation("unadmitted evidence source"))
     }
 
     pub(super) fn key_rules(&self) -> &super::routing::PredicateKeyRules {
@@ -534,7 +342,7 @@ impl<'a> BranchResources<'a> {
                 return Err(invalid_consolidation("branch evidence read refused"));
             }
         }
-        let source_rows = if let Some(pin) = self.ledger_pin {
+        let source_rows = if let Some(pin) = self.prepared_wake {
             ids.iter().map(|id| pin.source(id)).collect()
         } else {
             self.read.get_entities_parts_with_receipt(&ids, None)?.value
@@ -630,12 +438,9 @@ impl<'a> BranchResources<'a> {
             {
                 return Err(invalid_consolidation("candidate crossed its branch scope"));
             }
-            let locators = super::conflict::candidate_locators(candidate)?;
-            let cited: BTreeSet<_> = locators.iter().map(|entry| entry.source_id).collect();
-            let projected: BTreeSet<_> = candidate.evidence_turn_refs.iter().copied().collect();
-            if cited != projected {
+            if candidate.candidate.evidence().is_some() {
                 return Err(invalid_consolidation(
-                    "evidence locator projection mismatch",
+                    "unverified candidate evidence is not an authority source",
                 ));
             }
             for id in &candidate.evidence_turn_refs {
@@ -646,11 +451,46 @@ impl<'a> BranchResources<'a> {
                     self.source(scope, id)?;
                 }
             }
-            self.verify_evidence_refs(&locators)?;
         }
         Ok(())
     }
 
+    pub(super) fn upsert_verified_gaps(
+        &self,
+        scope: &Scope,
+        gaps: Vec<(
+            super::gap::ReflectionGap,
+            super::evidence::VerifiedEvidenceSet,
+        )>,
+        now: u64,
+    ) -> Result<super::gap::GapQueueDelta> {
+        self.check_axes(scope)?;
+        let mut persisted = Vec::new();
+        for (mut gap, evidence) in gaps {
+            evidence.check_pins(self)?;
+            gap.evidence_turn_refs = evidence.refs();
+            gap.evidence_refs = evidence.locators();
+            gap.verified_evidence = Some(evidence.envelope(Vec::new()));
+            for id in &gap.evidence_turn_refs {
+                if self.turns.contains(id) {
+                    self.turn(scope, id)?;
+                } else {
+                    self.prior(*id)?;
+                    self.source(scope, id)?;
+                }
+            }
+            persisted.push(gap);
+        }
+        super::gap::upsert_branch_gap_queue(
+            self.read.vault(),
+            scope,
+            &self.partition,
+            persisted,
+            now,
+        )
+    }
+
+    #[cfg(test)]
     pub(super) fn upsert_gaps(
         &self,
         scope: &Scope,
@@ -688,14 +528,37 @@ impl<'a> BranchResources<'a> {
         super::gap::upsert_branch_gap_queue(self.read.vault(), scope, &self.partition, gaps, now)
     }
 
+    pub(super) fn accept_verified(
+        &self,
+        scope: &Scope,
+        sink: &mut dyn ConsolidationSink,
+        candidates: Vec<super::evidence::VerifiedCandidate>,
+    ) -> Result<()> {
+        let write = self.prepare_write_verified(scope, candidates)?;
+        sink.accept_scoped(write)
+    }
+
+    #[cfg(test)]
     pub(super) fn accept(
         &self,
         scope: &Scope,
         sink: &mut dyn ConsolidationSink,
         candidates: Vec<PromotionCandidate>,
     ) -> Result<()> {
-        let write = self.prepare_write(scope, candidates)?;
-        sink.accept_scoped(write)
+        let verified = candidates
+            .into_iter()
+            .map(|candidate| {
+                let refs = candidate
+                    .evidence_turn_refs
+                    .iter()
+                    .copied()
+                    .map(super::evidence::EvidenceLocator::whole_turn)
+                    .collect();
+                let raw = super::evidence::ExtractedCandidate::new(candidate, refs)?;
+                super::evidence::VerifiedCandidate::from_extracted(self, raw)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.accept_verified(scope, sink, verified)
     }
 }
 

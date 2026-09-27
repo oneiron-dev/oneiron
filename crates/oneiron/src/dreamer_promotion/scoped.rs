@@ -2,6 +2,7 @@
 //! semantic-edge and provenance doors. A head is never re-authored to attach
 //! evidence: its value, approval, source and original attribution stay intact.
 use super::*;
+use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
 use crate::dreamer_consolidation::resources::{ConsolidationFence, ScopedConsolidationWrite};
 use crate::edge::EdgeKind;
 use crate::provenance::{EdgeProvenanceClaimBody, EdgeRef, SupersessionStatus};
@@ -19,16 +20,31 @@ pub fn promote_scoped_consolidation(
         return Err(Error::InvalidClaimBody("scoped promotion actor mismatch"));
     }
     let mut outcome = PromotionOutcome::default();
-    for (head, candidate) in write.attachments {
-        match attach_evidence(vault, run, &write.fence, head, &candidate, checker) {
+    for (head, candidate, evidence) in write.attachments {
+        match attach_evidence(
+            vault,
+            run,
+            &write.fence,
+            head,
+            &candidate,
+            &evidence,
+            checker,
+        ) {
             Ok(()) => outcome.landed.push(head),
             Err(error) => outcome.rejected.push((head, error.to_string())),
         }
     }
-    for mut candidate in write.candidates {
-        candidate.evidence_meet = write.fence.evidence_source(&candidate)?;
+    for (mut candidate, evidence) in write.candidates.into_iter().zip(write.candidate_evidence) {
+        candidate.evidence_meet = evidence.meet();
         let id = candidate.claim_id;
-        match promote_one(vault, run, candidate, checker, Some(&write.fence)) {
+        match promote_one(
+            vault,
+            run,
+            candidate,
+            checker,
+            Some(&write.fence),
+            Some(&evidence),
+        ) {
             Ok(ClaimApprovalStatus::Auto) => outcome.landed.push(id),
             Ok(ClaimApprovalStatus::Proposed) => outcome.pended.push(id),
             Ok(_) => outcome
@@ -46,9 +62,10 @@ fn attach_evidence(
     fence: &ConsolidationFence,
     head: EntityId,
     candidate: &PromotionCandidate,
+    evidence: &VerifiedEvidenceSet,
     checker: Option<&BoundedAutoChecker>,
 ) -> Result<()> {
-    let source = fence.evidence_source(candidate)?;
+    let source = evidence.meet();
     let envelope = WriteEnvelope::with_lineage(
         run.agent_actor,
         source,
@@ -67,19 +84,11 @@ fn attach_evidence(
         // Copy the head's complete scope so sensitivity/persona policy cannot be
         // lowered by a minimally scoped extraction. Keep the normal Dreamer
         // validity, source/lineage, isolation, checker and receipt machinery.
-        let locators = fence.verified_locators(candidate)?;
         let gate_candidate = candidate
             .candidate
             .clone()
             .with_scope(scope_with_taint(original.scope.clone(), source))
-            .with_evidence(encode_consolidation_evidence_with_locators(
-                &ConsolidationEvidenceEnvelope {
-                    refs: refs.iter().copied().collect(),
-                    chain: Vec::new(),
-                    source_meet: source,
-                },
-                &locators,
-            ));
+            .with_evidence(evidence.envelope(Vec::new()));
         let gate_body = gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?);
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
         crate::gate::check_claim_policy_for_write(
@@ -105,12 +114,8 @@ fn attach_evidence(
         // The gate is not an authority-granting preflight: all materialization
         // below and its receipt share this transaction, including live pins.
         for source_id in &refs {
-            let cited: Vec<_> = locators
-                .iter()
-                .copied()
-                .filter(|(locator, _)| locator.source_id == *source_id)
-                .collect();
-            attach_ref(vault, txn, run, head, *source_id, source, &cited)?;
+            let cited = evidence.for_source(*source_id);
+            attach_ref(vault, txn, run, head, *source_id, &cited)?;
         }
         if vault.get_claim_in_txn(txn, &head)?.as_ref() != Some(&original) {
             return Err(Error::InvalidClaimBody(
@@ -127,9 +132,10 @@ fn attach_ref(
     run: &DreamerRunContext,
     head: EntityId,
     source: EntityId,
-    evidence_meet: ClaimSource,
-    locators: &[(crate::dreamer_consolidation::SwarmEvidenceRef, [u8; 32])],
+    evidence: &VerifiedEvidenceSet,
 ) -> Result<()> {
+    let evidence_meet = evidence.meet();
+    let locators = evidence.verified_locators();
     if locators.is_empty()
         || locators
             .iter()
@@ -168,7 +174,7 @@ fn attach_ref(
             hash.update(&(start as u64).to_be_bytes());
             hash.update(&(end as u64).to_be_bytes());
         }
-        hash.update(digest);
+        hash.update(&digest);
     }
     let mut id = [0_u8; 16];
     id.copy_from_slice(&hash.finalize().as_bytes()[..16]);
@@ -191,14 +197,7 @@ fn attach_ref(
     );
     record.body_snapshot_ref = Some(head_hash.as_bytes()[..16].try_into().expect("hash prefix"));
     record.actor_class = Some(run.agent_actor.actor_class());
-    let derived_evidence = encode_consolidation_evidence_with_locators(
-        &ConsolidationEvidenceEnvelope {
-            refs: vec![source],
-            chain: Vec::new(),
-            source_meet: evidence_meet,
-        },
-        locators,
-    );
+    let derived_evidence = evidence.envelope(Vec::new());
     let edge_key = crate::store::Store::encode_edge_key(&source, EdgeKind::Supports, &head);
     if let Some(existing) = vault.get_claim_in_txn(txn, &id)? {
         let expected_scope = Value::Map(vec![
