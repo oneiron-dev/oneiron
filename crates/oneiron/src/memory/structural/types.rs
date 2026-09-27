@@ -83,25 +83,6 @@ pub struct HabitCheckinInput {
     /// Unix seconds; `None` ⇒ `occurred_at`.
     pub learned_at: Option<u64>,
 }
-/// One companion persona registration (B2 migrator group, design §2.3).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CompanionRecordInput {
-    /// Caller-supplied deterministic 32-hex record id; `None` ⇒ generated.
-    pub id: Option<String>,
-    /// Owner PERSON ref (personal scope).
-    pub owner_ref: String,
-    /// Companion persona PERSON ref.
-    pub persona_ref: String,
-    /// Opaque record value (JSON, stored as MessagePack).
-    pub value: serde_json::Value,
-    /// Provenance source string; `None` ⇒ `user_stated`.
-    pub source: Option<String>,
-    /// When set, the record is retired at this time after creation
-    /// (migration of `isActive == false` rows).
-    pub retired_at: Option<u64>,
-    /// Creation time (Unix seconds) — stamps the `created` lifecycle event.
-    pub learned_at: u64,
-}
 /// One imported-evidence claim admission (B1a migration-admission verb over
 /// `ingest.rs` `admit_imported_evidence_claim`; the gate still decides).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

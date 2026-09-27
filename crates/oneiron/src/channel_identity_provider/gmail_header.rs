@@ -4,6 +4,7 @@ use super::gmail::{
     GMAIL_EVENT_ID_PREFIX, GMAIL_THREAD_PAYLOAD_PREFIX, MAX_GMAIL_MESSAGE_ID_BYTES,
     MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id,
 };
+use super::mail_placement::MailPlacement;
 use super::{EmailProviderInbound, validate_email_inbound_metadata};
 use crate::channel_identity::MailboxAddr;
 use crate::error::Result;
@@ -102,6 +103,8 @@ pub struct GmailMessageMetadata {
     pub to: String,
     pub from: HeaderMailbox,
     pub internal_date_secs: u64,
+    /// Provider labels classified into an engine placement fact.
+    pub placement: MailPlacement,
 }
 
 impl GmailMessageMetadata {
@@ -118,6 +121,7 @@ impl GmailMessageMetadata {
         to: impl Into<String>,
         from: impl Into<HeaderMailbox>,
         internal_date_secs: u64,
+        placement: MailPlacement,
     ) -> Self {
         Self {
             message_id: message_id.into(),
@@ -125,7 +129,15 @@ impl GmailMessageMetadata {
             to: to.into(),
             from: from.into(),
             internal_date_secs,
+            placement,
         }
+    }
+
+    /// Selects a provider-classified placement.
+    #[must_use]
+    pub fn with_placement(mut self, placement: MailPlacement) -> Self {
+        self.placement = placement;
+        self
     }
 
     /// Normalizes Gmail-native fields into the shared email inbound payload.

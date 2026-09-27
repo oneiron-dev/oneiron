@@ -9,6 +9,8 @@ pub mod gmail;
 mod gmail_header;
 mod inbound_types;
 mod line_adapter;
+pub mod mail_placement;
+pub mod mailbox_cursor;
 mod shared_validate;
 mod slack_adapter;
 mod slack_validate;

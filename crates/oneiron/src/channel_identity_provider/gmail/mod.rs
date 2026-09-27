@@ -22,11 +22,10 @@
 //!   modify method, and [`delegated_scope_for_google_oauth_scope`] maps only the
 //!   two read scopes. A caller cannot widen this by passing a different string;
 //!   there is no variant for a write scope to land in.
-//! * **No credential in a signature.** The wire is handed a `secret_ref` (a
-//!   custody record NAME) and resolves the value at its own egress door.
-//!   In-crate, [`GmailDelegatedAdapter::with_delegated_token_at_door`] is the
-//!   only path to the bytes, and it is the SECRET-02 T0 door under the
-//!   `connector:gmail` effector binding.
+//! * **No credential in a signature.** The read wire receives an opaque
+//!   [`GmailReadAuthority`] bound to the live identity, not a bare custody
+//!   name. Its token callback rechecks the row at credential egress; token
+//!   bytes are never persisted or returned in a page.
 //! * **No new dependency.** The protocol lives behind the wire trait, so the
 //!   dependency graph and lockfile are untouched.
 //!
@@ -34,8 +33,14 @@
 //! re-issuing this grant, and the delegated edge table has no `Rotating` state
 //! to step into.
 
+mod run;
+pub use self::run::GmailReadAuthority;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use super::mail_placement::PlacementPolicy;
+use super::mailbox_cursor::{MailboxCursor, MailboxPageToken, validate_mailbox_cursor};
 
 use super::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
@@ -73,7 +78,6 @@ pub const GMAIL_METADATA_OAUTH_SCOPE: &str = "https://www.googleapis.com/auth/gm
 const GMAIL_INBOX_POLL_DEDUPE_PREFIX: &str = "gmail:inbox_poll:v1:";
 pub(super) const GMAIL_EVENT_ID_PREFIX: &str = "gmail:";
 pub(super) const GMAIL_THREAD_PAYLOAD_PREFIX: &str = "gmail:thread:";
-const MAX_GMAIL_CURSOR_BYTES: usize = 256;
 const MAX_GMAIL_MESSAGES_PER_PAGE: usize = 500;
 
 /// Provider-native ceiling on a Gmail id, independent of where it lands.
@@ -123,53 +127,45 @@ pub use super::gmail_header::{GmailMessageMetadata, HeaderMailbox};
 pub struct GmailInboxPage {
     pub messages: Vec<GmailMessageMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
+    pub next_cursor: Option<MailboxPageToken>,
 }
 
 impl GmailInboxPage {
     /// Builds a page of Gmail read results.
     #[must_use]
-    pub const fn new(messages: Vec<GmailMessageMetadata>, next_cursor: Option<String>) -> Self {
+    pub const fn new(
+        messages: Vec<GmailMessageMetadata>,
+        next_cursor: Option<MailboxPageToken>,
+    ) -> Self {
         Self {
             messages,
             next_cursor,
         }
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, policy: PlacementPolicy) -> Result<()> {
         if self.messages.len() > MAX_GMAIL_MESSAGES_PER_PAGE {
             return Err(Error::InvalidConfig(format!(
                 "gmail inbox page exceeds {MAX_GMAIL_MESSAGES_PER_PAGE} messages"
             )));
         }
         if let Some(cursor) = &self.next_cursor {
-            validate_gmail_cursor(cursor)?;
+            validate_mailbox_cursor(cursor.as_str())?;
+        }
+        for message in &self.messages {
+            policy.require(message.placement)?;
         }
         Ok(())
     }
 }
 
-/// The one cursor rule, applied on BOTH sides of the wire.
-///
-/// A cursor is opaque host state that gets handed straight back to the
-/// provider, so the caller-supplied one deserves the same bound as the one the
-/// provider returned — checking only `next_cursor` validates the value we
-/// already trust and skips the value we do not.
-fn validate_gmail_cursor(cursor: &str) -> Result<()> {
-    validate_non_blank(cursor, "gmail page cursor must be non-empty")?;
-    validate_max_bytes(
-        cursor,
-        MAX_GMAIL_CURSOR_BYTES,
-        "gmail page cursor exceeds maximum length",
-    )
-}
-
 /// The Gmail read protocol seam.
 ///
-/// Implementations own the REST calls, pagination, and the OAuth refresh, and
-/// resolve `secret_ref` at their own egress door. No credential crosses these
-/// signatures, and there is exactly one method: reading. A send or delete verb
-/// would have to be added here to exist, which is the point.
+/// Implementations own the REST calls and pagination. They MUST resolve the
+/// OAuth token through `authority.with_token_at_door`, and perform the provider
+/// request inside its callback. The returned page is refused if the wire did
+/// not use that identity-aware door. No credential crosses this trait's
+/// signature, and there is exactly one method: reading.
 pub trait GmailReadWire {
     /// Reads one page of the granted mailbox after `cursor`.
     ///
@@ -179,9 +175,10 @@ pub trait GmailReadWire {
     /// interpretation beyond page-shape validation.
     fn fetch_inbox_page(
         &self,
-        secret_ref: &str,
+        authority: &GmailReadAuthority<'_>,
         mailbox_address: &str,
-        cursor: Option<&str>,
+        policy: PlacementPolicy,
+        cursor: Option<&MailboxPageToken>,
     ) -> Result<GmailInboxPage>;
 }
 
@@ -191,6 +188,7 @@ pub struct GmailDelegatedAdapterConfig {
     mailbox_address: String,
     custody_record_ref: String,
     scopes: Vec<DelegatedGrantScope>,
+    placement_policy: PlacementPolicy,
 }
 
 impl GmailDelegatedAdapterConfig {
@@ -223,6 +221,7 @@ impl GmailDelegatedAdapterConfig {
             mailbox_address: format!("{local_part}@{mailbox_domain}"),
             custody_record_ref: grant.custody_record_ref,
             scopes: grant.scopes,
+            placement_policy: PlacementPolicy::default(),
         })
     }
 
@@ -254,6 +253,19 @@ impl GmailDelegatedAdapterConfig {
         }
         self.scopes = scopes;
         Ok(self)
+    }
+
+    /// Select which message placements this mailbox poll is allowed to read.
+    #[must_use]
+    pub fn with_placement_policy(mut self, policy: PlacementPolicy) -> Self {
+        self.placement_policy = policy;
+        self
+    }
+
+    /// The policy passed to the host read wire and checked on each result.
+    #[must_use]
+    pub const fn placement_policy(&self) -> PlacementPolicy {
+        self.placement_policy
     }
 
     /// The normalized mailbox address this adapter reads.
@@ -420,37 +432,6 @@ impl GmailDelegatedAdapter {
         )
     }
 
-    /// Reads one page of the granted mailbox through the host wire.
-    ///
-    /// The wire receives the custody NAME, not the value.
-    ///
-    /// The caller's cursor is validated BEFORE the wire is invoked. A blank or
-    /// oversized cursor is a caller bug, and validating it only on the way back
-    /// out means the egress call — token resolution, network round trip, and
-    /// whatever the provider does with a malformed page token — has already
-    /// happened by the time it is caught.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::InvalidConfig`] for a bad cursor or an over-large page, plus
-    /// whatever the wire returns.
-    pub fn fetch_inbox_page<W: GmailReadWire + ?Sized>(
-        &self,
-        wire: &W,
-        cursor: Option<&str>,
-    ) -> Result<GmailInboxPage> {
-        if let Some(cursor) = cursor {
-            validate_gmail_cursor(cursor)?;
-        }
-        let page = wire.fetch_inbox_page(
-            &self.config.custody_record_ref,
-            &self.config.mailbox_address,
-            cursor,
-        )?;
-        page.validate()?;
-        Ok(page)
-    }
-
     /// Enqueues one scheduled inbox poll for this delegated mailbox.
     ///
     /// The payload carries the custody NAME and the identity ref only; the
@@ -479,6 +460,7 @@ impl GmailDelegatedAdapter {
             mailbox_address: self.config.mailbox_address.clone(),
             custody_record_ref: self.config.custody_record_ref.clone(),
             identity_ref: identity_id.to_hex(),
+            placement_policy: self.config.placement_policy,
         };
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("gmail inbox poll config did not encode: {err}"))
@@ -619,6 +601,15 @@ pub struct GmailInboxPollConfig {
     pub mailbox_address: String,
     pub custody_record_ref: String,
     pub identity_ref: String,
+    /// The typed placement read boundary carried into the durable poll.
+    pub placement_policy: PlacementPolicy,
+}
+
+/// Result of one successfully admitted page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GmailMailboxRunOutcome {
+    pub messages_admitted: usize,
+    pub progress: MailboxCursor,
 }
 
 /// Stable dedupe key for one delegated mailbox's scheduled poll.
@@ -703,6 +694,8 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
             None => counterparty_from_raw_sender(&email.envelope_from),
         };
 
+        let correlation_id =
+            run::delivery_correlation_id(&self.config.mailbox_address, &email.provider_event_id);
         let mut input = InboundSurfaceEventInput::new(
             email.provider_event_id,
             EMAIL_CHANNEL,
@@ -710,7 +703,8 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
             counterparty,
             email.received_at,
             true,
-        );
+        )
+        .with_correlation_id(correlation_id);
         input.payload_ref = email.payload_ref;
         Ok(input)
     }

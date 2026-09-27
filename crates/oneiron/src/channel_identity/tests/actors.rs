@@ -60,7 +60,12 @@ fn mail_and_enrichment_are_distinct_scoped_actors_with_own_keys_and_priors() -> 
             .to_bytes();
         assert_eq!(
             vault
-                .verify_capability_slip(&issuer, &registered.slip, b"channel read", &signature)?
+                .verify_capability_slip(
+                    &issuer.public_key(),
+                    &registered.slip,
+                    b"channel read",
+                    &signature
+                )?
                 .scope(),
             &scope
         );
