@@ -287,7 +287,7 @@ pub(super) fn dispatch_result_receipt(
     verb_contract: &OutboundVerbContract,
     policy_risk: ExternalEffectPolicyRisk,
     space_posting: Option<&FrozenSpacePosting>,
-    admission: &AdmissionStage,
+    admission: Option<&AdmissionStage>,
     verdict: DispatchVerdict,
 ) -> OutboundDispatchResult {
     let DispatchVerdict {
@@ -314,8 +314,8 @@ pub(super) fn dispatch_result_receipt(
             budget_ladder_events: Vec::new(),
         };
     }
-    let window_decision = &admission.window_decision;
-    let window_resolution = &admission.window_resolution;
+    let window_decision = admission.map(|stage| &stage.window_decision);
+    let window_resolution = admission.map(|stage| &stage.window_resolution);
     let mut engine_receipt_fields = BTreeMap::new();
     let mut engine_policy_trace = Vec::new();
     if let Some(posting) = space_posting {
@@ -332,7 +332,7 @@ pub(super) fn dispatch_result_receipt(
             posting.policy_risk().to_string(),
         );
     }
-    if let Some(seat) = admission.seat.as_ref() {
+    if let Some(seat) = admission.and_then(|stage| stage.seat.as_ref()) {
         engine_receipt_fields.extend(seat.receipt_fields.clone());
         engine_policy_trace.extend(seat.policy_trace.iter().cloned());
     }
@@ -349,7 +349,9 @@ pub(super) fn dispatch_result_receipt(
     receipt
         .policy_trace
         .extend(gate_receipt_reasons.iter().cloned());
-    receipt.policy_trace.push(window_decision.policy_trace());
+    if let Some(window_decision) = window_decision {
+        receipt.policy_trace.push(window_decision.policy_trace());
+    }
     receipt.policy_trace.extend(engine_policy_trace);
     if let Some(gate_decision_ref) = gate_decision_ref.as_deref() {
         receipt
@@ -493,8 +495,10 @@ pub(super) fn dispatch_result_receipt(
         &gate_reason_codes,
         &gate_receipt_reasons,
     );
-    append_window_receipt_fields(&mut receipt, window_decision);
-    append_window_resolution_receipt_fields(&mut receipt, window_resolution, window_decision);
+    if let (Some(window_resolution), Some(window_decision)) = (window_resolution, window_decision) {
+        append_window_receipt_fields(&mut receipt, window_decision);
+        append_window_resolution_receipt_fields(&mut receipt, window_resolution, window_decision);
+    }
     if let Some(context) = request.context_receipt.as_ref() {
         context.append_to_fields(&mut receipt.fields);
     }
