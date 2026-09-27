@@ -158,7 +158,7 @@ impl Memory<'_> {
         pins: &[NotePin],
     ) -> MemoryResult<EntityRefReceipt> {
         let markdown = markdown.into();
-        let id = EntityId::now();
+        let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
             kind: NoteKind::Plugin("brief".into()),
@@ -175,7 +175,7 @@ impl Memory<'_> {
                 validate_pin_source(self.vault(), txn, pin)?;
                 doc.add_pin(pin, &actor)?;
             }
-            let now = crate::unix_seconds_now();
+            let now = self.vault().now_recorded_at();
             self.vault()
                 .batch_in()
                 .put_authored_note(
@@ -193,7 +193,7 @@ impl Memory<'_> {
             super::operations::record_authorship(
                 &doc,
                 &super::NoteAuthorship {
-                    operation: EntityId::now(),
+                    operation: self.vault().new_entity_id()?,
                     actor: self.actor(),
                     actor_class: self.actor_class().gate_actor_class().to_owned(),
                     grant: None,
@@ -214,7 +214,7 @@ impl Memory<'_> {
         self.apply_local_note_operation(
             note,
             &super::NoteOperation {
-                request_id: EntityId::now(),
+                request_id: self.vault().new_entity_id()?,
                 change: super::NoteChange::Cite { pin: pin.clone() },
             },
         )
@@ -251,7 +251,7 @@ impl Memory<'_> {
             .apply_local_note_operation(
                 note,
                 &super::NoteOperation {
-                    request_id: EntityId::now(),
+                    request_id: self.vault().new_entity_id()?,
                     change: super::NoteChange::Edit {
                         base: base.to_vec(),
                         edits: edits.to_vec(),

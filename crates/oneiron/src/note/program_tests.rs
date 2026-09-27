@@ -18,6 +18,45 @@ fn current(vault: &Vault, id: EntityId) -> String {
 }
 
 #[test]
+fn brief_ids_and_recorded_time_use_the_vault_source() {
+    use crate::ports::{EntityStoreRead, ManualClock};
+    let clock = ManualClock::new(123);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), config).unwrap();
+    let author = EntityId::from_bytes([0x41; 16]).unwrap();
+    vault
+        .put_entity(
+            &author,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let memory = vault.memory(author, EdgeActorClass::Human);
+    memory.bless_brief_kind().unwrap();
+    let brief = memory.author_brief("from clock", &[]).unwrap();
+    let id = EntityId::from_hex(&brief.id_hex).unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let stored = vault.port_entity_record(&txn, &id).unwrap().unwrap();
+    assert_eq!(stored.learned_at, 123);
+    assert_eq!(
+        stored.occurred,
+        TimeRange {
+            start: 123,
+            end: 123
+        }
+    );
+    assert_eq!(id.as_bytes()[0], 0x71);
+    drop(txn);
+    clock.set(124);
+    let another = memory.author_brief("next", &[]).unwrap();
+    assert_ne!(brief.id_hex, another.id_hex);
+}
+
+#[test]
 fn six_descriptors_and_namespaced_kind_round_trip() {
     let (_dir, vault, actor) = fixture();
     for kind in [
