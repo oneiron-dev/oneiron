@@ -933,6 +933,8 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let rejected = Arc::new(std::sync::Mutex::new(None));
     let rejection = Arc::clone(&rejected);
+    let refusals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let refused = Arc::clone(&refusals);
     let (sent, mut accepted) = tokio::sync::mpsc::unbounded_channel();
     let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
         .with_wave_planner(
@@ -945,7 +947,11 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
                     .expect("rejected lock")
                     .get_or_insert(candidate.task);
                 if candidate.task == first {
-                    return Ok(WaveHandoffOutcome::Deferred);
+                    // A refuses forever: once by deferral, then by host error.
+                    if refused.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                        return Ok(WaveHandoffOutcome::Deferred);
+                    }
+                    return Err(oneiron::Error::InvalidConfig("executor refused A".into()));
                 }
                 let WaveDispatchRoute::Attempt { id, generation } = candidate.route else {
                     unreachable!()
@@ -986,7 +992,7 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
         },
     );
     let stop = supervisor.shutdown_handle();
-    let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
+    let (report, ()) = tokio::time::timeout(Duration::from_secs(20), async {
         tokio::join!(supervisor.run(), async {
             let sibling = tokio::time::timeout(Duration::from_secs(5), accepted.recv())
                 .await
@@ -1006,6 +1012,15 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
                 .expect("new plan blocked by A")
                 .expect("new delivery");
             assert_ne!(next, sibling);
+            // A stays retryable after the scan moved past it, and each retry
+            // keeps failing without pinning the arbiter.
+            tokio::time::timeout(Duration::from_secs(6), async {
+                while refusals.load(std::sync::atomic::Ordering::SeqCst) < 3 {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("A retried after its host errors");
             stop.shutdown();
         })
     })
