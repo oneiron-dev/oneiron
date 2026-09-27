@@ -10,7 +10,7 @@ use super::dispatch_types::{
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
 use super::receipt_fields::append_connector_task_window_receipt;
-use super::retry_audit::persist_failed_send_receipt_and_retry;
+use super::retry_audit::{persist_failed_send_receipt_and_retry, settle_suppressed_send};
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
 use crate::attempt_queue::{
@@ -301,6 +301,15 @@ impl Vault {
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
+                    if result.receipt.fields.get("suppression").map(String::as_str)
+                        == Some("dedupe")
+                    {
+                        // The common door already committed the single durable,
+                        // replicated receipt. Settle only this TASK and queue,
+                        // atomically honoring any delivered winner.
+                        settle_suppressed_send(self, &attempt, task_ref, now)?;
+                        continue;
+                    }
                     fail_connector_task_attempt(self, &attempt, now, result.outcome.as_str())?;
                     project_connector_send_task_outcome(
                         self,
