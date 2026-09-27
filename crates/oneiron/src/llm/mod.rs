@@ -11,7 +11,7 @@ mod backend;
 mod bus;
 mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
-pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunker};
+pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
 mod burst_inputs;
 mod call;
