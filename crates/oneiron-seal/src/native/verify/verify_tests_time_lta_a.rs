@@ -81,6 +81,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn public_verifier_does_not_pass_skipped_signature_timestamp_trust() {
+        let signer = test_ca("signature-ts-trust-signer");
+        let tsa = tsa_ca();
+        let bytes = append_sig_revision(
+            &base_input(),
+            &signer,
+            "ts-trust",
+            Some(&tsa),
+            AT_UNIX + TS_GEN_TIME_MAX_SKEW_SECS + 1,
+        );
+        let signer_der = signer.cert_der;
+        let tsa_der = tsa.cert_der;
+        for roots in [vec![signer_der.clone(), tsa_der], vec![signer_der], vec![]] {
+            let report = verify_engine(roots, AT_UNIX)
+                .verify_sealed_pdf(&bytes)
+                .unwrap();
+            let signature = report
+                .signatures
+                .iter()
+                .find(|s| s.kind == crate::api::SignatureKind::Signer)
+                .unwrap();
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+            assert_eq!(signature.integrity, crate::api::VerifyVerdict::Failed);
+            assert_eq!(signature.trust, crate::api::VerifyVerdict::Indeterminate);
+            let trust = signature
+                .checks
+                .iter()
+                .find(|c| c.kind == VerifyCheckKind::SignatureTimestampTrust)
+                .unwrap();
+            assert_eq!(trust.status, VerifyCheckStatus::NotRun);
+            assert_eq!(trust.finding, Some(VerifyFindingCode::TrustCheckNotRun));
+        }
+    }
+
+    #[test]
     fn future_dated_ts_token_is_rejected_within_skew_passes() {
         // genTime ahead of the verify clock past the documented skew anchors
         // the applicable time in the future: rejected, never clamped.
@@ -603,6 +638,91 @@ pub(crate) mod tests {
             anchors: vec![signer.cert_der.clone(), signer2.cert_der, tsa.cert_der],
             signer_cert: signer.cert_der,
             stale_later_crl: crl,
+        }
+    }
+
+    fn insert_unindexed_catalog_before_xref(bytes: &[u8], separator: u8) -> Vec<u8> {
+        let mut out = bytes.to_vec();
+        let xref = out
+            .windows(b"\nxref\n".len())
+            .rposition(|w| w == b"\nxref\n")
+            .unwrap()
+            + 1;
+        assert_eq!(out[xref - 1], b'\n');
+        let extra = format!(
+            "{}1 0 obj << /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            char::from(separator)
+        );
+        out.splice(xref - 1..xref, extra.bytes());
+        let new_xref = xref - 1 + extra.len();
+        let marker = b"startxref\n";
+        let at = out
+            .windows(marker.len())
+            .rposition(|w| w == marker)
+            .unwrap()
+            + marker.len();
+        let end = at + out[at..].iter().position(|b| *b == b'\n').unwrap();
+        out.splice(at..end, new_xref.to_string().bytes());
+        out
+    }
+
+    #[test]
+    fn public_verifier_catches_same_line_catalog_definitions_and_dss_bypass() {
+        let signer = test_ca("same-line-signer");
+        let tsa = tsa_ca();
+        let engine = verify_engine(
+            vec![signer.cert_der.clone(), tsa.cert_der.clone()],
+            VERIFY_SECS,
+        );
+        for separator in [b' ', b'\r'] {
+            let input = insert_unindexed_catalog_before_xref(&base_input(), separator);
+            let pre_signed = append_sig_revision(&input, &signer, "original-extra", None, AT_UNIX);
+            let original = engine.verify_sealed_pdf(&pre_signed).unwrap();
+            assert!(
+                original
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+            );
+            assert_eq!(original.verdict(), crate::api::VerifyVerdict::Passed);
+        }
+        let signed = append_sig_revision(&base_input(), &signer, "dss-extra", Some(&tsa), AT_UNIX);
+        let crl = build_crl(
+            &signer,
+            AT_UNIX - 60,
+            Some(VERIFY_SECS + 3600),
+            None,
+            vec![],
+        );
+        let dss = append_dss_revision(&signed, vec![signer.cert_der, tsa.cert_der], vec![crl]);
+        assert_eq!(
+            engine.verify_sealed_pdf(&dss).unwrap().verdict(),
+            crate::api::VerifyVerdict::Passed
+        );
+        let new_line = insert_unindexed_catalog_before_xref(&dss, b'\n');
+        let rejected = engine.verify_sealed_pdf(&new_line).unwrap();
+        assert_eq!(
+            rejected.modifications,
+            crate::api::ModificationStatus::Suspicious
+        );
+        assert!(
+            rejected
+                .anomalies
+                .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+        );
+        for separator in [b' ', b'\r'] {
+            let altered = insert_unindexed_catalog_before_xref(&dss, separator);
+            let report = engine.verify_sealed_pdf(&altered).unwrap();
+            assert_eq!(
+                report.modifications,
+                crate::api::ModificationStatus::Suspicious,
+                "separator {separator:?}: {report:?}"
+            );
+            assert_eq!(report.verdict(), crate::api::VerifyVerdict::Failed);
+            assert!(
+                report
+                    .anomalies
+                    .contains(&crate::api::VerifyAnomaly::DuplicateObjectNumber)
+            );
         }
     }
 

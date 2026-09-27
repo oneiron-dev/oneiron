@@ -565,6 +565,10 @@ fn verify_ts_token(
                     false,
                     VerifyFindingCode::TimestampInvalid,
                 );
+                checks.not_run(
+                    VerifyCheckKind::SignatureTimestampTrust,
+                    VerifyFindingCode::TrustCheckNotRun,
+                );
                 return None;
             }
             token_der = Some(value.full.to_vec());
@@ -583,7 +587,10 @@ fn verify_ts_token(
             false,
             VerifyFindingCode::TimestampInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        checks.not_run(
+            VerifyCheckKind::SignatureTimestampTrust,
+            VerifyFindingCode::TrustCheckNotRun,
+        );
         return None;
     };
     if gen_time_beyond_skew(gen_time, clock_ms) {
@@ -592,7 +599,10 @@ fn verify_ts_token(
             false,
             VerifyFindingCode::TimestampInvalid,
         );
-        checks.absent(VerifyCheckKind::SignatureTimestampTrust);
+        checks.not_run(
+            VerifyCheckKind::SignatureTimestampTrust,
+            VerifyFindingCode::TrustCheckNotRun,
+        );
         return None;
     }
     checks.record(

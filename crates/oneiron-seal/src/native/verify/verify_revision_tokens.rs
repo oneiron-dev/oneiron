@@ -43,53 +43,51 @@ fn pdf_space(b: u8) -> bool {
     matches!(b, 0 | 9 | 10 | 12 | 13 | 32)
 }
 
-fn header_token(line: &[u8]) -> Option<ObjectId> {
+fn header_token(bytes: &[u8]) -> Option<ObjectId> {
     let mut at = 0;
-    while line.get(at).is_some_and(|b| pdf_space(*b)) {
-        at += 1;
-    }
     let first = at;
-    while line.get(at).is_some_and(u8::is_ascii_digit) {
+    while bytes.get(at).is_some_and(u8::is_ascii_digit) {
         at += 1;
     }
-    let num = std::str::from_utf8(line.get(first..at)?)
+    let num = std::str::from_utf8(bytes.get(first..at)?)
         .ok()?
         .parse::<u32>()
         .ok()?;
-    if !line.get(at).is_some_and(|b| pdf_space(*b)) {
+    if !bytes.get(at).is_some_and(|b| pdf_space(*b)) {
         return None;
     }
-    while line.get(at).is_some_and(|b| pdf_space(*b)) {
+    while bytes.get(at).is_some_and(|b| pdf_space(*b)) {
         at += 1;
     }
     let first = at;
-    while line.get(at).is_some_and(u8::is_ascii_digit) {
+    while bytes.get(at).is_some_and(u8::is_ascii_digit) {
         at += 1;
     }
-    let generation = std::str::from_utf8(line.get(first..at)?)
+    let generation = std::str::from_utf8(bytes.get(first..at)?)
         .ok()?
         .parse::<u16>()
         .ok()?;
-    if !line.get(at).is_some_and(|b| pdf_space(*b)) {
+    if !bytes.get(at).is_some_and(|b| pdf_space(*b)) {
         return None;
     }
-    while line.get(at).is_some_and(|b| pdf_space(*b)) {
+    while bytes.get(at).is_some_and(|b| pdf_space(*b)) {
         at += 1;
     }
-    if !line.get(at..)?.starts_with(b"obj") {
+    if !bytes.get(at..)?.starts_with(b"obj") {
         return None;
     }
     at += 3;
-    if line.get(at).is_some_and(|b| {
-        !pdf_space(*b) && !matches!(*b, b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'/' | b'%')
+    if bytes.get(at).is_some_and(|b| {
+        !pdf_space(*b) && !matches!(*b, b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'/')
     }) {
         return None;
     }
     Some((num, generation))
 }
 
-/// Lex only outside PDF literals, hex strings, comments, and the parser's
-/// length-delimited stream spans. Bounded by the input and object budgets.
+/// Walk token boundaries across all legal PDF whitespace, not just LF lines.
+/// Skip string, comment and known length-delimited stream spans; a second
+/// object definition following `endobj ` or `endobj\r` must be counted.
 pub(super) fn scan_headers(
     segment: &[u8],
     base: usize,
@@ -100,58 +98,62 @@ pub(super) fn scan_headers(
         ids: BTreeSet::new(),
         duplicate: false,
     };
-    let mut offset = base;
     let mut literal = 0usize;
     let mut hex = false;
     let mut escaped = false;
-    for line in segment.split_inclusive(|b| *b == b'\n') {
-        let current = offset;
-        offset += line.len();
-        if spans
+    let mut comment = false;
+    let mut i = 0;
+    while i < segment.len() {
+        let absolute = base.checked_add(i)?;
+        if let Some(&(_, end)) = spans
             .iter()
-            .any(|&(start, end)| current >= start && current < end)
+            .find(|&&(start, end)| absolute >= start && absolute < end)
         {
+            i = end.saturating_sub(base).min(segment.len());
             continue;
         }
-        if literal == 0
-            && !hex
-            && let Some(id) = header_token(line)
-        {
-            if !scan.ids.insert(id) {
-                scan.duplicate = true;
+        let b = segment[i];
+        if comment {
+            if b == b'\n' || b == b'\r' {
+                comment = false;
             }
-            if scan.ids.len() > max_objects.min(10_000) {
-                return None;
+        } else if literal > 0 {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'(' {
+                literal += 1;
+            } else if b == b')' {
+                literal -= 1;
             }
-        }
-        let mut i = 0;
-        while i < line.len() {
-            let b = line[i];
-            if literal > 0 {
-                if escaped {
-                    escaped = false;
-                } else if b == b'\\' {
-                    escaped = true;
-                } else if b == b'(' {
-                    literal += 1;
-                } else if b == b')' {
-                    literal -= 1;
+        } else if hex {
+            if b == b'>' {
+                hex = false;
+            }
+        } else {
+            if b.is_ascii_digit()
+                && (i == 0 || pdf_space(segment[i - 1]))
+                && let Some(id) = header_token(&segment[i..])
+            {
+                if !scan.ids.insert(id) {
+                    scan.duplicate = true;
                 }
-            } else if hex {
-                if b == b'>' {
-                    hex = false;
+                if scan.ids.len() > max_objects.min(10_000) {
+                    return None;
                 }
-            } else if b == b'%' {
-                break;
+            }
+            if b == b'%' {
+                comment = true;
             } else if b == b'(' {
                 literal = 1;
-            } else if b == b'<' && line.get(i + 1) != Some(&b'<') {
+            } else if b == b'<' && segment.get(i + 1) != Some(&b'<') {
                 hex = true;
             } else if b == b'<' {
-                i += 1;
-            } // dictionary opener, not a hex string
-            i += 1;
+                i += 1; // dictionary opener, not a hex string
+            }
         }
+        i += 1;
     }
     Some(scan)
 }
