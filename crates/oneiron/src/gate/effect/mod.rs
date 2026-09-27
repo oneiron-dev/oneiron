@@ -4,7 +4,7 @@ mod effect_grants;
 
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,
-    external_effect_consent_context,
+    external_effect_consent_context, native_mail_cold_composed_effect,
 };
 use self::effect_contacts::hydrate_external_effect_contact;
 use self::effect_grants::{
@@ -24,7 +24,7 @@ use super::decision::{GateDecision, GateOutcome, GateReasonCode, external_effect
 use super::definition_ceiling::agent_definition_ceiling_for_effect_actor;
 use super::doors::{GateConsentBinding, gate_decision_matches_pending_candidate};
 use super::grants::external_effect_grant_matches;
-use super::input::{ExternalEffectGateInput, GateEvaluatorInput};
+use super::input::{ConsentGateContext, ExternalEffectGateInput, GateEvaluatorInput};
 use super::resolution::PolicyManifestResolution;
 
 /// Connector-key target selected by governance. Accounting consumes this
@@ -91,6 +91,14 @@ pub(crate) fn external_effect_approval_digest(
     external_effect_composed_effect(effect).map(|composed| composed.digest())
 }
 
+/// The pack's one-send owner tap uses the same bound digest as the gate's
+/// native-mail cold effect. A different target or send ref is a different tap.
+pub(crate) fn native_mail_cold_approval_digest(
+    effect: &ExternalEffectGateInput,
+) -> Option<crate::consent::EffectDigest> {
+    native_mail_cold_composed_effect(effect).map(|composed| composed.digest())
+}
+
 /// Evaluates consent and connector governance without charging or recording.
 /// The caller must either finalize the returned decision or abort its txn.
 pub(crate) fn evaluate_external_effect_policy(
@@ -140,6 +148,11 @@ pub(crate) fn evaluate_external_effect_policy(
     // honors revocation immediately, and an UNGRANTED irreversible effect is
     // the only one that enters the ask lane (invariant 1).
     let mut consent_grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let mail_cold = crate::channel_identity_provider::native_mail::native_mail_cold_send_in_txn(
+        store,
+        &*wtxn,
+        &hydrated_effect,
+    )?;
     let mail_graduated = crate::channel_identity_provider::native_mail::mail_graduated_in_txn(
         store,
         &*wtxn,
@@ -195,14 +208,25 @@ pub(crate) fn evaluate_external_effect_policy(
     // unforgeable available authorization, or a typed spent-replay refusal.
     // The marker is changed to spent only when the final Gate decision is
     // recorded as Allow in this same transaction.
-    let approve_once = external_effect_composed_effect(&hydrated_effect)
+    let composed = if mail_cold {
+        native_mail_cold_composed_effect(&hydrated_effect)
+    } else {
+        external_effect_composed_effect(&hydrated_effect)
+    };
+    let approve_once = composed
+        .as_ref()
         .map(|effect| {
             crate::consent::approve_once_authorization_in_txn(store, &*wtxn, &effect.digest())
         })
         .transpose()?
         .flatten();
-    let consent =
-        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants);
+    let consent = if mail_cold {
+        composed.as_ref().map(|effect| {
+            ConsentGateContext::evaluate(effect, approve_once.as_ref(), &consent_grants)
+        })
+    } else {
+        external_effect_consent_context(&hydrated_effect, approve_once.as_ref(), &consent_grants)
+    };
     let mut input = hydrated_effect.gate_input(agent_definition_ceiling, consent);
     // Resolve by audited identity, regardless of the caller's actor-class spelling.
     input.foreign_agent_ceiling = hydrated_effect
@@ -220,6 +244,7 @@ pub(crate) fn evaluate_external_effect_policy(
     if let Some(effect) = input.external_effect.as_mut() {
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
+        effect.mail_approve_once = mail_cold && approve_once.is_some();
         // Only a still-available marker looked up by the engine-computed,
         // exact publish digest can release this one proposed public effect.
         effect.artifact_publish_approve_once = approve_once.is_some()

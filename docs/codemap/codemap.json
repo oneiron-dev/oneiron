@@ -7000,9 +7000,9 @@
      "path": "src/channel_identity_provider/native_mail.rs",
      "purpose": "Native mail fulfillment adapter",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 1,
       "trait": 1
      }
@@ -16615,7 +16615,7 @@
      "path": "src/gate/effect/effect_consent.rs",
      "purpose": "Pure DEC-0006 consent constructors over gate input",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -16645,7 +16645,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {

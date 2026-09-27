@@ -82,7 +82,8 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::{
     ExternalEffectGovernance, check_external_effect_policy, evaluate_external_effect_policy,
-    external_effect_approval_digest, record_external_effect_policy,
+    external_effect_approval_digest, native_mail_cold_approval_digest,
+    record_external_effect_policy,
 };
 pub(crate) use self::grants::{
     PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,

@@ -107,9 +107,21 @@ fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
     };
     use crate::channel_identity_lifecycle::ChannelIdentityLifecycleActor;
     use crate::channel_identity_provider::ChannelIdentityProviderProvision;
+    use crate::outbound::{
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+        OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionRequest,
+        OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
+    };
+    struct Sink(usize);
+    impl OutboundExecutionSink for Sink {
+        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.0 += 1;
+            OutboundExecutionOutcome::delivered_to_channel("unexpected")
+        }
+    }
     let (_tmp, vault) = temp_vault();
     let identity = test_id(0xD9);
-    let actor = test_id(0xC5);
+    let actor = test_id(0xE0);
     vault.put_entity(
         &actor,
         crate::registry::ENTITY_TYPE_PERSON,
@@ -193,6 +205,39 @@ fn mail_09_cold_send_asks_known_recipient_uses_ordinary_grant() -> Result<()> {
         check_external_effect_policy(&vault.store, txn, &effect, &policy, true)
     })?;
     assert_eq!(decision.outcome(), GateOutcome::Pending);
+
+    // The capability resolver accepts both spellings as `send`. Neither may
+    // authorize the introduced contact while delivering to a cold address.
+    let mut sink = Sink(0);
+    for (n, verb) in ["SEND", " send "].iter().enumerate() {
+        let intent = OutboundIntent::from_trigger(
+            OutboundIntentDraft::new("actor", *verb, "email", "cold@example.test"),
+            OutboundIntentTrigger::agent_immediate(format!("session:mail-09-{n}")),
+        );
+        let request = OutboundDispatchRequest::new(
+            format!("mail-09:wrong-{n}"),
+            format!("mail-09:wrong-intent-{n}"),
+            intent,
+            OutboundDispatchActor {
+                actor_class: "first_party".into(),
+                actor_ref: Some("sender".into()),
+                actor_entity_ref: Some(actor),
+            },
+            OutboundDispatchGate::allow_when_policy_grants(),
+            20,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        )
+        .channel_identity_ref(identity)
+        .counterparty_ref("known@example.test");
+        let error = vault
+            .dispatch_outbound_intent(request, &mut sink)
+            .expect_err("accepted send spelling cannot bypass recipient binding");
+        assert!(matches!(
+            error,
+            crate::outbound::OutboundDispatchError::Engine(Error::InvalidConfig(_))
+        ));
+        assert_eq!(sink.0, 0);
+    }
 
     // A non-native email connector still sees its original normal-risk policy.
     effect.channel_identity_ref = None;

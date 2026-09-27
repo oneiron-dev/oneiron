@@ -36,6 +36,10 @@ pub(super) struct FrozenOutboundPayload<'a> {
     pub(super) actor_entity_ref: Option<String>,
     pub(super) channel_identity_ref: Option<String>,
     pub(super) counterparty_ref: Option<&'a str>,
+    /// Admission-time native-mail classification. Replays must not depend on
+    /// today's sender lifecycle when reconstructing this frozen binding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) native_mail_recipient: Option<bool>,
     pub(super) has_opted_in: bool,
     pub(super) has_permission: bool,
     // Preserve the caller's dial too: a manifest can map both values to the

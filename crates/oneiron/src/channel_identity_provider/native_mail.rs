@@ -13,8 +13,11 @@ use crate::channel_identity::{
     decode_channel_identity_body,
 };
 use crate::channel_identity_lifecycle::{ChannelIdentityLifecycleVerb, ProvisionIntent};
+use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::consent_graduation::{RampScope, RampState};
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{
+    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
+};
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
@@ -96,6 +99,68 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         // before freezing the intent. This adapter cannot authorize a second
         // delivery path or normalize only the Gate's counterparty copy.
         vault.dispatch_outbound_intent(request, sink)
+    }
+
+    /// Owner approval for exactly one cold send. This mints no standing
+    /// authority; dispatch still rechecks recipient, sender and Gate policy.
+    /// A changed recipient or logical send reference gets a different digest.
+    pub fn approve_send_once(
+        &self,
+        vault: &Vault,
+        owner: &AuthenticatedOwner,
+        request: &OutboundDispatchRequest,
+    ) -> Result<ConsentReceipt> {
+        let invalid = || Error::InvalidConfig("invalid native-mail send envelope".into());
+        let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
+        let identity = vault
+            .get_channel_identity(&identity_ref)?
+            .ok_or_else(invalid)?;
+        let Some(actor) = request.actor.actor_entity_ref else {
+            return Err(invalid());
+        };
+        if request.intent.channel != "email"
+            || request.intent.verb != "send"
+            || request.intent_ref.trim().is_empty()
+            || identity.address_or_handle != self.address_for_identity(identity_ref)
+            || !identity.may_send()
+            || identity.binding.actor_ref() != Some(actor)
+            || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
+        {
+            return Err(invalid());
+        }
+        let recipient = canonical_recipient(&request.intent.target)?;
+        if let Some(contact) = request.counterparty_ref.as_deref()
+            && canonical_recipient(contact)? != recipient
+        {
+            return Err(invalid());
+        }
+        let effect = ExternalEffectGateInput {
+            actor: GateActor {
+                actor_class: request.actor.actor_class.clone(),
+                actor_ref: request.actor.actor_ref.clone(),
+                delegation_grant_ref: None,
+            },
+            provenance: GateProvenanceHandles {
+                actor_entity_ref: Some(actor),
+                ..GateProvenanceHandles::default()
+            },
+            verb: "send".into(),
+            channel: "email".into(),
+            channel_identity_ref: Some(identity_ref),
+            counterparty: Some(recipient),
+            brief_ref: request.intent.job_ref.clone(),
+            send_ref: Some(request.intent_ref.clone()),
+            standing_grant_ref: None,
+            scoped_mcp_call: None,
+            counterparty_first_touch: None,
+            counterparty_opted_out: false,
+            counterparty_opt_out_receipt_reason: None,
+            has_opted_in: request.gate.has_opted_in,
+            has_permission: request.gate.has_permission,
+            policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+        };
+        let digest = crate::gate::native_mail_cold_approval_digest(&effect).ok_or_else(invalid)?;
+        vault.approve_once(owner, digest)
     }
 
     /// CID-5 health is a prerequisite for OFFERING cold-recipient autonomy,
@@ -281,7 +346,7 @@ fn native_mail_identity_in_txn(
 /// graduation grant is both DEC-0006 consent and outbound authority, but
 /// only for the exact actor × native-mail identity × cold-recipient class.
 /// Missing or malformed identity/grant rows cannot authorize an effect.
-pub(crate) fn mail_graduated_in_txn(
+pub(crate) fn native_mail_cold_send_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
@@ -314,6 +379,25 @@ pub(crate) fn mail_graduated_in_txn(
     if identity.binding.actor_ref() != Some(actor) {
         return Ok(false);
     }
+    Ok(true)
+}
+
+/// A cold send may borrow the graduated owner grant only after the current
+/// counterparty and sender were classified on this Gate transaction.
+pub(crate) fn mail_graduated_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+) -> Result<bool> {
+    if !native_mail_cold_send_in_txn(store, txn, effect)? {
+        return Ok(false);
+    }
+    let (Some(identity_ref), Some(actor)) = (
+        effect.channel_identity_ref,
+        effect.provenance.actor_entity_ref,
+    ) else {
+        return Ok(false);
+    };
     let scope = RampScope::new(
         "send",
         format!("recipient:cold_external:{}", identity_ref.to_hex()),

@@ -103,7 +103,8 @@ impl OutboundDispatchPipeline {
                 .as_ref()
                 .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
         )?;
-        bind_native_mail_recipient(vault, &mut request)?;
+        let native_mail_recipient =
+            bind_native_mail_recipient(vault, &mut request, verb_contract, replay.as_ref())?;
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             vault.outbound_space_posting_in_txn(
@@ -161,6 +162,7 @@ impl OutboundDispatchPipeline {
                 actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
                 channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
                 counterparty_ref: request.counterparty_ref.as_deref(),
+                native_mail_recipient: native_mail_recipient.then_some(true),
                 has_opted_in: request.gate.has_opted_in,
                 has_permission: request.gate.has_permission,
                 requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
@@ -242,38 +244,63 @@ impl OutboundDispatchPipeline {
 fn bind_native_mail_recipient(
     vault: &Vault,
     request: &mut OutboundDispatchRequest,
-) -> std::result::Result<(), OutboundDispatchError> {
-    // MAIL-09: the public generic door is also a native-mail send door.
-    // Bind the delivery target to the Gate counterparty BEFORE freezing or
-    // comparing a replay. Never authorize a different address from the
-    // one the sink receives, even when the caller supplies a contact ref.
-    if request.intent.channel == "email"
-        && request.intent.verb == "send"
-        && let Some(identity) = request.channel_identity_ref
+    contract: &crate::outbound::capability::OutboundVerbContract,
+    replay: Option<&crate::outbound_intent_ledger::IntentLedgerRecord>,
+) -> std::result::Result<bool, OutboundDispatchError> {
+    // The accepted contract, not the caller's raw spelling, is the operation
+    // the Gate and the sink execute. The raw spelling stays frozen unchanged.
+    if normalize_key(&request.intent.channel) != "email" || contract.kind != "send" {
+        return Ok(false);
+    }
+    let Some(identity) = request.channel_identity_ref else {
+        return Ok(false);
+    };
+    let native = if let Some(record) = replay {
+        let frozen: serde_json::Value =
+            serde_json::from_slice(record.payload()).map_err(|_| invalid_replay())?;
+        match frozen.get("native_mail_recipient") {
+            Some(serde_json::Value::Bool(true)) => true,
+            None => false,
+            _ => return Err(invalid_replay()),
+        }
+    } else {
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+            &vault.store,
+            &txn,
+            identity,
+        )?
+    };
+    if !native {
+        return Ok(false);
+    }
+    // A completed send must validate the ORIGINAL frozen request even when
+    // its sender has since been released. A Pending replay might call transport
+    // again; it still requires a live sending identity today.
+    if replay.is_some_and(|record| record.state != crate::outbound_intent_ledger::IntentState::Done)
     {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        if crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
+        if !crate::channel_identity_provider::native_mail::is_native_mail_sender_in_txn(
             &vault.store,
             &txn,
             identity,
         )? {
-            let recipient = crate::channel_identity_provider::native_mail::canonical_recipient(
-                &request.intent.target,
-            )?;
-            if let Some(contact) = request.counterparty_ref.as_deref()
-                && crate::channel_identity_provider::native_mail::canonical_recipient(contact)?
-                    != recipient
-            {
-                return Err(Error::InvalidConfig(
-                    "native-mail target and counterparty differ".into(),
-                )
-                .into());
-            }
-            request.intent.target = recipient.clone();
-            request.counterparty_ref = Some(recipient);
+            return Err(Error::InvalidConfig("inactive native-mail sender".into()).into());
         }
     }
-    Ok(())
+    let recipient =
+        crate::channel_identity_provider::native_mail::canonical_recipient(&request.intent.target)?;
+    if let Some(contact) = request.counterparty_ref.as_deref()
+        && crate::channel_identity_provider::native_mail::canonical_recipient(contact)? != recipient
+    {
+        return Err(
+            Error::InvalidConfig("native-mail target and counterparty differ".into()).into(),
+        );
+    }
+    request.intent.channel = "email".to_owned();
+    request.intent.target = recipient.clone();
+    request.counterparty_ref = Some(recipient);
+    Ok(true)
 }
 
 fn invalid_replay() -> OutboundDispatchError {

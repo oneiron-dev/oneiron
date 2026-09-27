@@ -392,6 +392,7 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     graduated.receipt_id = "mail-09:graduated-receipt".into();
     graduated.intent_ref = "mail-09:graduated-intent".into();
     graduated.intent.target = "NEW@EXAMPLE.TEST".into();
+    let completed_replay = graduated.clone();
     let result = adapter
         .dispatch_send(&vault, graduated, &mut sink)
         .expect("graduated send reaches the gate");
@@ -431,5 +432,150 @@ fn mail_09_native_send_and_cid5_offer_require_real_identity_and_health() -> Resu
     forged.channel_identity_ref = Some(EntityId::now());
     assert!(adapter.dispatch_send(&vault, forged, &mut sink).is_err());
     assert_eq!(sink.0.len(), 2);
+    vault.transition_channel_identity(&id, ChannelIdentityState::Released, None, 30, None)?;
+    let replayed = vault
+        .dispatch_outbound_intent(completed_replay, &mut sink)
+        .expect("completed native-mail replay must validate from frozen admission");
+    assert_eq!(
+        replayed.outcome,
+        OutboundDispatchOutcome::DeliveredToChannel
+    );
+    assert_eq!(
+        sink.0.len(),
+        2,
+        "completed replay cannot call the sink again"
+    );
+    Ok(())
+}
+
+#[test]
+fn mail_09_owner_approve_once_releases_only_one_cold_send() -> Result<()> {
+    use crate::outbound::{
+        OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+        OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest,
+        OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
+    };
+    use crate::temporal::TimeRange;
+    struct Sink(usize);
+    impl OutboundExecutionSink for Sink {
+        fn execute(&mut self, _: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+            self.0 += 1;
+            OutboundExecutionOutcome::delivered_to_channel("host:once")
+        }
+    }
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let actor = EntityId::now();
+    let owner_id = EntityId::now();
+    for id in [actor, owner_id] {
+        vault.put_entity(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"mail principal",
+        )?;
+    }
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let identity = EntityId::now();
+    let adapter = NativeMailAdapter::new(
+        "side.example.test",
+        NativeMailRunMode::SelfRun,
+        Host {
+            inbound: EmailProviderInbound::new("event", "unused", "unused", 1),
+        },
+    )?;
+    let requested = adapter.requested_identity(identity, actor, 1);
+    vault.create_channel_identity(&identity, &requested)?;
+    vault.transition_channel_identity(
+        &identity,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        2,
+        None,
+    )?;
+    let provision = adapter.provision(
+        &ProvisionIntent {
+            identity_id: identity,
+            identity: requested,
+            fulfillment_mode: ChannelIdentityFulfillment::Api,
+        },
+        3,
+    )?;
+    vault.fulfill_channel_identity(
+        provision.fulfillment_input(ChannelIdentityLifecycleActor::agent(actor)),
+    )?;
+
+    let v = rmpv::Value::from;
+    let manifest = rmpv::Value::Map(vec![
+        (v("schema_version"), v("1.2")),
+        (v("pack_id"), v("native-mail-once")),
+        (v("pack_version"), v("v1")),
+        (v("min_engine_version"), v(env!("CARGO_PKG_VERSION"))),
+        (
+            v("defaults"),
+            rmpv::Value::Map(vec![
+                (v("criticality"), v("normal")),
+                (v("sensitivity"), v("normal")),
+            ]),
+        ),
+        (v("rules"), rmpv::Value::Array(vec![])),
+        (
+            v("actor_ceilings"),
+            rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+                (v("actor_class"), v("agent")),
+                (v("actor_ref"), rmpv::Value::from(actor.to_hex())),
+                (v("ceiling"), v("auto")),
+            ])]),
+        ),
+        (v("scoped_grants"), rmpv::Value::Array(vec![])),
+    ]);
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &manifest).expect("manifest encoding");
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &bytes,
+    )?;
+    let intent = OutboundIntent::from_trigger(
+        OutboundIntentDraft::new("actor", "send", "email", "NEW@EXAMPLE.TEST"),
+        OutboundIntentTrigger::agent_immediate("session:once"),
+    );
+    let request = crate::outbound::OutboundDispatchRequest::new(
+        "mail-09:once-receipt",
+        "mail-09:once-intent",
+        intent,
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        20,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+    .channel_identity_ref(identity);
+    let mut sink = Sink(0);
+    let held = adapter
+        .dispatch_send(&vault, request.clone(), &mut sink)
+        .expect("cold send reaches gate");
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.0, 0);
+    adapter.approve_send_once(&vault, &owner, &request)?;
+    let sent = adapter
+        .dispatch_send(&vault, request.clone(), &mut sink)
+        .expect("owner one-shot releases this send");
+    assert_eq!(sent.outcome, OutboundDispatchOutcome::DeliveredToChannel);
+    assert_eq!(sink.0, 1);
+    assert!(adapter.approve_send_once(&vault, &owner, &request).is_err());
+    let mut other = request;
+    other.receipt_id = "mail-09:other-receipt".into();
+    other.intent_ref = "mail-09:other-intent".into();
+    let held = adapter
+        .dispatch_send(&vault, other, &mut sink)
+        .expect("other cold send reaches gate");
+    assert_eq!(held.outcome, OutboundDispatchOutcome::Held);
+    assert_eq!(sink.0, 1);
     Ok(())
 }
