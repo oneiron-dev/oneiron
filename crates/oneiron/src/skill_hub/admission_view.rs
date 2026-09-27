@@ -210,7 +210,7 @@ impl Vault {
             surface,
         })
     }
-    fn check_hub_source_alias(
+    pub(super) fn check_hub_source_alias(
         &self,
         txn: &heed::RoTxn<'_>,
         candidate: &EntityId,

@@ -27961,7 +27961,7 @@
      "path": "src/skill_hub/admission_view.rs",
      "purpose": "Engine-computed install asks: trust changes presentation, never authorization",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -28088,17 +28088,22 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "HubImportReceipt"
+      "HubImportReceipt",
+      "MarketplaceFit",
+      "MarketplaceFitDecision",
+      "MarketplaceFitEvaluator"
      ],
      "path": "src/skill_hub/import_receipt.rs",
      "purpose": "Source receipts and admitted-publisher ingress beside content dedup, never in place of it",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -28481,7 +28486,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/transport_tests.rs",

@@ -26,6 +26,8 @@ pub struct SessionReadSet {
 pub struct ChangedLine {
     pub rows: Vec<(String, ServedLifecycle)>,
     pub overflow: usize,
+    pub install_rows: Vec<crate::skill_hub::HubImportReceipt>,
+    pub install_overflow: usize,
 }
 
 impl SessionReadSet {
@@ -75,6 +77,8 @@ impl SessionReadSet {
         ChangedLine {
             rows: changed.into_iter().take(cap).collect(),
             overflow,
+            install_rows: Vec::new(),
+            install_overflow: 0,
         }
     }
 }
@@ -95,6 +99,56 @@ impl ChangedLine {
         }
         if self.overflow > 0 {
             lines.push(format!("changed: +{}", self.overflow));
+        }
+        if !self.install_rows.is_empty() {
+            lines.push(format!(
+                "changed_install[{}:]{{id,hub,ref,pin,to,ask}}:",
+                self.install_rows.len()
+            ));
+            lines.extend(self.install_rows.iter().map(|receipt| {
+                let source = receipt.ref_string.chars().take(128).collect::<String>();
+                let pin = receipt.pin_value.as_deref().unwrap_or("none");
+                let ask = if receipt.outcome.as_deref() == Some("ask_permissions") {
+                    let requested = receipt
+                        .requested_permissions
+                        .iter()
+                        .take(3)
+                        .map(|s| one_line_token(s))
+                        .collect::<Vec<_>>()
+                        .join("|");
+                    serde_json::to_string(
+                        &format!(
+                            "{} [{}]",
+                            receipt.fit_analysis.as_deref().unwrap_or(""),
+                            requested
+                        )
+                        .chars()
+                        .take(256)
+                        .collect::<String>(),
+                    )
+                    .expect("string serializes")
+                } else {
+                    "-".to_owned()
+                };
+                format!(
+                    "{}: {},{},{},{}/{},{}",
+                    one_line_token(&receipt.entity),
+                    one_line_token(&receipt.hub_id),
+                    serde_json::to_string(&source).expect("string serializes"),
+                    serde_json::to_string(&format!(
+                        "{}:{}",
+                        receipt.pin_type,
+                        pin.chars().take(128).collect::<String>()
+                    ))
+                    .expect("string serializes"),
+                    receipt.installed_as.as_deref().unwrap_or("candidate"),
+                    receipt.outcome.as_deref().unwrap_or("imported"),
+                    ask
+                )
+            }));
+        }
+        if self.install_overflow > 0 {
+            lines.push(format!("changed_install: +{}", self.install_overflow));
         }
         lines
     }

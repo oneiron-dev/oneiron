@@ -14,7 +14,9 @@ mod http_fetch;
 mod import_receipt;
 mod package_codec;
 mod publisher;
-pub use import_receipt::HubImportReceipt;
+pub use import_receipt::{
+    HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
+};
 mod shared_delta;
 mod shared_gate;
 

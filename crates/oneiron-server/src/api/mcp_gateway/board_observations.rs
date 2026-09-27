@@ -1,6 +1,9 @@
 //! Session-clock read observations and turn-local riders for MCP boards.
 
-use super::{McpGatewayError, mcp_board_frame_error, mcp_engine_error, mcp_scoped_read};
+use super::{
+    McpGatewayError, mcp_board_frame_error, mcp_credential_reads, mcp_engine_error,
+    mcp_scope_covers_entity, mcp_scoped_read,
+};
 use crate::{mcp::McpResolvedActor, server::SyncServer};
 use oneiron::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLegend, BoardStreamFrame, CapabilityHit,
@@ -35,9 +38,24 @@ pub(super) async fn state(
 ) -> Result<(SessionReadSet, ChangedLine), McpGatewayError> {
     let observations = read_set(server, actor).await.clone();
     let read = mcp_scoped_read(&server.vault, actor)?;
-    let changed = observations
-        .refresh(&read, 16)
+    let mut changed = observations
+        .refresh(&read, 4096)
         .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
+    let mut visible = Vec::new();
+    for receipt in changed.install_rows.drain(..) {
+        let id = oneiron::EntityId::from_hex(&receipt.entity)
+            .map_err(|error| mcp_engine_error("mcp install receipt id invalid", error))?;
+        if mcp_scope_covers_entity(&read, &actor.scope, &id)?
+            && mcp_credential_reads(&server.vault, actor, &id)
+                .map_err(|error| mcp_engine_error("mcp install receipt credential failed", error))?
+        {
+            visible.push(receipt);
+        }
+    }
+    changed.install_overflow = visible.len().saturating_sub(16);
+    changed.install_rows = visible.into_iter().take(16).collect();
+    changed.overflow = changed.rows.len().saturating_sub(16);
+    changed.rows.truncate(16);
     Ok((observations, changed))
 }
 
