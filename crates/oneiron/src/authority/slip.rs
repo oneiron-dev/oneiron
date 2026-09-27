@@ -203,9 +203,9 @@ impl VerifiedSlip {
 }
 
 impl CapabilitySlip {
-    pub(super) fn mint(claims: SlipClaims, signing: &SigningKey) -> Result<Self> {
+    pub(super) fn mint(claims: SlipClaims, issuer: &super::HostSlipIssuer) -> Result<Self> {
         claims.validate()?;
-        let signature = signing.sign(&mint_transcript(&claims)?).to_bytes().to_vec();
+        let signature = issuer.sign_slip(&mint_transcript(&claims)?);
         Ok(Self {
             version: 2,
             claims,
@@ -289,6 +289,17 @@ impl CapabilitySlip {
         key.verify_strict(&self.binding_transcript(challenge)?, &signature)
             .map_err(|_| invalid_authority())?;
         Ok(verified)
+    }
+    /// Verify with the minting host public key, including signed narrowing blocks.
+    pub fn verify_with_host_key(
+        &self,
+        host_key: &super::AuthorityKey,
+        fold: &AuthorityFold,
+        now: u64,
+        challenge: &[u8],
+        holder_signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        self.verify(host_key, fold, now, challenge, holder_signature)
     }
     /// Transcript to sign with the throwaway binding private key for this request.
     pub fn binding_transcript(&self, challenge: &[u8]) -> Result<Vec<u8>> {

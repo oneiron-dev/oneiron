@@ -1998,7 +1998,7 @@
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 7,
-      "fn": 12,
+      "fn": 13,
       "struct": 6
      }
     },
@@ -2052,7 +2052,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/authority/slip_tests.rs",
@@ -2068,8 +2068,8 @@
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
-      "crate-vis": 7,
-      "fn": 19,
+      "crate-vis": 8,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -2366,7 +2366,7 @@
      "surface": {
       "const": 4,
       "enum": 1,
-      "mod": 1,
+      "mod": 2,
       "re-export": 4,
       "type": 1
      }
@@ -2409,9 +2409,43 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BudgetLease",
+      "CampaignConfig",
+      "CampaignKnobs",
+      "DecideRules",
+      "Decision",
+      "Measurement",
+      "MergeCrossover",
+      "MetricAxis",
+      "MetricDirection",
+      "MetricRole",
+      "MetricSet",
+      "SearchAxis",
+      "Verdict"
+     ],
+     "path": "src/autoreason_campaign/general.rs",
+     "purpose": "Config-only contract for skill-driven campaigns",
+     "surface": {
+      "enum": 4,
+      "fn": 5,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/autoreason_campaign/general/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -3818,15 +3852,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "BlobArtifactVersion"
+      "BlobArtifactVersion",
+      "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
-      "fn": 8,
-      "struct": 1
+      "crate-vis": 15,
+      "fn": 11,
+      "struct": 2
      }
     },
     {
@@ -13379,6 +13414,20 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerAgentBoundary"
+     ],
+     "path": "src/dreamer_runner/authority/policy.rs",
+     "purpose": "Dreamer job roster and the boundary for minting a separate agent",
+     "surface": {
+      "fn": 2,
       "struct": 1
      }
     },
@@ -13607,7 +13656,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/tests.rs",
@@ -14795,6 +14844,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/formula.rs",
+     "purpose": "Serialize post-2007 spreadsheet functions with Excel's OOXML prefix",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -14805,7 +14864,7 @@
      "path": "src/edit_roundtrip/inspect.rs",
      "purpose": "Workbook inspect scanners",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 3
      }
     },
@@ -14910,12 +14969,22 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_roundtrip/tests.rs",
      "purpose": "ARTL-3 pipeline tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/xml.rs",
+     "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "s",
@@ -15005,7 +15074,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/edit_settle/tests.rs",
@@ -16600,8 +16669,24 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProposalSubmissionCheck",
+      "ProposalSubmissionReceipt"
+     ],
+     "path": "src/gate/proposal_observation.rs",
+     "purpose": "Actor-scoped, receipt-backed proposal observation; crossing only asks a question",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -16629,7 +16714,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -16653,7 +16738,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_fold.rs",
@@ -19087,7 +19172,20 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 8
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensMount"
+     ],
+     "path": "src/lens/mount.rs",
+     "purpose": "Pack-aware lens mount decision, evaluated against the live vault on each render",
+     "surface": {
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -19257,7 +19355,7 @@
      "surface": {
       "crate-vis": 29,
       "mod": 168,
-      "re-export": 71
+      "re-export": 72
      }
     },
     {
@@ -19398,7 +19496,7 @@
       "const": 13,
       "enum": 5,
       "fn": 16,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -19453,8 +19551,28 @@
      "purpose": "Seat risk limits, sandbox policy evaluation, kill switch, and consent copy",
      "surface": {
       "enum": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 6,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "LinkedInConnectionObservation",
+      "LinkedInConnectionState",
+      "LinkedInMcpConnectRequest",
+      "LinkedInMcpConnectTransport",
+      "LinkedInMcpVerifiedConnectSink",
+      "LinkedInVerifiedConnectPlan"
+     ],
+     "path": "src/linkedin_connector/verified_connect.rs",
+     "purpose": "Connect-request execution with fresh profile observations and fail-closed retries",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -19470,7 +19588,7 @@
      "path": "src/linkedin_connector/verified_send.rs",
      "purpose": "Verify-after-send plan, sink, observation, and receipt helpers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 8,
       "struct": 3,
       "trait": 1
@@ -20489,16 +20607,6 @@
      "surface": {
       "crate-vis": 1,
       "re-export": 1
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/maintain/short_ids.rs",
-     "purpose": "Short-id hash refresh, orphan reap, and alias-backing guards",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -22819,6 +22927,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/linkedin_connect.rs",
+     "purpose": "LinkedIn connect-request execution through the outbound gate and verified sink",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -24419,7 +24535,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_index.rs",
@@ -24471,6 +24587,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ports/lmdb_short_id_maintenance.rs",
+     "purpose": "LMDB adapter for short-id hash refresh, orphan reap, and alias-backing guards",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -24495,7 +24621,7 @@
      "path": "src/ports/maintenance.rs",
      "purpose": "Narrow operational writes of the entity and edge ports",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -24656,7 +24782,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ports/tests/step22_conformance.rs",
@@ -26949,7 +27075,6 @@
      "path": "src/self_heal/healer_host.rs",
      "purpose": "External healer capability, durable propose receipts, and human-only PR release",
      "surface": {
-      "crate-vis": 1,
       "enum": 2,
       "fn": 10,
       "struct": 5
@@ -26982,7 +27107,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -28208,6 +28333,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Human-gated installation of exact pack source; requested powers stay inert",
      "surface": {
+      "crate-vis": 1,
       "fn": 5
      }
     },
@@ -28259,7 +28385,7 @@
      "path": "src/skill_hub/pack_catalog/bundled_skills.rs",
      "purpose": "Pack skills pass the existing archive scanner/Candidate door in the install transaction",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -28560,6 +28686,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AskBandLabel",
+      "AskBandPolicy"
+     ],
+     "path": "src/skill_optimize/ask_band.rs",
+     "purpose": "Question-class band policy input from settled human ask receipts",
+     "surface": {
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "SkillEditDraft",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
@@ -28707,7 +28847,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…",
      "surface": {
       "crate-vis": 2,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -30934,6 +31074,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_band.rs",
+     "purpose": "Owner-scoped, consume-once ask labels and the policy-owned question-class band",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -30981,7 +31131,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/ask_tests.rs",
@@ -31007,6 +31157,7 @@
       "TaskAskFallback",
       "TaskAskHandle",
       "TaskAskHoldReason",
+      "TaskAskLadderPrediction",
       "TaskAskNeed",
       "TaskAskOptionId",
       "TaskAskProvisional",
@@ -31029,7 +31180,7 @@
       "crate-vis": 2,
       "enum": 14,
       "fn": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -33939,7 +34090,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -34359,7 +34510,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 26,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34394,7 +34545,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34485,7 +34636,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 74,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34583,7 +34734,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "lens": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34604,7 +34755,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…"
     },
     "linkedin_connector": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34632,7 +34783,7 @@
      "purpose": "M8 forward test oracle — authored by the path opener (ONE-1685) for the M8-A / M8-B remainder tickets"
     },
     "maintain": {
-     "files": 7,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34674,7 +34825,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34737,7 +34888,7 @@
      "purpose": "Policy classification over two planes"
     },
     "ports": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34975,7 +35126,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35052,7 +35203,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
     "task_verb": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35173,8 +35324,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2075,
-   "test_files": 714
+   "source_files": 2084,
+   "test_files": 716
   },
   "oneiron-android": {
    "files": [

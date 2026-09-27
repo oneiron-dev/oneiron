@@ -404,11 +404,14 @@ fn org_slips_are_closed_identified_and_never_owner_grade() {
         claims.holder_ref = "host".into();
     });
     assert_unauthorized(fixture.auth(&missing_admin));
-    assert_unauthorized(CoreAuth::from_headers(
+    let independent = CoreAuth::from_headers(
         &fixture.headers(&slip),
         &config_with_secret("independent-member-root"),
         fixture.vault.as_ref(),
-    ));
+    )
+    .unwrap();
+    assert_eq!(independent.org_ref(), slip.claims.org_ref.as_deref());
+    assert!(!independent.is_owner_grade());
 }
 
 #[test]
@@ -473,16 +476,15 @@ fn v2_shaped_secrets_are_still_verified_through_the_logged_root() {
 }
 
 #[test]
-fn wrong_or_empty_secret_and_absent_credentials_fail_closed() {
+fn wrong_or_empty_secret_cannot_replace_a_logged_slip_and_absent_credentials_fail_closed() {
     let fixture = Fixture::new();
     let slip = fixture.mint(|_| {});
     for secret in ["unrecognized-host", ""] {
         let config = config_with_secret(secret);
-        assert_unauthorized(CoreAuth::from_headers(
-            &fixture.headers(&slip),
-            &config,
-            fixture.vault.as_ref(),
-        ));
+        let authenticated =
+            CoreAuth::from_headers(&fixture.headers(&slip), &config, fixture.vault.as_ref())
+                .unwrap();
+        assert_eq!(authenticated.jti(), fixture.auth(&slip).unwrap().jti());
         assert_unauthorized(CoreAuth::from_headers(
             &bearer(secret),
             &config,
@@ -552,6 +554,37 @@ fn development_hatch_does_not_mint_authority_and_honours_explicit_revocation() {
     assert_unauthorized(CoreAuth::from_headers(&bearer(&token), &config, &vault));
     assert!(!auth.credential_is_live(&vault));
     assert!(vault.authority_fold().unwrap().vault_id.is_none());
+}
+
+#[test]
+fn concurrent_legacy_revokes_report_exactly_one_winner_per_jti() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap();
+    let other = mint_token_jti();
+    for _ in 0..8 {
+        let jti = mint_token_jti();
+        let winners = std::thread::scope(|scope| {
+            let start = Arc::new(std::sync::Barrier::new(24));
+            let calls: Vec<_> = (0..24)
+                .map(|_| {
+                    let start = Arc::clone(&start);
+                    let vault = &vault;
+                    let jti = &jti;
+                    scope.spawn(move || {
+                        start.wait();
+                        revoke_token_jti(vault, jti).unwrap()
+                    })
+                })
+                .collect();
+            calls
+                .into_iter()
+                .map(|call| call.join().unwrap() as usize)
+                .sum::<usize>()
+        });
+        assert_eq!(winners, 1, "a JTI has one successful revoker");
+        assert!(vault.is_revoked(&jti).unwrap());
+    }
+    assert!(!vault.is_revoked(&other).unwrap());
 }
 
 #[test]
