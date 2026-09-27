@@ -100,6 +100,9 @@ fn saved_query_lifecycle_to_json(lifecycle: &SavedQueryLifecycle) -> Value {
             root.insert("state".to_owned(), Value::String("paused".to_owned()));
             root.insert("error".to_owned(), Value::String(error.clone()));
         }
+        SavedQueryLifecycle::Disabled => {
+            root.insert("state".to_owned(), Value::String("disabled".to_owned()));
+        }
         SavedQueryLifecycle::Archived => {
             root.insert("state".to_owned(), Value::String("archived".to_owned()));
         }
