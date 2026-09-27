@@ -57,6 +57,10 @@ pub enum SecretError {
         floor_max: crate::secret_custody::CustodyTier,
         binding_ceiling: crate::secret_custody::CustodyTier,
     },
+    /// The credential-door dial no longer admits this door-bound T0/T1
+    /// materialization. The reason never contains secret or manifest bytes.
+    #[error("secret materialization refused by credential-door policy: {reason}")]
+    SecretDoorPolicyRefused { reason: &'static str },
     /// A door/lease call named a secret ref with no live custody record
     /// (SECRET-02).
     #[error("no live secret custody record for ref `{name}`")]
@@ -129,6 +133,7 @@ impl SecretError {
             Self::SecretBindingDenied { .. } => ErrorKind::SecretBindingDenied,
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
+            Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretLeaseNotFound { .. } => ErrorKind::SecretLeaseNotFound,
             Self::SecretLeaseNotActive { .. } => ErrorKind::SecretLeaseNotActive,
