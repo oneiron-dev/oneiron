@@ -591,7 +591,10 @@ fn authenticated_wrong_link_tap_persists_label_and_rejects_unknown_link() -> Res
         read.weave_link_corrections(WeaveReader::Person(person), link)?,
         vec![filed]
     );
-    assert_eq!(vault.weave_link_correction_labels(link)?, vec![filed]);
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
     let unknown = EdgeRef::new(peer, EdgeKind::Mentions, person);
     assert!(matches!(
         read.report_wrong_link(&auth, WeaveReader::Person(person), unknown),
@@ -624,7 +627,10 @@ fn authenticated_wrong_link_tap_persists_label_and_rejects_unknown_link() -> Res
         vec![filed]
     );
     assert!(vault.delete_edge(&person, EdgeKind::Mentions, &peer)?);
-    assert_eq!(vault.weave_link_correction_labels(link)?, vec![filed]);
+    assert_eq!(
+        vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+        vec![filed]
+    );
     assert!(matches!(
         read.weave_link_corrections(WeaveReader::Person(person), link),
         Err(Error::EntityNotFound)

@@ -51,22 +51,19 @@ impl ScopedRead<'_> {
                 "weave correction actor mismatch".into(),
             ));
         }
-        let recipe = [WeaveSectionSpec {
-            kind: WeaveSectionKind::Links,
-            predicates: Vec::new(),
-            edge_kinds: vec![link.kind],
-        }];
-        let report = self.weave_report(reader, &recipe)?;
-        if !report.value.sections[0].items.iter().any(|item| {
-            matches!(item, WeaveItem::Link { source, kind, target }
-                if *source == link.source && *kind == link.kind && *target == link.target)
-        }) {
-            return Err(Error::EntityNotFound);
-        }
         let mut txn = self.vault.store.env.write_txn()?;
         auth.revalidate_in_txn(self.vault, &txn)?;
-        if !self.live_weave_edge_in(&txn, link.source, link.kind, link.target)? {
-            return Err(Error::EntityNotFound);
+        self.require_visible_weave_link_in(&txn, reader, link)?;
+        // Writers enforce the reader's bound in this SAME serialized txn.
+        // Refuse a tap before it can make all prior labels unreadable.
+        let key_prefix = prefix(link);
+        let mut count = 0;
+        for row in self.vault.store.vault_meta.prefix_iter(&txn, &key_prefix)? {
+            row?;
+            count += 1;
+            if count >= MAX_LABELS {
+                return Err(Error::IndexOverflow("weave correction labels"));
+            }
         }
         let correction = WeaveLinkCorrection {
             id: EntityId::now(),
@@ -74,7 +71,7 @@ impl ScopedRead<'_> {
             actor: auth.actor(),
             recorded_at: self.vault.store.clock.now_recorded_at(),
         };
-        let key = [prefix(link), correction.id.as_bytes().to_vec()].concat();
+        let key = [key_prefix, correction.id.as_bytes().to_vec()].concat();
         let bytes = rmp_serde::to_vec_named(&StoredCorrection {
             id: correction.id,
             link: link.encode().to_vec(),
@@ -94,34 +91,47 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         link: EdgeRef,
     ) -> Result<Vec<WeaveLinkCorrection>> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.require_visible_weave_link_in(&txn, reader, link)?;
+        self.vault.weave_link_correction_labels_in_txn(&txn, link)
+    }
+
+    /// Re-use the full report's reader binding, current policy, project
+    /// membership, endpoint gates, and edge-liveness check in the given txn.
+    fn require_visible_weave_link_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader: WeaveReader<'_>,
+        link: EdgeRef,
+    ) -> Result<()> {
         let recipe = [WeaveSectionSpec {
             kind: WeaveSectionKind::Links,
             predicates: Vec::new(),
             edge_kinds: vec![link.kind],
         }];
-        let report = self.weave_report(reader, &recipe)?;
-        if !report.value.sections[0].items.iter().any(|item| {
+        let report = self.weave_report_in_txn(txn, reader, &recipe)?;
+        if report.value.sections[0].items.iter().any(|item| {
             matches!(item, WeaveItem::Link { source, kind, target }
                 if *source == link.source && *kind == link.kind && *target == link.target)
         }) {
-            return Err(Error::EntityNotFound);
+            Ok(())
+        } else {
+            Err(Error::EntityNotFound)
         }
-        self.vault.weave_link_correction_labels(link)
     }
 }
 
 impl crate::Vault {
-    /// The trusted sieve, child and link loops can consume labels by edge id
-    /// even after that edge is retracted. Caller-facing reads use the report
-    /// projection above and cannot use this internal unscoped door.
-    pub(crate) fn weave_link_correction_labels(
+    /// Trusted loops can read labels, including on retracted links, in their
+    /// own snapshot. Caller-facing reads must go through ScopedRead instead.
+    pub(crate) fn weave_link_correction_labels_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         link: EdgeRef,
     ) -> Result<Vec<WeaveLinkCorrection>> {
-        let txn = self.store.env.read_txn()?;
         let mut labels = Vec::new();
         let prefix = prefix(link);
-        for row in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
+        for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
             let (key, raw) = row?;
             if labels.len() >= MAX_LABELS {
                 return Err(Error::IndexOverflow("weave correction labels"));
@@ -142,5 +152,121 @@ impl crate::Vault {
             });
         }
         Ok(labels)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claim::ScopedReadActorKey;
+    use crate::test_util::{embedding_test_config, entity, open_test_vault_with};
+    use crate::{EdgeKind, TimeRange};
+
+    fn fixture() -> Result<(tempfile::TempDir, crate::Vault, EntityId, EdgeRef)> {
+        let (tmp, vault) = open_test_vault_with(embedding_test_config());
+        let person = entity(0xb1);
+        let peer = entity(0xb2);
+        for id in [person, peer] {
+            vault.put_entity(
+                &id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"reader",
+            )?;
+        }
+        vault.put_edge(&person, EdgeKind::Mentions, &peer, 0.5)?;
+        crate::test_util::authorize_readers(&vault, &[&person.to_hex()]);
+        Ok((
+            tmp,
+            vault,
+            person,
+            EdgeRef::new(person, EdgeKind::Mentions, peer),
+        ))
+    }
+
+    #[test]
+    fn revoked_reader_cannot_file_or_read_after_an_earlier_report_admitted_link() -> Result<()> {
+        let (_tmp, vault, person, link) = fixture()?;
+        let auth = vault.authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+        let recipe = [WeaveSectionSpec {
+            kind: WeaveSectionKind::Links,
+            predicates: Vec::new(),
+            edge_kinds: vec![link.kind],
+        }];
+        assert!(
+            read.weave_report(WeaveReader::Person(person), &recipe)?
+                .value
+                .sections[0]
+                .items
+                .contains(&WeaveItem::Link {
+                    source: link.source,
+                    kind: link.kind,
+                    target: link.target,
+                })
+        );
+        // The previous report is stale; the actor and graph edge remain live.
+        crate::test_util::authorize_readers(&vault, &[]);
+        assert!(
+            read.report_wrong_link(&auth, WeaveReader::Person(person), link)
+                .is_err()
+        );
+        assert!(
+            read.weave_link_corrections(WeaveReader::Person(person), link)
+                .is_err()
+        );
+        assert!(
+            vault
+                .weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn last_allowed_label_is_readable_and_next_tap_does_not_write() -> Result<()> {
+        let (_tmp, vault, person, link) = fixture()?;
+        let auth = vault.authenticate_owner(
+            person,
+            &person.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        // Seed the first 9,999 valid encoded receipts in one transaction to
+        // reach the production bound without 9,999 independent report scans.
+        let mut txn = vault.store.env.write_txn()?;
+        for i in 1..MAX_LABELS {
+            let id = EntityId::from_bytes((i as u128).to_be_bytes())?;
+            let key = [prefix(link), id.as_bytes().to_vec()].concat();
+            let bytes = rmp_serde::to_vec_named(&StoredCorrection {
+                id,
+                link: link.encode().to_vec(),
+                actor: person,
+                recorded_at: 1,
+            })
+            .expect("fixture encodes");
+            vault.store.vault_meta.put(&mut txn, &key, &bytes)?;
+        }
+        txn.commit()?;
+        let read = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
+        let final_label = read.report_wrong_link(&auth, WeaveReader::Person(person), link)?;
+        let labels = read.weave_link_corrections(WeaveReader::Person(person), link)?;
+        assert_eq!(labels.len(), MAX_LABELS);
+        assert!(labels.contains(&final_label));
+        assert!(matches!(
+            read.report_wrong_link(&auth, WeaveReader::Person(person), link),
+            Err(Error::IndexOverflow("weave correction labels"))
+        ));
+        assert_eq!(
+            vault.weave_link_correction_labels_in_txn(&vault.store.env.read_txn()?, link)?,
+            labels
+        );
+        Ok(())
     }
 }

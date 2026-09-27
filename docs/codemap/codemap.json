@@ -7681,7 +7681,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 1,
       "struct": 3

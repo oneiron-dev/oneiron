@@ -633,7 +633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/slip_tests.rs` | test | s | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/versions.rs` | src | s | 6 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
 | `src/claim/scoped_read/weave_correction.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | WeaveLinkCorrection | Authenticated wrong-link labels emitted by the live weave report |
-| `src/claim/scoped_read/weave_report.rs` | src | m | 3 struct · 3 enum · 1 fn · 1 crate-vis | WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec | Live weave data for a reader, not a saved digest or a rendered section recipe |
+| `src/claim/scoped_read/weave_report.rs` | src | m | 3 struct · 3 enum · 1 fn · 2 crate-vis | WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec | Live weave data for a reader, not a saved digest or a rendered section recipe |
 | `src/claim/scoped_read/weave_report/tests.rs` | test | m | — | — | — |
 | `src/claim/source_trust.rs` | src | m | 2 enum · 21 crate-vis | ClaimDemotionAction, ClaimDemotionRung | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/status.rs` | src | s | 3 enum · 3 fn · 4 crate-vis | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
