@@ -1,6 +1,6 @@
 use heed::RoTxn;
 
-use crate::claim::{ClaimBody, claim_corpus_id};
+use crate::claim::ClaimBody;
 use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
@@ -63,16 +63,13 @@ impl CorpusFilter {
     }
 }
 
-/// All is a strict no-op, including no corpus projection from a decoded body.
-pub(super) fn claim_matches_corpus(scope: &CorpusScope, body: &ClaimBody) -> Result<bool> {
-    if matches!(scope, CorpusScope::All) {
-        return Ok(true);
-    }
-    Ok(scope.matches(claim_corpus_id(body)?))
+/// Corpus selection reads the required project-axis stamp, not the opaque scope map.
+pub(super) fn claim_matches_corpus(scope: &CorpusScope, body: &ClaimBody) -> bool {
+    scope.matches(body.scope_project)
 }
 
-/// Post-fusion audience removal, before result truncation. Selected corpora
-/// retain matching and unscoped claims; non-claims pass untouched. The D19
+/// Post-fusion project-axis removal, before result truncation. Selected
+/// projects retain only their own claims; non-claims pass untouched. The D19
 /// cache supplies decoded bodies, as it does on the candidate/probe path.
 pub(super) fn apply_corpus_filter(
     scores: &mut Vec<ScoredEntity>,
@@ -122,7 +119,7 @@ pub(super) fn pipeline_candidate_matches_corpus_filter(
         return Ok(false);
     }
     match gate.decisions.get(id) {
-        Some(Some(body)) => claim_matches_corpus(scope, body),
+        Some(Some(body)) => Ok(claim_matches_corpus(scope, body)),
         Some(None) => Ok(false),
         None => Ok(true), // Non-claims never enter the D19 cache.
     }
