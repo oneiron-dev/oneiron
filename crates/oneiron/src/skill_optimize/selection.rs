@@ -83,7 +83,7 @@ fn select_candidates(
 
     // One pass to learn which `skillId`s already have an unanswered proposed
     // revision, so the second pass can skip asking again.
-    let mut open_questions: HashSet<String> = HashSet::new();
+    let mut open_questions: HashSet<(Option<EntityId>, String)> = HashSet::new();
     let mut records = Vec::with_capacity(skills.len());
     for id in skills {
         let Some(record) = vault.get_skill_record(&id)? else {
@@ -92,7 +92,7 @@ fn select_candidates(
         if record.lifecycle_status == SkillLifecycle::Candidate
             && record.approval_status == ClaimApprovalStatus::Proposed
         {
-            open_questions.insert(record.skill_id.clone());
+            open_questions.insert((crate::skill::resident_of(&record)?, record.skill_id.clone()));
         }
         records.push((id, record));
     }
@@ -104,7 +104,7 @@ fn select_candidates(
         {
             continue;
         }
-        if open_questions.contains(&record.skill_id) {
+        if open_questions.contains(&(resident, record.skill_id.clone())) {
             continue;
         }
         if !tier_verdict(vault, &id, &record)?.optimizable() {

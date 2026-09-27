@@ -13,6 +13,26 @@ pub struct LoadedSkillPack {
 }
 
 impl Vault {
+    /// Bind one live attempt to the resident whose receipts it will produce,
+    /// even if this attempt loads only shared skills or no skill at all.
+    /// The marker is written before terminalization and is immutable.
+    pub fn bind_resident_attempt(&self, attempt: AttemptId, resident: &EntityId) -> Result<()> {
+        self.with_write_txn(|txn| {
+            let row = AttemptQueue::new(self)
+                .get_in_txn(txn, attempt)?
+                .ok_or(Error::EntityNotFound)?;
+            if row.state.is_terminal() {
+                return Err(Error::InvalidClaimBody("cannot bind a terminal attempt"));
+            }
+            super::resident::bind_receipt_in_txn(
+                self,
+                txn,
+                &crate::receipt::attempt_pack_receipt_id(&attempt),
+                resident,
+            )
+        })
+    }
+
     /// Mid-run tier-2 record load. Merely listing a skill at tier 1 is not evidence of body use.
     pub fn load_attempt_skill(
         &self,
@@ -147,7 +167,7 @@ impl Vault {
             let body = self
                 .get_claim_in_txn(txn, claim)?
                 .ok_or(Error::EntityNotFound)?;
-            if crate::actor_claims::is_actor_claim_predicate(&body.predicate)
+            if body.predicate.starts_with("actor.")
                 && !matches!(&body.subject,
                     crate::claim::ClaimSubject::Entity(actor) if Some(*actor) == resident)
             {

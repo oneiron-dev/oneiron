@@ -55,6 +55,26 @@ fn terminal_receipt_keeps_index_pull_and_actor_claim_in_load_order() -> Result<(
             .load_resident_actor_claim(status.attempt.id, &other, &claim, 42)
             .is_err()
     );
+    // `actor.confidence_prior` is owned by the provider-confidence module,
+    // but it is still an actor.* fact about its SUBJECT, not this resident.
+    let prior_id = EntityId::now();
+    let mut prior = crate::claim::ClaimBody::new(
+        crate::provider_confidence::PREDICATE_ACTOR_CONFIDENCE_PRIOR,
+        crate::claim::ClaimSubject::Entity(other),
+        Value::F32(0.75),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Auto,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    prior.source = Some(crate::claim::ClaimSource::Observed);
+    prior.evidence = Some(Value::from("fixture:provider"));
+    vault
+        .with_write_txn(|txn| vault.put_reserved_claim_in_txn(txn, &prior_id, &prior, t(41), 41))?;
+    assert!(
+        vault
+            .load_resident_actor_claim(status.attempt.id, &actor, &prior_id, 42)
+            .is_err()
+    );
     let queue = AttemptQueue::new(&vault);
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
         "dreamer",

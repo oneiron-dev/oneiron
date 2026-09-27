@@ -27907,7 +27907,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
-      "fn": 6,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -27934,7 +27934,7 @@
      "path": "src/skill/resident.rs",
      "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 12
      }
     },
     {
@@ -27942,6 +27942,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/skill/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -28042,7 +28050,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests/resident.rs",
@@ -35215,7 +35223,7 @@
      "purpose": "Revocable brief read grants"
     },
     "skill": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35442,7 +35450,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2090,
-   "test_files": 720
+   "test_files": 721
   },
   "oneiron-android": {
    "files": [

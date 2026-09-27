@@ -87,10 +87,14 @@ pub(super) fn ground_actor_claim(
     match &evidence.lane {
         ActorClaimLane::Task { receipts } => {
             for receipt in receipts {
-                if crate::skill::resident::receipt_resident(vault, receipt)?
-                    .is_some_and(|resident| resident != row.actor())
+                let owner = crate::skill::resident::receipt_resident(vault, receipt)?;
+                if owner.is_some_and(|resident| resident != row.actor())
+                    || owner.is_none()
+                        && crate::skill::resident::is_registered(vault, &row.actor())?
                 {
-                    return Err(invalid("actor row cites another resident's attempt"));
+                    return Err(invalid(
+                        "actor row cites another resident's or unbound attempt",
+                    ));
                 }
                 if crate::receipt::attempt_pack_receipt(vault, receipt)?.is_none() {
                     return Err(invalid("actor row cites an unstamped attempt receipt"));

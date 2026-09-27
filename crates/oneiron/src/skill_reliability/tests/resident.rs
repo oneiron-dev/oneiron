@@ -125,16 +125,40 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
         .select_and_load_resident_skill_pack(selection.id, &a, &[a_old, a_new], 40)?
         .expect("candidate");
     assert_eq!(selected, a_new);
-    assert!(crate::skill::resident::receipt_loaded_skill(
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "resident.selected",
+        ClaimAttempt {
+            lease_owner: "resident-selected".into(),
+            now: 41,
+        },
+    )?
+    else {
+        panic!("claim selected attempt")
+    };
+    queue.fail(crate::attempt_queue::FailAttempt {
+        id: selection.id,
+        lease_owner: "resident-selected".into(),
+        attempt_count: leased.attempt_count,
+        reason: "failed".into(),
+        now: 42,
+    })?;
+    let selected_receipt = attempt_pack_receipt_id(&selection.id);
+    assert!(
+        record_attribution_evidence(
+            &vault,
+            &OutcomeEvidence::new(&selected_receipt, a, AttemptOutcome::Failed, 43)
+                .with_skill(a_old)
+                .with_routing_facts(true, true)
+        )
+        .is_err(),
+        "an unselected fork cannot claim the winner's terminal receipt"
+    );
+    record_attribution_evidence(
         &vault,
-        &attempt_pack_receipt_id(&selection.id),
-        &a_new,
-    )?);
-    assert!(!crate::skill::resident::receipt_loaded_skill(
-        &vault,
-        &attempt_pack_receipt_id(&selection.id),
-        &a_old,
-    )?);
+        &OutcomeEvidence::new(&selected_receipt, a, AttemptOutcome::Failed, 43)
+            .with_skill(a_new)
+            .with_routing_facts(true, true),
+    )?;
     assert_eq!(skill_reliability_posterior(&vault, &a_new)?, None);
     assert_eq!(skill_reliability_posterior(&vault, &b_version)?, None);
     // The same manifest without the fork's exact version is not evidence.

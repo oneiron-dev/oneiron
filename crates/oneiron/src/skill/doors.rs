@@ -301,6 +301,11 @@ impl Vault {
                 "supersession links two revisions of one skill",
             )));
         }
+        if super::resident_of(&old)? != super::resident_of(&new)? {
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                "supersession cannot cross resident ownership",
+            )));
+        }
         if new.version == old.version {
             return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
                 "superseding revision must carry a new version",

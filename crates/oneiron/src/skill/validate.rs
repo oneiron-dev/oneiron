@@ -59,6 +59,11 @@ pub(super) fn validate_skill_record(record: &SkillRecord) -> Result<()> {
         )));
     }
     validate_provenance(&record.provenance)?;
+    if super::resident_of(record)?.is_some() && record.forked_from.is_none() {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "resident skill must carry forkedFrom lineage",
+        )));
+    }
     validate_dependencies(&record.skill_id, &record.dependencies)?;
     Ok(())
 }
