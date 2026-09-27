@@ -15,9 +15,11 @@
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::gate::{self, PolicyManifestResolution};
-use crate::llm::{BudgetLease, LlmBackend, LlmRequest};
+use crate::llm::{BudgetGuard, BudgetLease, LlmBackend, LlmRequest};
+use crate::store::GateSystemNoticeRecord;
 
 use super::binding::{PolicyContentBinding, content_binding};
+use super::classifier_lease::ClassifierLease;
 use super::contract::PolicyOutputContract;
 use super::notice::{policy_model_rationale_notice, policy_notice};
 use super::pattern::{
@@ -285,6 +287,37 @@ impl Vault {
         config: &PolicyModelConfig,
         safeguard: Option<(&dyn LlmBackend, &BudgetLease)>,
     ) -> Result<OwnerPlanePass> {
+        self.owner_plane_pass_with_safeguard(
+            request,
+            config,
+            safeguard.map(|(backend, lease)| OwnerSafeguard::Leased { backend, lease }),
+        )
+        .await
+    }
+
+    /// Admit one lease at the moment the classifier actually needs a model.
+    /// Pattern-only and disabled owner-policy passes reserve nothing.
+    pub(super) async fn owner_plane_pass_with_budget(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        backend: &dyn LlmBackend,
+        budget: &BudgetGuard,
+    ) -> Result<OwnerPlanePass> {
+        self.owner_plane_pass_with_safeguard(
+            request,
+            config,
+            Some(OwnerSafeguard::Budgeted { backend, budget }),
+        )
+        .await
+    }
+
+    async fn owner_plane_pass_with_safeguard(
+        &self,
+        request: &PolicyClassifyRequest,
+        config: &PolicyModelConfig,
+        safeguard: Option<OwnerSafeguard<'_>>,
+    ) -> Result<OwnerPlanePass> {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
         let Some(context) = self.live_owner_context(context, config)? else {
@@ -317,7 +350,7 @@ impl Vault {
                 model_skipped: false,
             });
         }
-        let (Some((backend, lease)), Some(prompt)) = (safeguard, context.prompt(request)) else {
+        let (Some(safeguard), Some(prompt)) = (safeguard, context.prompt(request)) else {
             // No model to reach, or no document to send it: the plane is
             // inactive for model classification. Sovereign, so it fails open.
             return Ok(OwnerPlanePass {
@@ -330,7 +363,35 @@ impl Vault {
                 model_skipped: true,
             });
         };
-        let Ok(response) = backend.generate(prompt.llm_request(config), lease).await else {
+        let llm_request = prompt.llm_request(config);
+        let response = match safeguard {
+            OwnerSafeguard::Leased { backend, lease } => {
+                backend.generate(llm_request, lease).await.ok()
+            }
+            OwnerSafeguard::Budgeted { backend, budget } => {
+                // A completed call gets its own admission, even on a stale-
+                // policy retry. A denied admission is a skipped sovereign
+                // classifier pass, not a free invocation on an old lease.
+                if let Ok(admission) = budget.admit_for_request(&llm_request) {
+                    let lease = ClassifierLease::new(budget, admission.lease);
+                    let response = backend.generate(llm_request, lease.lease()).await;
+                    match &response {
+                        Ok(answer) => budget
+                            .settle_per_call(lease.lease(), &answer.usage)
+                            .map_err(|_| {
+                                Error::InvariantViolation("classifier budget settlement")
+                            })?,
+                        Err(_) => budget.settle_reserved(lease.lease()).map_err(|_| {
+                            Error::InvariantViolation("classifier budget settlement")
+                        })?,
+                    };
+                    response.ok()
+                } else {
+                    None
+                }
+            }
+        };
+        let Some(response) = response else {
             return Ok(OwnerPlanePass {
                 verdict: PolicyClassifyVerdict::clean_allow(
                     binding,
@@ -505,6 +566,55 @@ impl Vault {
         let policy = gate::resolve_policy_manifest(&self.store, &rtxn)?;
         policy_model_context_for_policy(request, config, &policy)
     }
+}
+
+/// How the shared owner pass obtains its classifier lease. Ordinary callers
+/// already hold admission; stateless chat cannot reuse one across turns.
+enum OwnerSafeguard<'a> {
+    Leased {
+        backend: &'a dyn LlmBackend,
+        lease: &'a BudgetLease,
+    },
+    Budgeted {
+        backend: &'a dyn LlmBackend,
+        budget: &'a BudgetGuard,
+    },
+}
+
+/// Evaluate the owner policy for a traceless chat turn. Only the policy manifest
+/// is read. In particular, the ordinary classify/enforce doors are NOT used:
+/// they append durable gate receipts even when a turn is withheld.
+/// A moving policy is retried once, then refused without releasing content.
+pub(crate) async fn stateless_owner_classification(
+    vault: &Vault,
+    content: &str,
+    config: &PolicyModelConfig,
+    backend: &dyn LlmBackend,
+    budget: &BudgetGuard,
+) -> Result<(PolicyClassifyDecision, Vec<GateSystemNoticeRecord>)> {
+    let request = PolicyClassifyRequest::outbound_content(content);
+    for _ in 0..2 {
+        let pass = vault
+            .owner_plane_pass_with_budget(&request, config, backend, budget)
+            .await?;
+        if !vault.policy_model_verdict_is_stale_with_config(&pass.verdict, &request, config)? {
+            let verdict = pass.verdict;
+            // A human hold needs a durable queue. This route cannot create
+            // one, so it returns a blocking notice, never a phantom hold.
+            let notice_decision = if verdict.decision == PolicyClassifyDecision::Hold {
+                PolicyClassifyDecision::Block
+            } else {
+                verdict.decision
+            };
+            let notices = policy_notice(notice_decision, &verdict.category, None, config)
+                .into_iter()
+                .collect();
+            return Ok((verdict.decision, notices));
+        }
+    }
+    Err(Error::ConcurrentWrite(
+        "anonymous chat policy changed during classification",
+    ))
 }
 
 /// What the owner plane concluded, plus whether its model got to speak.

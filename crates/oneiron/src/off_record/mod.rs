@@ -26,6 +26,7 @@
 //! off-record contract v11 had introduced. `lifecycle` owns enter / mode flip
 //! / close and the registry; `promote` owns the replay and its receipt.
 
+pub mod anonymous_chat;
 mod lifecycle;
 mod promote;
 
