@@ -44,6 +44,7 @@ pub(crate) mod pack_sync;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
+pub(crate) mod receipt_ingest;
 pub mod replay;
 pub mod residence;
 pub mod schema;

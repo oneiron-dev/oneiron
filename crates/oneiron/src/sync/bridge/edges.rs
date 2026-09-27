@@ -107,6 +107,12 @@ pub(super) fn materialize_edges_from_delta(
                     // decode has no side effects.
                     let decoded = match decode_edge_value_for_kind(kind, buf) {
                         Ok(v) => v,
+                        Err(_) if kind == EdgeKind::Parent => {
+                            let tombstoned = crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
+                                || crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt);
+                            super::parent_retry::submit(vault, wtxn, window_key, src, tgt, buf, tombstoned)?;
+                            continue;
+                        }
                         Err(e) => {
                             quarantine_rejected_op_in_txn(
                                 vault,
@@ -176,7 +182,12 @@ pub(super) fn materialize_edges_from_delta(
                     // missing mandate or peer-chosen bytes remain a
                     // quarantine-and-continue rejection; no reserved edge
                     // lands merely because hydration ran first.
-                    if let Some(reserved) = &reserved_rejection {
+                    if let Some(reserved) = &reserved_rejection
+                        && !matches!(
+                            kind,
+                            EdgeKind::Parent | EdgeKind::SpawnedBy | EdgeKind::RepliesTo
+                        )
+                    {
                         let mandated_at = vault.identity_topology_mandated_shell_edge_in_txn(
                             &*wtxn, &src, kind, &tgt,
                         )?;
@@ -232,12 +243,31 @@ pub(super) fn materialize_edges_from_delta(
                             )?;
                             continue;
                         }
+                        // The Parent coordinator owns missing endpoints and
+                        // must register a typed pending obligation before this
+                        // successful receive transaction can commit.
+                        (Ok(_), Ok(_)) if kind == EdgeKind::Parent => {}
                         (Ok(_), Ok(_)) => {
-                            // Endpoint absent or tombstoned in the CRDT — a
-                            // deferral (cross-window endpoints arrive later;
-                            // tombstoned endpoints never resurrect), not a
-                            // write-gate rejection. The edge stays in the
-                            // CRDT and re-materializes when its endpoints do.
+                            if kind == EdgeKind::SpawnedBy
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
+                            {
+                                super::parent_retry::defer_spawned_by(
+                                    vault, wtxn, window_key, &src, &tgt, buf,
+                                )?;
+                            }
+                            if kind == EdgeKind::ChildOf
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &src)
+                                && !crate::sync::loro_support::tombstone_map_contains_id(&tombstones_map, &tgt)
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &src)?
+                                && !vault.local_hard_delete_marker_exists_in_txn(wtxn, &tgt)?
+                            {
+                                super::childof::defer_child_of(
+                                    vault, wtxn, window_key, &src, &tgt, buf,
+                                )?;
+                            }
                             tracing::debug!(
                                 edge = %key,
                                 "observer-b: edge deferred — endpoint absent or tombstoned"
@@ -272,6 +302,25 @@ pub(super) fn materialize_edges_from_delta(
                                 buf,
                             )?;
                             continue;
+                        }
+                    }
+
+                    // Parent is staged after ChildOf and submitted to the
+                    // one coordinator there. Other DAG structural kinds have
+                    // their body-backed admission check here.
+                    if matches!(kind, EdgeKind::SpawnedBy | EdgeKind::RepliesTo) {
+                        match crate::conversation_dag::validate_received_edge(
+                            &vault.store, &*wtxn, src, kind, tgt, decoded,
+                        ) {
+                            Ok(()) => {}
+                            Err(rejected) if remote_rejection_reason(&rejected).is_some() => {
+                                quarantine_rejected_op_in_txn(
+                                    vault, wtxn, window_key, QuarantineContainer::Edges,
+                                    key, &rejected, buf,
+                                )?;
+                                continue;
+                            }
+                            Err(local) => return Err(local),
                         }
                     }
 
@@ -365,6 +414,35 @@ pub(super) fn materialize_edges_from_delta(
                         )?;
                         continue;
                     };
+                    if kind == EdgeKind::ChildOf {
+                        super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
+                    }
+                    // A bare peer removal is not proof that the DAG door
+                    // retired an immutable structural edge. A soft-deleted
+                    // shell retains its ancestry; only an already-absent
+                    // edge after validated destructive deletion is a no-op
+                    // echo. Do not equate DeletedShell with hard purge.
+                    if matches!(
+                        kind,
+                        EdgeKind::Parent
+                            | EdgeKind::SpawnedBy
+                            | EdgeKind::RepliesTo
+                            | EdgeKind::AddressedTo
+                    ) && (matches!(
+                        crate::vault::live_entity_row_in_txn(&vault.store, &*wtxn, &src)?,
+                        crate::vault::LiveEntityRow::Live { .. }
+                    ) || vault.store.edges_out.get(
+                        &*wtxn,
+                        &Store::encode_edge_key(&src, kind, &tgt),
+                    )?.is_some()) {
+                        let reserved = crate::edge::validate_public_edge_kind(kind)
+                            .expect_err("DAG structural edge is reserved");
+                        quarantine_rejected_op_in_txn(
+                            vault, wtxn, window_key, QuarantineContainer::Edges,
+                            key, &reserved, &[],
+                        )?;
+                        continue;
+                    }
                     // ARCH-0055 reserved-kind gate, removal side: a raw
                     // edges-map removal must not tear a shell edge the
                     // validated ledger still mandates (an unledgered
@@ -424,7 +502,29 @@ pub(super) fn materialize_edges_from_delta(
                 }
             }
         }
-        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key)?;
+        let considered_child_of: Vec<_> = ops.iter().filter_map(|op| match op {
+            BatchOp::EdgeWithCreatedAt { src, kind: EdgeKind::ChildOf, tgt, .. } => Some((*src, *tgt)),
+            _ => None,
+        }).collect();
+        apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones_map)?;
+        for (src, tgt) in considered_child_of {
+            // The candidate has reached the winner arbiter or its terminal
+            // rejection, so no earlier missing-endpoint obligation remains.
+            super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
+        }
+        let facts: Vec<_> = delta.updated.iter().filter_map(|(key, value)| {
+            if !matches!(value, Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(_)))) {
+                return None;
+            }
+            let (src, kind, _) = parse_edge_key(key.as_ref())?;
+            match kind {
+                EdgeKind::ChildOf => Some(crate::conversation_dag::topology::Dependency::ConversationMembership(src)),
+                EdgeKind::SpawnedBy => Some(crate::conversation_dag::topology::Dependency::SessionAnchor(src)),
+                EdgeKind::Parent => Some(crate::conversation_dag::topology::Dependency::ParentOf(src)),
+                _ => None,
+            }
+        }).collect();
+        super::parent_retry::wake_in_txn(vault, wtxn, &facts)?;
         #[cfg(test)]
         if take_injected_batch_commit_failure() {
             return Err(Error::Io(std::io::Error::other(
