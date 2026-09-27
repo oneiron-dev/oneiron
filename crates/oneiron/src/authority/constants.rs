@@ -25,9 +25,6 @@ pub const ROLE_RECOVERY: u16 = 0x0010;
 pub(super) const ROLE_DEFINED_MASK: u16 =
     ROLE_OWNER | ROLE_ADMIN | ROLE_AGENT | ROLE_CLOUD | ROLE_RECOVERY;
 
-/// Owner-facing alarm kind emitted when AUTH-5 detects key equivocation.
-pub const AUTHORITY_FORK_ALARM_KIND: &str = "AUTHORITY FORK DETECTED";
-
 /// Content hash of a canonical authority entry.
 pub type AuthorityEntryHash = [u8; AUTHORITY_HASH_LEN];
 
