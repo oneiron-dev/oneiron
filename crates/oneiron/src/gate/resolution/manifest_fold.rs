@@ -138,6 +138,12 @@ pub(crate) fn resolve_policy_manifest(
                 // Deterministic resolved order: type-index manifest scan
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
+                if let Some(rows) = decoded.connector_class_carry {
+                    match &mut resolution.connector_class_carry {
+                        None => resolution.connector_class_carry = Some(rows),
+                        Some(existing) => existing.retain(|row| rows.contains(row)),
+                    }
+                }
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {

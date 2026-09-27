@@ -99,4 +99,5 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    pub(crate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
 }

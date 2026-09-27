@@ -2,7 +2,7 @@
 use crate::Vault;
 use crate::connector_key::qualification::{
     GroundingOracle, QualificationConnector, QualificationFailure, QualificationPlan,
-    QualificationReport, qualify_connector,
+    QualificationReport, qualify_connector_with_schemas,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -51,7 +51,9 @@ impl Vault {
             .ok_or_else(|| invalid_body("connector replacement slate missing"))?;
         // A pending, not-yet-consented expansion cannot be washed away by
         // another revision that makes no further expansion.
-        let expanded = record.consent_required || slate_expands(&old_slate, &next_slate);
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        let expanded = record.consent_required
+            || slate_expands(&old_slate, &next_slate, &policy.connector_class_carry());
         if next_slate_ref != old_slate_id {
             bind_connector_slate_in_txn(self, &mut wtxn, next_slate_ref, id)?;
         }
@@ -100,7 +102,7 @@ impl Vault {
     {
         // A probe may make sandbox writes. Never start it without a bound,
         // freshly owner-stamped slate for this exact admission revision.
-        let (expected_slate_id, stamped_revision, manifest_hash, admission_epoch) = {
+        let (expected_slate_id, stamped_revision, manifest_hash, admission_epoch, schemas) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             let record =
                 read_connector_key_in_txn(&self.store, &txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -122,9 +124,12 @@ impl Vault {
                 slate.revision(),
                 slate.manifest_hash(),
                 record.admission_epoch,
+                slate
+                    .resolved_schemas()
+                    .ok_or_else(|| invalid_body("resolved connector schemas required"))?,
             )
         };
-        let report = qualify_connector(connector, plan, oracle)?;
+        let report = qualify_connector_with_schemas(connector, plan, oracle, Some(&schemas))?;
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;

@@ -10306,6 +10306,7 @@
      "path": "src/connector_key/qualification.rs",
      "purpose": "Connector qualification probes",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 2,
       "struct": 10,
@@ -10313,7 +10314,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/connector_key/qualification/tests.rs",
@@ -10399,7 +10400,7 @@
      "path": "src/connector_key/slate.rs",
      "purpose": "ARCH-0072 typed per-tool grant slates",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 11,
       "struct": 5
@@ -16733,7 +16734,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -17051,7 +17052,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {

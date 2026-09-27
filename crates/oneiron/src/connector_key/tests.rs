@@ -21,6 +21,8 @@ fn register_catalog(
             name: name.clone(),
             data_class: SlateDataClass::Personal,
             header_parameters: Vec::new(),
+            resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+            trigger: None,
             destroys: false,
             spends: false,
             sends_outward: false,
@@ -32,6 +34,8 @@ fn register_catalog(
             name: "read".into(),
             data_class: SlateDataClass::Personal,
             header_parameters: Vec::new(),
+            resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+            trigger: None,
             destroys: false,
             spends: false,
             sends_outward: false,
@@ -2954,7 +2958,6 @@ fn registration_fails_on_unresolved_secret_ref() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 #[test]
 fn replicated_existing_pending_key_cannot_activate() -> Result<()> {
     let (_tmp, vault) = temp_vault();

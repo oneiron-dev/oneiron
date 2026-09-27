@@ -60,6 +60,7 @@ impl QualificationConnection for Connection {
             } else {
                 json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}})
             },
+            trigger: None,
             result_types: BTreeSet::from([if self.fault == Fault::ResultType {
                 "unknown".into()
             } else {
@@ -373,6 +374,10 @@ fn pending_slate_key_only_activates_after_full_probes_and_owner_stamp() -> crate
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
+        trigger: None,
+        resolved_input_schema: Some(
+            json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}}),
+        ),
         destroys: false,
         spends: false,
         sends_outward: false,
@@ -530,6 +535,10 @@ fn read_only_key_qualifies_and_revision_expansion_needs_graded_consent() -> crat
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
+        trigger: None,
+        resolved_input_schema: Some(
+            json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}}),
+        ),
         destroys: false,
         spends: false,
         sends_outward: false,
@@ -699,6 +708,10 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
         name: "memory".into(),
         data_class: SlateDataClass::Personal,
         header_parameters: vec![],
+        trigger: None,
+        resolved_input_schema: Some(
+            json!({"type":"object","properties":{"idempotency_key":{"type":"string"}}}),
+        ),
         destroys: false,
         spends: false,
         sends_outward: false,
@@ -761,5 +774,292 @@ fn mid_probe_revision_round_trip_cannot_activate_stale_attempt() -> crate::error
         ConnectorKeyStatus::Pending
     );
     assert!(vault.route_connector_call("memory")?.is_none());
+    Ok(())
+}
+
+#[test]
+fn resolved_schema_delta_is_bound_before_effectful_probes() -> crate::error::Result<()> {
+    use crate::connector_key::{
+        ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec, ConnectorKeyStatus,
+        SlateDataClass, SlateToolManifest, draft_connector_slate,
+    };
+    use crate::{EntityId, Vault, VaultConfig};
+    struct SchemaStub {
+        inner: Stub,
+        schema: Value,
+    }
+    struct SchemaConnection<'a> {
+        inner: Box<dyn QualificationConnection + 'a>,
+        schema: Value,
+    }
+    impl QualificationConnection for SchemaConnection<'_> {
+        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
+            let mut tools = self.inner.tools_list()?;
+            tools[0].input_schema = self.schema.clone();
+            Ok(tools)
+        }
+        fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+            self.inner.call(request)
+        }
+    }
+    impl QualificationConnector for SchemaStub {
+        fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
+            Ok(Box::new(SchemaConnection {
+                inner: self.inner.connect()?,
+                schema: self.schema.clone(),
+            }))
+        }
+        fn effect_state(&self) -> Result<Vec<u8>, QualificationFailure> {
+            self.inner.effect_state()
+        }
+    }
+    let stub = |schema: Value| SchemaStub {
+        inner: Stub {
+            fault: Fault::ReadOnly,
+            connections: Cell::new(0),
+            effects: Rc::default(),
+        },
+        schema,
+    };
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let schema = json!({"type":"object","properties":{"query":{"type":"string","enum":["a","b"]}}});
+    let mut tool = SlateToolManifest {
+        name: "memory".into(),
+        data_class: SlateDataClass::Public,
+        header_parameters: vec![],
+        resolved_input_schema: Some(schema.clone()),
+        trigger: None,
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+    };
+    let make_slate = |tool: &SlateToolManifest| -> crate::error::Result<EntityId> {
+        let tools = std::slice::from_ref(tool);
+        vault.store_connector_slate(
+            tools,
+            &serde_json::to_string(&draft_connector_slate(tools)).unwrap(),
+        )
+    };
+    let first = make_slate(&tool)?;
+    let (id, _) = vault.register_connector(
+        ConnectorCatalogEntry {
+            name: "memory".into(),
+            connector: "memory".into(),
+            summary: "Memory".into(),
+            verbs: vec!["read".into()],
+            call_class: ConnectorCallClass::ScopedMcp,
+            registered_at: 0,
+        },
+        ConnectorKeySpec {
+            slate_ref: Some(first),
+            protocol_revision: Some("A".into()),
+            ..ConnectorKeySpec::new("memory")
+        },
+        100,
+    )?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    vault.override_connector_slate(&auth, first, 0, &BTreeMap::new())?;
+    let mut read_plan = plan();
+    read_plan.write = None;
+    read_plan.timeout_retry = None;
+    vault
+        .qualify_connector_key(&id, "A", &stub(schema), &read_plan, &Oracle, 101)
+        .unwrap();
+    let changed = json!({"type":"object","properties":{"query":{"type":"string","enum":["a","b"],"default":"b"}}});
+    // Reusing a prior slate under the new wire declaration fails before calls.
+    vault.revise_connector_protocol(&id, "B", first, 102)?;
+    let mismatched = stub(changed.clone());
+    assert!(
+        vault
+            .qualify_connector_key(&id, "B", &mismatched, &read_plan, &Oracle, 103)
+            .is_err()
+    );
+    assert_eq!(mismatched.inner.effects.borrow().len(), 0);
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().status,
+        ConnectorKeyStatus::Pending
+    );
+    // A typed delta with the changed default needs an owner decision.
+    tool.resolved_input_schema = Some(changed.clone());
+    let expanded = make_slate(&tool)?;
+    vault.revise_connector_protocol(&id, "C", expanded, 104)?;
+    let unapproved = stub(changed.clone());
+    assert!(
+        vault
+            .qualify_connector_key(&id, "C", &unapproved, &read_plan, &Oracle, 105)
+            .is_err()
+    );
+    assert_eq!(unapproved.inner.connections.get(), 0);
+    vault.override_connector_slate(&auth, expanded, 0, &BTreeMap::new())?;
+    vault
+        .qualify_connector_key(&id, "C", &stub(changed), &read_plan, &Oracle, 106)
+        .unwrap();
+    // Removing a permitted enum value is a provable narrowing, no second tap.
+    tool.resolved_input_schema = Some(
+        json!({"type":"object","properties":{"query":{"type":"string","enum":["b"],"default":"b"}}}),
+    );
+    let narrowed = make_slate(&tool)?;
+    let row = vault.revise_connector_protocol(&id, "D", narrowed, 107)?;
+    assert!(!row.consent_required);
+    vault
+        .qualify_connector_key(
+            &id,
+            "D",
+            &stub(tool.resolved_input_schema.unwrap()),
+            &read_plan,
+            &Oracle,
+            108,
+        )
+        .unwrap();
+    Ok(())
+}
+
+#[test]
+fn reordered_rows_cannot_enable_tool_without_owner_stamp() -> crate::error::Result<()> {
+    use crate::connector_key::{
+        ConnectorCallClass, ConnectorCatalogEntry, ConnectorKeySpec, ConnectorKeyStatus,
+        SlateDataClass, SlateToolManifest, draft_connector_slate,
+    };
+    use crate::{EntityId, Vault, VaultConfig};
+    struct TwoTools {
+        inner: Stub,
+    }
+    struct TwoConnections<'a> {
+        inner: Box<dyn QualificationConnection + 'a>,
+    }
+    impl QualificationConnection for TwoConnections<'_> {
+        fn tools_list(&mut self) -> Result<Vec<ProbeTool>, QualificationFailure> {
+            let first = self.inner.tools_list()?.remove(0);
+            Ok(["A", "B"]
+                .into_iter()
+                .map(|name| ProbeTool {
+                    name: name.into(),
+                    ..first.clone()
+                })
+                .collect())
+        }
+        fn call(&mut self, request: &ProbeRequest) -> Result<ProbeReply, QualificationFailure> {
+            self.inner.call(request)
+        }
+    }
+    impl QualificationConnector for TwoTools {
+        fn connect(&self) -> Result<Box<dyn QualificationConnection + '_>, QualificationFailure> {
+            Ok(Box::new(TwoConnections {
+                inner: self.inner.connect()?,
+            }))
+        }
+        fn effect_state(&self) -> Result<Vec<u8>, QualificationFailure> {
+            self.inner.effect_state()
+        }
+    }
+    let make_connector = || TwoTools {
+        inner: Stub {
+            fault: Fault::ReadOnly,
+            connections: Cell::new(0),
+            effects: Rc::default(),
+        },
+    };
+    let tmp = tempfile::tempdir()?;
+    let vault = Vault::open(tmp.path(), VaultConfig::default())?;
+    let tool = |name: &str| SlateToolManifest {
+        name: name.into(),
+        data_class: SlateDataClass::Public,
+        header_parameters: vec![],
+        resolved_input_schema: Some(json!({"type":"object",
+            "properties":{"idempotency_key":{"type":"string"}}})),
+        trigger: None,
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+    };
+    let manifest = vec![tool("A"), tool("B")];
+    let mut old_rows = draft_connector_slate(&manifest);
+    old_rows[0].enabled = false;
+    let old = vault.store_connector_slate(&manifest, &serde_json::to_string(&old_rows).unwrap())?;
+    let (id, _) = vault.register_connector(
+        ConnectorCatalogEntry {
+            name: "twotools".into(),
+            connector: "twotools".into(),
+            summary: "Two tools".into(),
+            verbs: vec!["read".into()],
+            call_class: ConnectorCallClass::ScopedMcp,
+            registered_at: 0,
+        },
+        ConnectorKeySpec {
+            slate_ref: Some(old),
+            protocol_revision: Some("A".into()),
+            ..ConnectorKeySpec::new("twotools")
+        },
+        100,
+    )?;
+    let owner = EntityId::now();
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*EntityId::now().as_bytes()),
+    )?;
+    vault.override_connector_slate(&auth, old, 0, &BTreeMap::new())?;
+    let mut read_plan = plan();
+    read_plan.write = None;
+    read_plan.timeout_retry = None;
+    read_plan.reads[0].call.name = "A".into();
+    read_plan.reads[1].call.name = "B".into();
+    vault
+        .qualify_connector_key(&id, "A", &make_connector(), &read_plan, &Oracle, 101)
+        .unwrap();
+    let mut next_rows = draft_connector_slate(&manifest);
+    next_rows[1].enabled = false;
+    next_rows.reverse();
+    let next =
+        vault.store_connector_slate(&manifest, &serde_json::to_string(&next_rows).unwrap())?;
+    let pending = vault.revise_connector_protocol(&id, "B", next, 102)?;
+    assert!(
+        pending.consent_required,
+        "A became enabled even with permuted row order"
+    );
+    let unapproved = make_connector();
+    assert!(
+        vault
+            .qualify_connector_key(&id, "B", &unapproved, &read_plan, &Oracle, 103)
+            .is_err()
+    );
+    assert_eq!(unapproved.inner.connections.get(), 0);
+    assert_eq!(
+        vault.get_connector_key(&id)?.unwrap().status,
+        ConnectorKeyStatus::Pending
+    );
+    vault.override_connector_slate(&auth, next, 0, &BTreeMap::new())?;
+    assert_eq!(
+        vault
+            .qualify_connector_key(&id, "B", &make_connector(), &read_plan, &Oracle, 104)
+            .unwrap()
+            .0
+            .status,
+        ConnectorKeyStatus::Active
+    );
     Ok(())
 }

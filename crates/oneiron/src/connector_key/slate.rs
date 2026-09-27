@@ -36,6 +36,12 @@ pub struct SlateToolManifest {
     pub name: String,
     pub data_class: SlateDataClass,
     pub header_parameters: Vec<String>,
+    /// Host-resolved input declaration, including defaults and constraints.
+    /// Unresolved refs/composition are refused rather than guessed at admission.
+    #[serde(default)]
+    pub resolved_input_schema: Option<serde_json::Value>,
+    #[serde(default)]
+    pub trigger: Option<String>,
     pub destroys: bool,
     pub spends: bool,
     pub sends_outward: bool,
@@ -102,6 +108,19 @@ impl ConnectorGrantSlate {
     pub fn rows(&self) -> &[SlateRow] {
         &self.rows
     }
+    pub(in crate::connector_key) fn resolved_schemas(
+        &self,
+    ) -> Option<BTreeMap<String, (serde_json::Value, Option<String>)>> {
+        self.manifest
+            .iter()
+            .map(|tool| {
+                Some((
+                    tool.name.clone(),
+                    (tool.resolved_input_schema.clone()?, tool.trigger.clone()),
+                ))
+            })
+            .collect()
+    }
     pub fn tool_names(&self) -> BTreeSet<&str> {
         self.manifest
             .iter()
@@ -166,6 +185,10 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
             || row.rationale.len() > 4096
             || tool.floor() && row.disposition != SlateDisposition::ConfirmFirst
             || tool.legacy_ask && row.enabled
+            || !tool
+                .resolved_input_schema
+                .as_ref()
+                .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
             || row.data_class
                 != if tool.header_parameters.is_empty() {
                     tool.data_class
@@ -185,27 +208,31 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
 pub(in crate::connector_key) fn slate_expands(
     old: &ConnectorGrantSlate,
     next: &ConnectorGrantSlate,
+    carry: &BTreeSet<(String, String)>,
 ) -> bool {
-    let class_rank = |class| match class {
-        SlateDataClass::Public => 0_u8,
-        SlateDataClass::Personal => 1,
-        SlateDataClass::Secret => 2,
-        SlateDataClass::Header => 3,
-    };
-    next.manifest.iter().zip(&next.rows).any(|(tool, row)| {
+    next.manifest.iter().any(|tool| {
+        let row = next
+            .rows
+            .iter()
+            .find(|row| row.draft.tool == tool.name)
+            .expect("validated slate has one row per tool");
         if !row.enabled() {
             return false;
         }
-        let Some((old_tool, old_row)) = old
-            .manifest
-            .iter()
-            .zip(&old.rows)
-            .find(|(candidate, _)| candidate.name == tool.name)
-        else {
+        let Some(old_tool) = old.manifest.iter().find(|prior| prior.name == tool.name) else {
             return true;
         };
+        let old_row = old
+            .rows
+            .iter()
+            .find(|row| row.draft.tool == tool.name)
+            .expect("validated slate has one row per tool");
         !old_row.enabled()
-            || class_rank(tool.data_class) > class_rank(old_tool.data_class)
+            || tool.data_class != old_tool.data_class
+                && !carry.contains(&(
+                    tool.data_class.as_str().into(),
+                    old_tool.data_class.as_str().into(),
+                ))
             || tool
                 .header_parameters
                 .iter()
@@ -214,9 +241,115 @@ pub(in crate::connector_key) fn slate_expands(
             || tool.spends && !old_tool.spends
             || tool.sends_outward && !old_tool.sends_outward
             || tool.legacy_ask && !old_tool.legacy_ask
+            || !schema_narrows(
+                old_tool.resolved_input_schema.as_ref(),
+                tool.resolved_input_schema.as_ref(),
+            )
             || row.effective_disposition() == SlateDisposition::Auto
                 && old_row.effective_disposition() == SlateDisposition::ConfirmFirst
     })
+}
+
+impl SlateDataClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Personal => "personal",
+            Self::Secret => "secret",
+            Self::Header => "header",
+        }
+    }
+}
+
+/// Only a provable restriction carries consent. Anything unknown re-asks.
+fn schema_narrows(old: Option<&serde_json::Value>, next: Option<&serde_json::Value>) -> bool {
+    let (Some(old), Some(next)) = (old, next) else {
+        return old == next;
+    };
+    if old == next {
+        return true;
+    }
+    let (Some(a), Some(b)) = (old.as_object(), next.as_object()) else {
+        return false;
+    };
+    if a.get("type") != b.get("type") || a.get("default") != b.get("default") {
+        return false;
+    }
+    if a.get("additionalProperties") != b.get("additionalProperties") {
+        return false;
+    }
+    let (Some(ap), Some(bp)) = (
+        a.get("properties").and_then(|v| v.as_object()),
+        b.get("properties").and_then(|v| v.as_object()),
+    ) else {
+        return false;
+    };
+    if bp.keys().collect::<BTreeSet<_>>() != ap.keys().collect::<BTreeSet<_>>() {
+        return false;
+    }
+    let required = |obj: &serde_json::Map<String, serde_json::Value>| -> Option<BTreeSet<String>> {
+        obj.get("required")
+            .map_or(Some(&[][..]), |v| v.as_array().map(Vec::as_slice))?
+            .iter()
+            .map(|v| v.as_str().map(str::to_owned))
+            .collect::<Option<BTreeSet<_>>>()
+    };
+    let (Some(ar), Some(br)) = (required(a), required(b)) else {
+        return false;
+    };
+    if !ar.is_subset(&br) {
+        return false;
+    }
+    if a.keys().any(|k| {
+        !matches!(
+            k.as_str(),
+            "type" | "default" | "properties" | "required" | "additionalProperties"
+        )
+    }) || b.keys().any(|k| {
+        !matches!(
+            k.as_str(),
+            "type" | "default" | "properties" | "required" | "additionalProperties"
+        )
+    }) {
+        return false;
+    }
+    ap.iter().all(|(name, prior)| {
+        let Some(current) = bp.get(name) else {
+            return false;
+        };
+        if current == prior {
+            return true;
+        }
+        let (Some(x), Some(y)) = (prior.as_object(), current.as_object()) else {
+            return false;
+        };
+        if x.get("type") != y.get("type") || x.get("default") != y.get("default") {
+            return false;
+        }
+        let (Some(xe), Some(ye)) = (
+            x.get("enum").and_then(|v| v.as_array()),
+            y.get("enum").and_then(|v| v.as_array()),
+        ) else {
+            return false;
+        };
+        x.keys()
+            .all(|k| matches!(k.as_str(), "type" | "default" | "enum"))
+            && y.keys()
+                .all(|k| matches!(k.as_str(), "type" | "default" | "enum"))
+            && ye.iter().all(|value| xe.contains(value))
+    })
+}
+
+fn is_resolved_schema(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            !map.keys()
+                .any(|key| matches!(key.as_str(), "$ref" | "allOf" | "anyOf" | "oneOf"))
+                && map.values().all(is_resolved_schema)
+        }
+        serde_json::Value::Array(values) => values.iter().all(is_resolved_schema),
+        _ => true,
+    }
 }
 
 /// A stamped slate is an admission for one connector, not a reusable grant.
@@ -368,6 +501,8 @@ mod tests {
                 } else {
                     vec![]
                 },
+                resolved_input_schema: Some(serde_json::json!({"type":"object"})),
+                trigger: None,
                 destroys: false,
                 spends: false,
                 sends_outward: name == "send",
@@ -388,6 +523,27 @@ mod tests {
         assert!(
             vault
                 .store_connector_slate(&manifest, &serde_json::to_string(&bad).unwrap())
+                .is_err()
+        );
+        let mut unresolved = manifest.clone();
+        unresolved[0].resolved_input_schema =
+            Some(serde_json::json!({"$ref":"#/definitions/hidden"}));
+        assert!(
+            vault
+                .store_connector_slate(
+                    &unresolved,
+                    &serde_json::to_string(&draft_connector_slate(&unresolved)).unwrap()
+                )
+                .is_err()
+        );
+        let mut missing = manifest.clone();
+        missing[0].resolved_input_schema = None;
+        assert!(
+            vault
+                .store_connector_slate(
+                    &missing,
+                    &serde_json::to_string(&draft_connector_slate(&missing)).unwrap()
+                )
                 .is_err()
         );
         let id = vault.store_connector_slate(&manifest, &serde_json::to_string(&rows).unwrap())?;
@@ -427,6 +583,128 @@ mod tests {
             SlateDisposition::Auto
         );
         assert_eq!(vault.connector_slate(id)?, Some(slate));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tool(name: &str) -> SlateToolManifest {
+        SlateToolManifest {
+            name: name.into(),
+            data_class: SlateDataClass::Public,
+            header_parameters: vec![],
+            resolved_input_schema: Some(json!({"type":"object",
+                "properties":{"query":{"type":"string","enum":["a","b"]}}})),
+            trigger: None,
+            destroys: false,
+            spends: false,
+            sends_outward: false,
+            legacy_ask: false,
+        }
+    }
+    fn slate(manifest: Vec<SlateToolManifest>, rows: Vec<SlateDraftRow>) -> ConnectorGrantSlate {
+        validate(&manifest, &rows).expect("valid permuted slate");
+        ConnectorGrantSlate {
+            manifest,
+            rows: rows
+                .into_iter()
+                .map(|draft| SlateRow {
+                    draft,
+                    owner_override: None,
+                })
+                .collect(),
+            manifest_hash: [0; 32],
+            revision: 0,
+            owner_actor: None,
+            owner_authentication: None,
+        }
+    }
+    #[test]
+    fn permutations_and_schema_defaults_are_checked_by_tool_identity() {
+        let tools = vec![tool("A"), tool("B")];
+        let mut old_rows = draft_connector_slate(&tools);
+        old_rows[0].enabled = false;
+        let old = slate(tools.clone(), old_rows);
+        let mut next_rows = draft_connector_slate(&tools);
+        next_rows[1].enabled = false;
+        next_rows.reverse();
+        let next = slate(tools.clone(), next_rows);
+        assert!(
+            slate_expands(&old, &next, &BTreeSet::new()),
+            "A became enabled despite reordered rows"
+        );
+        let old = slate(tools.clone(), draft_connector_slate(&tools));
+        let mut changed = tools.clone();
+        changed[0].resolved_input_schema = Some(json!({"type":"object",
+            "properties":{"query":{"type":"string","enum":["a","b"],"default":"b"}}}));
+        assert!(slate_expands(
+            &old,
+            &slate(changed.clone(), draft_connector_slate(&changed)),
+            &BTreeSet::new()
+        ));
+        changed = tools;
+        changed[0].resolved_input_schema = Some(json!({"type":"object",
+            "properties":{"query":{"type":"string","enum":["a"]}}}));
+        assert!(!slate_expands(
+            &old,
+            &slate(changed.clone(), draft_connector_slate(&changed)),
+            &BTreeSet::new()
+        ));
+    }
+    #[test]
+    fn resolved_policy_controls_class_carry_and_header_is_independent() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let txn = vault.store.env.read_txn()?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+        let default = policy.connector_class_carry();
+        drop(txn);
+        let base = tool("A");
+        let prior = SlateToolManifest {
+            data_class: SlateDataClass::Personal,
+            ..base.clone()
+        };
+        let next = SlateToolManifest {
+            data_class: SlateDataClass::Public,
+            ..base.clone()
+        };
+        let old = slate(vec![prior.clone()], draft_connector_slate(&[prior]));
+        let new = slate(vec![next.clone()], draft_connector_slate(&[next]));
+        assert!(!slate_expands(&old, &new, &default));
+        let header = SlateToolManifest {
+            data_class: SlateDataClass::Header,
+            ..base
+        };
+        let header = slate(vec![header.clone()], draft_connector_slate(&[header]));
+        assert!(slate_expands(&old, &header, &default));
+        assert!(slate_expands(&header, &new, &default));
+        // A trusted holder row narrows the shipped carry table to empty.
+        let data = crate::gate::default_policy_manifest();
+        let mut cursor = std::io::Cursor::new(data);
+        let rmpv::Value::Map(mut entries) =
+            rmpv::decode::read_value(&mut cursor).expect("policy map")
+        else {
+            panic!("policy map");
+        };
+        *entries
+            .iter_mut()
+            .find(|(k, _)| k.as_str() == Some("connector_class_carry"))
+            .expect("shipped policy carry row") = (
+            rmpv::Value::from("connector_class_carry"),
+            rmpv::Value::Array(vec![]),
+        );
+        let mut encoded = Vec::new();
+        rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).expect("encode policy");
+        crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &encoded)?;
+        let txn = vault.store.env.read_txn()?;
+        let narrowed =
+            crate::gate::resolve_policy_manifest(&vault.store, &txn)?.connector_class_carry();
+        assert!(narrowed.is_empty());
+        assert!(slate_expands(&old, &new, &narrowed));
         Ok(())
     }
 }

@@ -9,6 +9,7 @@ use std::time::Instant;
 pub struct ProbeTool {
     pub name: String,
     pub input_schema: Value,
+    pub trigger: Option<String>,
     pub result_types: BTreeSet<String>,
     pub writes: bool,
 }
@@ -141,10 +142,30 @@ pub struct QualificationReport {
     pub calls: usize,
 }
 
+/// Vault-only form: compare the independently fetched, resolved declarations
+/// with the owner slate before any effectful probe is invoked.
+pub(crate) fn qualify_connector_with_schemas(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    expected: Option<&BTreeMap<String, (Value, Option<String>)>>,
+) -> Result<QualificationReport, QualificationFailure> {
+    run_qualification(connector, plan, oracle, expected)
+}
+
 pub fn qualify_connector(
     connector: &dyn QualificationConnector,
     plan: &QualificationPlan,
     oracle: &dyn GroundingOracle,
+) -> Result<QualificationReport, QualificationFailure> {
+    run_qualification(connector, plan, oracle, None)
+}
+
+fn run_qualification(
+    connector: &dyn QualificationConnector,
+    plan: &QualificationPlan,
+    oracle: &dyn GroundingOracle,
+    expected: Option<&BTreeMap<String, (Value, Option<String>)>>,
 ) -> Result<QualificationReport, QualificationFailure> {
     if !plan.reads.iter().any(|case| case.in_scope) || !plan.reads.iter().any(|case| !case.in_scope)
     {
@@ -155,6 +176,14 @@ pub fn qualify_connector(
     let tools = first.tools_list()?;
     if tools != second.tools_list()? {
         return Err(QualificationFailure::StatelessMismatch);
+    }
+    if let Some(expected) = expected
+        && (tools.len() != expected.len()
+            || tools.iter().any(|tool| {
+                expected.get(&tool.name) != Some(&(tool.input_schema.clone(), tool.trigger.clone()))
+            }))
+    {
+        return Err(QualificationFailure::ResultType);
     }
     if tools
         .iter()

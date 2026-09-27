@@ -10,13 +10,13 @@ use crate::gate::ceiling::{
 };
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
-    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
-    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_CONNECTOR_CLASS_CARRY_KEY, POLICY_DEFAULTS_KEY,
+    POLICY_DELEGATED_GRANTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
+    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
+    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
+    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
+    POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::resolution::CommOptOutPosture;
@@ -56,6 +56,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) connector_class_carry: Option<std::collections::BTreeSet<(String, String)>>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
@@ -101,6 +102,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | POLICY_CONNECTOR_CLASS_CARRY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
         ) {
@@ -224,6 +226,35 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let connector_class_carry = match single_map_value(&entries, POLICY_CONNECTOR_CLASS_CARRY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(Value::Array(rows)) => {
+            let mut result = std::collections::BTreeSet::new();
+            for row in rows {
+                let Value::Array(pair) = row else {
+                    return None;
+                };
+                let [Value::String(from), Value::String(to)] = pair.as_slice() else {
+                    return None;
+                };
+                let (Some(from), Some(to)) = (from.as_str(), to.as_str()) else {
+                    return None;
+                };
+                // Holder policy can REMOVE default carry edges, never add
+                // unsupported ones; header is intentionally incomparable.
+                if !matches!(
+                    (from, to),
+                    ("public", "personal" | "secret") | ("personal", "secret")
+                ) || !result.insert((from.to_owned(), to.to_owned()))
+                {
+                    return None;
+                }
+            }
+            Some(result)
+        }
+        MapValue::Present(_) => return None,
+    };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -266,6 +297,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        connector_class_carry,
         diagnostic_bounds,
         proposal_check_threshold,
         unsupported_schema,
