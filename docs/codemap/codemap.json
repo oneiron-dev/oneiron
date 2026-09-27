@@ -7657,7 +7657,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -15402,7 +15402,7 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage and row-pointer migration",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 1
      }
@@ -20057,7 +20057,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -20068,7 +20068,7 @@
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
       "crate-vis": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -20085,6 +20085,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnswerProposal",
       "AnswerRecord",
       "CalibrationPair",
       "OutcomeBinding",
@@ -20101,8 +20102,30 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
-      "struct": 7
+      "struct": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RefreshBatch",
+      "RefreshFailure"
+     ],
+     "path": "src/llm/decision/questions/refresh.rs",
+     "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -21798,7 +21821,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -35074,7 +35097,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 73,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35629,8 +35652,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2102,
-   "test_files": 720
+   "source_files": 2103,
+   "test_files": 721
   },
   "oneiron-android": {
    "files": [
