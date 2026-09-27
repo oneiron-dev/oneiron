@@ -108,7 +108,7 @@ pub(super) fn default_l2_subjects(
         None => Some(owner),
     };
     let principal = if let Some(id) = person_id {
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)?
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &id)?
             .as_deref()
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
