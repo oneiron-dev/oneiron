@@ -149,6 +149,33 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn logged_slip_reconnects_without_the_minting_host_secret() {
+    let fixture = Fixture::serve().await;
+    let link = fixture.owner_link();
+    let (_mint_origin, credential) = blocking(move || OneironClient::pair(&link).unwrap()).await;
+    let public_server =
+        Arc::new(SyncServer::new(fixture.vault.clone(), SyncServerConfig::default()).unwrap());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, build_app(public_server))
+            .await
+            .unwrap();
+    });
+    let read = blocking(move || {
+        OneironClient::connect(&url, &credential)
+            .unwrap()
+            .receipts(10)
+    })
+    .await;
+    task.abort();
+    assert!(
+        read.is_ok(),
+        "a logged slip needs no minting secret to verify"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn back_to_back_calls_each_spend_a_fresh_nonce() {
     let fixture = Fixture::serve().await;
     let link = fixture.owner_link();
