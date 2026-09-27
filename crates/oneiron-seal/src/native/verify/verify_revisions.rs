@@ -78,6 +78,29 @@ fn without(dict: &lopdf::Dictionary, keys: &[&[u8]]) -> lopdf::Dictionary {
     }
     clone
 }
+/// Native incremental appends preserve effective document metadata. `/Size`
+/// and xref-stream decoding/index fields are structural; every other trailer
+/// entry (notably `/Root`, `/Info`, `/ID`) must remain byte-for-byte equal.
+fn preserves_trailer(before: &Document, after: &Document) -> bool {
+    let structural = [
+        b"Size".as_slice(),
+        b"Prev",
+        b"Type",
+        b"W",
+        b"Index",
+        b"Length",
+        b"Filter",
+        b"DecodeParms",
+    ];
+    let mut old = before.trailer.clone();
+    let mut new = after.trailer.clone();
+    for key in structural {
+        old.remove(key);
+        new.remove(key);
+    }
+    old == new
+}
+
 fn ref_id(obj: &Object) -> Option<ObjectId> {
     obj.as_reference().ok()
 }
@@ -90,7 +113,9 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
     else {
         return false;
     };
-    if without(old_catalog, &[b"DSS"]) != without(new_catalog, &[b"DSS"]) {
+    if !preserves_trailer(before, after)
+        || without(old_catalog, &[b"DSS"]) != without(new_catalog, &[b"DSS"])
+    {
         return false;
     }
     let Some(dss_ref) = new_catalog.get(b"DSS").ok().and_then(ref_id) else {
@@ -181,7 +206,9 @@ fn doc_timestamp_allowed(
     else {
         return false;
     };
-    if without(old_catalog, &[b"AcroForm"]) != without(new_catalog, &[b"AcroForm"]) {
+    if !preserves_trailer(before, after)
+        || without(old_catalog, &[b"AcroForm"]) != without(new_catalog, &[b"AcroForm"])
+    {
         return false;
     }
     let Some(af_obj) = new_catalog.get(b"AcroForm").ok() else {

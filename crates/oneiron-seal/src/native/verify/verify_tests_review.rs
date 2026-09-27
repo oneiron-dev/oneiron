@@ -375,3 +375,112 @@ fn review_r2_document_timestamp_supplies_baseline_t() {
     assert_eq!(report.verdict(), VerifyVerdict::Passed);
     assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
 }
+
+#[test]
+fn review_r3_trailer_info_change_is_not_lta_table() {
+    review_r3_trailer_info_change(false);
+}
+
+#[test]
+fn review_r3_trailer_info_change_is_not_lta_stream() {
+    review_r3_trailer_info_change(true);
+}
+
+fn review_r3_trailer_info_change(stream: bool) {
+    let mut doc = lopdf::Document::load_mem(&base_input()).unwrap();
+    let mut old_dict = lopdf::Dictionary::new();
+    old_dict.set("Title", lopdf::Object::string_literal("SIGNED TITLE"));
+    let old_info = doc.add_object(old_dict);
+    let mut new_dict = lopdf::Dictionary::new();
+    new_dict.set("Title", lopdf::Object::string_literal("REPLACED TITLE"));
+    let new_info = doc.add_object(new_dict);
+    doc.trailer.set("Info", lopdf::Object::Reference(old_info));
+    let mut input = Vec::new();
+    if stream {
+        doc.save_modern(&mut input).unwrap();
+    } else {
+        doc.save_to(&mut input).unwrap();
+    }
+    let signer = test_ca("r3-info");
+    let signed = append_sig_revision(&input, &signer, "info", None, AT_UNIX);
+    let engine = verify_engine(vec![signer.cert_der.clone()], AT_UNIX);
+    assert_eq!(
+        engine.verify_sealed_pdf(&signed).unwrap().verdict(),
+        VerifyVerdict::Passed
+    );
+    let mut state = pdf::reparse_revision(&signed, &SealResourceLimits::default()).unwrap();
+    assert_eq!(state.info, Some(old_info));
+    let normal = append_dss_revision(&signed, vec![signer.cert_der.clone()], vec![]);
+    let normal_report = engine.verify_sealed_pdf(&normal).unwrap();
+    assert_eq!(normal_report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(
+        normal_report.modifications,
+        Modifications::Clean(ModificationLevel::LtaUpdates)
+    );
+    state.info = Some(new_info);
+    let material = super::super::profile::DssMaterial {
+        certs_der: vec![signer.cert_der],
+        ocsps_der: vec![],
+        crls_der: vec![],
+    };
+    let (objects, dss_obj) =
+        super::super::profile::build_dss_objects(&material, state.max_obj + 1).unwrap();
+    let draft = pdf::append_revision(
+        &signed,
+        &state,
+        &pdf::RevisionKind::Dss {
+            material_objects: objects,
+            dss_obj,
+        },
+        0,
+    )
+    .unwrap();
+    let after = lopdf::Document::load_mem(&draft.bytes).unwrap();
+    let info = after
+        .get_object(after.trailer.get(b"Info").unwrap().as_reference().unwrap())
+        .unwrap()
+        .as_dict()
+        .unwrap();
+    assert_eq!(
+        info.get(b"Title").unwrap().as_str().unwrap(),
+        b"REPLACED TITLE"
+    );
+    let report = engine.verify_sealed_pdf(&draft.bytes).unwrap();
+    assert_eq!(report.modifications, Modifications::Suspicious);
+}
+
+#[test]
+fn review_r3_document_timestamp_supplies_applicable_time() {
+    let root = test_ca("r3-time-root");
+    let signer = ocsp_delegate_with_kus(
+        &root,
+        "r3-time-leaf",
+        (2020, 1, 1),
+        (2027, 1, 1),
+        vec![rcgen::KeyUsagePurpose::DigitalSignature],
+    );
+    let tsa = tsa_ca();
+    let engine = verify_engine(
+        vec![root.cert_der.clone(), tsa.cert_der.clone()],
+        1_830_297_600,
+    ); // 2028-01-01
+    // Positive control: identical leaf and TSA at the same trusted instant,
+    // using the alternate timestamp form accepted by the B-T law.
+    let sig_ts = append_sig_revision(&base_input(), &signer, "r3-sig-ts", Some(&tsa), AT_UNIX);
+    let sig_report = engine.verify_sealed_pdf(&sig_ts).unwrap();
+    assert_eq!(sig_report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(
+        sig_report.signatures[0].profile,
+        Some(PadesProfile::BaselineT)
+    );
+    let signed = append_sig_revision(&base_input(), &signer, "r3-doc-ts", None, AT_UNIX);
+    let stamped = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
+    let at_signing = verify_engine(vec![root.cert_der, tsa.cert_der], AT_UNIX);
+    assert_eq!(
+        at_signing.verify_sealed_pdf(&stamped).unwrap().verdict(),
+        VerifyVerdict::Passed
+    );
+    let report = engine.verify_sealed_pdf(&stamped).unwrap();
+    assert_eq!(report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+}

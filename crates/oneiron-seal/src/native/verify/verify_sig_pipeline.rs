@@ -400,7 +400,7 @@ pub(super) fn verify_cades_sig(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) {
+) -> Option<Vec<Vec<u8>>> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -459,7 +459,7 @@ pub(super) fn verify_cades_sig(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
-        return;
+        return None;
     };
     covered.extend(
         parsed
@@ -467,7 +467,7 @@ pub(super) fn verify_cades_sig(
             .iter()
             .filter_map(|d| EmbeddedCert::from_der(d)),
     );
-    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered);
+    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered)
 }
 
 /// Signer-level checks after the envelope parses: baseline attributes,
@@ -481,7 +481,7 @@ fn verify_signer(
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) {
+) -> Option<Vec<Vec<u8>>> {
     let signer = &parsed.signer;
     let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
@@ -522,7 +522,7 @@ fn verify_signer(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
-        return;
+        return None;
     };
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der);
@@ -563,6 +563,7 @@ fn verify_signer(
         signer_path_status(&chain_ders, anchors, at_unix),
         VerifyFindingCode::CertificatePathInvalid,
     );
+    Some(chain_ders)
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.

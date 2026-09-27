@@ -247,11 +247,12 @@ pub(crate) fn verify_document(
     // /DSS keeps its DocumentTimestamp check for the report but confers no
     // archival profile.
     let mut covered_ranges = Vec::with_capacity(sigs.len());
+    let mut signer_chains = Vec::with_capacity(sigs.len());
     let mut doc_ts_times = vec![None; sigs.len()];
     for (i, e) in sigs.iter().enumerate() {
         let mut sig_checks = Checks::new();
         let covered_start = covered.len();
-        if e.is_doc_ts {
+        let signer_chain = if e.is_doc_ts {
             if let Some(gen_time) = verify_doc_ts(
                 bytes,
                 e,
@@ -275,9 +276,11 @@ pub(crate) fn verify_document(
                     }
                 }
             }
+            None
         } else {
-            verify_cades_sig(bytes, e, ctx, &anchors, &mut sig_checks, &mut covered);
-        }
+            verify_cades_sig(bytes, e, ctx, &anchors, &mut sig_checks, &mut covered)
+        };
+        signer_chains.push(signer_chain);
         covered_ranges.push(covered_start..covered.len());
         signatures.push(signature_report(bytes, e, i, sig_checks.list));
     }
@@ -316,6 +319,33 @@ pub(crate) fn verify_document(
                 })
             })
             .flatten();
+        // The signer path was initially checked at its CMS timestamp (if
+        // trusted) or at the verify clock. A full trusted DocTimeStamp can
+        // instead establish the historical applicable time. Revalidate that
+        // same certificate path before deriving trust and profile.
+        let has_signature_timestamp = signatures[i].checks.iter().any(|check| {
+            check.kind == VerifyCheckKind::SignatureTimestamp
+                && check.status == VerifyCheckStatus::Pass
+        }) && signatures[i].checks.iter().any(|check| {
+            check.kind == VerifyCheckKind::TimestampCertificatePath
+                && check.status == VerifyCheckStatus::Pass
+        });
+        if !has_signature_timestamp
+            && let Some((_, time)) = covering_time
+            && let Some(chain) = &signer_chains[i]
+        {
+            let status = signer_path_status(chain, &anchors, time);
+            if let Some(check) = signatures[i]
+                .checks
+                .iter_mut()
+                .find(|check| check.kind == VerifyCheckKind::CertificatePath)
+            {
+                check.status = status;
+                check.finding = (status == VerifyCheckStatus::Fail)
+                    .then_some(VerifyFindingCode::CertificatePathInvalid);
+            }
+            signatures[i].trust = status;
+        }
         let archival_time_for_sig = covering_time.filter(|(j, _)| {
             dss_end.is_some_and(|dss_end| {
                 signatures[*j]
