@@ -628,7 +628,7 @@ fn policy_reason_budget_preserves_utf8_boundary_and_old_evidence() -> Result<()>
     let row = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
         .with_skill(skill)
         .with_followed_state(FollowedState::DeviatedWithReason {
-            reason: reason.clone(),
+            reason,
             cause: Some(DeviationCause::IncorrectInstruction),
         });
     record_attribution_evidence(&vault, &row)?;
@@ -716,7 +716,7 @@ fn vault_policy_can_raise_the_shipped_default_before_other_packs_narrow_it() -> 
     let row = OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 13)
         .with_skill(skill)
         .with_followed_state(FollowedState::DeviatedWithReason {
-            reason: reason.clone(),
+            reason,
             cause: Some(DeviationCause::IncorrectInstruction),
         });
     record_attribution_evidence(&vault, &row)?;
