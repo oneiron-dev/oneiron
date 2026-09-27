@@ -157,6 +157,20 @@ impl Vault {
                 redacted_at: None,
             };
             self.store.append_gate_decision_in_txn(txn, &decision)?;
+            // The queue's run-id ceiling is 124 bytes. Hash the full scoped
+            // binding so a second evidence slice cannot collide or silently
+            // reuse another attempt, without truncating any ref.
+            let run_key = format!(
+                "weave:{}",
+                blake3::Hasher::new()
+                    .update(b"oneiron:dreamer:weave-run:v1")
+                    .update(skill.as_bytes())
+                    .update(hash.as_bytes())
+                    .update(subject.as_bytes())
+                    .update(evidence.as_bytes())
+                    .finalize()
+                    .to_hex()
+            );
             let store = DreamerRunnerStore::new(self);
             store.enqueue_kind_in_txn(
                 txn,
@@ -166,20 +180,8 @@ impl Vault {
                     input: pin.encode(),
                     parent_attempt: None,
                 },
-                Some(format!(
-                    "weave:{}:{}:{}:{}",
-                    skill.to_hex(),
-                    hash.to_hex(),
-                    subject.to_hex(),
-                    evidence.to_hex()
-                )),
-                Some(format!(
-                    "weave:{}:{}:{}:{}",
-                    skill.to_hex(),
-                    hash.to_hex(),
-                    subject.to_hex(),
-                    evidence.to_hex()
-                )),
+                Some(run_key.clone()),
+                Some(run_key),
                 now,
             )
         })
