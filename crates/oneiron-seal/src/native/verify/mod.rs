@@ -6,8 +6,10 @@
 //! optional timestamp or DSS object is a failed verification, never an
 //! absent optional profile.
 
+mod evidence_time;
 mod verify_chain_gates;
 mod verify_dss_core;
+mod verify_evidence;
 mod verify_report_build;
 mod verify_revisions;
 mod verify_revocation;

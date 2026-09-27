@@ -8,8 +8,10 @@ use crate::api::{
 use crate::error::SealError;
 
 use super::super::{cms, pdf, tsp};
-use super::verify_chain_gates::{VerifyCtx, malformed_input, signer_path_status};
+use super::verify_chain_gates::{VerifyCtx, malformed_input};
 use super::verify_dss_core::EmbeddedCert;
+pub(super) use super::verify_evidence::evaluate_envelope;
+use super::verify_evidence::{CadesEvidence, ValidatedTimeToken};
 use super::verify_revocation::gen_time_beyond_skew;
 
 #[derive(Debug)]
@@ -400,7 +402,7 @@ pub(super) fn verify_cades_sig(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> Option<Vec<Vec<u8>>> {
+) -> CadesEvidence {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -459,7 +461,10 @@ pub(super) fn verify_cades_sig(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
-        return None;
+        return CadesEvidence {
+            signer_chain: None,
+            timestamp: None,
+        };
     };
     covered.extend(
         parsed
@@ -481,7 +486,7 @@ fn verify_signer(
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) -> Option<Vec<Vec<u8>>> {
+) -> CadesEvidence {
     let signer = &parsed.signer;
     let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
@@ -522,7 +527,10 @@ fn verify_signer(
             VerifyFindingCode::CertificatePathInvalid,
         );
         checks.absent(VerifyCheckKind::SignatureTimestamp);
-        return None;
+        return CadesEvidence {
+            signer_chain: None,
+            timestamp: None,
+        };
     };
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der);
@@ -544,8 +552,7 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let ts_gen_time = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
-    let at_unix = ts_gen_time.unwrap_or(ctx.clock_ms / 1000);
+    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
             parsed
@@ -556,14 +563,10 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    // An absent root cannot prove a broken signature. Keep trust unresolved
-    // instead of laundering it into an integrity failure.
-    checks.record_status(
-        VerifyCheckKind::CertificatePath,
-        signer_path_status(&chain_ders, anchors, at_unix),
-        VerifyFindingCode::CertificatePathInvalid,
-    );
-    Some(chain_ders)
+    CadesEvidence {
+        signer_chain: Some(chain_ders),
+        timestamp,
+    }
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -578,7 +581,7 @@ fn verify_ts_token(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) -> Option<u64> {
+) -> Option<ValidatedTimeToken> {
     let mut token_der = None;
     for attr in &signer.unsigned_attrs {
         let Ok((oid, value)) = cms::parse_attribute(attr) else {
@@ -635,7 +638,10 @@ fn verify_ts_token(
                     .iter()
                     .filter_map(|d| EmbeddedCert::from_der(d)),
             );
-            Some(token.gen_time_unix)
+            Some(ValidatedTimeToken {
+                gen_time: token.gen_time_unix,
+                tsa_chain_ders: token.tsa_chain_ders,
+            })
         }
         Err(_) => {
             checks.record(
@@ -665,7 +671,7 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-) -> Option<u64> {
+) -> Option<ValidatedTimeToken> {
     let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
@@ -720,5 +726,8 @@ pub(super) fn verify_doc_ts(
             .iter()
             .filter_map(|d| EmbeddedCert::from_der(d)),
     );
-    Some(token.gen_time_unix)
+    Some(ValidatedTimeToken {
+        gen_time: token.gen_time_unix,
+        tsa_chain_ders: token.tsa_chain_ders,
+    })
 }

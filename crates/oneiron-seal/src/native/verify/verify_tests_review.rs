@@ -484,3 +484,109 @@ fn review_r3_document_timestamp_supplies_applicable_time() {
     assert_eq!(report.verdict(), VerifyVerdict::Passed);
     assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
 }
+
+#[test]
+fn review_r4_later_timestamp_preserves_earlier_signer_validation_time() {
+    let root = test_ca("r4-renew-root");
+    let signer = ocsp_delegate_with_kus(
+        &root,
+        "r4-renew-leaf",
+        (2020, 1, 1),
+        (2027, 1, 1),
+        vec![rcgen::KeyUsagePurpose::DigitalSignature],
+    );
+    let tsa = tsa_ca();
+    let later = 1_830_297_600; // 2028-01-01
+    let engine = verify_engine(vec![root.cert_der, tsa.cert_der.clone()], later);
+    let signed = append_sig_revision(&base_input(), &signer, "r4-renew", None, AT_UNIX);
+    let first = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
+    let first_report = engine.verify_sealed_pdf(&first).unwrap();
+    assert_eq!(first_report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(
+        first_report.signatures[0].profile,
+        Some(PadesProfile::BaselineT)
+    );
+    let renewed = append_doc_ts_revision(&first, &tsa, later);
+    let report = engine.verify_sealed_pdf(&renewed).unwrap();
+    assert_eq!(report.signatures.len(), 3);
+    assert_eq!(
+        report.modifications,
+        Modifications::Clean(ModificationLevel::LtaUpdates)
+    );
+    for ts in &report.signatures[1..] {
+        assert_eq!(ts.integrity, VerifyVerdict::Passed);
+        assert_eq!(ts.trust, VerifyCheckStatus::Pass);
+    }
+    assert_eq!(report.verdict(), VerifyVerdict::Passed);
+    assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
+}
+
+#[test]
+fn renewal_uses_early_signer_time_and_later_material_time_independently() {
+    let root = test_ca("dual-time-root");
+    let signer = ocsp_delegate_with_kus(
+        &root,
+        "dual-time-leaf",
+        (2020, 1, 1),
+        (2027, 1, 1),
+        vec![rcgen::KeyUsagePurpose::DigitalSignature],
+    );
+    let tsa = tsa_ca();
+    let archival = 1_814_443_200; // 2027-07-01, after the signer expired.
+    let clock = 1_830_297_600; // 2028-01-01.
+    let signed = append_sig_revision(&base_input(), &signer, "dual-time", None, AT_UNIX);
+    let early = append_doc_ts_revision(&signed, &tsa, AT_UNIX);
+    let crl = build_crl(&root, archival - 3600, Some(archival + 3600), None, vec![]);
+    let dss = append_dss_revision(
+        &early,
+        vec![
+            signer.cert_der.clone(),
+            root.cert_der.clone(),
+            tsa.cert_der.clone(),
+        ],
+        vec![crl],
+    );
+    let renewed = append_doc_ts_revision(&dss, &tsa, archival);
+    let engine = verify_engine(vec![root.cert_der.clone(), tsa.cert_der.clone()], clock);
+    let report = engine.verify_sealed_pdf(&renewed).unwrap();
+    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::Pass);
+    assert_eq!(
+        report.signatures[0].profile,
+        Some(PadesProfile::BaselineLta)
+    );
+    for kind in [
+        VerifyCheckKind::CertificatePath,
+        VerifyCheckKind::ValidationMaterial,
+    ] {
+        assert!(
+            report.signatures[0]
+                .checks
+                .iter()
+                .any(|check| check.kind == kind && check.status == VerifyCheckStatus::Pass)
+        );
+    }
+    assert_eq!(report.signatures[1].trust, VerifyCheckStatus::Pass);
+    assert_eq!(report.signatures[2].trust, VerifyCheckStatus::Pass);
+    assert_eq!(
+        report.modifications,
+        Modifications::Clean(ModificationLevel::LtaUpdates)
+    );
+    assert_eq!(report.verdict(), VerifyVerdict::Passed);
+
+    // The later archival timestamp cannot make an expired signer valid when
+    // no earlier trusted proof exists, even though the material is fresh.
+    let crl = build_crl(&root, archival - 3600, Some(archival + 3600), None, vec![]);
+    let dss_without_early = append_dss_revision(
+        &signed,
+        vec![signer.cert_der, root.cert_der, tsa.cert_der.clone()],
+        vec![crl],
+    );
+    let late_only = append_doc_ts_revision(&dss_without_early, &tsa, archival);
+    let report = engine.verify_sealed_pdf(&late_only).unwrap();
+    assert_eq!(report.signatures[0].trust, VerifyCheckStatus::Fail);
+    assert_ne!(
+        report.signatures[0].profile,
+        Some(PadesProfile::BaselineLta)
+    );
+    assert_eq!(report.verdict(), VerifyVerdict::Failed);
+}

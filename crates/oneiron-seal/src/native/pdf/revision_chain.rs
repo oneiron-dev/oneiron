@@ -12,6 +12,28 @@ fn ws(b: u8) -> bool {
     matches!(b, 0 | 9 | 10 | 12 | 13 | 32)
 }
 
+/// Proven revision identity within one validated xref/`/Prev` chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RevisionBoundary {
+    pub index: usize,
+    pub eof_end: usize,
+}
+
+/// Bind a signed range once to a structural revision, never to raw marker
+/// text that merely resembles an EOF inside a stream or string.
+pub(crate) fn bind_range(
+    bytes: &[u8],
+    ends: Option<&[usize]>,
+    covers_to: u64,
+) -> Option<RevisionBoundary> {
+    ends?.iter().enumerate().find_map(|(index, eof_end)| {
+        owns_eof(bytes, *eof_end, covers_to).then_some(RevisionBoundary {
+            index,
+            eof_end: *eof_end,
+        })
+    })
+}
+
 /// A signature may cover the EOF marker itself or as many as four EOL bytes
 /// immediately after it. This is the same boundary law used by classification
 /// and the coverage ladder. The following revision's glue is not signed.

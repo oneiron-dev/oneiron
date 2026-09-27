@@ -4,10 +4,11 @@
 use std::collections::BTreeSet;
 
 use super::super::pdf;
+use super::verify_evidence::EnvelopeEvidence;
 use crate::api::SealResourceLimits;
 use crate::api::{
     Anomaly, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind,
-    SignatureReport, VerifyCheckKind, VerifyCheckStatus,
+    VerifyCheck, VerifyCheckKind, VerifyCheckStatus,
 };
 use lopdf::{Document, Object, ObjectId};
 
@@ -193,10 +194,11 @@ fn doc_timestamp_allowed(
     before: &Document,
     after: &Document,
     ids: &BTreeSet<ObjectId>,
-    sig: &SignatureReport,
+    sig_kind: SignatureKind,
+    sig_checks: &[VerifyCheck],
 ) -> bool {
-    if sig.kind != SignatureKind::DocumentTimestamp
-        || sig.checks.iter().all(|c| {
+    if sig_kind != SignatureKind::DocumentTimestamp
+        || sig_checks.iter().all(|c| {
             c.kind != VerifyCheckKind::DocumentTimestamp || c.status != VerifyCheckStatus::Pass
         })
     {
@@ -306,7 +308,7 @@ fn doc_timestamp_allowed(
 /// are Suspicious even when their signature bytes still verify.
 pub(super) fn classify(
     bytes: &[u8],
-    signatures: &[SignatureReport],
+    signatures: &[EnvelopeEvidence],
     ends: Option<&[usize]>,
     limits: &SealResourceLimits,
 ) -> (Vec<RevisionReport>, Modifications, Vec<Anomaly>) {
@@ -328,11 +330,9 @@ pub(super) fn classify(
         let Some(doc) = pdf::load_snapshot(&bytes[..end], limits) else {
             return (revisions, Modifications::NotRun, anomalies);
         };
-        let signed = signatures.iter().find(|s| {
-            s.byte_range
-                .covers_to
-                .is_some_and(|n| pdf::owns_eof(bytes, end, n))
-        });
+        let signed = signatures
+            .iter()
+            .find(|s| s.revision.is_some_and(|r| r.index == index));
         let mut kind = if index == 0 {
             RevisionKind::Original
         } else if let Some(sig) = signed {
@@ -371,9 +371,9 @@ pub(super) fn classify(
             if first_signer.is_some() {
                 let allowed = match kind {
                     RevisionKind::Dss => dss_allowed(before, &doc, &ids),
-                    RevisionKind::DocumentTimestamp => {
-                        signed.is_some_and(|s| doc_timestamp_allowed(before, &doc, &ids, s))
-                    }
+                    RevisionKind::DocumentTimestamp => signed.is_some_and(|s| {
+                        doc_timestamp_allowed(before, &doc, &ids, s.kind, &s.checks)
+                    }),
                     _ => false,
                 };
                 if allowed {
@@ -451,7 +451,8 @@ mod tests {
             &before,
             &after,
             &ids,
-            &report.signatures[1]
+            report.signatures[1].kind,
+            &report.signatures[1].checks
         ));
         let fake_id = (
             after.trailer.get(b"Size").unwrap().as_i64().unwrap() as u32,
@@ -466,7 +467,8 @@ mod tests {
             &before,
             &after,
             &ids,
-            &report.signatures[1]
+            report.signatures[1].kind,
+            &report.signatures[1].checks
         ));
     }
 }

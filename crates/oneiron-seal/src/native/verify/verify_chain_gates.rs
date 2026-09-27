@@ -8,10 +8,11 @@ use crate::api::{
 use crate::error::{InputInvalidCode, SealError};
 
 use super::super::{cms, pdf};
+use super::evidence_time::{archival_coverage, material_validation_time, signer_validation_time};
 use super::verify_dss_core::{EmbeddedCert, dss_revision_end, verify_dss};
 use super::verify_report_build::{classify_signature, signature_report};
 use super::verify_revisions;
-use super::verify_sig_pipeline::{Checks, collect_signatures, verify_cades_sig, verify_doc_ts};
+use super::verify_sig_pipeline::{Checks, collect_signatures, evaluate_envelope};
 
 pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
@@ -226,176 +227,109 @@ pub(crate) fn verify_document(
         .iter()
         .filter_map(|d| EmbeddedCert::from_der(d))
         .collect();
+    // Stage 1: bind every envelope to the already-proven xref chain and
+    // validate its CMS/TSP integrity. No signer path or profile is decided
+    // until all trusted time proofs are available.
     let sigs = collect_signatures(&doc)?;
-    let last_idx = sigs.len().saturating_sub(1);
-    let mut signatures = Vec::new();
-    // Certificates of the CMS signer/TSA chains this report covers; the DSS
-    // binding requires the validation material to speak about them.
-    let mut covered: Vec<EmbeddedCert> = Vec::new();
-    // genTime of the most recent VALIDATED DocTimeStamp whose ByteRange
-    // provably covers the final /DSS revision: the archival applicable time
-    // for DSS evidence freshness (§7.6 step 3 — the DocTimeStamp covers the
-    // DSS revision and attests the material as of that moment). A validated
-    // DocTimeStamp that does NOT cover the /DSS attests nothing about the
-    // evidence, so its genTime must not feed freshness; with no covering
-    // DocTimeStamp the verify clock applies and stale evidence fails.
-    let dss_end = dss_revision_end(&doc, bytes);
-    let mut archival_time: Option<u64> = None;
-    // Set when a VALIDATED DocTimeStamp provably covers the final /DSS
-    // revision (br_end >= dss_end — the archival_time condition). The LTA
-    // rung requires it: a validated DocTimeStamp that does NOT cover the
-    // /DSS keeps its DocumentTimestamp check for the report but confers no
-    // archival profile.
-    let mut covered_ranges = Vec::with_capacity(sigs.len());
-    let mut signer_chains = Vec::with_capacity(sigs.len());
-    let mut doc_ts_times = vec![None; sigs.len()];
-    for (i, e) in sigs.iter().enumerate() {
-        let mut sig_checks = Checks::new();
-        let covered_start = covered.len();
-        let signer_chain = if e.is_doc_ts {
-            if let Some(gen_time) = verify_doc_ts(
+    let envelopes: Vec<_> = sigs
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            evaluate_envelope(
                 bytes,
-                e,
+                entry,
+                index,
+                revision_ends.as_deref(),
+                ctx,
                 &anchors,
-                &mut sig_checks,
-                i == last_idx,
-                &mut covered,
-                ctx.clock_ms,
-            ) {
-                let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
-                // Cryptographic token validity alone does not confer archival
-                // time. The timestamp must reach its own structural revision
-                // EOF (including at most four signed EOL bytes).
-                let complete = revision_ends
-                    .as_deref()
-                    .is_some_and(|ends| ends.iter().any(|end| pdf::owns_eof(bytes, *end, br_end)));
-                if complete {
-                    doc_ts_times[i] = Some(gen_time);
-                    if dss_end.is_some_and(|end| br_end >= end) {
-                        archival_time = Some(gen_time);
-                    }
-                }
-            }
-            None
-        } else {
-            verify_cades_sig(bytes, e, ctx, &anchors, &mut sig_checks, &mut covered)
-        };
-        signer_chains.push(signer_chain);
-        covered_ranges.push(covered_start..covered.len());
-        signatures.push(signature_report(bytes, e, i, sig_checks.list));
+                index + 1 == sigs.len(),
+            )
+        })
+        .collect();
+    let dss_end = dss_revision_end(&doc, bytes);
+    let mut covered = Vec::new();
+    for envelope in &envelopes {
+        covered.extend(
+            envelope
+                .covered
+                .iter()
+                .filter_map(|cert| EmbeddedCert::from_der(&cert.der)),
+        );
     }
     verify_dss(
         &doc,
         &anchor_certs,
         &covered,
-        archival_time.unwrap_or(ctx.clock_ms / 1000),
+        material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
         limits.max_input_bytes,
         &mut checks,
     );
-    // An archival timestamp must attest THIS signer and the effective DSS.
-    // Evidence freshness and completeness are evaluated at that signer's
-    // applicable time, not the document-wide most recent timestamp time.
-    for i in 0..signatures.len() {
-        if signatures[i].kind != crate::api::SignatureKind::Signature {
+
+    // Stage 2: resolve TWO independent obligations for each signer. The
+    // earliest eligible proof fixes signer validation time; a possibly newer
+    // document timestamp can separately attest the effective DSS.
+    let mut envelopes = envelopes;
+    let mut profiles = Vec::with_capacity(envelopes.len());
+    for index in 0..envelopes.len() {
+        if envelopes[index].kind != crate::api::SignatureKind::Signature {
+            profiles.push(None);
             continue;
         }
-        let signer_end = signatures[i].byte_range.covers_to;
-        let signer_owns_revision = signer_end.is_some_and(|signed_end| {
-            revision_ends.as_deref().is_some_and(|ends| {
-                ends.iter()
-                    .any(|end| pdf::owns_eof(bytes, *end, signed_end))
-            })
-        });
-        // A full, trusted document timestamp supplies B-T even when no DSS
-        // exists. DSS coverage is an additional requirement for B-LTA only.
-        let covering_time = signer_owns_revision
-            .then(|| {
-                doc_ts_times.iter().enumerate().rev().find_map(|(j, time)| {
-                    let ts_end = signatures[j].byte_range.covers_to?;
-                    let time = (*time)?;
-                    signer_end
-                        .is_some_and(|end| ts_end >= end)
-                        .then_some((j, time))
-                })
-            })
-            .flatten();
-        // The signer path was initially checked at its CMS timestamp (if
-        // trusted) or at the verify clock. A full trusted DocTimeStamp can
-        // instead establish the historical applicable time. Revalidate that
-        // same certificate path before deriving trust and profile.
-        let has_signature_timestamp = signatures[i].checks.iter().any(|check| {
-            check.kind == VerifyCheckKind::SignatureTimestamp
-                && check.status == VerifyCheckStatus::Pass
-        }) && signatures[i].checks.iter().any(|check| {
-            check.kind == VerifyCheckKind::TimestampCertificatePath
-                && check.status == VerifyCheckStatus::Pass
-        });
-        if !has_signature_timestamp
-            && let Some((_, time)) = covering_time
-            && let Some(chain) = &signer_chains[i]
+        let validation_time =
+            signer_validation_time(&envelopes[index], &envelopes, ctx.clock_ms / 1000);
+        let archival = archival_coverage(&envelopes[index], &envelopes, dss_end);
+        if let Some(chain) = &envelopes[index].signer_chain {
+            let mut path = Checks::new();
+            path.record_status(
+                VerifyCheckKind::CertificatePath,
+                signer_path_status(chain, &anchors, validation_time.at),
+                VerifyFindingCode::CertificatePathInvalid,
+            );
+            envelopes[index].checks.extend(path.list);
+        }
+        let mut material = Vec::new();
+        material.extend(
+            envelopes[index]
+                .covered
+                .iter()
+                .filter_map(|cert| EmbeddedCert::from_der(&cert.der)),
+        );
+        if let Some(archive) = &archival
+            && let Some(proof) = envelopes[archive.timestamp].time_proof.as_ref()
         {
-            let status = signer_path_status(chain, &anchors, time);
-            if let Some(check) = signatures[i]
-                .checks
-                .iter_mut()
-                .find(|check| check.kind == VerifyCheckKind::CertificatePath)
-            {
-                check.status = status;
-                check.finding = (status == VerifyCheckStatus::Fail)
-                    .then_some(VerifyFindingCode::CertificatePathInvalid);
-            }
-            signatures[i].trust = status;
-        }
-        let archival_time_for_sig = covering_time.filter(|(j, _)| {
-            dss_end.is_some_and(|dss_end| {
-                signatures[*j]
-                    .byte_range
-                    .covers_to
-                    .is_some_and(|end| end >= dss_end)
-            })
-        });
-        let mut evidence = Vec::new();
-        for cert in &covered[covered_ranges[i].clone()] {
-            if let Some(cert) = EmbeddedCert::from_der(&cert.der) {
-                evidence.push(cert);
-            }
-        }
-        if let Some((j, _)) = archival_time_for_sig {
-            for cert in &covered[covered_ranges[j].clone()] {
-                if let Some(cert) = EmbeddedCert::from_der(&cert.der) {
-                    evidence.push(cert);
-                }
-            }
+            material.extend(
+                proof
+                    .tsa_chain_ders
+                    .iter()
+                    .filter_map(|der| EmbeddedCert::from_der(der)),
+            );
         }
         let mut material_checks = Checks::new();
         verify_dss(
             &doc,
             &anchor_certs,
-            &evidence,
-            archival_time_for_sig.map_or(ctx.clock_ms / 1000, |(_, time)| time),
+            &material,
+            archival
+                .as_ref()
+                .map_or(ctx.clock_ms / 1000, |proof| proof.at),
             limits.max_input_bytes,
             &mut material_checks,
         );
         let dss_ok = material_checks.passed(VerifyCheckKind::ValidationMaterial);
-        signatures[i].checks.extend(material_checks.list);
-        signatures[i].profile = classify_signature(
-            &signatures[i].checks,
+        envelopes[index].checks.extend(material_checks.list);
+        profiles.push(classify_signature(
+            &envelopes[index],
+            &validation_time,
             dss_ok,
-            covering_time.is_some(),
-            archival_time_for_sig.is_some(),
-        );
+            archival.as_ref(),
+            dss_end,
+        ));
     }
+
+    // Stage 3: classify raw revision changes against the private evidence,
+    // then project each final envelope into the public report exactly once.
     let (revisions, modifications, anomalies) =
-        verify_revisions::classify(bytes, &signatures, revision_ends.as_deref(), limits);
-    for signature in &mut signatures {
-        if signature.coverage == crate::api::Coverage::ContiguousFromStart
-            && revisions
-                .iter()
-                .any(|rev| rev.signed_by.as_deref() == Some(signature.id.as_str()))
-        {
-            signature.coverage = crate::api::Coverage::EntireRevision;
-        }
-    }
+        verify_revisions::classify(bytes, &envelopes, revision_ends.as_deref(), limits);
     match modifications {
         Modifications::Suspicious => checks.record(
             VerifyCheckKind::Modification,
@@ -409,6 +343,11 @@ pub(crate) fn verify_document(
             VerifyFindingCode::ModificationNotAllowed,
         ),
     }
+    let signatures = envelopes
+        .into_iter()
+        .zip(profiles)
+        .map(|(evidence, profile)| signature_report(evidence, profile))
+        .collect();
     Ok(VerifyReport {
         artifact_sha256,
         revisions,

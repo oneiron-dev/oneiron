@@ -39112,13 +39112,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/revision_chain.rs",
      "purpose": "Shared, bounded PDF revision discovery from the actual xref /Prev chain",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -39191,6 +39191,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/verify/evidence_time.rs",
+     "purpose": "Resolve signer history separately from archival material coverage",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/verify/mod.rs",
      "purpose": "Native verifier and profile classifier (§7.7)",
      "surface": {
@@ -39221,8 +39231,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/verify/verify_evidence.rs",
+     "purpose": "Private, bounded evidence collected before trust, time, and profile decisions",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/verify/verify_report_build.rs",
-     "purpose": "Convert envelope checks into separate evidence axes and derived profile rungs",
+     "purpose": "Project completed evidence into the public per-envelope report once",
      "surface": {
       "crate-vis": 2
      }
@@ -39254,7 +39274,7 @@
      "path": "src/native/verify/verify_sig_pipeline.rs",
      "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -39380,7 +39400,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 35,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -39389,7 +39409,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 36,
+   "source_files": 38,
    "test_files": 9
   },
   "oneiron-server": {
