@@ -9,6 +9,8 @@ pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
+    permit_record as permit_leader_chat_record, permitted_record as leader_chat_record_permitted,
+    settle_record as settle_leader_chat_record,
 };
 pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]

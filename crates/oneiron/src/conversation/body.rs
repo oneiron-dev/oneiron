@@ -114,7 +114,10 @@ pub(crate) fn validate_put_in_txn(
         let chat: crate::workspace_roster::LeaderChat =
             rmp_serde::from_slice(&encoded).map_err(|_| invalid("leader chat binding"))?;
         if body.kind != ConversationKind::Direct
-            || body.member_ids != chat.persons
+            || body
+                .member_ids
+                .iter()
+                .any(|person| !chat.persons.contains(person))
             || chat.projects[0] == chat.projects[1]
             || chat.actors[0] == chat.actors[1]
             || chat.persons[0] == chat.persons[1]

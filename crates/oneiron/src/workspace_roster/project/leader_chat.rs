@@ -8,6 +8,18 @@ use crate::write_envelope::WriteActor;
 
 const CHAT: &[u8] = b"project.leader_chat.v1/";
 pub(crate) const CHAT_FIELD: &str = "project_leader_chat_v1";
+const PERMIT: &[u8] = b"project.leader_chat.permit.v1/";
+const PROOF: &[u8] = b"project.leader_chat.proof.v1/";
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeakerProof {
+    room: EntityId,
+    actor: EntityId,
+    project: EntityId,
+    body_hash: [u8; 32],
+}
+
 /// A rule row about a PROJECT. `false` narrows leader chat; `true` cannot widen it.
 pub const LEADER_CHAT_RULE_PREDICATE: &str = "project.leader_chat";
 
@@ -21,6 +33,66 @@ pub struct LeaderChat {
 
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
+}
+/// A local typed writer alone can grant a one-transaction ChildOf permit.
+pub(crate) fn permit_record(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    room: EntityId,
+) -> Result<()> {
+    store
+        .vault_meta
+        .put(txn, &key(PERMIT, id), room.as_bytes())?;
+    Ok(())
+}
+pub(crate) fn permitted_record(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    room: EntityId,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .get(txn, &key(PERMIT, id))?
+        .is_some_and(|v| v.as_ref() == room.as_bytes()))
+}
+/// Commit the authenticated speaker proof and ordinary six-axis Scope after
+/// the body and witness edges have been applied in the same transaction.
+pub(crate) fn settle_record(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    room: EntityId,
+    actor: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, id.as_bytes())?
+        .ok_or_else(denied)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+    if !matches!(
+        header.entity_type,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) {
+        return Err(denied());
+    }
+    let body_hash = *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
+    let proof = SpeakerProof {
+        room,
+        actor,
+        project,
+        body_hash,
+    };
+    vault
+        .store
+        .vault_meta
+        .put(txn, &key(PROOF, id), &encode(&proof)?)?;
+    crate::federation::record_scope::stamp_leader_project(&vault.store, txn, id, project)?;
+    vault.store.vault_meta.delete(txn, &key(PERMIT, id))?;
+    Ok(())
 }
 pub(super) fn denied() -> Error {
     RecordError::ConversationDenied.into()
@@ -166,8 +238,9 @@ impl Vault {
         })
     }
 
-    /// Project audience of one attributed MESSAGE, derived from durable room
-    /// binding and AuthoredBy edge. The same answer survives sync and reopen.
+    /// Project audience of a locally authenticated TURN or MESSAGE. Its
+    /// digest-bound scope and speaker proof survive reopen; opaque peer rows
+    /// stay untrusted until admitted through an authenticated local door.
     pub fn leader_chat_message_scope(&self, message: EntityId) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let room = match crate::conversation::room_for_record_in(self, &txn, message) {
@@ -190,6 +263,32 @@ impl Vault {
             .get(&txn, message.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+        // Opaque replicated bodies, even ones that name real leaders, cannot
+        // manufacture an authenticated speaker proof or a positive scope stamp.
+        let Some(proof_bytes) = self.store.vault_meta.get(&txn, &key(PROOF, message))? else {
+            return Ok(None);
+        };
+        let proof: SpeakerProof = decode(&proof_bytes).map_err(|_| denied())?;
+        if proof.room != room
+            || proof.body_hash != *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes()
+            || !chat
+                .actors
+                .iter()
+                .zip(chat.projects)
+                .any(|(a, p)| *a == proof.actor && p == proof.project)
+        {
+            return Err(denied());
+        }
+        let scope =
+            crate::federation::record_scope::scope_for_blob(&self.store, &txn, message, &raw)?
+                .ok_or_else(denied)?;
+        if scope.audience
+            != crate::federation::ScopeAxis::Some(BTreeSet::from([crate::federation::ScopeId(
+                proof.project,
+            )]))
+        {
+            return Err(denied());
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
             let value: rmpv::Value =
                 rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| denied())?;
@@ -207,17 +306,32 @@ impl Vault {
                 }
                 EntityId::from_hex(value).map_err(|_| denied())
             };
-            let actor = field("actor")?;
-            let project = field("scope_project_id")?;
-            if !chat
-                .actors
+            if fields
                 .iter()
-                .zip(chat.projects)
-                .any(|(a, p)| *a == actor && p == project)
+                .any(|(key, _)| key.as_str() == Some("dag_kind"))
             {
-                return Err(denied());
+                let actor = field("actor")?;
+                let project = field("scope_project_id")?;
+                if actor != proof.actor || project != proof.project {
+                    return Err(denied());
+                }
+            } else {
+                // Witness TURNs carry only the speaker bucket. The private
+                // authenticated proof is their actor/project binding.
+                let mut speakers = fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("speaker"));
+                if speakers
+                    .next()
+                    .and_then(|(_, value)| value.as_str())
+                    .is_none()
+                    || speakers.next().is_some()
+                    || fields.len() != 1
+                {
+                    return Err(denied());
+                }
             }
-            return Ok(Some(project));
+            return Ok(Some(proof.project));
         }
         if header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE {
             return Ok(None);
@@ -230,7 +344,7 @@ impl Vault {
             false,
             crate::limits::MAX_ANCESTOR_DEPTH,
         )?;
-        if authors.len() != 1 {
+        if authors != [proof.actor] {
             return Err(denied());
         }
         let slot = chat
@@ -264,7 +378,10 @@ pub(crate) fn admit_turn(
     let now = vault.store.clock.now_recorded_at();
     ensure_leaders(vault, txn, &chat, now)?;
     if body.kind != ConversationKind::Direct
-        || body.member_ids != chat.persons
+        || body
+            .member_ids
+            .iter()
+            .any(|person| !chat.persons.contains(person))
         || has_unattributed_message
     {
         return Err(denied());
@@ -275,6 +392,9 @@ pub(crate) fn admit_turn(
         .iter()
         .position(|candidate| *candidate == actor)
         .ok_or_else(denied)?;
+    if !body.member_ids.contains(&chat.persons[slot]) {
+        return Err(denied());
+    }
     Ok(Some(chat.projects[slot]))
 }
 
@@ -284,6 +404,6 @@ pub(crate) fn admit_witness(
     room: EntityId,
     actor: EntityId,
     has_unattributed_message: bool,
-) -> Result<()> {
-    admit_turn(vault, txn, room, actor, has_unattributed_message).map(|_| ())
+) -> Result<Option<EntityId>> {
+    admit_turn(vault, txn, room, actor, has_unattributed_message)
 }

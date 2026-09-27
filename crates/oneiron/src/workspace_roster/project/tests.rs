@@ -244,6 +244,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::edge::EdgeActorClass;
     use crate::error::{ErrorKind, RecordError};
+    use crate::federation::{Scope, ScopeAxis, ScopeId};
     use crate::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
     let root = vault.root_project()?;
@@ -297,12 +298,16 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
                 order: 0,
             }],
         };
-        vault
+        let receipt = vault
             .memory(actor, EdgeActorClass::Human)
             .witness(&turn)
             .map_err(|e| Error::InvalidConfig(format!("witness: {e}")))?;
-        assert_eq!(vault.leader_chat_message_scope(message)?, Some(project));
-        scopes.push((message, project));
+        let turn_id = crate::memory::resolve_entity_ref(&vault, &receipt.turn_short_id)
+            .map_err(|e| Error::InvalidConfig(format!("turn ref: {e}")))?;
+        for id in [message, turn_id] {
+            assert_eq!(vault.leader_chat_message_scope(id)?, Some(project));
+            scopes.push((id, project));
+        }
     }
     // The other direct-chat turn door stamps the same speaker scope.
     let dag = vault.append_dag_record(&crate::conversation_dag::fixtures::input(
@@ -313,6 +318,29 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     ))?;
     assert_eq!(vault.leader_chat_message_scope(dag.id)?, Some(a));
     scopes.push((dag.id, a));
+    // The audience axis is authoritative; an accessor label alone is not.
+    for (record, project) in &scopes {
+        assert_eq!(
+            vault.record_scope(record)?.unwrap().audience,
+            ScopeAxis::Some(BTreeSet::from([ScopeId(*project)]))
+        );
+    }
+    for (project, own, foreign) in [(a, scopes[0].0, scopes[2].0), (b, scopes[2].0, scopes[0].0)] {
+        let mut selector = Scope::top();
+        selector.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(project)]));
+        for rows in [
+            vault.records_in_scope(
+                &selector,
+                &Scope::top(),
+                &Scope::top(),
+                crate::federation::record_scope::ScopeView::Normal,
+            )?,
+            vault.export_records_in_scope(&selector, &Scope::top(), &Scope::top())?,
+        ] {
+            assert!(rows.iter().any(|row| row.id == own));
+            assert!(!rows.iter().any(|row| row.id == foreign));
+        }
+    }
     // Raw body puts and ordinary creates cannot erase or forge this binding.
     let mut forged = vault.conversation_body(chat)?;
     forged.extra.remove(super::leader_chat::CHAT_FIELD);
@@ -520,5 +548,192 @@ fn cross_project_widen_asks_the_shared_ancestor_board_not_the_other_leader() -> 
             .idempotent_replay
     );
     assert_eq!(vault.project(root)?.unwrap().asks.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn leader_chat_membership_keeps_binding_but_allows_history_leave_and_rejoin() -> Result<()> {
+    use crate::conversation::HistoryChoice;
+    use crate::edge::EdgeActorClass;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let root = vault.root_project()?;
+    let alice = EntityId::from_bytes([0xD1; 16])?;
+    let bob = EntityId::from_bytes([0xB1; 16])?; // intentionally sorts ahead of alice
+    for person in [alice, bob] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+        crate::conversation_dag::fixtures::grant(
+            &vault,
+            crate::WriteActor::new(person, EdgeActorClass::Human),
+            true,
+        );
+    }
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    for (leaver, other) in [(alice, bob), (bob, alice)] {
+        let room = EntityId::now();
+        let writer = crate::WriteActor::new(alice, EdgeActorClass::Human);
+        vault.open_leader_chat(room, [a, b], writer, 3)?;
+        let binding = vault.conversation_body(room)?.extra[super::leader_chat::CHAT_FIELD].clone();
+        vault.set_history_visibility(room, other, writer, 4, 0)?;
+        assert_eq!(
+            vault.conversation_body(room)?.member_ids,
+            vec![bob, alice],
+            "history update may reorder the set"
+        );
+        vault.leave_member(room, leaver, writer, 5)?;
+        assert_eq!(vault.members(room)?, vec![other]);
+        assert_eq!(
+            vault.conversation_body(room)?.extra[super::leader_chat::CHAT_FIELD],
+            binding
+        );
+        let refused = vault
+            .append_dag_record(&crate::conversation_dag::fixtures::input(
+                room,
+                None,
+                true,
+                crate::WriteActor::new(leaver, EdgeActorClass::Human),
+            ))
+            .unwrap_err();
+        assert_eq!(refused.kind(), crate::ErrorKind::ConversationDenied);
+        vault.join_member(room, leaver, writer, 6, HistoryChoice::None)?;
+        assert_eq!(vault.members(room)?, vec![bob, alice]);
+        assert_eq!(vault.windows(room, leaver)?.len(), 2);
+    }
+    Ok(())
+}
+
+#[test]
+fn raw_turn_and_edge_cannot_attach_to_leader_chat_before_or_after_dag_adoption() -> Result<()> {
+    use crate::{EdgeActorClass, EdgeKind};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let root = vault.root_project()?;
+    let alice = EntityId::now();
+    let bob = EntityId::now();
+    for person in [alice, bob] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )?;
+    }
+    let a = EntityId::now();
+    let b = EntityId::now();
+    vault.put_project(a, &ProjectRecord::new(a, Some(root), a, alice), 2)?;
+    vault.put_project(b, &ProjectRecord::new(b, Some(root), b, bob), 2)?;
+    let chat = EntityId::now();
+    vault.open_leader_chat(
+        chat,
+        [a, b],
+        crate::WriteActor::new(alice, EdgeActorClass::Human),
+        3,
+    )?;
+    for adopted in [false, true] {
+        if adopted {
+            vault.head(&chat)?;
+        }
+        let raw = EntityId::now();
+        let body = rmp_serde::to_vec_named(&serde_json::json!({
+            "dag_kind":"record", "actor":alice.to_hex(), "scope_project_id":a.to_hex()
+        }))
+        .expect("turn body");
+        let err = vault
+            .batch()
+            .put(
+                &raw,
+                crate::registry::ENTITY_TYPE_TURN,
+                TimeRange { start: 4, end: 4 },
+                4,
+                &body,
+            )
+            .edge(&raw, EdgeKind::ChildOf, &chat, 1.0)
+            .commit()
+            .unwrap_err();
+        assert_eq!(err.kind(), crate::ErrorKind::ConversationDenied);
+        assert!(
+            vault.get(&raw)?.is_none(),
+            "failed batch must roll back TURN"
+        );
+        vault.put_entity(
+            &raw,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 4, end: 4 },
+            4,
+            &body,
+        )?;
+        assert!(vault.put_edge(&raw, EdgeKind::ChildOf, &chat, 1.0).is_err());
+        assert_eq!(vault.leader_chat_message_scope(raw)?, None);
+    }
+    Ok(())
+}
+
+#[test]
+fn replicated_chat_and_turn_cannot_self_attest_a_project_scope() -> Result<()> {
+    use crate::{
+        EdgeKind,
+        registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN},
+    };
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let person_a = EntityId::now();
+    let person_b = EntityId::now();
+    let false_leader_a = EntityId::now();
+    let false_leader_b = EntityId::now();
+    let project_a = EntityId::now();
+    let project_b = EntityId::now();
+    let room = EntityId::now();
+    let turn = EntityId::now();
+    let binding = super::leader_chat::LeaderChat {
+        projects: [project_a, project_b],
+        actors: [false_leader_a, false_leader_b],
+        persons: [person_a, person_b],
+    };
+    let mut body = crate::conversation::ConversationBody {
+        kind: crate::conversation::ConversationKind::Direct,
+        member_ids: vec![person_a, person_b],
+        ..Default::default()
+    };
+    body.extra.insert(
+        super::leader_chat::CHAT_FIELD.into(),
+        rmp_serde::from_slice(&super::encode(&binding)?).expect("binding"),
+    );
+    let forged_turn = rmp_serde::to_vec_named(&serde_json::json!({
+        "dag_kind":"record", "actor":false_leader_a.to_hex(),
+        "scope_project_id":project_a.to_hex()
+    }))
+    .expect("turn");
+    let at = TimeRange { start: 1, end: 1 };
+    vault
+        .batch()
+        .put_replicated(&room, ENTITY_TYPE_CONVERSATION, at, 1, &body.to_bytes()?)
+        .put_replicated(&turn, ENTITY_TYPE_TURN, at, 1, &forged_turn)
+        .edge_with_value_fields(
+            &turn,
+            EdgeKind::ChildOf,
+            &room,
+            crate::batch::EdgeValueFields {
+                weight: 1.0,
+                created_at: 1,
+                vad: crate::affect::Vad::NEUTRAL,
+                provenance: None,
+            },
+        )
+        .commit()?;
+    assert!(
+        vault
+            .conversation_body(room)?
+            .extra
+            .contains_key(super::leader_chat::CHAT_FIELD)
+    );
+    assert_eq!(vault.leader_chat_message_scope(turn)?, None);
+    assert!(vault.record_scope(&turn)?.is_none());
     Ok(())
 }

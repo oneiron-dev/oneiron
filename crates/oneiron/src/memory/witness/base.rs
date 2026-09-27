@@ -213,7 +213,7 @@ impl Memory<'_> {
                 turn,
                 &message_ids,
             )?;
-            crate::workspace_roster::admit_leader_chat_witness(
+            let leader_project = crate::workspace_roster::admit_leader_chat_witness(
                 self.vault,
                 wtxn,
                 conversation_id,
@@ -222,6 +222,14 @@ impl Memory<'_> {
                     .iter()
                     .any(|m| m.author == super::WitnessAuthor::System),
             )?;
+            if leader_project.is_some() {
+                crate::workspace_roster::permit_leader_chat_record(
+                    &self.vault.store,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                )?;
+            }
             let mut batch = self.vault.batch_in();
             if conversation_is_new {
                 batch = batch.put(
@@ -396,6 +404,26 @@ impl Memory<'_> {
                 }
             }
             batch.apply(wtxn)?;
+            if let Some(project) = leader_project {
+                crate::workspace_roster::settle_leader_chat_record(
+                    self.vault,
+                    wtxn,
+                    turn_id,
+                    conversation_id,
+                    self.actor,
+                    project,
+                )?;
+                for id in &message_ids {
+                    crate::workspace_roster::settle_leader_chat_record(
+                        self.vault,
+                        wtxn,
+                        *id,
+                        conversation_id,
+                        self.actor,
+                        project,
+                    )?;
+                }
+            }
             let text_ops: Vec<BatchOp> = turn
                 .messages
                 .iter()

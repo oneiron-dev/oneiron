@@ -251,7 +251,25 @@ pub(crate) fn append_in_txn(
         );
     }
     super::admission::permit(&vault.store, txn, &id, &input.conversation)?;
+    if project_scope.is_some() {
+        crate::workspace_roster::permit_leader_chat_record(
+            &vault.store,
+            txn,
+            id,
+            input.conversation,
+        )?;
+    }
     batch.apply(txn)?;
+    if let Some(project) = project_scope {
+        crate::workspace_roster::settle_leader_chat_record(
+            vault,
+            txn,
+            id,
+            input.conversation,
+            input.actor.entity_ref(),
+            project,
+        )?;
+    }
     super::admission::finish(&vault.store, txn, &id)?;
     crate::compaction::record_turn_session_membership_in_txn(
         &vault.store,

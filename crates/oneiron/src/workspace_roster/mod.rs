@@ -114,7 +114,8 @@ mod tests;
 mod project;
 pub(crate) use project::{
     LEADER_CHAT_FIELD, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
-    is_project_type, reconcile_project_rooms, seed_root_project, validate_project_body,
+    is_project_type, leader_chat_record_permitted, permit_leader_chat_record,
+    reconcile_project_rooms, seed_root_project, settle_leader_chat_record, validate_project_body,
     validate_room_body,
 };
 pub use project::{
