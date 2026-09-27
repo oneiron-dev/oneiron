@@ -67,6 +67,16 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// # One autonomous agent is guaranteed a slice but cannot consume the vault.
 /// { actor: "<canonical-actor-ref>", floor: 50_000, cap: 150_000 }
 /// ```
+/// Attribution admission/work budgets are policy data, not evidence codec law.
+/// Multiple trusted packs narrow these rows; holder rows can only narrow the
+/// vault's reason limit, never raise it.
+pub(super) const POLICY_ATTRIBUTION_LIMITS_KEY: &str = "attribution_limits";
+pub(super) const ATTRIBUTION_PRECEDENCE_KEY: &str = "precedence";
+pub(super) const ATTRIBUTION_REASON_MAX_BYTES_KEY: &str = "reason_max_bytes";
+pub(super) const ATTRIBUTION_RECEIPTS_PER_PASS_KEY: &str = "receipts_per_pass";
+pub(super) const ATTRIBUTION_HOLDER_REASON_BYTES_KEY: &str = "holder_reason_bytes";
+pub(super) const ATTRIBUTION_HOLDER_ACTOR_KEY: &str = "actor_ref";
+pub(super) const ATTRIBUTION_HOLDER_MAX_BYTES_KEY: &str = "max_bytes";
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";

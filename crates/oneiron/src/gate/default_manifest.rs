@@ -7,8 +7,10 @@ use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
 use super::constants::{
-    ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
+    ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, ATTRIBUTION_PRECEDENCE_KEY,
+    ATTRIBUTION_REASON_MAX_BYTES_KEY, ATTRIBUTION_RECEIPTS_PER_PASS_KEY, AXIS_CRITICALITY_KEY,
+    AXIS_SENSITIVITY_KEY, LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY,
+    POLICY_ATTRIBUTION_LIMITS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
@@ -18,6 +20,9 @@ use super::constants::{
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 use super::pack_install_policy::{KEY as PACK_INSTALL_POLICY_KEY, PackInstallPolicy};
+use super::resolution::{
+    DEFAULT_ATTRIBUTION_REASON_MAX_BYTES, DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS,
+};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -437,6 +442,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(PACK_INSTALL_POLICY_KEY),
             PackInstallPolicy::shipped().encode(),
+        ),
+        (
+            Value::from(POLICY_ATTRIBUTION_LIMITS_KEY),
+            Value::Map(vec![
+                (
+                    Value::from(ATTRIBUTION_PRECEDENCE_KEY),
+                    Value::from("nested_narrowing"),
+                ),
+                (
+                    Value::from(ATTRIBUTION_REASON_MAX_BYTES_KEY),
+                    Value::from(DEFAULT_ATTRIBUTION_REASON_MAX_BYTES),
+                ),
+                (
+                    Value::from(ATTRIBUTION_RECEIPTS_PER_PASS_KEY),
+                    Value::from(DEFAULT_ATTRIBUTION_RECEIPTS_PER_PASS),
+                ),
+            ]),
         ),
         (
             Value::from(POLICY_ON_BUDGET_EXHAUSTED_KEY),
