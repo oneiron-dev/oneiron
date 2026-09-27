@@ -1,17 +1,21 @@
-//! Explicit graph-unit backfill for a standing question. The host supplies a typed
-//! judgment; the engine pins its receipt and lands the kept claim atomically.
+//! Explicit graph-unit backfill with same-snapshot authority and source pins.
 
 use super::super::types::invalid;
 use super::{records::*, store::*};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+    ScopedReadActorKey,
+};
 use crate::llm::decision::{DecisionAnswer, DecisionReceipt, ProviderPin, TypedDecision};
 use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
+use rmpv::Value;
 
-/// One explicit backfill result over a graph unit. Model execution and artifact
-/// landing belong to their adapters; this door never runs a model or grants access.
+/// The host obtains `source_frontier` before asking a provider. Admission
+/// refuses a response if any source changed while the provider was working.
 #[derive(Debug, Clone)]
 pub struct StandingAnswer {
     pub unit: EntityId,
@@ -19,12 +23,133 @@ pub struct StandingAnswer {
     pub probability: Option<f64>,
     pub evidence: Vec<EntityId>,
     pub providers: Vec<ProviderPin>,
+    pub source_frontier: [u8; 32],
 }
 
-/// Keep one backfilled answer for an immutable question version. A retry at
-/// the same source frontier returns the first receipt; a changed unit may be
-/// refreshed without editing the question. Explicit backfill is allowed while
-/// automatic refresh is paused.
+struct Source {
+    kind: u8,
+    claim: Option<ClaimBody>,
+}
+
+fn standing_record(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+    version: u32,
+) -> Result<(QuestionHead, QuestionRecord)> {
+    let head = owned_head(vault, txn, principal, question)?;
+    if head.version != version {
+        return Err(Error::ConcurrentWrite("standing question changed"));
+    }
+    let record: QuestionRecord = load(
+        vault,
+        txn,
+        &key(question, b"version", &version.to_be_bytes()),
+    )?
+    .ok_or(Error::EntityNotFound)?;
+    if record.schema_version != 1 {
+        return Err(invalid("unsupported question schema"));
+    }
+    record.definition.validate()?;
+    if record.definition.activation != QuestionActivation::Standing
+        || record.definition.adapter != "graph"
+    {
+        return Err(invalid("not a standing graph question"));
+    }
+    Ok((head, record))
+}
+
+fn sources_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    actor: WriteActor,
+    unit: EntityId,
+    evidence: &[EntityId],
+) -> Result<([u8; 32], Vec<Source>)> {
+    if evidence.len() > 4096 {
+        return Err(invalid("too many standing answer sources"));
+    }
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    let reader = ScopedReadActorKey::with_actor_class(
+        principal.to_hex(),
+        actor.actor_class().gate_actor_class(),
+    )
+    .ok_or(Error::InvariantViolation("canonical question principal"))?;
+    let holder = ScopedReadActorKey::with_actor_class(
+        actor.entity_ref().to_hex(),
+        actor.actor_class().gate_actor_class(),
+    )
+    .ok_or(Error::InvariantViolation("canonical question actor"))?;
+    let mut hasher = blake3::Hasher::new();
+    let mut sources = Vec::with_capacity(evidence.len() + 1);
+    for id in std::iter::once(&unit).chain(evidence.iter()) {
+        if !vault
+            .scoped_read(reader.clone())
+            .is_entity_readable_with_policy_in(txn, &policy, id)?
+            || !vault
+                .scoped_read(holder.clone())
+                .is_entity_readable_with_policy_in(txn, &policy, id)?
+        {
+            return Err(Error::EntityNotFound);
+        }
+        let raw = vault
+            .store
+            .entities
+            .get(txn, id.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("standing source header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+            || raw.len() == ENTITY_METADATA_HEADER_LEN
+        {
+            return Err(Error::EntityNotFound);
+        }
+        hasher.update(id.as_bytes());
+        hasher.update(&(raw.len() as u64).to_be_bytes());
+        hasher.update(&raw);
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
+            let frontier = crate::note::live_frontier_in_txn(vault, txn, *id)?;
+            hasher.update(&(frontier.len() as u64).to_be_bytes());
+            hasher.update(&frontier);
+        }
+        let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        let claim = if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+            Some(crate::claim::decode_claim_body(&body, true)?)
+        } else {
+            None
+        };
+        sources.push(Source {
+            kind: header.entity_type,
+            claim,
+        });
+    }
+    Ok((*hasher.finalize().as_bytes(), sources))
+}
+
+/// Resolve the complete source set under the principal and writing actor in
+/// one read snapshot. Pass this pin to `backfill_standing_answer` after work.
+pub fn standing_source_frontier(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    expected_version: u32,
+    actor: WriteActor,
+    unit: EntityId,
+    evidence: &[EntityId],
+) -> Result<[u8; 32]> {
+    let txn = vault.store.env.read_txn()?;
+    let (_, record) = standing_record(vault, &txn, principal, question, expected_version)?;
+    if !record.definition.units.contains(&unit) {
+        return Err(Error::EntityNotFound);
+    }
+    Ok(sources_in_txn(vault, &txn, principal, actor, unit, evidence)?.0)
+}
+
+/// Keep a graph answer and its immutable-version receipt atomically. Repeated
+/// work at one source frontier is idempotent; an edited source may refresh.
+/// Manual backfill remains available while automatic refresh is paused.
 pub fn backfill_standing_answer(
     vault: &Vault,
     principal: EntityId,
@@ -35,71 +160,93 @@ pub fn backfill_standing_answer(
     now: u64,
 ) -> Result<AnswerRecord> {
     vault.with_write_txn(|txn| {
-        let mut head = owned_head(vault, txn, principal, question)?;
-        if head.version != expected_version {
-            return Err(Error::ConcurrentWrite("standing question changed"));
-        }
-        let record: QuestionRecord = load(
-            vault,
-            txn,
-            &key(question, b"version", &expected_version.to_be_bytes()),
-        )?
-        .ok_or(Error::EntityNotFound)?;
-        if record.schema_version != 1 {
-            return Err(invalid("unsupported question schema"));
-        }
-        record.definition.validate()?;
+        let (mut head, record) =
+            standing_record(vault, txn, principal, question, expected_version)?;
         if !record.definition.units.contains(&input.unit)
             || !record.definition.question.contract.accepts(&input.answer)
             || matches!(input.answer, DecisionAnswer::Abstain)
             || input
                 .probability
                 .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
-            || input.evidence.len() > 4096
             || input.providers.len() > 64
             || input.providers.iter().any(|pin| {
                 pin.model.is_empty()
                     || pin.version.is_empty()
+                    || pin.model.len() > 256
+                    || pin.version.len() > 256
                     || pin.rung < record.definition.dial.first
                     || pin.rung > record.definition.dial.ceiling
             })
         {
             return Err(invalid("invalid standing answer"));
         }
-        let (source_kind, source) = super::task_ask::validate_task_answer_unit(
-            vault,
-            txn,
-            principal,
-            actor.entity_ref(),
-            input.unit,
-        )?;
-        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-        let reader = crate::claim::ScopedReadActorKey::new(principal.to_hex())
-            .ok_or(Error::InvariantViolation("canonical question principal"))?;
-        let holder = crate::claim::ScopedReadActorKey::new(actor.entity_ref().to_hex())
-            .ok_or(Error::InvariantViolation("canonical question actor"))?;
-        for evidence in &input.evidence {
-            if !super::arrival::readable(&vault.store, txn, &policy, &reader, evidence)?
-                || !super::arrival::readable(&vault.store, txn, &policy, &holder, evidence)?
-            {
-                return Err(Error::EntityNotFound);
-            }
+        let (frontier, sources) =
+            sources_in_txn(vault, txn, principal, actor, input.unit, &input.evidence)?;
+        if frontier != input.source_frontier {
+            return Err(Error::ConcurrentWrite("standing source changed"));
         }
-        let frontier = *blake3::hash(&source).as_bytes();
         let dedup = key(
             question,
             b"backfill",
             &[
                 expected_version.to_be_bytes().as_slice(),
                 input.unit.as_bytes(),
-                &[source_kind],
                 &frontier,
             ]
             .concat(),
         );
         if let Some(claim) = load::<EntityIdBytes>(vault, txn, &dedup)? {
-            return load(vault, txn, &key(question, b"answer", &claim.0))?
-                .ok_or(Error::CorruptedIndex("standing backfill answer"));
+            let answer: AnswerRecord = load(vault, txn, &key(question, b"answer", &claim.0))?
+                .ok_or(Error::CorruptedIndex("standing backfill answer"))?;
+            if answer.unit != input.unit
+                || answer.frontier != frontier
+                || answer.decision.evidence != input.evidence
+                || answer.decision.receipt.question != question
+                || answer.decision.receipt.question_version != expected_version
+                || answer.decision.receipt.principal != principal
+            {
+                return Err(Error::CorruptedIndex("standing backfill identity"));
+            }
+            let id = answer.claim;
+            let reader = ScopedReadActorKey::with_actor_class(
+                principal.to_hex(),
+                actor.actor_class().gate_actor_class(),
+            )
+            .ok_or(Error::InvariantViolation("canonical question principal"))?;
+            let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+            if crate::vault_cleanup::is_archived_in_txn(&vault.store, txn, &id)? {
+                return Err(Error::EntityNotFound);
+            }
+            let raw = vault
+                .store
+                .entities
+                .get(txn, id.as_bytes())?
+                .ok_or(Error::EntityNotFound)?;
+            let header = EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("standing answer header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                return Err(Error::EntityNotFound);
+            }
+            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+            let encoded = encode(&answer)?;
+            let value = rmpv::decode::read_value(&mut encoded.as_slice())
+                .map_err(|_| Error::CorruptedIndex("standing answer encoding"))?;
+            if body.predicate != "judgment.answer"
+                || body.subject != ClaimSubject::Entity(input.unit)
+                || body.value != value
+                || body.stale
+                || body.lifecycle != ClaimLifecycleStatus::Active
+                || body.approval == ClaimApprovalStatus::Rejected
+                || !crate::gate::scoped_read_claim_allowed(
+                    &policy,
+                    &reader,
+                    &body,
+                    &crate::claim::facet_refs_in_db(&vault.store.edges_out, txn, &id)?,
+                )
+            {
+                return Err(Error::EntityNotFound);
+            }
+            return Ok(answer);
         }
         let answer = AnswerRecord {
             claim: EntityId::now(),
@@ -121,7 +268,7 @@ pub fn backfill_standing_answer(
                 human_ask: None,
             },
             frontier,
-            source_kind,
+            source_kind: sources[0].kind,
             answered_at: now,
         };
         let encoded = encode(&answer)?;
@@ -133,29 +280,23 @@ pub fn backfill_standing_answer(
             value.clone(),
             1.0,
         );
-        let mut taint = ClaimSource::Imported;
-        if source_kind == crate::registry::ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&source, true)?;
-            taint = body.source.unwrap_or(ClaimSource::Imported);
-            if let Some(inherited) = crate::claim::claim_evidence_taint(&body) {
-                taint = crate::dreamer_consolidation::source_meet(taint, inherited);
-            }
-            if let Some(scope) = body.scope {
-                candidate = candidate.with_scope(scope);
-            }
-            if let Some(world) = body.world {
-                candidate = candidate.with_world(world);
+        let taint = constrain_sources(&mut candidate, &sources, principal)?;
+        let mut refs = vec![input.unit];
+        for id in &answer.decision.evidence {
+            if !refs.contains(id) {
+                refs.push(*id);
             }
         }
         candidate = candidate
             .with_evidence_taint(taint)?
             .with_private_reader(principal)?
-            .with_evidence(rmpv::Value::Array(vec![rmpv::Value::from(
-                input.unit.to_hex(),
-            )]));
+            .with_evidence(Value::Array(
+                refs.iter().map(|id| Value::from(id.to_hex())).collect(),
+            ));
+        let source = crate::dreamer_consolidation::source_meet(ClaimSource::Generated, taint);
         let envelope = WriteEnvelope::new(
             actor,
-            crate::dreamer_consolidation::source_meet(ClaimSource::Generated, taint),
+            source,
             WriteProvenance::new(value)?,
             ClaimApprovalStatus::Proposed,
         );
@@ -183,6 +324,99 @@ pub fn backfill_standing_answer(
         put(vault, txn, &key(question, b"head", &[]), &head)?;
         Ok(answer)
     })
+}
+
+fn constrain_sources(
+    candidate: &mut ClaimCandidate,
+    sources: &[Source],
+    principal: EntityId,
+) -> Result<ClaimSource> {
+    let mut taint = ClaimSource::UserStated;
+    let mut facet = None;
+    let mut project = None;
+    let mut world = None;
+    let mut rel = None;
+    let mut scope: Vec<(Value, Value)> = Vec::new();
+    let principal_hex = principal.to_hex();
+    for source in sources {
+        let Some(body) = &source.claim else {
+            taint = crate::dreamer_consolidation::source_meet(taint, ClaimSource::Imported);
+            continue;
+        };
+        taint = crate::dreamer_consolidation::source_meet(
+            taint,
+            body.source.unwrap_or(ClaimSource::Imported),
+        );
+        if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
+            taint = crate::dreamer_consolidation::source_meet(taint, inherited);
+        }
+        for (slot, id) in [
+            (&mut facet, body.scope_facet),
+            (&mut project, body.scope_project),
+            (
+                &mut world,
+                body.world.unwrap_or(crate::claim::base_world_id()),
+            ),
+        ] {
+            if slot.is_some_and(|existing| existing != id) {
+                return Err(invalid("incompatible evidence scope"));
+            }
+            *slot = Some(id);
+        }
+        if let Some(id) = body.rel {
+            if rel.is_some_and(|existing| existing != id) {
+                return Err(invalid("incompatible evidence scope"));
+            }
+            rel = Some(id);
+        }
+        if let Some(value) = &body.scope {
+            let Value::Map(entries) = value else {
+                return Err(invalid("unrepresentable evidence scope"));
+            };
+            for (key, value) in entries {
+                match key.as_str() {
+                    Some(
+                        "evidence_taint" | "facet" | "facet_ref" | "facetRef" | "scopeProjectId",
+                    ) => continue,
+                    Some("typed_question_principal")
+                        if value.as_str() == Some(principal_hex.as_str()) =>
+                    {
+                        continue;
+                    }
+                    Some("typed_question_principal") => {
+                        return Err(invalid("incompatible evidence principal"));
+                    }
+                    _ => {}
+                }
+                if let Some((_, existing)) = scope.iter().find(|(name, _)| name == key) {
+                    if existing != value {
+                        return Err(invalid("incompatible evidence scope"));
+                    }
+                } else {
+                    scope.push((key.clone(), value.clone()));
+                }
+            }
+        }
+    }
+    if let Some(id) = facet {
+        scope.push((Value::from("facet"), Value::Binary(id.as_bytes().to_vec())));
+    }
+    if let Some(id) = project {
+        scope.push((
+            Value::from("scopeProjectId"),
+            Value::Binary(id.as_bytes().to_vec()),
+        ));
+    }
+    if let Some(id) = world.filter(|id| *id != crate::claim::base_world_id()) {
+        *candidate = candidate.clone().with_world(id);
+    }
+    if let Some(id) = rel {
+        *candidate = candidate.clone().with_relationship(id);
+    }
+    if !scope.is_empty() {
+        *candidate = candidate.clone().with_scope(Value::Map(scope));
+    }
+    Ok(taint)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

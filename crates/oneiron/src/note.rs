@@ -375,6 +375,15 @@ mod birth;
 mod brief_view;
 mod document;
 mod document_store;
+
+/// Same-snapshot NOTE document frontier for typed answer source pins.
+pub(crate) fn live_frontier_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<u8>> {
+    Ok(document_store::load(vault, txn, id)?.view()?.frontier)
+}
 pub(crate) use birth::document_birth_in_txn;
 mod operations;
 pub use operations::{NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt};

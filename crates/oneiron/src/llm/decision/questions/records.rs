@@ -75,6 +75,7 @@ pub struct QuestionDefinition {
     pub recipe: String,
     pub profile: String,
     pub dial: DecisionDial,
+    pub activation: QuestionActivation,
     pub refresh: RefreshPolicy,
     pub delivery: String,
     pub learning: bool,
@@ -99,6 +100,13 @@ impl QuestionDefinition {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionActivation {
+    OneOff,
+    Standing,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
