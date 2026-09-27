@@ -1269,6 +1269,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/tests.rs` | test | L | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
 | `src/failure_ladder/tests/failure_integrity.rs` | test | m | — | — | — |
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
+| `src/failure_signals.rs` | src | s | 4 struct · 3 enum · 4 fn | AgentKind, FailureClassV1, FailureSignalCounts, FailureSignalDimensions, FailureTaxonomy, Tier1FailureCount, VersionedComponent | Content-free, versioned tier-1 agent failure counts |
+| `src/failure_signals/tests.rs` | test | s | — | — | — |
 | `src/fanout_auto.rs` | src | m | 5 struct · 5 enum · 1 trait · 6 fn · 3 crate-vis | AppliedFanoutEscalationRuling, FanoutAskClassifier, FanoutAskContext, FanoutAskTrigger, FanoutAskVerdict, FanoutClassifierView, FanoutDecisionHistory, FanoutEscalationRuling +3 | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
 | `src/fanout_auto/tests.rs` | test | XL | — | — | ONE-1720 (ES-07) unit tests: the closed verdict vocabulary, the fixed evaluation order (blank-context floor… |
 | `src/federation/codec.rs` | src | s | 5 crate-vis | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
@@ -1553,7 +1555,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/validate.rs` | src | s | 14 crate-vis | — | Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]… |
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn · 2 crate-vis | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 5 crate-vis | — | Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the… |
-| `src/lib.rs` | src | L | 168 mod · 72 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | L | 169 mod · 72 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limits.rs` | src | s | 3 crate-vis | — | — |
 | `src/linear_sync/codec.rs` | src | s | 3 fn · 1 crate-vis | — | Stable link keys, operation/event digests, field hashes |
 | `src/linear_sync/engine.rs` | src | m | 1 struct · 7 fn · 2 crate-vis | LinearSyncAdapter | LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic |

@@ -15865,6 +15865,34 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AgentKind",
+      "FailureClassV1",
+      "FailureSignalCounts",
+      "FailureSignalDimensions",
+      "FailureTaxonomy",
+      "Tier1FailureCount",
+      "VersionedComponent"
+     ],
+     "path": "src/failure_signals.rs",
+     "purpose": "Content-free, versioned tier-1 agent failure counts",
+     "surface": {
+      "enum": 3,
+      "fn": 4,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/failure_signals/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -19365,7 +19393,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 29,
-      "mod": 168,
+      "mod": 169,
       "re-export": 72
      }
     },
@@ -34755,6 +34783,13 @@
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
+    "failure_signals": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "Content-free, versioned tier-1 agent failure counts"
+    },
     "fanout_auto": {
      "files": 2,
      "impl_vault": false,
@@ -35472,8 +35507,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
-   "test_files": 718
+   "source_files": 2095,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [
