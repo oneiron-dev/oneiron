@@ -1,3 +1,4 @@
+mod decode_class_policy;
 mod decode_manifest;
 mod decode_map_util;
 mod decode_policy_tables;

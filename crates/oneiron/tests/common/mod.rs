@@ -42,8 +42,8 @@ pub(crate) fn self_held_identity_in_state(
     at: u64,
 ) -> oneiron::channel_identity::ChannelIdentity {
     use oneiron::channel_identity::{
-        CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, ChannelIdentity, ChannelIdentityFulfillment,
-        ChannelIdentityState, ChannelIdentityStep,
+        ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
+        DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
     };
 
     let mut row = ChannelIdentity::requested(channel, address_or_handle, shape, binding, at);
@@ -71,7 +71,7 @@ pub(crate) fn self_held_identity_in_state(
             ChannelIdentityStep::Fulfill,
             ChannelIdentityStep::Release,
             ChannelIdentityStep::Quarantine {
-                until: at + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+                until: at + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
             },
         ],
         ChannelIdentityState::Tombstone => &[
@@ -79,7 +79,7 @@ pub(crate) fn self_held_identity_in_state(
             ChannelIdentityStep::Fulfill,
             ChannelIdentityStep::Release,
             ChannelIdentityStep::Quarantine {
-                until: at + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+                until: at + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
             },
             ChannelIdentityStep::Close,
         ],

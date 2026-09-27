@@ -9,6 +9,9 @@ use super::frontier_hash::hash_policy_frontier_v0;
 use super::manifest_types::{
     CommOptOutPosture, PolicyManifestDiagnostics, PolicyManifestResolution,
 };
+use crate::entity_id::EntityId;
+use crate::gate::class_policy::{ActPosture, WaitResolution};
+
 use crate::gate::ceiling::{
     PolicyAxes, PolicyCriticality, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicySensitivity,
     PolicySignature,
@@ -80,6 +83,43 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    /// The resolved wait window for `wait_class`, fail-closed.
+    ///
+    /// A loaded manifest that forces fail-closed reports
+    /// [`WaitResolution::Contradictory`]: an unreadable manifest is not
+    /// evidence that a wait may be shorter, and the caller must refuse rather
+    /// than fall back to its own default.
+    #[must_use]
+    pub(crate) fn resolved_wait(
+        &self,
+        wait_class: &str,
+        holder: Option<EntityId>,
+    ) -> WaitResolution {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return WaitResolution::Contradictory;
+        }
+        self.wait_policy.resolve(wait_class, holder)
+    }
+
+    /// The resolved posture for `(act_class, subject_class)`, fail-closed.
+    ///
+    /// A loaded manifest that forces fail-closed reports
+    /// [`ActPosture::Deny`] — the restrictive pole — rather than `None`, so a
+    /// caller that treats silence as "keep my own default" cannot read an
+    /// unreadable manifest as permission.
+    #[must_use]
+    pub(crate) fn resolved_act_posture(
+        &self,
+        act_class: &str,
+        subject_class: &str,
+        holder: Option<EntityId>,
+    ) -> Option<ActPosture> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return Some(ActPosture::Deny);
+        }
+        self.act_policy.resolve(act_class, subject_class, holder)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed

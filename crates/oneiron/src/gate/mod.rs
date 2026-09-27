@@ -6,6 +6,7 @@
 mod auto_signals;
 mod bundle;
 mod ceiling;
+pub(crate) mod class_policy;
 pub(crate) mod manifest_authenticity;
 #[cfg(test)]
 pub(crate) use manifest_authenticity::stamp_manifest_origin;

@@ -2,6 +2,8 @@
 
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
+use crate::gate::class_policy::{ActPolicyTable, WaitPolicyTable};
+
 use crate::gate::ceiling::{
     ActorCeiling, DelegationFoldCache, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -99,4 +101,10 @@ pub(crate) struct PolicyManifestResolution {
     /// from a resolved manifest.
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
+    /// Vault-resident wait windows keyed by wait class (DEC-0005; owner rule
+    /// 2026-09-27). A class no row names stays ungoverned, and its caller keeps
+    /// the restrictive default it ships with.
+    pub(super) wait_policy: WaitPolicyTable,
+    /// Vault-resident act postures keyed by `(act class, subject class)`.
+    pub(super) act_policy: ActPolicyTable,
 }

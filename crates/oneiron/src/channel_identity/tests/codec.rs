@@ -269,7 +269,8 @@ fn delegated_rows_have_no_rotation_or_quarantine_state() {
             delegated_body_entries("delegated_grant", CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION);
         claimed[6].1 = Value::from(state);
         if state == "quarantine" {
-            claimed[9].1 = Value::from(1_800_000_000 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS);
+            claimed[9].1 =
+                Value::from(1_800_000_000 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS);
         }
         let err = decode_channel_identity_body(&encode_entries(claimed))
             .expect_err("a delegated body is never rotated or quarantined");

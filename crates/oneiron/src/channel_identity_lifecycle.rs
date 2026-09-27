@@ -5,7 +5,8 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
     IdentityTransition, InboundDisposition, admit_channel_identity_transition_in_txn,
-    decode_channel_identity_body, encode_channel_identity_body, step_channel_identity_in_txn,
+    decode_channel_identity_body, encode_channel_identity_body, resolve_quarantine_floor_in_txn,
+    step_channel_identity_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -506,11 +507,15 @@ impl Vault {
                 let next = if released.is_delegated() {
                     released
                 } else {
-                    released.step(
+                    // The hold floor is manifest policy resolved in THIS write
+                    // transaction, so the second half of the release act runs
+                    // under the same snapshot the first half admitted against.
+                    released.step_with_wait(
                         ChannelIdentityStep::Quarantine {
                             until: intent.quarantine_until,
                         },
                         at,
+                        resolve_quarantine_floor_in_txn(&self.store, wtxn, &released)?,
                     )?
                 };
                 let outcome = next.state().as_str();

@@ -20,13 +20,14 @@ use super::codec::{
 use super::custody::{Custody, DelegatedCustodyProof, DelegatedGrant, InboundDisposition};
 
 use super::keys::{
-    CHANNEL_IDENTITY_CLAIM_PREDICATES, MAX_ADDRESS_OR_HANDLE_BYTES, MAX_CHANNEL_BYTES,
-    PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
-    PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
-    PREDICATE_CHANNEL_IDENTITY_CHANNEL, PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF,
-    PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT, PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL,
-    PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF, PREDICATE_CHANNEL_IDENTITY_SHAPE,
-    PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
+    CHANNEL_IDENTITY_CLAIM_PREDICATES, DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+    MAX_ADDRESS_OR_HANDLE_BYTES, MAX_CHANNEL_BYTES, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF, PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE,
+    PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET, PREDICATE_CHANNEL_IDENTITY_CHANNEL,
+    PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF, PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT,
+    PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL, PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF,
+    PREDICATE_CHANNEL_IDENTITY_SHAPE, PREDICATE_CHANNEL_IDENTITY_STATE,
+    PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
 };
 
 use super::auth_mode::ChannelAuthMode;
@@ -368,10 +369,32 @@ impl ChannelIdentity {
         self.custody.occupies_assignment_key()
     }
 
-    /// Whether this row may carry an OUTBOUND effect.
+    /// Whether this row may carry an OUTBOUND effect under the RESTRICTIVE
+    /// default posture (see [`Custody::may_send`]).
     #[must_use]
-    pub const fn may_send(&self) -> bool {
+    pub fn may_send(&self) -> bool {
         self.custody.may_send()
+    }
+
+    /// Whether this row may carry an OUTBOUND effect under `posture`, as the
+    /// caller resolved it from the manifest's `act_policy` table.
+    #[must_use]
+    pub(crate) fn may_send_under(&self, posture: crate::gate::class_policy::ActPosture) -> bool {
+        self.custody.may_send_under(posture)
+    }
+
+    /// The `act_policy` subject class this row resolves under.
+    #[must_use]
+    pub(crate) const fn outbound_subject_class(&self) -> &'static str {
+        self.custody.outbound_subject_class()
+    }
+
+    /// Whether this row's substrate carries the capability an outbound send
+    /// needs, with the act class already permitted (see
+    /// [`Custody::holds_outbound_capability`]).
+    #[must_use]
+    pub(crate) fn holds_outbound_capability(&self) -> bool {
+        self.custody.holds_outbound_capability()
     }
 
     /// What this row can do for a message arriving now.
@@ -447,6 +470,31 @@ impl ChannelIdentity {
     /// when this row is delegated, when the act is not on its state's table, or
     /// when the stamp moves backwards.
     pub fn step(&self, step: ChannelIdentityStep, state_changed_at: u64) -> Result<Self> {
+        self.step_with_wait(
+            step,
+            state_changed_at,
+            DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+        )
+    }
+
+    /// [`Self::step`] with the vault's RESOLVED quarantine floor.
+    ///
+    /// A door that holds a manifest snapshot resolves
+    /// [`WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE`](super::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE)
+    /// and calls this; [`Self::step`] is the same act under the floor the
+    /// default manifest ships, which is the fail-closed answer for a caller
+    /// that has no snapshot to resolve against.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::step`], with the window checked against
+    /// `min_quarantine_secs`.
+    pub fn step_with_wait(
+        &self,
+        step: ChannelIdentityStep,
+        state_changed_at: u64,
+        min_quarantine_secs: u64,
+    ) -> Result<Self> {
         if self.custody.is_delegated() {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "a delegated_grant identity steps only through the vault door, which proves \
@@ -456,6 +504,7 @@ impl ChannelIdentity {
         self.step_edge(
             IdentityEdge::SelfHeld(step.self_held_edge()),
             state_changed_at,
+            min_quarantine_secs,
         )
     }
 
@@ -470,12 +519,19 @@ impl ChannelIdentity {
     ///
     /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
     /// when the edge is not on this row's table or the stamp moves backwards.
-    pub(super) fn step_edge(&self, edge: IdentityEdge<'_>, state_changed_at: u64) -> Result<Self> {
+    pub(super) fn step_edge(
+        &self,
+        edge: IdentityEdge<'_>,
+        state_changed_at: u64,
+        min_quarantine_secs: u64,
+    ) -> Result<Self> {
         if state_changed_at < self.state_changed_at {
             return Err(invalid_identity());
         }
         let next = Self {
-            custody: self.custody.step(edge, state_changed_at)?,
+            custody: self
+                .custody
+                .step(edge, state_changed_at, min_quarantine_secs)?,
             state_changed_at,
             ..self.clone()
         };

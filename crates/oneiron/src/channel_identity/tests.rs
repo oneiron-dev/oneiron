@@ -16,6 +16,7 @@ use crate::test_util::open_test_vault_with;
 use crate::test_util::entity;
 
 mod codec;
+mod policy_residence;
 mod subject_binding;
 
 /// Registers the OAuth grant a delegated `email` row is made true by: a live
@@ -149,7 +150,7 @@ fn state_machine_rejects_skips_and_pins_quarantine_window() -> Result<()> {
         released
             .step(
                 ChannelIdentityStep::Quarantine {
-                    until: 1_800_000_020 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+                    until: 1_800_000_020 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
                 },
                 1_800_000_020,
             )
@@ -159,7 +160,7 @@ fn state_machine_rejects_skips_and_pins_quarantine_window() -> Result<()> {
         released
             .step(
                 ChannelIdentityStep::Quarantine {
-                    until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS - 1,
+                    until: 1_800_000_040 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS - 1,
                 },
                 1_800_000_040,
             )
@@ -167,13 +168,13 @@ fn state_machine_rejects_skips_and_pins_quarantine_window() -> Result<()> {
     );
     let quarantine = released.step(
         ChannelIdentityStep::Quarantine {
-            until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+            until: 1_800_000_040 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
         },
         1_800_000_040,
     )?;
     assert_eq!(
         quarantine.quarantine_until(),
-        Some(1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS),
+        Some(1_800_000_040 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
         "a quarantined row always names the window it is held for",
     );
     quarantine.step(ChannelIdentityStep::Close, 1_900_000_000)?;
@@ -254,7 +255,7 @@ fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
     vault.step_channel_identity(
         &id,
         ChannelIdentityStep::Quarantine {
-            until: 1_800_000_040 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+            until: 1_800_000_040 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
         },
         1_800_000_040,
     )?;
@@ -438,7 +439,7 @@ fn delegated_rows_are_read_only_and_free_their_key_when_retired() -> Result<()> 
     for banned in [
         ChannelIdentityStep::Rotate,
         ChannelIdentityStep::Quarantine {
-            until: 1_800_000_010 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS,
+            until: 1_800_000_010 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
         },
     ] {
         assert!(

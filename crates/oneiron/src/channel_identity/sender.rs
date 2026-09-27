@@ -1,8 +1,11 @@
 use super::decode_channel_identity_body;
+use super::keys::ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND;
+use super::record::ChannelIdentity;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::gate::class_policy::ActPosture;
 
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
@@ -50,12 +53,13 @@ pub(crate) fn resolve_channel_identity_ref_for_connector(
             return Err(Error::CorruptedIndex("channel identity entity type"));
         }
         let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-        // `may_send` rather than `state == Active`: a `delegated_grant` row is
-        // a scoped-READ grant over a mailbox the product does not own, and it
-        // reaches ACTIVE like any other row. Selecting one as the sender of an
-        // outbound effect would be sending AS the member on an authority we
-        // were never given.
-        if !identity.may_send()
+        // The posture comes from the vault's `act_policy` row for this
+        // identity's subject class, resolved in THIS transaction — not from the
+        // identity's class. A delegated row is denied by the row the default
+        // manifest ships, and if the owner raises that row the capability check
+        // behind `may_send_under` still refuses, because a read-only grant
+        // carries no outbound scope.
+        if !outbound_send_permitted(store, txn, &identity)?
             || normalize_channel_class(identity.channel()) != channel_class
             || identity.binding().actor_ref() != Some(bound_actor)
         {
@@ -89,12 +93,8 @@ pub(crate) fn enrich_dispatch_channel_identity(
                 .ok_or(Error::CorruptedIndex("channel identity sender header"))?;
             if header.entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
                 let identity = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-                if !identity.may_send() {
-                    return Err(Error::Record(
-                        crate::error::RecordError::InvalidChannelIdentityBody(
-                            "inactive or delegated channel identity cannot send",
-                        ),
-                    ));
+                if !outbound_send_permitted(store, txn, &identity)? {
+                    return Err(refuse_outbound_send(&identity));
                 }
             }
             Ok(Some(id))
@@ -103,4 +103,60 @@ pub(crate) fn enrich_dispatch_channel_identity(
             resolve_channel_identity_ref_for_connector(store, txn, connector_key, actor_entity_ref)
         }
     }
+}
+
+/// Whether `identity` may carry an outbound effect in this vault right now.
+///
+/// Two independent questions, asked in the order that keeps them honest:
+///
+/// 1. POLICY — does the manifest's `act_policy` row for
+///    `channel_identity.outbound_send` permit this subject class, for this
+///    holder? A missing row is [`ActPosture::Deny`]: silence about an outbound
+///    act is not permission, and the default manifest is never silent here.
+/// 2. SUBSTRATE — does the row hold the capability the act needs? For a
+///    self-held row that is a live state; for a delegated row it is an outbound
+///    scope on the grant, which no read-only scope class can express.
+///
+/// Raising the manifest row therefore cannot by itself enable a send. What it
+/// changes is which of the two refusals the vault reports, and who owns the
+/// decision: the vault's policy data rather than an engine class ban.
+fn outbound_send_permitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> crate::Result<bool> {
+    let posture = resolved_outbound_posture(store, txn, identity)?;
+    Ok(identity.may_send_under(posture))
+}
+
+fn resolved_outbound_posture(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> crate::Result<ActPosture> {
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    Ok(policy
+        .resolved_act_posture(
+            ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND,
+            identity.outbound_subject_class(),
+            identity.binding().actor_ref(),
+        )
+        .unwrap_or_default())
+}
+
+/// The refusal for an explicit sender the vault will not send through.
+///
+/// The two reasons are reported apart on purpose: "this vault's policy bars the
+/// class" and "the grant we hold carries no outbound scope" are different facts
+/// for the owner who has to decide what to change.
+fn refuse_outbound_send(identity: &ChannelIdentity) -> Error {
+    let reason = if identity.holds_outbound_capability() {
+        "this vault's act_policy row bars outbound send for this channel identity's subject class"
+    } else {
+        "channel identity holds no outbound send capability: a self-held row must be active, and \
+         a delegated grant must carry an outbound scope"
+    };
+    Error::Record(crate::error::RecordError::InvalidChannelIdentityBody(
+        reason,
+    ))
 }

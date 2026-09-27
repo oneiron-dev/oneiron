@@ -1,7 +1,7 @@
 use super::*;
 use rmpv::Value;
 
-use crate::channel_identity::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
+use crate::channel_identity::DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS;
 use crate::config::VaultConfig;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 
@@ -176,7 +176,7 @@ fn lifecycle_verbs_gate_receipt_and_manual_fulfillment() -> Result<()> {
         fulfilled_at: 1_060,
     })?;
 
-    let quarantine_until = 1_070 + CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
+    let quarantine_until = 1_070 + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS;
     let released = vault.apply_channel_identity_lifecycle_intent(request(
         actor.clone(),
         1_070,

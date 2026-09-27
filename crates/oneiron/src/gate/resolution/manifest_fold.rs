@@ -139,6 +139,12 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                // Class rows compose restrictively inside `resolve`, so the
+                // fold only has to concatenate them: the longest floor, the
+                // tightest ceiling and any `deny` win there, whichever pack
+                // each came from.
+                resolution.wait_policy.extend_rows(decoded.wait_policy);
+                resolution.act_policy.extend_rows(decoded.act_policy);
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),

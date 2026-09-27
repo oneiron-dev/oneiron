@@ -19,7 +19,6 @@
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
 use super::custody::DelegatedCustodyProof;
-use super::keys::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
 use crate::error::{Error, RecordError, Result};
 
 /// ChannelIdentity lifecycle state as it appears on the wire (OF-347 R3/R5).
@@ -83,9 +82,14 @@ pub enum SelfHeldLifecycle {
     Active,
     Rotating,
     Released,
-    /// Held out of recycling until `until`, at least
-    /// [`CHANNEL_IDENTITY_MIN_QUARANTINE_SECS`] past the release, checked by
-    /// [`SelfHeldLifecycle::step`] and by the decoder.
+    /// Held out of recycling until `until`.
+    ///
+    /// The floor `until` must clear is the manifest's resolved
+    /// `channel_identity.quarantine` wait row, checked by this machine's step
+    /// against the number its door resolved. The decoder checks only that the
+    /// window does not end before the stamp it dates from: it holds no manifest
+    /// snapshot, and a replicated body carries no evidence about this vault's
+    /// policy.
     Quarantine {
         until: u64,
     },
@@ -298,15 +302,26 @@ impl SelfHeldLifecycle {
         }
     }
 
-    /// Applies one edge at `at`.
+    /// Applies one edge at `at`, with `min_quarantine_secs` as the resolved
+    /// hold floor for this vault.
+    ///
+    /// The floor is a PARAMETER because it is policy: the door resolves the
+    /// manifest's `channel_identity.quarantine` wait row in the transaction
+    /// that writes the row, and hands the number here. The state table is still
+    /// code; how long the hold runs is not.
     ///
     /// # Errors
     ///
     /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
     /// when the edge is not on this state's table, or when a quarantine window
-    /// is shorter than [`CHANNEL_IDENTITY_MIN_QUARANTINE_SECS`];
-    /// [`Error::ArithmeticOverflow`] when that floor cannot be computed.
-    pub(super) fn step(self, edge: SelfHeldEdge, at: u64) -> Result<Self> {
+    /// is shorter than the resolved floor; [`Error::ArithmeticOverflow`] when
+    /// that floor cannot be computed.
+    pub(super) fn step(
+        self,
+        edge: SelfHeldEdge,
+        at: u64,
+        min_quarantine_secs: u64,
+    ) -> Result<Self> {
         match (self, edge) {
             (Self::Requested, SelfHeldEdge::Bind(mode)) => Ok(Self::PendingFulfillment(mode)),
             (Self::PendingFulfillment(_) | Self::Rotating, SelfHeldEdge::Fulfill) => {
@@ -315,9 +330,11 @@ impl SelfHeldLifecycle {
             (Self::Active, SelfHeldEdge::Rotate) => Ok(Self::Rotating),
             (Self::Active | Self::Rotating, SelfHeldEdge::Release) => Ok(Self::Released),
             (Self::Released, SelfHeldEdge::Quarantine { until }) => {
-                let floor = at.checked_add(CHANNEL_IDENTITY_MIN_QUARANTINE_SECS).ok_or(
-                    Error::ArithmeticOverflow("channel identity quarantine window"),
-                )?;
+                let floor =
+                    at.checked_add(min_quarantine_secs)
+                        .ok_or(Error::ArithmeticOverflow(
+                            "channel identity quarantine window",
+                        ))?;
                 if until < floor {
                     return Err(invalid_identity());
                 }

@@ -12,7 +12,11 @@ use crate::store::Store;
 use super::binding::ChannelIdentityBinding;
 use super::custody::{DelegatedGrant, verify_delegated_custody_in_txn};
 
+use super::keys::{
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+};
 use super::lifecycle::{ChannelIdentityState, ChannelIdentityStep, IdentityEdge};
+use crate::gate::class_policy::WaitResolution;
 
 use super::record::ChannelIdentity;
 use crate::error::RecordError;
@@ -179,7 +183,8 @@ pub(crate) fn step_channel_identity_in_txn(
     at: u64,
 ) -> Result<ChannelIdentity> {
     let Some(grant) = current.grant() else {
-        return current.step(step, at);
+        let min_quarantine_secs = resolve_quarantine_floor_in_txn(store, txn, current)?;
+        return current.step_with_wait(step, at, min_quarantine_secs);
     };
     let proof = if step.asserts_live_custody() {
         Some(verify_delegated_custody_in_txn(
@@ -192,7 +197,51 @@ pub(crate) fn step_channel_identity_in_txn(
     } else {
         None
     };
-    current.step_edge(IdentityEdge::delegated(step, proof)?, at)
+    // A delegated row has no quarantine edge to reach, so the floor it would
+    // pass is unreachable; the shipped default is handed through rather than
+    // resolving a row this machine cannot use.
+    current.step_edge(
+        IdentityEdge::delegated(step, proof)?,
+        at,
+        DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+    )
+}
+
+/// The quarantine hold floor for `identity`, resolved from the manifest in THIS
+/// transaction (DEC-0005: policy resolves in the same snapshot as the row it
+/// governs).
+///
+/// The holder is the actor the identity is bound to, so a holder-scoped row can
+/// ask this vault to hold one agent's addresses longer — capped by the vault
+/// row, which is the only place a widen can live.
+///
+/// # Errors
+///
+/// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
+/// when the resolved rows contradict each other or the manifest is fail-closed:
+/// an unreadable policy is never read as a shorter hold.
+pub(crate) fn resolve_quarantine_floor_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    identity: &ChannelIdentity,
+) -> Result<u64> {
+    let policy = crate::gate::resolve_policy_manifest(store, txn)?;
+    match policy.resolved_wait(
+        WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+        identity.binding().actor_ref(),
+    ) {
+        WaitResolution::Resolved(wait) => Ok(wait.min_secs),
+        // No row names the class: the caller keeps the value the default
+        // manifest ships, which is what a vault whose owner deleted the row
+        // asked for — not a hold of zero.
+        WaitResolution::Ungoverned => Ok(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
+        WaitResolution::Contradictory => {
+            Err(Error::Record(RecordError::InvalidChannelIdentityBody(
+                "channel_identity.quarantine wait policy is unresolvable; refusing to step a \
+                 lifecycle act under a policy this vault cannot read",
+            )))
+        }
+    }
 }
 
 /// Law C, for the row a birth or a step is about to store.

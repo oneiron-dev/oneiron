@@ -1,20 +1,28 @@
 use rmpv::Value;
 
+use crate::channel_identity::{
+    ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, ChannelIdentityShape,
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, SUBJECT_CLASS_SELF_HELD,
+    WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
+};
 use crate::claim::{ClaimSource, UNSTAMPED_CLAIM_SENSITIVITY_BAND};
 use crate::commitment_schedule::commitment_projection_actor;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;
 
+use super::class_policy::ActPosture;
 use super::constants::{
-    ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
-    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
+    ACT_POLICY_CLASS_KEY, ACT_POLICY_POSTURE_KEY, ACT_POLICY_SUBJECT_CLASS_KEY, ACTOR_CEILING_KEY,
+    ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
+    LOCAL_WRITE_ACTOR_CLASS, POLICY_ACT_POLICY_KEY, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
     POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
     POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY,
-    SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY,
-    SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_SOURCE_TRUST_KEY, POLICY_WAIT_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
+    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
+    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    WAIT_POLICY_CLASS_KEY, WAIT_POLICY_MIN_SECS_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 
@@ -371,6 +379,67 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
         (
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
+        ),
+        // GATE-009: the restrictive STARTING values for the two class
+        // tables ship here, in the vault-resident default manifest, rather
+        // than as engine constants (DEC-0005; owner rule 2026-09-27). Both
+        // rows state today's behavior — they change nothing on a fresh vault
+        // and everything about who owns the decision.
+        (
+            Value::from(POLICY_WAIT_POLICY_KEY),
+            Value::Array(vec![Value::Map(vec![
+                (
+                    Value::from(WAIT_POLICY_CLASS_KEY),
+                    Value::from(WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE),
+                ),
+                (
+                    Value::from(WAIT_POLICY_MIN_SECS_KEY),
+                    Value::from(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
+                ),
+            ])]),
+        ),
+        (
+            Value::from(POLICY_ACT_POLICY_KEY),
+            Value::Array(vec![
+                // A delegated row is the member's own mailbox under an OAuth
+                // grant. ARCH-0063 R3 says identity picks the STARTING posture
+                // only and a grant may authorize send-as-owner, so the ban is
+                // a default and not a class property. Raising this row to
+                // `require_capability` does not by itself enable sending: the
+                // grant must carry an outbound scope, and the read-only scope
+                // classes cannot express one.
+                Value::Map(vec![
+                    (
+                        Value::from(ACT_POLICY_CLASS_KEY),
+                        Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+                    ),
+                    (
+                        Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                        Value::from(ChannelIdentityShape::DelegatedGrant.as_str()),
+                    ),
+                    (
+                        Value::from(ACT_POLICY_POSTURE_KEY),
+                        Value::from(ActPosture::Deny.as_str()),
+                    ),
+                ]),
+                // A self-held row is an account the product minted, so the
+                // class is not barred; the substrate check still asks whether
+                // this row is live.
+                Value::Map(vec![
+                    (
+                        Value::from(ACT_POLICY_CLASS_KEY),
+                        Value::from(ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND),
+                    ),
+                    (
+                        Value::from(ACT_POLICY_SUBJECT_CLASS_KEY),
+                        Value::from(SUBJECT_CLASS_SELF_HELD),
+                    ),
+                    (
+                        Value::from(ACT_POLICY_POSTURE_KEY),
+                        Value::from(ActPosture::RequireCapability.as_str()),
+                    ),
+                ]),
+            ]),
         ),
         (
             Value::from(POLICY_SIGNATURES_KEY),

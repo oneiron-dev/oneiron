@@ -6611,7 +6611,7 @@
      "path": "src/channel_identity/custody.rs",
      "purpose": "Custody: WHO holds the account behind a channel identity, the delegated grant handle, the txn-bound proof…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "enum": 3,
       "fn": 17,
       "struct": 1
@@ -6624,7 +6624,7 @@
      "path": "src/channel_identity/keys.rs",
      "purpose": "Pinned ChannelIdentity schema versions, body key sets, claim predicates, and byte bounds",
      "surface": {
-      "const": 19,
+      "const": 22,
       "crate-vis": 17
      }
     },
@@ -6665,8 +6665,8 @@
      "path": "src/channel_identity/record.rs",
      "purpose": "Vault-resident ChannelIdentity record: private fields, one custody value, accessors, and the one stepping door",
      "surface": {
-      "crate-vis": 7,
-      "fn": 23,
+      "crate-vis": 10,
+      "fn": 24,
       "struct": 1
      }
     },
@@ -6719,6 +6719,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/channel_identity/tests/policy_residence.rs",
+     "purpose": "The quarantine WAIT and the delegated SEND posture as vault-resident policy",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -6735,7 +6743,7 @@
      "path": "src/channel_identity/transition.rs",
      "purpose": "ChannelIdentity transition admission, custody re-proof, and uniqueness scan",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "struct": 1
      }
     },
@@ -16700,6 +16708,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/class_policy.rs",
+     "purpose": "Vault-resident CLASS policy: waits and act postures, with holder narrowing",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "CriticalWriteConfirmBinding",
       "CriticalWriteConfirmResolution"
@@ -16721,7 +16739,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 87
      }
     },
     {
@@ -16732,6 +16750,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/decode/decode_class_policy.rs",
+     "purpose": "`wait_policy` and `act_policy` row parsers",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -16994,7 +17022,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -17039,7 +17067,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -17180,6 +17208,14 @@
      "notable": [],
      "path": "src/gate/tests/claim_candidate_lineage.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/class_policy.rs",
+     "purpose": "`wait_policy` / `act_policy` manifest parse and resolution tests",
      "surface": {}
     },
     {
@@ -35169,7 +35205,7 @@
      "purpose": "CRM pack engine-side registration home"
     },
     "channel_identity": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35645,7 +35681,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36333,8 +36369,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2145,
-   "test_files": 730
+   "source_files": 2147,
+   "test_files": 732
   },
   "oneiron-android": {
    "files": [

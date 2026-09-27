@@ -30,10 +30,11 @@ use super::address::{AssignmentAddress, ChannelKey};
 use super::auth_mode::ChannelAuthMode;
 use super::binding::ChannelIdentityFulfillment;
 use super::codec::invalid_identity;
-use super::keys::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS;
+use super::keys::SUBJECT_CLASS_SELF_HELD;
 use super::lifecycle::{ChannelIdentityState, DelegatedLifecycle, IdentityEdge, SelfHeldLifecycle};
 use super::shape::{ChannelIdentityShape, SelfHeldShape};
 use crate::error::{RecordError, SecretError};
+use crate::gate::class_policy::ActPosture;
 
 const MAX_DELEGATED_GRANT_REF_BYTES: usize = 256;
 const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
@@ -94,6 +95,21 @@ impl DelegatedGrant {
             custody_record_ref: custody_record_ref.into(),
             scopes,
         }
+    }
+
+    /// Whether the scopes this grant covers include OUTBOUND SEND.
+    ///
+    /// Always false today, and matched exhaustively on purpose:
+    /// [`DelegatedGrantScope`] declares read classes only, so adding a send
+    /// class is a compile error here until someone decides what it answers.
+    /// That is what keeps a manifest row from turning a read-only OAuth grant
+    /// into send authority — the policy row says whether the ACT class may run,
+    /// and this says whether the grant we actually hold carries it.
+    #[must_use]
+    pub(crate) fn covers_outbound_send(&self) -> bool {
+        self.scopes.iter().any(|scope| match scope {
+            DelegatedGrantScope::MailRead | DelegatedGrantScope::MailMetadata => false,
+        })
     }
 
     /// Validates the grant handle's own bounds.
@@ -277,22 +293,62 @@ impl Custody {
         }
     }
 
-    /// Whether this row may carry an OUTBOUND effect.
-    ///
-    /// Self-held and `Active`, and nothing else. A delegated row is a
-    /// scoped-READ grant over a mailbox the product does not own; there is no
-    /// state it can reach in which sending as the member is a thing we were
-    /// given permission to do — and after R1 that is the ONE line above,
-    /// because the variant carries the fact.
+    /// The `act_policy` subject class this row resolves under.
     #[must_use]
-    pub const fn may_send(&self) -> bool {
-        matches!(
-            self,
-            Self::SelfHeld {
-                lifecycle: SelfHeldLifecycle::Active,
-                ..
+    pub(crate) const fn outbound_subject_class(&self) -> &'static str {
+        match self {
+            Self::SelfHeld { .. } => SUBJECT_CLASS_SELF_HELD,
+            Self::Delegated { .. } => ChannelIdentityShape::DelegatedGrant.as_str(),
+        }
+    }
+
+    /// Whether this row's SUBSTRATE carries the capability an outbound send
+    /// needs, with the act class already permitted by policy.
+    ///
+    /// This is the half that stays in code, and it is a capability question,
+    /// never a class one. A self-held row holds an account the product minted,
+    /// so the capability is its live state. A delegated row holds a grant, and
+    /// [`DelegatedGrant::covers_outbound_send`] asks that grant — which answers
+    /// no for every scope class that exists, because
+    /// [`DelegatedGrantScope`] has no send variant to name. Raising the
+    /// manifest row does not change that answer; it changes which refusal the
+    /// caller reports.
+    #[must_use]
+    pub(crate) fn holds_outbound_capability(&self) -> bool {
+        match self {
+            Self::SelfHeld { lifecycle, .. } => {
+                matches!(lifecycle, SelfHeldLifecycle::Active)
             }
-        )
+            Self::Delegated { grant, lifecycle } => {
+                matches!(lifecycle, DelegatedLifecycle::Active) && grant.covers_outbound_send()
+            }
+        }
+    }
+
+    /// Whether this row may carry an OUTBOUND effect under `posture`.
+    #[must_use]
+    pub(crate) fn may_send_under(&self, posture: ActPosture) -> bool {
+        match posture {
+            ActPosture::Deny => false,
+            ActPosture::RequireCapability => self.holds_outbound_capability(),
+        }
+    }
+
+    /// Whether this row may carry an OUTBOUND effect under the RESTRICTIVE
+    /// default posture.
+    ///
+    /// The posture this answers under is the one the default manifest ships
+    /// (`deny` for a delegated row, `require_capability` for a self-held one),
+    /// so it is also the fail-closed answer for a caller that holds no resolved
+    /// manifest. A caller that resolves policy asks `may_send_under` with the
+    /// posture it resolved; a caller that only needs selection hygiene keeps
+    /// asking this.
+    #[must_use]
+    pub fn may_send(&self) -> bool {
+        self.may_send_under(match self {
+            Self::SelfHeld { .. } => ActPosture::RequireCapability,
+            Self::Delegated { .. } => ActPosture::Deny,
+        })
     }
 
     /// What this row can do for a message arriving now.
@@ -339,9 +395,9 @@ impl Custody {
     ///   assert the product mints and holds back the member's mailbox;
     /// * `pending_fulfillment` present outside PENDING, or absent inside it;
     /// * `quarantine_until` present outside QUARANTINE, absent inside it, or
-    ///   naming a window shorter than
-    ///   [`CHANNEL_IDENTITY_MIN_QUARANTINE_SECS`](super::keys::CHANNEL_IDENTITY_MIN_QUARANTINE_SECS)
-    ///   past the stamp.
+    ///   naming a window that ends before the stamp it dates from. HOW LONG the
+    ///   hold must run is manifest policy the door resolves, not a decode-side
+    ///   number (see [`WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE`](super::keys::WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE)).
     ///
     /// # Errors
     ///
@@ -397,7 +453,8 @@ impl Custody {
         }
     }
 
-    /// Applies one edge, on whichever machine this custody runs.
+    /// Applies one edge, on whichever machine this custody runs, with
+    /// `min_quarantine_secs` as the resolved hold floor.
     ///
     /// A mismatch is refused HERE rather than by a predicate at the caller: a
     /// self-held edge handed to a delegated row (and the reverse) is one arm,
@@ -410,12 +467,17 @@ impl Custody {
     /// [`RecordError::InvalidChannelIdentityBody`](crate::error::RecordError::InvalidChannelIdentityBody)
     /// when the edge belongs to the other machine, or is not on this state's
     /// table.
-    pub(super) fn step(&self, edge: IdentityEdge<'_>, at: u64) -> Result<Self> {
+    pub(super) fn step(
+        &self,
+        edge: IdentityEdge<'_>,
+        at: u64,
+        min_quarantine_secs: u64,
+    ) -> Result<Self> {
         match (self, edge) {
             (Self::SelfHeld { shape, lifecycle }, IdentityEdge::SelfHeld(edge)) => {
                 Ok(Self::SelfHeld {
                     shape: *shape,
-                    lifecycle: lifecycle.step(edge, at)?,
+                    lifecycle: lifecycle.step(edge, at, min_quarantine_secs)?,
                 })
             }
             (Self::Delegated { grant, lifecycle }, IdentityEdge::Delegated(edge)) => {
@@ -454,14 +516,15 @@ fn self_held_lifecycle_from_wire(
         ChannelIdentityState::Active => SelfHeldLifecycle::Active,
         ChannelIdentityState::Rotating => SelfHeldLifecycle::Rotating,
         ChannelIdentityState::Released => SelfHeldLifecycle::Released,
+        // Coherence, not duration: a window that ends before the state change
+        // it dates from means two things at once, and no policy can make it
+        // mean one. HOW LONG the hold must run is the manifest's
+        // `channel_identity.quarantine` wait row, resolved at the door that
+        // holds the snapshot — decode has no snapshot to resolve against, and a
+        // replicated body carries no evidence about the local vault's policy.
         ChannelIdentityState::Quarantine => {
             let until = quarantine_until.ok_or_else(invalid_identity)?;
-            let floor = state_changed_at
-                .checked_add(CHANNEL_IDENTITY_MIN_QUARANTINE_SECS)
-                .ok_or(Error::ArithmeticOverflow(
-                    "channel identity quarantine window",
-                ))?;
-            if until < floor {
+            if until < state_changed_at {
                 return Err(invalid_identity());
             }
             SelfHeldLifecycle::Quarantine { until }

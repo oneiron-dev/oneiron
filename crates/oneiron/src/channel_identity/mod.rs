@@ -67,15 +67,17 @@ pub use self::codec::{
     decode_channel_identity_body, encode_channel_identity_body, is_channel_identity_claim_predicate,
 };
 pub use self::keys::{
-    CHANNEL_IDENTITY_BODY_KEYS, CHANNEL_IDENTITY_CLAIM_PREDICATES,
-    CHANNEL_IDENTITY_DELEGATED_BODY_KEYS, CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION,
-    CHANNEL_IDENTITY_MIN_QUARANTINE_SECS, CHANNEL_IDENTITY_SCHEMA_VERSION, KEY_BINDING_FACET_REF,
+    ACT_CLASS_CHANNEL_IDENTITY_OUTBOUND_SEND, CHANNEL_IDENTITY_BODY_KEYS,
+    CHANNEL_IDENTITY_CLAIM_PREDICATES, CHANNEL_IDENTITY_DELEGATED_BODY_KEYS,
+    CHANNEL_IDENTITY_DELEGATED_SCHEMA_VERSION, CHANNEL_IDENTITY_SCHEMA_VERSION,
+    DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS, KEY_BINDING_FACET_REF,
     PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE, PREDICATE_CHANNEL_IDENTITY_BINDING_FACET_REF,
     PREDICATE_CHANNEL_IDENTITY_BINDING_SCOPE, PREDICATE_CHANNEL_IDENTITY_BINDING_TARGET,
     PREDICATE_CHANNEL_IDENTITY_CHANNEL, PREDICATE_CHANNEL_IDENTITY_MANIFEST_REF,
     PREDICATE_CHANNEL_IDENTITY_PENDING_FULFILLMENT, PREDICATE_CHANNEL_IDENTITY_QUARANTINE_UNTIL,
     PREDICATE_CHANNEL_IDENTITY_REPUTATION_REF, PREDICATE_CHANNEL_IDENTITY_SHAPE,
     PREDICATE_CHANNEL_IDENTITY_STATE, PREDICATE_CHANNEL_IDENTITY_STATE_CHANGED_AT,
+    SUBJECT_CLASS_SELF_HELD, WAIT_CLASS_CHANNEL_IDENTITY_QUARANTINE,
 };
 pub use self::lifecycle::{ChannelIdentityState, ChannelIdentityStep};
 pub use self::record::ChannelIdentity;
@@ -92,7 +94,8 @@ use self::record::StoredIdentityParts;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{
-    IdentityTransition, admit_channel_identity_transition_in_txn, step_channel_identity_in_txn,
+    IdentityTransition, admit_channel_identity_transition_in_txn, resolve_quarantine_floor_in_txn,
+    step_channel_identity_in_txn,
 };
 
 #[cfg(test)]
