@@ -158,9 +158,11 @@ pub(crate) mod tests {
             dss_revision_end(&doc, &bytes),
             report.achieved_profile()
         );
-        // The hand-built filler and later countersign are not engine LTA
-        // renewals. The evidence still confers LTA on the first signature.
-        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        // The span-crafted timestamp attests the DSS bytes, but ends before
+        // its own revision EOF. It cannot own a structural revision, so the
+        // modification classifier must not claim Clean. The first signer's
+        // evidence still supports its archival profile independently.
+        assert_eq!(report.modifications, crate::api::Modifications::NotRun);
         assert!(!report.valid());
         assert_eq!(
             report.signatures[0].profile,

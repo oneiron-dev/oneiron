@@ -20,7 +20,7 @@ fn fixture_pdf(name: &str) -> Vec<u8> {
     std::fs::read(path).unwrap()
 }
 
-fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
+fn sealed_b_input(input: &[u8]) -> (NativeSealEngine, Vec<u8>) {
     let id: TestIdentity = p256_identity(false);
     let anchor = id.cert_der.clone();
     let engine = NativeSealEngine::new(
@@ -39,7 +39,7 @@ fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
         .build()
         .unwrap()
         .block_on(engine.seal_pdf(
-            &fixture_pdf("classic_1page.pdf"),
+            input,
             &SealRequest {
                 operation_id: "verify-vector".to_string(),
                 target_profile: PadesProfile::BaselineB,
@@ -47,6 +47,10 @@ fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
         ))
         .unwrap();
     (engine, out.bytes)
+}
+
+fn sealed_b() -> (NativeSealEngine, Vec<u8>) {
+    sealed_b_input(&fixture_pdf("classic_1page.pdf"))
 }
 
 fn finding(report: &VerifyReport, kind: VerifyCheckKind) -> Option<VerifyFindingCode> {
@@ -321,6 +325,34 @@ fn unknown_post_signature_object_is_not_a_lta_update() {
         report.artifact_sha256,
         oneiron_seal::api::Sha256Digest::default()
     );
+}
+
+#[test]
+fn marker_in_stream_is_accepted_by_input_gate_and_self_verify() {
+    let mut doc = lopdf::Document::load_mem(&fixture_pdf("classic_1page.pdf")).unwrap();
+    doc.add_object(lopdf::Stream::new(
+        lopdf::Dictionary::new(),
+        b"startxref\n0\n%%EOF\n".to_vec(),
+    ));
+    let mut input = Vec::new();
+    doc.save_to(&mut input).unwrap();
+    let (engine, signed) = sealed_b_input(&input);
+    assert_eq!(
+        engine.verify_sealed_pdf(&signed).unwrap().verdict(),
+        oneiron_seal::VerifyVerdict::Passed
+    );
+}
+
+#[test]
+fn more_than_four_unsigned_eol_bytes_never_reach_entire_file() {
+    let (engine, mut signed) = sealed_b();
+    signed.extend_from_slice(b"\n\n\n\n\n");
+    let report = engine.verify_sealed_pdf(&signed).unwrap();
+    assert_ne!(
+        report.signatures[0].coverage,
+        oneiron_seal::Coverage::EntireFile
+    );
+    assert_eq!(report.modifications, oneiron_seal::Modifications::NotRun);
 }
 
 // Bounded property/fuzz legs (test budget: 24 cases each, no dependency

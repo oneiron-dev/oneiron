@@ -8,7 +8,7 @@ use crate::api::{
 use crate::error::SealError;
 
 use super::super::{cms, pdf, tsp};
-use super::verify_chain_gates::{VerifyCtx, malformed_input, validate_chain};
+use super::verify_chain_gates::{VerifyCtx, malformed_input, signer_path_status};
 use super::verify_dss_core::EmbeddedCert;
 use super::verify_revocation::gen_time_beyond_skew;
 
@@ -268,6 +268,19 @@ impl Checks {
                 VerifyCheckStatus::Fail
             },
             finding: if ok { None } else { Some(finding) },
+        });
+    }
+
+    pub(super) fn record_status(
+        &mut self,
+        kind: VerifyCheckKind,
+        status: VerifyCheckStatus,
+        finding: VerifyFindingCode,
+    ) {
+        self.list.push(VerifyCheck {
+            kind,
+            status,
+            finding: (status == VerifyCheckStatus::Fail).then_some(finding),
         });
     }
 
@@ -545,20 +558,11 @@ fn verify_signer(
         .collect();
     // An absent root cannot prove a broken signature. Keep trust unresolved
     // instead of laundering it into an integrity failure.
-    let path_valid = validate_chain(&chain_ders, anchors, at_unix).is_ok();
-    if !path_valid
-        && !chain_ders
-            .iter()
-            .any(|der| ctx.config.trust_anchors_der.contains(der))
-    {
-        checks.not_run(VerifyCheckKind::CertificatePath);
-    } else {
-        checks.record(
-            VerifyCheckKind::CertificatePath,
-            path_valid,
-            VerifyFindingCode::CertificatePathInvalid,
-        );
-    }
+    checks.record_status(
+        VerifyCheckKind::CertificatePath,
+        signer_path_status(&chain_ders, anchors, at_unix),
+        VerifyFindingCode::CertificatePathInvalid,
+    );
 }
 
 /// Validate the optional `signatureTimeStampToken` unsigned attribute.
@@ -602,8 +606,8 @@ fn verify_ts_token(
     };
     let imprint = cms::sha256(&signer.signature);
     match tsp::validate_token_for_verify(&token, &imprint, anchors) {
-        Ok((gen_time, tsa_chain_ders)) => {
-            if gen_time_beyond_skew(gen_time, clock_ms) {
+        Ok(token) => {
+            if gen_time_beyond_skew(token.gen_time_unix, clock_ms) {
                 checks.record(
                     VerifyCheckKind::SignatureTimestamp,
                     false,
@@ -616,12 +620,21 @@ fn verify_ts_token(
                 true,
                 VerifyFindingCode::TimestampInvalid,
             );
+            checks.record_status(
+                VerifyCheckKind::TimestampCertificatePath,
+                token.trust,
+                VerifyFindingCode::CertificatePathInvalid,
+            );
+            if token.trust != VerifyCheckStatus::Pass {
+                return None;
+            }
             covered.extend(
-                tsa_chain_ders
+                token
+                    .tsa_chain_ders
                     .iter()
                     .filter_map(|d| EmbeddedCert::from_der(d)),
             );
-            Some(gen_time)
+            Some(token.gen_time_unix)
         }
         Err(_) => {
             checks.record(
@@ -681,7 +694,7 @@ pub(super) fn verify_doc_ts(
     });
     let future_dated = token
         .as_ref()
-        .is_some_and(|(gen_time, _)| gen_time_beyond_skew(*gen_time, clock_ms));
+        .is_some_and(|t| gen_time_beyond_skew(t.gen_time_unix, clock_ms));
     let ok = br_ok && covers_end && token.is_some() && !future_dated;
     checks.record(
         VerifyCheckKind::DocumentTimestamp,
@@ -691,11 +704,20 @@ pub(super) fn verify_doc_ts(
     if !ok {
         return None;
     }
-    let (gen_time, tsa_chain_ders) = token?;
+    let token = token?;
+    checks.record_status(
+        VerifyCheckKind::TimestampCertificatePath,
+        token.trust,
+        VerifyFindingCode::CertificatePathInvalid,
+    );
+    if token.trust != VerifyCheckStatus::Pass {
+        return None;
+    }
     covered.extend(
-        tsa_chain_ders
+        token
+            .tsa_chain_ders
             .iter()
             .filter_map(|d| EmbeddedCert::from_der(d)),
     );
-    Some(gen_time)
+    Some(token.gen_time_unix)
 }

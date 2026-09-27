@@ -7,6 +7,7 @@
 mod incremental;
 mod objects;
 mod parse;
+mod revision_chain;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +20,7 @@ pub(crate) use self::parse::{
 };
 #[cfg(test)]
 pub(crate) use self::parse::{RevisionState, XrefStyle};
+pub(crate) use self::revision_chain::{file_tail_covered, load_snapshot, owns_eof, revision_ends};
 
 #[cfg(test)]
 use self::parse::*;

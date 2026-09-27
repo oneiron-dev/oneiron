@@ -417,6 +417,9 @@ pub(crate) fn validate_prepared(
         return Err(input_invalid(InputInvalidCode::MissingPage));
     }
     analyze_security(&doc, true)?;
+    if super::revision_chain::revision_ends(bytes, &doc, limits).is_none() {
+        return Err(input_invalid(InputInvalidCode::MalformedXref));
+    }
     let state = revision_state(&doc, bytes)?;
     Ok(PreparedInput {
         bytes: bytes.to_vec(),

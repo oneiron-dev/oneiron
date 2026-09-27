@@ -15,37 +15,13 @@ pub(super) fn signature_report(
     let br_ok = check_byte_range(bytes, e);
     let end = e.byte_range[2].checked_add(e.byte_range[3]);
     let covers_to = end.filter(|_| br_ok);
+    // The revision classifier upgrades this contiguous range only after it
+    // matches a structural xref/EOF boundary. Marker-looking stream bytes
+    // are never enough to award EntireRevision.
     let coverage = if !br_ok {
         Coverage::Unclear
-    } else if end.is_some_and(|n| {
-        usize::try_from(n)
-            .ok()
-            .and_then(|n| bytes.get(n..))
-            .is_some_and(|tail| tail.len() <= 4 && tail.iter().all(|b| *b == b'\r' || *b == b'\n'))
-    }) {
+    } else if end.is_some_and(|n| pdf::file_tail_covered(bytes, n)) {
         Coverage::EntireFile
-    } else if end
-        .and_then(|n| usize::try_from(n).ok())
-        .and_then(|n| bytes.get(..n))
-        .is_some_and(|prefix| {
-            prefix
-                .iter()
-                .rev()
-                .take(4)
-                .filter(|b| **b == b'\n' || **b == b'\r')
-                .count()
-                <= 4
-                && prefix
-                    .iter()
-                    .rev()
-                    .skip_while(|b| **b == b'\n' || **b == b'\r')
-                    .take(5)
-                    .copied()
-                    .collect::<Vec<_>>()
-                    == b"FOE%%"
-        })
-    {
-        Coverage::EntireRevision
     } else {
         Coverage::ContiguousFromStart
     };
@@ -64,10 +40,25 @@ pub(super) fn signature_report(
     } else {
         SignatureKind::Signature
     };
-    let trust = checks
+    let paths: Vec<_> = checks
         .iter()
-        .find(|c| c.kind == VerifyCheckKind::CertificatePath)
-        .map_or(VerifyCheckStatus::NotApplicable, |c| c.status);
+        .filter(|c| {
+            matches!(
+                c.kind,
+                VerifyCheckKind::CertificatePath | VerifyCheckKind::TimestampCertificatePath
+            )
+        })
+        .map(|c| c.status)
+        .collect();
+    let trust = if paths.contains(&VerifyCheckStatus::Fail) {
+        VerifyCheckStatus::Fail
+    } else if paths.contains(&VerifyCheckStatus::NotRun) {
+        VerifyCheckStatus::NotRun
+    } else if paths.contains(&VerifyCheckStatus::Pass) {
+        VerifyCheckStatus::Pass
+    } else {
+        VerifyCheckStatus::NotApplicable
+    };
     let integrity_checks = checks.iter().filter(|c| {
         matches!(
             c.kind,
@@ -119,14 +110,19 @@ pub(super) fn classify_signature(
 ) -> Option<PadesProfile> {
     if checks.iter().any(|c| {
         c.status == VerifyCheckStatus::Fail
-            || (c.status == VerifyCheckStatus::NotRun && c.kind != VerifyCheckKind::CertificatePath)
+            || (c.status == VerifyCheckStatus::NotRun
+                && !matches!(
+                    c.kind,
+                    VerifyCheckKind::CertificatePath | VerifyCheckKind::TimestampCertificatePath
+                ))
     }) {
         return None;
     }
     let checks = Checks {
         list: checks.to_vec(),
     };
-    let t = checks.passed(VerifyCheckKind::SignatureTimestamp);
+    let t = checks.passed(VerifyCheckKind::SignatureTimestamp)
+        && checks.passed(VerifyCheckKind::TimestampCertificatePath);
     let lt = t && dss_ok;
     Some(if lt && covering_dts_valid {
         PadesProfile::BaselineLta

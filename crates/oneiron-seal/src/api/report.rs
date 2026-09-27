@@ -22,6 +22,7 @@ pub enum VerifyCheckKind {
     SignatureValue,
     SigningCertificateBinding,
     CertificatePath,
+    TimestampCertificatePath,
     SignatureTimestamp,
     ValidationMaterial,
     DocumentTimestamp,

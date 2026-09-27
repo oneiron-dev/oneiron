@@ -38352,7 +38352,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -38373,6 +38373,16 @@
      "purpose": "Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/pdf/revision_chain.rs",
+     "purpose": "Shared, bounded PDF revision discovery from the actual xref /Prev chain",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -38438,7 +38448,7 @@
      "path": "src/native/tsp.rs",
      "purpose": "RFC 3161 timestamp requests and token validation (§7.4, §7.6)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -38452,13 +38462,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/native/verify/verify_chain_gates.rs",
      "purpose": "Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -38508,7 +38518,7 @@
      "path": "src/native/verify/verify_sig_pipeline.rs",
      "purpose": "Signature discovery and evaluation: AcroForm collection plus CAdES signer, signature-timestamp and…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -38540,6 +38550,14 @@
      "surface": {
       "crate-vis": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/verify/verify_tests_review.rs",
+     "purpose": "Regression probes for per-signature report and revision admission",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -38626,7 +38644,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 33,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -38635,7 +38653,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 34,
+   "source_files": 36,
    "test_files": 9
   },
   "oneiron-server": {

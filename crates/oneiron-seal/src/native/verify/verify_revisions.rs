@@ -3,62 +3,14 @@
 //! timestamp. No unknown PDF object type is allowed by default.
 use std::collections::BTreeSet;
 
+use super::super::pdf;
+use crate::api::SealResourceLimits;
 use crate::api::{
     Anomaly, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind,
     SignatureReport, VerifyCheckKind, VerifyCheckStatus,
 };
-use lopdf::{Document, LoadOptions, Object, ObjectId};
+use lopdf::{Document, Object, ObjectId};
 
-const MAX_REVISIONS: usize = 32;
-
-fn bounds(bytes: &[u8]) -> Option<Vec<usize>> {
-    let mut ends = Vec::new();
-    for (at, marker) in bytes.windows(5).enumerate() {
-        if marker != b"%%EOF" {
-            continue;
-        }
-        // Only a startxref directly preceding EOF counts as a revision.
-        // A marker embedded in a stream or PDF string is not a revision.
-        let head = &bytes[at.saturating_sub(80)..at];
-        let Some(sx) = head.windows(9).rposition(|w| w == b"startxref") else {
-            continue;
-        };
-        let number = head[sx + 9..]
-            .iter()
-            .copied()
-            .filter(|b| !b.is_ascii_whitespace())
-            .collect::<Vec<_>>();
-        let Ok(num) = std::str::from_utf8(&number).ok()?.parse::<usize>() else {
-            continue;
-        };
-        if num >= at || num.checked_add(4).and_then(|n| bytes.get(num..n)).is_none() {
-            continue;
-        }
-        if ends.len() >= MAX_REVISIONS {
-            return None;
-        }
-        ends.push(at + 5);
-    }
-    let last = *ends.last()?;
-    let tail = &bytes[last..];
-    if tail.len() > 4 || tail.iter().any(|b| !matches!(b, b'\r' | b'\n')) {
-        return None;
-    }
-    *ends.last_mut()? = bytes.len();
-    Some(ends)
-}
-
-fn loaded(bytes: &[u8]) -> Option<Document> {
-    Document::load_mem_with_options(
-        bytes,
-        LoadOptions {
-            strict: true,
-            max_decompressed_size: Some(bytes.len()),
-            ..LoadOptions::default()
-        },
-    )
-    .ok()
-}
 fn changed(before: &Document, after: &Document) -> Option<BTreeSet<ObjectId>> {
     if before
         .objects
@@ -158,7 +110,15 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
             let Some(obj) = after.get_object(id).ok() else {
                 return false;
             };
-            if !matches!(obj, Object::Stream(_)) {
+            let Object::Stream(stream) = obj else {
+                return false;
+            };
+            // The native DSS writer emits only an exact-length stream.
+            // An extra dictionary key is not an engine renewal shape.
+            if stream.dict.len() != 1
+                || !matches!(stream.dict.get(b"Length"), Ok(Object::Integer(n))
+                    if usize::try_from(*n).ok() == Some(stream.content.len()))
+            {
                 return false;
             }
             allowed.insert(id);
@@ -257,7 +217,13 @@ fn doc_timestamp_allowed(
     let Some(ts) = after.get_object(ts_id).ok().and_then(|o| o.as_dict().ok()) else {
         return false;
     };
-    if !matches!(ts.get(b"Type"), Ok(Object::Name(n)) if n == b"DocTimeStamp") {
+    if ts.len() != 5
+        || !matches!(ts.get(b"Type"), Ok(Object::Name(n)) if n == b"DocTimeStamp")
+        || !matches!(ts.get(b"Filter"), Ok(Object::Name(n)) if n == b"Adobe.PPKLite")
+        || !matches!(ts.get(b"SubFilter"), Ok(Object::Name(n)) if n == b"ETSI.RFC3161")
+        || !matches!(ts.get(b"ByteRange"), Ok(Object::Array(items)) if items.len() == 4)
+        || !matches!(ts.get(b"Contents"), Ok(Object::String(..)))
+    {
         return false;
     }
     let mut allowed = BTreeSet::from([last_field, ts_id]);
@@ -281,8 +247,10 @@ fn doc_timestamp_allowed(
 pub(super) fn classify(
     bytes: &[u8],
     signatures: &[SignatureReport],
+    final_doc: &Document,
+    limits: &SealResourceLimits,
 ) -> (Vec<RevisionReport>, Modifications, Vec<Anomaly>) {
-    let Some(ends) = bounds(bytes) else {
+    let Some(ends) = pdf::revision_ends(bytes, final_doc, limits) else {
         return (vec![], Modifications::NotRun, vec![]);
     };
     let mut revisions = Vec::new();
@@ -297,17 +265,13 @@ pub(super) fn classify(
         if work > 2 * 1024 * 1024 * 1024 {
             return (revisions, Modifications::NotRun, anomalies);
         }
-        let Some(doc) = loaded(&bytes[..end]) else {
+        let Some(doc) = pdf::load_snapshot(&bytes[..end], limits) else {
             return (revisions, Modifications::NotRun, anomalies);
         };
         let signed = signatures.iter().find(|s| {
-            s.byte_range.covers_to.is_some_and(|n| {
-                n <= end as u64
-                    && end as u64 - n <= 4
-                    && bytes[n as usize..end]
-                        .iter()
-                        .all(|b| *b == b'\r' || *b == b'\n')
-            })
+            s.byte_range
+                .covers_to
+                .is_some_and(|n| pdf::owns_eof(bytes, end, n))
         });
         let mut kind = if index == 0 {
             RevisionKind::Original
@@ -376,6 +340,16 @@ pub(super) fn classify(
             signed_by: signed.map(|s| s.id.clone()),
         });
         previous = Some(doc);
+    }
+    // Missing ownership cannot mean "no modifications". A valid discovered
+    // envelope must bind to a proven revision before we can classify appends.
+    if signatures.iter().any(|s| {
+        s.byte_range.well_formed
+            && !revisions
+                .iter()
+                .any(|r| r.signed_by.as_deref() == Some(s.id.as_str()))
+    }) {
+        return (revisions, Modifications::NotRun, anomalies);
     }
     (
         revisions,

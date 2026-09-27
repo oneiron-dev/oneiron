@@ -2,7 +2,9 @@
 
 use lopdf::{Document, LoadOptions};
 
-use crate::api::{Modifications, SealConfig, VerifyCheckKind, VerifyFindingCode, VerifyReport};
+use crate::api::{
+    Modifications, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode, VerifyReport,
+};
 use crate::error::{InputInvalidCode, SealError};
 
 use super::super::{cms, pdf};
@@ -94,33 +96,65 @@ pub(crate) fn issuer_permits_crl_sign(cert: &x509_cert::Certificate) -> bool {
     key_usage_permits(cert, x509_cert::ext::pkix::KeyUsage::crl_sign)
 }
 
+/// Only a missing path/anchor is unresolved trust. A constructed path that
+/// violates a certificate constraint has conclusively failed validation.
+pub(crate) fn pkix_path_status(error: &pkix_chain::Error) -> VerifyCheckStatus {
+    match error {
+        pkix_chain::Error::Path(pkix_chain::pkix_path::Error::NoTrustedPath)
+        | pkix_chain::Error::PathBuild(pkix_chain::pkix_path_builder::Error::NoPathFound)
+        | pkix_chain::Error::Aia(_)
+        | pkix_chain::Error::AiaDepthExceeded => VerifyCheckStatus::NotRun,
+        _ => VerifyCheckStatus::Fail,
+    }
+}
+
 /// RFC 5280 path validation against configured trust anchors at the
-/// applicable time, plus the signer-leaf key-usage gate. Shared by the
-/// assembler (B-LT chain pre-check) and the verifier.
-pub(crate) fn validate_chain(
+/// applicable time, plus the signer-leaf key-usage gate. The typed status is
+/// shared by seal-side refusal and verify's distinct trust axis.
+pub(crate) fn signer_path_status(
     chain_ders: &[Vec<u8>],
     anchors: &[pkix_chain::TrustAnchor],
     at_unix: u64,
-) -> Result<(), SealError> {
+) -> VerifyCheckStatus {
     use der::Decode;
-    let chain: Vec<x509_cert::Certificate> = chain_ders
+    let Ok(chain) = chain_ders
         .iter()
         .map(|d| x509_cert::Certificate::from_der(d))
-        .collect::<Result<_, _>>()
-        .map_err(|_| cert_path_err())?;
-    pkix_chain::verify_chain(
+        .collect::<Result<Vec<_>, _>>()
+    else {
+        return VerifyCheckStatus::Fail;
+    };
+    // This violation is provable without a root. Check it before path
+    // construction so an absent CMS root cannot turn bad KeyUsage into unknown.
+    if chain
+        .first()
+        .is_none_or(|leaf| enforce_signer_leaf_key_usage(leaf).is_err())
+    {
+        return VerifyCheckStatus::Fail;
+    }
+    match pkix_chain::verify_chain(
         &chain,
         anchors,
         &pkix_chain::ValidationPolicy::new(at_unix),
         &pkix_chain::DefaultVerifier,
         &pkix_chain::NoRevocation,
         &pkix_chain::NoAiaFetcher,
-    )
-    .map_err(|_| cert_path_err())?;
-    if let Some(leaf) = chain.first() {
-        enforce_signer_leaf_key_usage(leaf)?;
+    ) {
+        Ok(_) => VerifyCheckStatus::Pass,
+        Err(error) => pkix_path_status(&error),
     }
-    Ok(())
+}
+
+pub(crate) fn validate_chain(
+    chain_ders: &[Vec<u8>],
+    anchors: &[pkix_chain::TrustAnchor],
+    at_unix: u64,
+) -> Result<(), SealError> {
+    if signer_path_status(chain_ders, anchors, at_unix) == VerifyCheckStatus::Pass {
+        Ok(())
+    } else {
+        Err(cert_path_err())
+    }
 }
 
 pub(super) fn anchors(config: &SealConfig) -> Vec<pkix_chain::TrustAnchor> {
@@ -215,9 +249,11 @@ pub(crate) fn verify_document(
     // rung requires it: a validated DocTimeStamp that does NOT cover the
     // /DSS keeps its DocumentTimestamp check for the report but confers no
     // archival profile.
-    let mut covering_dts_valid = false;
+    let mut covered_ranges = Vec::with_capacity(sigs.len());
+    let mut doc_ts_times = vec![None; sigs.len()];
     for (i, e) in sigs.iter().enumerate() {
         let mut sig_checks = Checks::new();
+        let covered_start = covered.len();
         if e.is_doc_ts {
             if let Some(gen_time) = verify_doc_ts(
                 bytes,
@@ -229,14 +265,15 @@ pub(crate) fn verify_document(
                 ctx.clock_ms,
             ) {
                 let br_end = e.byte_range[2].saturating_add(e.byte_range[3]);
+                doc_ts_times[i] = Some(gen_time);
                 if dss_end.is_some_and(|end| br_end >= end) {
                     archival_time = Some(gen_time);
-                    covering_dts_valid = true;
                 }
             }
         } else {
             verify_cades_sig(bytes, e, ctx, &anchors, &mut sig_checks, &mut covered);
         }
+        covered_ranges.push(covered_start..covered.len());
         signatures.push(signature_report(bytes, e, i, sig_checks.list));
     }
     verify_dss(
@@ -247,13 +284,60 @@ pub(crate) fn verify_document(
         limits.max_input_bytes,
         &mut checks,
     );
-    let dss_ok = checks.passed(VerifyCheckKind::ValidationMaterial);
-    for sig in &mut signatures {
-        if sig.kind == crate::api::SignatureKind::Signature {
-            sig.profile = classify_signature(&sig.checks, dss_ok, covering_dts_valid);
+    // An archival timestamp must attest THIS signer and the effective DSS.
+    // Evidence freshness and completeness are evaluated at that signer's
+    // applicable time, not the document-wide most recent timestamp time.
+    for i in 0..signatures.len() {
+        if signatures[i].kind != crate::api::SignatureKind::Signature {
+            continue;
+        }
+        let signer_end = signatures[i].byte_range.covers_to;
+        let covering = dss_end.and_then(|dss_end| {
+            doc_ts_times.iter().enumerate().rev().find_map(|(j, time)| {
+                let ts_end = signatures[j].byte_range.covers_to?;
+                let time = (*time)?;
+                (ts_end >= dss_end && signer_end.is_some_and(|end| ts_end >= end))
+                    .then_some((j, time))
+            })
+        });
+        let mut evidence = Vec::new();
+        for cert in &covered[covered_ranges[i].clone()] {
+            if let Some(cert) = EmbeddedCert::from_der(&cert.der) {
+                evidence.push(cert);
+            }
+        }
+        if let Some((j, _)) = covering {
+            for cert in &covered[covered_ranges[j].clone()] {
+                if let Some(cert) = EmbeddedCert::from_der(&cert.der) {
+                    evidence.push(cert);
+                }
+            }
+        }
+        let mut material_checks = Checks::new();
+        verify_dss(
+            &doc,
+            &anchor_certs,
+            &evidence,
+            covering.map_or(ctx.clock_ms / 1000, |(_, time)| time),
+            limits.max_input_bytes,
+            &mut material_checks,
+        );
+        let dss_ok = material_checks.passed(VerifyCheckKind::ValidationMaterial);
+        signatures[i].checks.extend(material_checks.list);
+        signatures[i].profile =
+            classify_signature(&signatures[i].checks, dss_ok, covering.is_some());
+    }
+    let (revisions, modifications, anomalies) =
+        verify_revisions::classify(bytes, &signatures, &doc, limits);
+    for signature in &mut signatures {
+        if signature.coverage == crate::api::Coverage::ContiguousFromStart
+            && revisions
+                .iter()
+                .any(|rev| rev.signed_by.as_deref() == Some(signature.id.as_str()))
+        {
+            signature.coverage = crate::api::Coverage::EntireRevision;
         }
     }
-    let (revisions, modifications, anomalies) = verify_revisions::classify(bytes, &signatures);
     match modifications {
         Modifications::Suspicious => checks.record(
             VerifyCheckKind::Modification,

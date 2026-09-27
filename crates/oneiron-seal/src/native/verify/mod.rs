@@ -19,12 +19,14 @@ mod verify_tests_fixtures_dss_a;
 #[cfg(test)]
 mod verify_tests_lta_probes;
 #[cfg(test)]
+mod verify_tests_review;
+#[cfg(test)]
 mod verify_tests_sig_shapes;
 #[cfg(test)]
 mod verify_tests_time_lta_a;
 
 pub(crate) use self::verify_chain_gates::{
-    VerifyCtx, issuer_permits_crl_sign, validate_chain, verify_document,
+    VerifyCtx, issuer_permits_crl_sign, pkix_path_status, validate_chain, verify_document,
 };
 pub(crate) use self::verify_dss_core::EmbeddedCert;
 pub(crate) use self::verify_revocation::{
