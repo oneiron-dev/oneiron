@@ -1,6 +1,6 @@
 "use strict";
 const pathToken = location.pathname.match(/^\/sign\/([0-9a-f]{64})$/);
-const token = pathToken ? pathToken[1] : location.pathname === "/sign" ? location.hash.slice(1) : "";
+const token = pathToken ? pathToken[1] : "";
 // A capability in the public link must not remain in browser history or in
 // referrers after the first document load. Subsequent calls use POST bodies.
 history.replaceState(null, "", "/sign");

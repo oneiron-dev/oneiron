@@ -52,10 +52,8 @@ pub(super) fn public_routes() -> Router<Arc<SyncServer>> {
 async fn action(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: Result<
-        axum::extract::ConnectInfo<std::net::SocketAddr>,
-        axum::extract::rejection::ExtensionRejection,
-    >,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<SigningRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
@@ -69,10 +67,9 @@ async fn action(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    let Ok(axum::extract::ConnectInfo(peer)) = peer else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
-    let ip = Some(peer.ip().to_string());
     match server
         .vault
         .execute_signing_action(&token, &request.action, ip, ua)
@@ -89,6 +86,29 @@ async fn action(
         Err(_) => refused(),
     }
 }
+type NetworkPeer = Result<
+    axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::rejection::ExtensionRejection,
+>;
+type LocalPeer = Result<
+    axum::extract::ConnectInfo<crate::managed::UnixPeer>,
+    axum::extract::rejection::ExtensionRejection,
+>;
+
+fn signing_peer_ip(network: NetworkPeer, local: LocalPeer) -> Result<Option<String>, ()> {
+    if let Ok(axum::extract::ConnectInfo(peer)) = network {
+        return Ok(Some(peer.ip().to_string()));
+    }
+    if let Ok(axum::extract::ConnectInfo(peer)) = local
+        && peer.verified()
+    {
+        // A kernel-verified Unix peer is the local supervisor, not a signer
+        // address. Record no IP rather than inventing one or trusting XFF.
+        return Ok(None);
+    }
+    Err(())
+}
+
 fn refused() -> Response {
     (
         StatusCode::FORBIDDEN,
@@ -110,17 +130,15 @@ struct PdfRequest {
 async fn pdf(
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    peer: Result<
-        axum::extract::ConnectInfo<std::net::SocketAddr>,
-        axum::extract::rejection::ExtensionRejection,
-    >,
+    peer: NetworkPeer,
+    local_peer: LocalPeer,
     Json(request): Json<PdfRequest>,
 ) -> Response {
     let token = match EsignCapability::parse(&request.token) {
         Ok(t) => t,
         Err(_) => return refused(),
     };
-    let Ok(axum::extract::ConnectInfo(peer)) = peer else {
+    let Ok(ip) = signing_peer_ip(peer, local_peer) else {
         return unavailable();
     };
     let ua = headers
@@ -128,12 +146,10 @@ async fn pdf(
         .and_then(|v| v.to_str().ok())
         .filter(|v| v.len() <= 1024)
         .map(str::to_owned);
-    match server.vault.esign_pdf_for_capability(
-        &token,
-        request.item,
-        Some(peer.ip().to_string()),
-        ua,
-    ) {
+    match server
+        .vault
+        .esign_pdf_for_capability(&token, request.item, ip, ua)
+    {
         Ok(bytes) => {
             let mut response = (
                 [
@@ -373,7 +389,7 @@ mod tests {
             Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
         let server =
             Arc::new(SyncServer::new(vault, crate::config::SyncServerConfig::default()).unwrap());
-        let app = public_routes().with_state(server);
+        let app = editor_routes().with_state(server);
         let mut pdf = b"%PDF-1.7\n".to_vec();
         let mut offsets = Vec::new();
         for (index, body) in [
