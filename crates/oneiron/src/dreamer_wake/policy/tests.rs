@@ -106,6 +106,7 @@ fn v3() -> DreamerWakePolicy {
         nightly_secs: 24 * 3600,
         idle_secs: 60,
         quiet_weave_secs: 3600,
+        weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
     }
 }
 
@@ -464,6 +465,7 @@ fn nightly_recipe_is_a_separate_row_dial() -> Result<()> {
             nightly_secs: 3_600,
             idle_secs: 60,
             quiet_weave_secs: 2 * 86_400,
+            weave_recipe_priority: crate::dreamer_wake::WeaveRecipePriority::BeforeConnectorEvent,
         },
     )?;
     claim(&vault, ClaimSource::UserStated, 1)?;
@@ -621,6 +623,53 @@ fn interleaved_recipe_wakes_merge_each_component_once() -> Result<()> {
         assert_eq!(continuous.nightly_count, 3, "interleaved {interleaved:?}");
         assert_eq!(continuous.after_record, None);
         assert_eq!(continuous.after_nightly, None);
+    }
+    Ok(())
+}
+
+#[test]
+fn recipe_priority_requires_an_owner_and_rejects_unknown_rows() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    assert_eq!(
+        vault.dreamer_wake_policy()?.weave_recipe_priority,
+        WeaveRecipePriority::BeforeConnectorEvent
+    );
+    let owner = EntityId::now();
+    vault.put_entity(&owner, ENTITY_TYPE_PERSON, at(1), 1, b"owner")?;
+    let proof = vault.authenticate_owner(
+        owner,
+        "principal:policy-owner",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let mut policy = vault.dreamer_wake_policy()?;
+    policy.weave_recipe_priority = WeaveRecipePriority::AfterConnectorEvent;
+    vault.set_dreamer_wake_policy(&proof, policy)?;
+    assert_eq!(
+        vault.dreamer_wake_policy()?.weave_recipe_priority,
+        WeaveRecipePriority::AfterConnectorEvent
+    );
+    // The only admitted placement is before or after the connector lane;
+    // unknown priorities cannot silently leap over protected cleanup or
+    // maintenance, and a missing key is not an implied authority widening.
+    for replacement in [
+        serde_json::Value::String("before_cleanup".into()),
+        serde_json::Value::Null,
+    ] {
+        let mut row = serde_json::to_value(policy)
+            .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+        row["weave_recipe_priority"] = replacement;
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(
+                txn,
+                POLICY_KEY,
+                &serde_json::to_vec(&row)
+                    .map_err(|_| Error::InvalidConfig("encode policy".into()))?,
+            )?;
+            Ok(())
+        })?;
+        assert!(vault.dreamer_wake_policy().is_err());
     }
     Ok(())
 }

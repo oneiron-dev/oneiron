@@ -1522,3 +1522,120 @@ fn selection_retry_settles_spend_and_releases_without_manual_resume() -> Result<
     );
     Ok(())
 }
+
+#[test]
+fn owner_wake_policy_orders_recipe_against_connector_without_changing_budget_or_lease() -> Result<()>
+{
+    use crate::attempt_queue::{AttemptQueue, AttemptState};
+    use crate::dreamer_runner::{
+        DREAMER_WEAVE_RECIPE_ATTEMPT_KIND, connector_event::CONNECTOR_EVENT_QUEUE_KIND,
+    };
+    use crate::dreamer_wake::WeaveRecipePriority;
+
+    for selected in [
+        WeaveRecipePriority::BeforeConnectorEvent,
+        WeaveRecipePriority::AfterConnectorEvent,
+    ] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let agent = EntityId::now();
+        let owner = EntityId::now();
+        let subject = EntityId::now();
+        let evidence = EntityId::now();
+        for id in [agent, owner, subject] {
+            vault.put_entity(&id, ENTITY_TYPE_PERSON, occurred(1), 1, b"fixture person")?;
+        }
+        vault.put_entity(
+            &evidence,
+            crate::registry::ENTITY_TYPE_TURN,
+            occurred(1),
+            1,
+            b"user turn",
+        )?;
+        let skill = EntityId::now();
+        let candidate = crate::skill::SkillRecord::new(
+            "weave.recipe",
+            "schedule fixture",
+            "v1",
+            ClaimApprovalStatus::Proposed,
+            crate::skill::SkillLifecycle::Candidate,
+            ClaimSource::Generated,
+            0.5,
+            true,
+            false,
+            Vec::new(),
+            Value::Map(vec![("author".into(), "agent".into())]),
+        );
+        vault
+            .memory(agent, EdgeActorClass::Agent)
+            .skill_save_with_source(
+                skill,
+                &candidate,
+                vec![crate::skill_hub::HubFile::new(
+                    "SKILL.md",
+                    b"# owner recipe",
+                )],
+                None,
+                2,
+            )
+            .map_err(|err| crate::Error::InvalidConfig(err.to_string()))?;
+        let owner = vault.authenticate_owner(
+            owner,
+            "principal:lane-order",
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        vault.admit_and_enqueue_weave_recipe(&owner, skill, subject, evidence, 3)?;
+        vault.with_write_txn(|txn| {
+            DreamerRunnerStore::new(&vault).enqueue_connector_event_in_txn(
+                txn,
+                crate::dreamer_runner::DreamerAttemptPayload {
+                    attempt_type: crate::dreamer_runner::connector_event::CONNECTOR_EVENT_FACET
+                        .into(),
+                    input: Value::Nil,
+                    parent_attempt: None,
+                },
+                None,
+                None,
+                3,
+            )?;
+            Ok(())
+        })?;
+        let mut policy = vault.dreamer_wake_policy()?;
+        policy.weave_recipe_priority = selected;
+        vault.set_dreamer_wake_policy(&owner, policy)?;
+        let node_id = crate::identity::load_or_mint_client_id(&vault)?;
+        let mut driver = DreamerWakeDriver::new(&vault, "wake-order", frozen_deadline(0, 180_000));
+        let mut exec = CompletingExecutor {
+            completed_units: 100,
+            executed: 0,
+        };
+        let mut input = run_input(DreamerConsolidationScope::Micro, node_id, 4);
+        input.budget_total_units = 100;
+        let report =
+            block_on_ready(driver.run_wake_pass(input, &mut exec, &WakeCancellation::new()))?;
+        assert_eq!(report.admitted, 1);
+        assert_eq!(report.completed, 1);
+        assert_eq!(report.stop, WakePassStop::BudgetExhausted);
+        let rows = AttemptQueue::new(&vault).list()?;
+        let completed: Vec<_> = rows
+            .iter()
+            .filter(|row| row.state == AttemptState::Completed)
+            .collect();
+        assert_eq!(completed.len(), 1);
+        assert_eq!(
+            completed[0].kind,
+            if selected == WeaveRecipePriority::BeforeConnectorEvent {
+                DREAMER_WEAVE_RECIPE_ATTEMPT_KIND
+            } else {
+                CONNECTOR_EVENT_QUEUE_KIND
+            }
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.state == AttemptState::Queued && row.kind != completed[0].kind)
+        );
+        assert_eq!(exec.executed, 1);
+    }
+    Ok(())
+}

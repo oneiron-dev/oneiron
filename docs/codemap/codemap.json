@@ -14170,13 +14170,14 @@
       "WakePolicyOutcome",
       "WakePolicyTimerLease",
       "WakePolicyTrigger",
-      "WakeRecipe"
+      "WakeRecipe",
+      "WeaveRecipePriority"
      ],
      "path": "src/dreamer_wake/policy.rs",
      "purpose": "Row-backed wake admission",
      "surface": {
       "crate-vis": 2,
-      "enum": 2,
+      "enum": 3,
       "fn": 6,
       "struct": 5
      }

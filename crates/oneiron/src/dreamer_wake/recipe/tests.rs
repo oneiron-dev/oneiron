@@ -62,7 +62,7 @@ impl Fixture {
             )?;
         }
         if let Some((source, taint)) = claim_source {
-            let observed = source == ClaimSource::Observed;
+            let observed = source == ClaimSource::Observed && taint == ClaimSource::ToolOutput;
             let mut claim = ClaimBody::new(
                 if observed {
                     "actor.scope_note"
@@ -368,6 +368,21 @@ fn recipe_persists_source_meet_and_transitive_taint() -> Result<()> {
             ClaimSource::ToolOutput,
             ClaimSource::ToolOutput,
         ),
+        (
+            ClaimSource::UserStated,
+            ClaimSource::UserStated,
+            ClaimSource::Generated,
+        ),
+        (
+            ClaimSource::Observed,
+            ClaimSource::Observed,
+            ClaimSource::Generated,
+        ),
+        (
+            ClaimSource::Inferred,
+            ClaimSource::Inferred,
+            ClaimSource::Generated,
+        ),
         // A valid engine-owned actor claim records observation origin beside
         // a lower-trust ancestry. The recipe must not erase that ancestry.
         (
@@ -397,6 +412,10 @@ fn recipe_persists_source_meet_and_transitive_taint() -> Result<()> {
             .ok_or_else(invalid)?;
         assert_eq!(decoded.refs, [fixture.evidence]);
         assert_eq!(decoded.source_meet, expected);
+        assert_eq!(
+            crate::claim::claim_evidence_admissible(&body),
+            expected != ClaimSource::Generated,
+        );
         // The emitted CLAIM retains the class even when cited on a later pass.
         assert_eq!(
             crate::dreamer_consolidation::evidence_chain_source(

@@ -338,7 +338,10 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
         ));
     }
     let body = crate::claim::decode_claim_body(data, true)?;
-    Ok(evidence_source_from_claim(&body))
+    Ok(source_meet(
+        ClaimSource::Generated,
+        evidence_source_from_claim(&body),
+    ))
 }
 
 fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
