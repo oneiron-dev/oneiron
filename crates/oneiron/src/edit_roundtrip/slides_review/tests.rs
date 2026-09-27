@@ -173,6 +173,10 @@ fn review(input: &[u8], count: usize, run_ref: &str) -> SlideReviewRun {
                 name: "Editor".into(),
             },
             dial: dial(),
+            resident_dial: None,
+            limits: SlideReviewLimits::default(),
+            policy: &DecisionBandPolicy::default(),
+            reversibility: Reversibility::ReversibleRead,
             labels: &labels(),
             providers: &[&local, &jev],
             run_ref,
@@ -190,6 +194,11 @@ fn twenty_slides_batch_fallback_abstention_and_comment_receipt_agree() {
     let asker = EntityId::now();
     let answerer = EntityId::now();
     let q = question();
+    let mut policy = DecisionBandPolicy::default();
+    policy
+        .learn_shadow(&q, Reversibility::ReversibleRead, dial().band, 1)
+        .unwrap();
+    policy.enforce(&q, Reversibility::ReversibleRead).unwrap();
     let result = review_slides(
         &input,
         Some(1),
@@ -203,6 +212,10 @@ fn twenty_slides_batch_fallback_abstention_and_comment_receipt_agree() {
                 name: "Editor".into(),
             },
             dial: dial(),
+            resident_dial: None,
+            limits: SlideReviewLimits::default(),
+            policy: &policy,
+            reversibility: Reversibility::ReversibleRead,
             labels: &labels(),
             providers: &[&local, &jev],
             run_ref: "20-slides",
@@ -230,6 +243,8 @@ fn twenty_slides_batch_fallback_abstention_and_comment_receipt_agree() {
     for row in &proposal.manifest.slide_judgments {
         assert_eq!(row.decision.receipt.question, q.id);
         assert_eq!(row.decision.receipt.question_version, 2);
+        assert_eq!(row.decision.receipt.band_version, 1);
+        assert_eq!(row.band_mode, BandMode::Enforce);
         assert_eq!(row.decision.receipt.principal, asker);
         assert_eq!(row.judged_version, Some(1));
         assert_eq!(row.frontier, *blake3::hash(&input).as_bytes());
@@ -266,7 +281,7 @@ fn twenty_slides_batch_fallback_abstention_and_comment_receipt_agree() {
 }
 
 #[test]
-fn malformed_response_or_missing_evidence_never_yields_a_proposal() {
+fn malformed_response_and_duplicate_unit_never_yield_a_proposal() {
     let input = deck(2);
     let local = Provider {
         rung: DecisionRung::Local,
@@ -288,6 +303,10 @@ fn malformed_response_or_missing_evidence_never_yields_a_proposal() {
                     name: "Editor".into(),
                 },
                 dial: dial(),
+                resident_dial: None,
+                limits: SlideReviewLimits::default(),
+                policy: &DecisionBandPolicy::default(),
+                reversibility: Reversibility::ReversibleRead,
                 labels: &labels(),
                 providers: &[&local, &jev],
                 run_ref: "malformed",
@@ -296,9 +315,6 @@ fn malformed_response_or_missing_evidence_never_yields_a_proposal() {
         )
     };
     assert!(call(units(2)).is_err());
-    let mut bad = units(2);
-    bad[0].review_image.clear();
-    assert!(call(bad).is_err());
     let mut duplicate = units(2);
     duplicate[1] = duplicate[0].clone();
     assert!(call(duplicate).is_err());
@@ -382,6 +398,20 @@ fn keep_receipt_survives_reopen_and_stale_preview_cannot_overwrite() {
         .unwrap();
     assert!(old.stranded_proposal.is_some());
     assert_eq!(old.receipt.outcome, "proposed");
+    let stale_patch = match &stale.manifest.ops[0] {
+        super::super::EditOp::PptxComment { patch } => patch,
+        _ => panic!("expected comment"),
+    };
+    assert_ne!(stale_patch.asked_by, stale_patch.answered_by);
+    assert_ne!(actor.entity_ref(), stale_patch.asked_by);
+    let identities: serde_json::Value =
+        serde_json::from_str(&old.receipt.fields["pptx_review_identities"]).unwrap();
+    assert_eq!(identities[0]["asked_by"], stale_patch.asked_by.to_hex());
+    assert_eq!(
+        identities[0]["answered_by"],
+        stale_patch.answered_by.to_hex()
+    );
+    assert_eq!(identities[0]["export_author_guid"], support::AUTHOR);
     assert_eq!(old.version.version, 2);
     assert_eq!(
         vault
@@ -420,6 +450,15 @@ fn keep_receipt_survives_reopen_and_stale_preview_cannot_overwrite() {
             .unwrap()
             .pptx_judgments,
         first.manifest.slide_judgments
+    );
+    assert_eq!(
+        reopened
+            .blob_artifact_settlement(&artifact, "review:stale")
+            .unwrap()
+            .unwrap()
+            .pptx_review_identities[0]
+            .answered_by,
+        stale_patch.answered_by
     );
 }
 
@@ -474,12 +513,32 @@ fn forged_receipt_or_comment_is_refused_at_settle() {
             )
             .is_err()
     );
+    let mut false_enforce = review(&input, 1, "review:fake-enforce").proposal.unwrap();
+    false_enforce.manifest.slide_judgments[0].band_mode = BandMode::Enforce;
+    assert!(
+        vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &false_enforce,
+                &consent,
+                actor,
+                TimeRange { start: 4, end: 4 },
+                4
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:fake-enforce")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
 fn discard_keeps_the_review_receipt_but_never_writes_comments() {
     let input = deck(1);
-    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+    let (dir, vault, artifact, actor) = vault_with_deck(&input);
     let proposal = review(&input, 1, "review:discard").proposal.unwrap();
     let result = vault
         .settle_discard_edit_proposal(
@@ -507,6 +566,26 @@ fn discard_keeps_the_review_receipt_but_never_writes_comments() {
     assert_eq!(row.pptx_judgments, proposal.manifest.slide_judgments);
     assert_eq!(row.outcome, SettleOutcomeKind::Discarded);
     assert!(result.receipt.fields["slide_judgments"].contains("fixture-renderer@1"));
+    let patch = match &proposal.manifest.ops[0] {
+        super::super::EditOp::PptxComment { patch } => patch,
+        _ => panic!("expected comment"),
+    };
+    let identities: serde_json::Value =
+        serde_json::from_str(&result.receipt.fields["pptx_review_identities"]).unwrap();
+    assert_eq!(identities[0]["asked_by"], patch.asked_by.to_hex());
+    assert_eq!(identities[0]["answered_by"], patch.answered_by.to_hex());
+    assert_ne!(actor.entity_ref(), patch.answered_by);
+    drop(vault);
+    let reopened = Vault::open(dir.path(), embedding_test_config()).unwrap();
+    assert_eq!(
+        reopened
+            .blob_artifact_settlement(&artifact, "review:discard")
+            .unwrap()
+            .unwrap()
+            .pptx_review_identities[0]
+            .answered_by,
+        patch.answered_by
+    );
 }
 
 struct ShortProvider;
@@ -545,6 +624,10 @@ fn wrong_batch_cardinality_fails_closed() {
                     name: "Editor".into()
                 },
                 dial: dial(),
+                resident_dial: None,
+                limits: SlideReviewLimits::default(),
+                policy: &DecisionBandPolicy::default(),
+                reversibility: Reversibility::ReversibleRead,
                 labels: &labels(),
                 providers: &[&ShortProvider, &jev],
                 run_ref: "short-output",
@@ -553,4 +636,546 @@ fn wrong_batch_cardinality_fails_closed() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn relabeled_slide_review_cannot_bypass_authoritative_pptx_replay() {
+    let input = deck(1);
+    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+    let mut proposal = review(&input, 1, "review:relabel").proposal.unwrap();
+    proposal.format = super::super::OfficeFormat::Xlsx;
+    proposal.manifest.format = super::super::OfficeFormat::Xlsx;
+    proposal.manifest.ops.clear();
+    proposal.manifest.touched_parts.clear();
+    proposal.manifest.slide_judgments.clear();
+    let mut parts = support::unpack(&input);
+    support::with_text(
+        &mut parts,
+        "ppt/slides/slide1.xml",
+        "Original text",
+        "Undeclared slide edit",
+    );
+    proposal.new_bytes = support::bytes(&parts);
+    assert!(
+        vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &proposal,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                TimeRange { start: 4, end: 4 },
+                4
+            )
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:relabel")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn same_comment_cannot_change_answer_primitive_at_either_settle_door() {
+    let input = deck(1);
+    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+    let mut proposal = review(&input, 1, "review:wrong-primitive")
+        .proposal
+        .unwrap();
+    // The low-level writer's labels allow a choice to render identically to Noul(true).
+    proposal.manifest.slide_judgments[0].decision.answer =
+        DecisionAnswer::Choice("Overstated".into());
+    let consent = SettleConsent::OwnerConsent { brief_ref: None };
+    assert!(
+        vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &proposal,
+                &consent,
+                actor,
+                TimeRange { start: 4, end: 4 },
+                4
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .settle_discard_edit_proposal(&artifact, &proposal, &consent, actor, "invalid", 4)
+            .is_err()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:wrong-primitive")
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn missing_input_abstains_per_unit_and_all_missing_creates_no_proposal() {
+    let input = deck(20);
+    let local = Provider::new(DecisionRung::Local);
+    let jev = Provider::new(DecisionRung::SystemOne);
+    let question = question();
+    let mut units = units(20);
+    units[10].review_image.clear();
+    let request = SlideReviewRequest {
+        units: &units,
+        question: &question,
+        principal: EntityId::now(),
+        answered_by: EntityId::now(),
+        author: &PptxAuthor {
+            guid: support::AUTHOR.into(),
+            name: "Editor".into(),
+        },
+        dial: dial(),
+        resident_dial: None,
+        limits: SlideReviewLimits::default(),
+        policy: &DecisionBandPolicy::default(),
+        reversibility: Reversibility::ReversibleRead,
+        labels: &labels(),
+        providers: &[&local, &jev],
+        run_ref: "review:missing-one",
+        at: 1_700_000_000_123,
+    };
+    let result = review_slides(&input, Some(1), &request).unwrap();
+    assert_eq!(
+        result.abstained.iter().map(|u| u.slide).collect::<Vec<_>>(),
+        [11]
+    );
+    assert_eq!(result.proposal.unwrap().manifest.slide_judgments.len(), 19);
+    assert_eq!(
+        local
+            .calls
+            .borrow()
+            .iter()
+            .map(Vec::len)
+            .collect::<Vec<_>>(),
+        [8, 8, 3]
+    );
+    for unit in &mut units {
+        unit.text.clear();
+    }
+    let all_missing = SlideReviewRequest {
+        units: &units,
+        question: &question,
+        principal: EntityId::now(),
+        answered_by: EntityId::now(),
+        author: &PptxAuthor {
+            guid: support::AUTHOR.into(),
+            name: "Editor".into(),
+        },
+        dial: dial(),
+        resident_dial: None,
+        limits: SlideReviewLimits::default(),
+        policy: &DecisionBandPolicy::default(),
+        reversibility: Reversibility::ReversibleRead,
+        labels: &labels(),
+        providers: &[&local, &jev],
+        run_ref: "review:all-missing",
+        at: 1_700_000_000_123,
+    };
+    let result = review_slides(&input, Some(1), &all_missing).unwrap();
+    assert_eq!(result.abstained.len(), 20);
+    assert!(result.proposal.is_none());
+}
+
+struct ChangingPin {
+    calls: std::cell::Cell<usize>,
+}
+impl SlideReviewProvider for ChangingPin {
+    fn pin(&self) -> ProviderPin {
+        let count = self.calls.get();
+        self.calls.set(count + 1);
+        ProviderPin {
+            rung: DecisionRung::Local,
+            model: if count == 0 { "validated" } else { "" }.into(),
+            version: "1".into(),
+        }
+    }
+    fn decide_batch(
+        &self,
+        _: &DecisionQuestion,
+        units: &[SlideReviewUnit],
+    ) -> Result<Vec<ProviderDecision>> {
+        Ok(units
+            .iter()
+            .map(|_| ProviderDecision {
+                answer: DecisionAnswer::Noul(true),
+                probability: Some(0.9),
+            })
+            .collect())
+    }
+}
+#[test]
+fn provider_pin_is_validated_once_and_snapshotted_for_every_unit() {
+    let input = deck(2);
+    let provider = ChangingPin {
+        calls: std::cell::Cell::new(0),
+    };
+    let question = question();
+    let result = review_slides(
+        &input,
+        Some(1),
+        &SlideReviewRequest {
+            units: &units(2),
+            question: &question,
+            principal: EntityId::now(),
+            answered_by: EntityId::now(),
+            author: &PptxAuthor {
+                guid: support::AUTHOR.into(),
+                name: "Editor".into(),
+            },
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Local,
+                band: DecisionBand::default(),
+            },
+            resident_dial: None,
+            limits: SlideReviewLimits::default(),
+            policy: &DecisionBandPolicy::default(),
+            reversibility: Reversibility::ReversibleRead,
+            labels: &labels(),
+            providers: &[&provider],
+            run_ref: "review:pin",
+            at: 1_700_000_000_123,
+        },
+    )
+    .unwrap();
+    assert_eq!(provider.calls.get(), 1);
+    for row in result.proposal.unwrap().manifest.slide_judgments {
+        assert_eq!(row.decision.receipt.providers[0].model, "validated");
+    }
+}
+
+fn many_judgment_proposal(input: &[u8], count: usize, run_ref: &str) -> super::super::EditProposal {
+    let mut proposal = review(input, 1, run_ref).proposal.unwrap();
+    let row = proposal.manifest.slide_judgments[0].clone();
+    let op = proposal.manifest.ops[0].clone();
+    proposal.manifest.slide_judgments.clear();
+    proposal.manifest.ops.clear();
+    for index in 0..count {
+        let thread_id = EntityId::now();
+        let mut next = row.clone();
+        next.thread_id = thread_id;
+        next.target.slide = index as u64 + 1;
+        let mut patch = op.clone();
+        if let super::super::EditOp::PptxComment { patch } = &mut patch {
+            patch.thread_id = thread_id;
+            patch.comment_id = thread_id;
+            if let PptxCommentAction::Add { target, .. } = &mut patch.action {
+                *target = next.target.clone();
+            }
+        }
+        proposal.manifest.slide_judgments.push(next);
+        proposal.manifest.ops.push(patch);
+    }
+    proposal
+}
+
+#[test]
+fn settlement_row_limit_is_shared_by_encoder_decoder_select_and_discard() {
+    let input = deck(1);
+    let (_dir, vault, artifact, actor) = vault_with_deck(&input);
+    let consent = SettleConsent::OwnerConsent { brief_ref: None };
+    let valid = many_judgment_proposal(&input, MAX_JUDGMENTS, "review:limit");
+    assert!(validate_judgment_rows(&valid.manifest.slide_judgments).is_ok());
+    // Discard writes the maximum valid ledger row, which must decode again.
+    let discarded = vault
+        .settle_discard_edit_proposal(&artifact, &valid, &consent, actor, "limit", 4)
+        .unwrap();
+    assert_eq!(discarded.receipt.outcome, "discarded");
+    assert_eq!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:limit")
+            .unwrap()
+            .unwrap()
+            .pptx_judgments
+            .len(),
+        MAX_JUDGMENTS
+    );
+    let too_many = many_judgment_proposal(&input, MAX_JUDGMENTS + 1, "review:over-limit");
+    assert!(
+        vault
+            .settle_discard_edit_proposal(&artifact, &too_many, &consent, actor, "over", 5)
+            .is_err()
+    );
+    assert!(
+        vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &too_many,
+                &consent,
+                actor,
+                TimeRange { start: 5, end: 5 },
+                5
+            )
+            .is_err()
+    );
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "review:over-limit")
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_head(&artifact)
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+    let mut duplicate = many_judgment_proposal(&input, 2, "review:duplicate");
+    duplicate.manifest.slide_judgments[1].thread_id =
+        duplicate.manifest.slide_judgments[0].thread_id;
+    assert!(
+        vault
+            .settle_discard_edit_proposal(&artifact, &duplicate, &consent, actor, "duplicate", 6)
+            .is_err()
+    );
+    let mut aliases = many_judgment_proposal(&input, 2, "review:aliases");
+    aliases.manifest.slide_judgments[0].target.shape_creation_id = Some(support::SHAPE.into());
+    aliases.manifest.slide_judgments[1].target.slide = 1;
+    aliases.manifest.slide_judgments[1].target.shape_creation_id =
+        Some(support::SHAPE.to_ascii_lowercase());
+    assert!(validate_judgment_rows(&aliases.manifest.slide_judgments).is_err());
+}
+
+struct InBandProvider {
+    rung: DecisionRung,
+    calls: std::cell::Cell<usize>,
+}
+impl InBandProvider {
+    fn new(rung: DecisionRung) -> Self {
+        Self {
+            rung,
+            calls: std::cell::Cell::new(0),
+        }
+    }
+}
+impl SlideReviewProvider for InBandProvider {
+    fn pin(&self) -> ProviderPin {
+        ProviderPin {
+            rung: self.rung,
+            model: "band-fixture".into(),
+            version: "1".into(),
+        }
+    }
+    fn decide_batch(
+        &self,
+        _: &DecisionQuestion,
+        rows: &[SlideReviewUnit],
+    ) -> Result<Vec<ProviderDecision>> {
+        self.calls.set(self.calls.get() + 1);
+        Ok(rows
+            .iter()
+            .map(|_| ProviderDecision {
+                answer: DecisionAnswer::Noul(true),
+                probability: Some(0.5),
+            })
+            .collect())
+    }
+}
+
+#[test]
+fn shared_shadow_and_enforce_policy_stamp_version_and_move_only_one_rung() {
+    let input = deck(1);
+    let q = question();
+    let local = InBandProvider::new(DecisionRung::Local);
+    let jev = InBandProvider::new(DecisionRung::SystemOne);
+    let big = InBandProvider::new(DecisionRung::Big);
+    let mut policy = DecisionBandPolicy::default();
+    let learned = DecisionBand {
+        low: 0.4,
+        high: 0.6,
+    };
+    policy
+        .learn_shadow(&q, Reversibility::ReversibleRead, learned, 3)
+        .unwrap();
+    let run = |policy: &DecisionBandPolicy, run_ref: &str| {
+        review_slides(
+            &input,
+            Some(1),
+            &SlideReviewRequest {
+                units: &units(1),
+                question: &q,
+                principal: EntityId::now(),
+                answered_by: EntityId::now(),
+                author: &PptxAuthor {
+                    guid: support::AUTHOR.into(),
+                    name: "Editor".into(),
+                },
+                dial: DecisionDial {
+                    first: DecisionRung::Local,
+                    ceiling: DecisionRung::Big,
+                    band: DecisionBand::default(),
+                },
+                resident_dial: None,
+                limits: SlideReviewLimits::default(),
+                policy,
+                reversibility: Reversibility::ReversibleRead,
+                labels: &labels(),
+                providers: &[&local, &jev, &big],
+                run_ref,
+                at: 1_700_000_000_123,
+            },
+        )
+        .unwrap()
+    };
+    let shadow = run(&policy, "review:shadow").proposal.unwrap();
+    let row = &shadow.manifest.slide_judgments[0];
+    assert_eq!(row.band_mode, BandMode::Shadow);
+    assert_eq!(row.decision.receipt.band_version, 3);
+    assert_eq!(row.decision.receipt.band, learned);
+    assert_eq!(row.decision.receipt.providers.len(), 1);
+    assert_eq!(
+        (local.calls.get(), jev.calls.get(), big.calls.get()),
+        (1, 0, 0)
+    );
+    policy.enforce(&q, Reversibility::ReversibleRead).unwrap();
+    let enforced = run(&policy, "review:enforce").proposal.unwrap();
+    let row = &enforced.manifest.slide_judgments[0];
+    assert_eq!(row.band_mode, BandMode::Enforce);
+    assert_eq!(row.decision.receipt.providers.len(), 2);
+    assert!(row.decision.in_band);
+    assert_eq!(
+        (local.calls.get(), jev.calls.get(), big.calls.get()),
+        (2, 1, 0)
+    );
+    verify_judgments(&enforced).unwrap();
+}
+
+#[test]
+fn resident_dial_cannot_widen_owner_dial_or_change_band() {
+    let input = deck(1);
+    let q = question();
+    let local = InBandProvider::new(DecisionRung::Local);
+    let jev = InBandProvider::new(DecisionRung::SystemOne);
+    let owner = dial();
+    let widened = DecisionDial {
+        first: DecisionRung::Rule,
+        ceiling: DecisionRung::Big,
+        band: owner.band,
+    };
+    let request = SlideReviewRequest {
+        units: &units(1),
+        question: &q,
+        principal: EntityId::now(),
+        answered_by: EntityId::now(),
+        author: &PptxAuthor {
+            guid: support::AUTHOR.into(),
+            name: "Editor".into(),
+        },
+        dial: owner,
+        resident_dial: Some(widened),
+        limits: SlideReviewLimits::default(),
+        policy: &DecisionBandPolicy::default(),
+        reversibility: Reversibility::ReversibleRead,
+        labels: &labels(),
+        providers: &[&local, &jev],
+        run_ref: "review:widen",
+        at: 1_700_000_000_123,
+    };
+    assert!(review_slides(&input, Some(1), &request).is_err());
+    assert_eq!(local.calls.get(), 0);
+}
+
+#[test]
+fn vault_review_uses_manifest_limits_and_route_not_a_wider_request() {
+    let input = deck(2);
+    let (_dir, vault, artifact, _actor) = vault_with_deck(&input);
+    let mut manifest = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut manifest.as_slice()).unwrap()
+    else {
+        unreachable!()
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("slide_review_policy"));
+    let row = |values: Vec<(&str, rmpv::Value)>| {
+        rmpv::Value::Map(values.into_iter().map(|(k, v)| (k.into(), v)).collect())
+    };
+    entries.push((
+        "slide_review_policy".into(),
+        rmpv::Value::Array(vec![
+            row(vec![
+                ("scope", "precedence".into()),
+                ("value", "nested_narrowing".into()),
+            ]),
+            row(vec![
+                ("scope", "vault".into()),
+                ("batch_size", 1_u64.into()),
+                ("max_units", 1_u64.into()),
+                ("max_text_bytes", 2048_u64.into()),
+                ("max_image_bytes", 4096_u64.into()),
+            ]),
+            row(vec![
+                ("scope", "route".into()),
+                ("first", "local".into()),
+                ("ceiling", "local".into()),
+            ]),
+        ]),
+    ));
+    manifest.clear();
+    rmpv::encode::write_value(&mut manifest, &rmpv::Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &manifest).unwrap();
+    let local = Provider::new(DecisionRung::Local);
+    let jev = Provider::new(DecisionRung::SystemOne);
+    let q = question();
+    let author = PptxAuthor {
+        guid: support::AUTHOR.into(),
+        name: "Editor".into(),
+    };
+    let labels = labels();
+    let policy = DecisionBandPolicy::default();
+    let two = units(2);
+    let mut request = SlideReviewRequest {
+        units: &two,
+        question: &q,
+        principal: EntityId::now(),
+        answered_by: EntityId::now(),
+        author: &author,
+        dial: dial(),
+        resident_dial: None,
+        limits: SlideReviewLimits::default(),
+        policy: &policy,
+        reversibility: Reversibility::ReversibleRead,
+        labels: &labels,
+        providers: &[&local, &jev],
+        run_ref: "review:manifest",
+        at: 1_700_000_000_123,
+    };
+    // Both the vault unit cap and its route are stricter than this request.
+    assert!(
+        vault
+            .review_blob_artifact_slides(&artifact, &request)
+            .is_err()
+    );
+    assert!(local.calls.borrow().is_empty());
+    let one = units(1);
+    request.units = &one;
+    request.dial.ceiling = DecisionRung::Local;
+    let local_only = [&local as &dyn SlideReviewProvider];
+    request.providers = &local_only;
+    let result = vault
+        .review_blob_artifact_slides(&artifact, &request)
+        .unwrap();
+    assert_eq!(result.proposal.unwrap().manifest.slide_judgments.len(), 1);
+    assert_eq!(*local.calls.borrow(), vec![vec![1]]);
 }

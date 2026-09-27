@@ -69,6 +69,8 @@ pub(super) const POLICY_AUTO_CHECKER_KEY: &str = "auto_checker";
 /// ```
 pub(super) const POLICY_BUDGET_POLICY_KEY: &str = "budget_policy";
 pub(super) const POLICY_HOSTED_TTS_KEY: &str = "hosted_tts";
+/// Vault and holder rows for artifact-review operating limits and precedence.
+pub(super) const POLICY_SLIDE_REVIEW_KEY: &str = "slide_review_policy";
 pub(super) const BUDGET_POLICY_PURPOSE_KEY: &str = "purpose";
 pub(super) const BUDGET_POLICY_ACTOR_KEY: &str = "actor";
 pub(super) const BUDGET_POLICY_FLOOR_KEY: &str = "floor";

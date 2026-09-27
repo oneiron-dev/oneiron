@@ -72,6 +72,18 @@ impl Vault {
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
             }
+            // The artifact body, not a caller-mutable proposal tag, chooses the
+            // format-specific verifier. Check both tags before stale retention
+            // or append, inside the same transaction as the head read.
+            let body = self
+                .get_blob_artifact_in_txn(wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            let actual_format = OfficeFormat::from_media_type(&body.media_type)?;
+            if actual_format != proposal.format || actual_format != proposal.manifest.format {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "proposal format differs from the artifact media type",
+                )));
+            }
             // Base head read in-txn, consistent with the append below.
             let base = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?
                 .ok_or(Error::EntityNotFound)?;
@@ -101,7 +113,7 @@ impl Vault {
                     manifest_ref: Some(manifest_hash),
                     manifest_ops,
                     pptx_slide_creation_id_mints: Vec::new(),
-                    pptx_review_identities: Vec::new(),
+                    pptx_review_identities: pptx_review_identities(proposal),
                     pptx_judgments: proposal.manifest.slide_judgments.clone(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
@@ -113,15 +125,7 @@ impl Vault {
             }
             // Replay every PPTX comment operation against the pinned in-transaction
             // base. A public proposal/report cannot authorize XML changes on its own.
-            if proposal.format == OfficeFormat::Pptx {
-                let body = self
-                    .get_blob_artifact_in_txn(wtxn, artifact_id)?
-                    .ok_or(Error::EntityNotFound)?;
-                if OfficeFormat::from_media_type(&body.media_type)? != OfficeFormat::Pptx {
-                    return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                        "PowerPoint comment proposal targets a non-PPTX artifact",
-                    )));
-                }
+            if actual_format == OfficeFormat::Pptx {
                 if proposal.base_version != Some(base.version) {
                     return Err(Error::Artifact(ArtifactError::EditProposalStale));
                 }
@@ -206,23 +210,7 @@ impl Vault {
                         }
                     })
                     .collect(),
-                pptx_review_identities: proposal
-                    .manifest
-                    .ops
-                    .iter()
-                    .filter_map(|op| {
-                        let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
-                            return None;
-                        };
-                        Some(super::records::PptxReviewIdentity {
-                            thread_id: patch.thread_id,
-                            asked_by: patch.asked_by,
-                            answered_by: patch.answered_by,
-                            export_author_guid: patch.author.guid.clone(),
-                            export_author_name: patch.author.name.clone(),
-                        })
-                    })
-                    .collect(),
+                pptx_review_identities: pptx_review_identities(proposal),
                 pptx_judgments: proposal.manifest.slide_judgments.clone(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
@@ -276,7 +264,7 @@ impl Vault {
             manifest_ref: None,
             manifest_ops: 0,
             pptx_slide_creation_id_mints: Vec::new(),
-            pptx_review_identities: Vec::new(),
+            pptx_review_identities: pptx_review_identities(proposal),
             pptx_judgments: proposal.manifest.slide_judgments.clone(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
@@ -472,6 +460,26 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+fn pptx_review_identities(proposal: &EditProposal) -> Vec<super::records::PptxReviewIdentity> {
+    proposal
+        .manifest
+        .ops
+        .iter()
+        .filter_map(|op| {
+            let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
+                return None;
+            };
+            Some(super::records::PptxReviewIdentity {
+                thread_id: patch.thread_id,
+                asked_by: patch.asked_by,
+                answered_by: patch.answered_by,
+                export_author_guid: patch.author.guid.clone(),
+                export_author_name: patch.author.name.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Validates a proposal ref before it lands in a durable ledger row — the same

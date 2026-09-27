@@ -140,6 +140,12 @@ pub(crate) fn resolve_policy_manifest(
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
+                if !resolution
+                    .slide_review_policy
+                    .restrict(decoded.slide_review_policy)
+                {
+                    resolution.diagnostics.malformed_manifest_seen = true;
+                }
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),

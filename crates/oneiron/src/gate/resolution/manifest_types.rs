@@ -102,4 +102,5 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) auto_checker: Option<String>,
     pub(super) budget_policy: BudgetPolicyTable,
     pub(super) hosted_tts: HostedTtsPolicy,
+    pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
 }
