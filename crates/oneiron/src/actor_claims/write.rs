@@ -77,10 +77,21 @@ pub(super) fn ground_actor_claim(
     require_actor_entity(vault, &row.actor())?;
     if let ActorClaimRow::SkillFit { skill, .. } = row {
         require_skill_entity(vault, skill)?;
+        let record = vault
+            .get_skill_record(skill)?
+            .ok_or(Error::EntityNotFound)?;
+        if crate::skill::resident_of(&record)?.is_some_and(|resident| resident != row.actor()) {
+            return Err(invalid("actor.skill_fit names another resident's fork"));
+        }
     }
     match &evidence.lane {
         ActorClaimLane::Task { receipts } => {
             for receipt in receipts {
+                if crate::skill::resident::receipt_resident(vault, receipt)?
+                    .is_some_and(|resident| resident != row.actor())
+                {
+                    return Err(invalid("actor row cites another resident's attempt"));
+                }
                 if crate::receipt::attempt_pack_receipt(vault, receipt)?.is_none() {
                     return Err(invalid("actor row cites an unstamped attempt receipt"));
                 }

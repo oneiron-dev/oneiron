@@ -40,9 +40,20 @@ fn terminal_receipt_keeps_index_pull_and_actor_claim_in_load_order() -> Result<(
     assert_eq!(loaded.skill_id, "pack.loaded");
     assert_eq!(
         vault
-            .load_attempt_actor_claim(status.attempt.id, &claim, 42)?
+            .load_resident_actor_claim(status.attempt.id, &actor, &claim, 42)?
             .predicate,
         PREDICATE_ACTOR_LESSON
+    );
+    assert!(
+        vault
+            .load_attempt_actor_claim(status.attempt.id, &claim, 42)
+            .is_err()
+    );
+    let other = put_actor(&vault)?;
+    assert!(
+        vault
+            .load_resident_actor_claim(status.attempt.id, &other, &claim, 42)
+            .is_err()
     );
     let queue = AttemptQueue::new(&vault);
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(

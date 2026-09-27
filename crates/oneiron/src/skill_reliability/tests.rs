@@ -110,10 +110,13 @@ fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) ->
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "sk05-worker".to_owned(),
-            now: 12,
-        })
+        .claim_kind(
+            "sk05.attempt",
+            ClaimAttempt {
+                lease_owner: "sk05-worker".to_owned(),
+                now: 12,
+            },
+        )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
@@ -1379,3 +1382,5 @@ fn skill_posterior_sample_rejects_invalid_public_parameters() {
         );
     }
 }
+
+mod resident;

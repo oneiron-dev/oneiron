@@ -185,6 +185,11 @@ fn validate_skill_update_for_door(
             "forkedFrom lineage cannot change on update",
         )));
     }
+    if super::resident_of(prior)? != super::resident_of(updated)? {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "resident ownership cannot change on update",
+        )));
+    }
     // Lifecycle machine (ARCH-0053 §6): a superseded revision is frozen
     // history — it never loads as canon and never updates; continuing the
     // skill means admitting a NEW revision. All other moves must follow

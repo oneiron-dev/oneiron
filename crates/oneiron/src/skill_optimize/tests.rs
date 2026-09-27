@@ -118,6 +118,10 @@ fn put_actor(vault: &Vault, id: &EntityId) {
 /// Runs one attempt whose pack loaded `skill_id@1.0.0` to its terminal door
 /// and returns the receipt id its close STAMPED.
 fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
+    stamped_receipt_version(vault, skill_id, FIXTURE_VERSION, now)
+}
+
+fn stamped_receipt_version(vault: &Vault, skill_id: &str, version: &str, now: u64) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
         .enqueue(EnqueueAttempt {
@@ -134,7 +138,7 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     queue
         .append_manifest_entry(
             attempt.id,
-            ManifestEntry::new(ManifestKind::Skill, skill_id, FIXTURE_VERSION, now),
+            ManifestEntry::new(ManifestKind::Skill, skill_id, version, now),
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
@@ -4400,3 +4404,4 @@ fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Res
     );
     Ok(())
 }
+mod resident;

@@ -686,4 +686,5 @@ fn an_empty_fixture_set_scores_zero() {
     assert!(report.pass_rate() < f32::EPSILON);
 }
 
+mod resident;
 mod sweep;

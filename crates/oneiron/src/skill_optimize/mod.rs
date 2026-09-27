@@ -149,9 +149,11 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize, run_skill_optimize_as,
+    run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
 };
-pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
+pub use self::selection::{
+    SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
+};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,
