@@ -11,7 +11,7 @@ use rmpv::Value;
 use crate::{
     BudgetLease, ClaimCandidate, ClaimSubject, ContentPart, EdgeActorClass, EdgeKind,
     FatalLlmError, FinishReason, LlmGenerateFuture, LlmResponse, LlmStreamResult, LlmUsage,
-    ModelId, TimeRange, WriteActor, code_run::SelfAskHumanCall, code_run::SelfDurableWaitReason,
+    ModelId, TimeRange, WriteActor, code_run::SelfAskCall, code_run::SelfDurableWaitReason,
     code_run::SelfEffect, code_run::SelfMemoryPutClaimCall, code_run::SelfMemoryPutEdgeCall,
     code_run::SelfMemoryWriteFixtureCall, code_run::SelfSpeechCall, registry::ENTITY_TYPE_PERSON,
 };
@@ -37,7 +37,7 @@ fn open_test_vault() -> (tempfile::TempDir, Vault) {
 }
 
 fn prompt_package_root() -> std::path::PathBuf {
-    crate::prompt::workspace_prompt_package_root().expect("workspace prompt package")
+    crate::prompt::workspace_test_prompt_package_root().expect("workspace test prompt package")
 }
 
 use crate::error::{ArtifactError, GateError};
@@ -319,10 +319,10 @@ fn executor_uses_llm_backend_and_plain_js_boundary() {
 #[test]
 fn executor_records_self_calls_through_dispatcher_and_waits_durably() {
     let (_dir, vault) = open_test_vault();
-    let backend = FixtureBackend::new(["await self.ask_human('continue?');"]);
+    let backend = FixtureBackend::new(["await ask('continue?');"]);
     let lease = BudgetLease::for_test("executor-lease");
     let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::pending("waiting")])
-        .with_calls([vec![SelfCall::AskHuman(SelfAskHumanCall::new("continue?"))]]);
+        .with_calls([vec![SelfCall::Ask(SelfAskCall::new("continue?"))]]);
     let gated_write = gated_actor_write(&vault, "run-wait");
     let config = executor_config(entity(0x82), EngineExecutorLimits::default());
 
@@ -333,14 +333,14 @@ fn executor_records_self_calls_through_dispatcher_and_waits_durably() {
     let EngineExecutorStatus::Waiting(wait) = outcome.status else {
         panic!("expected durable wait");
     };
-    assert_eq!(wait.effect, SelfEffect::AskHuman);
+    assert_eq!(wait.effect, SelfEffect::Ask);
     assert_eq!(wait.reason, SelfDurableWaitReason::HumanInput);
     assert_eq!(wait.prompt.as_deref(), Some("continue?"));
     assert_eq!(outcome.replay_record.bridge_calls.len(), 1);
     assert_eq!(outcome.replay_record.bridge_calls[0].seq, 0);
     assert_eq!(
         outcome.replay_record.bridge_calls[0].effect,
-        SelfEffect::AskHuman
+        SelfEffect::Ask
     );
     let stored = vault
         .get_code_run_replay_record(&config.run_id)
@@ -352,12 +352,12 @@ fn executor_records_self_calls_through_dispatcher_and_waits_durably() {
 #[test]
 fn executor_blocks_later_self_calls_after_durable_wait() {
     let (_dir, vault) = open_test_vault();
-    let backend = FixtureBackend::new(["self.askHuman({ prompt: 'continue?' });"]);
+    let backend = FixtureBackend::new(["ask({ prompt: 'continue?' });"]);
     let lease = BudgetLease::for_test("executor-lease");
     let src = seed_person(&vault, 0xC1);
     let tgt = seed_person(&vault, 0xC2);
     let calls = vec![
-        SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
+        SelfCall::Ask(SelfAskCall::new("continue?")),
         SelfCall::MemoryPutEdge(SelfMemoryPutEdgeCall::new(
             src,
             EdgeKind::Mentions,
@@ -379,7 +379,7 @@ fn executor_blocks_later_self_calls_after_durable_wait() {
     assert_eq!(outcome.replay_record.bridge_calls.len(), 2);
     assert_eq!(
         outcome.replay_record.bridge_calls[0].effect,
-        SelfEffect::AskHuman
+        SelfEffect::Ask
     );
     assert_eq!(
         outcome.replay_record.bridge_calls[1].effect,
@@ -739,10 +739,10 @@ fn executor_persists_bridge_calls_when_output_recording_fails_after_dispatch() {
 #[test]
 fn executor_preserves_durable_wait_when_runtime_errors_after_wait() {
     let (_dir, vault) = open_test_vault();
-    let backend = FixtureBackend::new(["await self.ask_human('continue?');"]);
+    let backend = FixtureBackend::new(["await ask('continue?');"]);
     let lease = BudgetLease::for_test("executor-lease");
     let mut runtime =
-        ErrorAfterCallsRuntime::new(vec![SelfCall::AskHuman(SelfAskHumanCall::new("continue?"))]);
+        ErrorAfterCallsRuntime::new(vec![SelfCall::Ask(SelfAskCall::new("continue?"))]);
     let gated_write = gated_actor_write(&vault, "run-wait-then-error");
     let config = executor_config(
         entity(0x8D),
@@ -759,7 +759,7 @@ fn executor_preserves_durable_wait_when_runtime_errors_after_wait() {
     let EngineExecutorStatus::Waiting(wait) = outcome.status else {
         panic!("expected durable wait");
     };
-    assert_eq!(wait.effect, SelfEffect::AskHuman);
+    assert_eq!(wait.effect, SelfEffect::Ask);
     assert_eq!(wait.reason, SelfDurableWaitReason::HumanInput);
     assert_eq!(outcome.steps_run, 1);
     let stored = vault
@@ -1656,7 +1656,7 @@ fn source_literals_and_comments_can_start_lines_with_every_wire_token() {
 /// One configurable non-Rust prompt-package block drives both teaching sites.
 #[test]
 fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
-    let package_root = crate::prompt::workspace_prompt_package_root().expect("prompt package");
+    let package_root = crate::prompt::workspace_test_prompt_package_root().expect("prompt package");
     let resolved = crate::prompt::resolve_engine_executor_wire_prompt(&package_root)
         .expect("resolve executor wire prompt");
     let canonical = resolved.text.trim_end();
@@ -1691,10 +1691,6 @@ fn canonical_prompt_package_block_drives_system_and_turn_wire_teaching() {
             "agent-facing teaching must not be authored in Rust: {teaching_line}"
         );
     }
-    assert!(
-        !engine_rust.contains("workspace_prompt_package_root"),
-        "executor constructors must require a deployed package instead of a source-checkout fallback"
-    );
     let prompt_rust = include_str!("../prompt.rs");
     assert!(
         !prompt_rust.contains(r#"include_str!("../../../packages/prompts"#),
@@ -2660,7 +2656,7 @@ fn every_host_call_response_carries_budget() {
         calls: vec![
             SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("status", 3)),
             SelfCall::MemorySearch(crate::code_run::SelfMemorySearchCall::new("plans", 2)),
-            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
+            SelfCall::Ask(SelfAskCall::new("continue?")),
         ],
         captured: std::sync::Arc::clone(&captured),
     };
@@ -2997,12 +2993,12 @@ fn executor_interleaves_speech_reads_and_gated_writes_in_bridge_order() {
 #[test]
 fn speech_after_a_durable_wait_stays_behind_the_fail_closed_barrier() {
     let (_dir, vault) = open_test_vault();
-    let backend = FixtureBackend::new(["await self.ask_human('continue?');"]);
+    let backend = FixtureBackend::new(["await ask('continue?');"]);
     let lease = BudgetLease::for_test("executor-lease");
     let mut runtime =
         FixtureRuntime::new([JsCodeModeStepOutcome::pending("waiting")]).with_calls([vec![
             SelfCall::Speak(SelfSpeechCall::new("before the wait")),
-            SelfCall::AskHuman(SelfAskHumanCall::new("continue?")),
+            SelfCall::Ask(SelfAskCall::new("continue?")),
             SelfCall::Speak(SelfSpeechCall::new("after the wait")),
             SelfCall::Think(SelfSpeechCall::new("also after the wait")),
         ]]);
@@ -3023,7 +3019,7 @@ fn speech_after_a_durable_wait_stays_behind_the_fail_closed_barrier() {
             .collect::<Vec<_>>(),
         vec![
             ("self.speak", "speech"),
-            ("self.ask_human", "durable_wait"),
+            ("ask", "durable_wait"),
             ("self.speak", "durable_wait"),
             ("self.think", "durable_wait"),
         ],

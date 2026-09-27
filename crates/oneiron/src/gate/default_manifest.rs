@@ -98,6 +98,23 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         ]),
                     ),
                 ]),
+                // A delivered-send receipt projects this non-restrictive
+                // standing fact. Keep the rule exact: comm.opt_out still
+                // inherits the critical floor and cannot auto-widen consent.
+                Value::Map(vec![
+                    (
+                        Value::from(RULE_PREFIX_KEY),
+                        Value::from(crate::comm::PREDICATE_COMM_LAST_TOUCH),
+                    ),
+                    (Value::from(RULE_EXACT_KEY), Value::Boolean(true)),
+                    (
+                        Value::from(RULE_AXES_KEY),
+                        Value::Map(vec![
+                            (Value::from(AXIS_CRITICALITY_KEY), Value::from("normal")),
+                            (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
+                        ]),
+                    ),
+                ]),
                 Value::Map(vec![
                     (Value::from(RULE_PREFIX_KEY), Value::from("calendar.")),
                     (
@@ -362,7 +379,7 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 (Value::from(SIGNATURE_KEY_ID_KEY), Value::from("owner")),
                 (
                     Value::from(SIGNATURE_SIG_KEY),
-                    Value::from("first-party-eiri-auto"),
+                    Value::from("first-party-agent-auto"),
                 ),
             ])]),
         ),

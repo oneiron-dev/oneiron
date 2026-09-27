@@ -677,7 +677,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             results
                 .iter()
                 .any(|entity| entity["id"].as_str() == Some(party_id.as_str())),
-            "stored scope admits the party memory",
+            "TURN-band scope admits the party memory",
         );
         assert!(
             results
@@ -788,7 +788,7 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
     let identity_ref = seeded_test_entity_id(0x1517_0041);
     let wider_contact = seeded_test_entity_id(0x1517_0042);
     seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
-    seed_text_turn(&server, "party event needle23");
+    let party = seed_text_turn(&server, "party event needle23");
     seed_disclosure_scope(&server, wider_contact, disclosure_base_world_clearance());
     // Principal X has no contact row: it contributes the deny-all scope.
     let principal_ref = seeded_test_entity_id(0x1517_0043).to_hex();
@@ -799,6 +799,27 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
             "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
         }
     });
+    let (wide_status, wide_body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &wider_contact.to_hex(),
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(wide_status, StatusCode::OK);
+    assert!(
+        wide_body["results"]
+            .as_array()
+            .expect("wider results")
+            .iter()
+            .any(|row| row["id"] == party.to_hex()),
+        "contact clearance alone must admit the party, so X ∩ Y is asymmetric: {wide_body:?}"
+    );
+
     let (status, body) = route_json(
         server,
         core_request_with_principal_ref(
@@ -984,4 +1005,398 @@ async fn core_context_pack_dangling_contact_ref_fails_loudly() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_error_envelope(&body, "NOT_FOUND");
+}
+
+/// Fixture: a logged, host-signed human binding plus a holder-bound top slip.
+/// A bare host secret has no authenticated PERSON identity to exclude.
+fn bind_room_owner(server: &SyncServer, owner: oneiron::EntityId) {
+    use ed25519_dalek::Signer;
+    use oneiron::authority::{
+        AUTHORITY_LOG_SCHEMA_VERSION, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+        HostSlipIssuer, actor_binding_is_active, authority_entry_hash, authority_transcript,
+    };
+    use std::collections::BTreeSet;
+
+    let issuer = HostSlipIssuer::from_secret(b"secret").unwrap();
+    let host_key = issuer.public_key();
+    let seed = blake3::derive_key("oneiron/host-authority-signing/v2", b"secret");
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    assert_eq!(signing.verifying_key().to_bytes(), issuer.binding_key());
+    let fold = server.vault.authority_fold().unwrap();
+    let mut heads: BTreeSet<_> = fold.valid_entries.clone();
+    let mut seq = 0;
+    for row in server
+        .vault
+        .entities_by_type(oneiron::registry::ENTITY_TYPE_AUTHORITY_LOG)
+        .unwrap()
+    {
+        let entry = server.vault.get_authority_log_entry(&row).unwrap().unwrap();
+        let hash = authority_entry_hash(&entry).unwrap();
+        if fold.valid_entries.contains(&hash) {
+            for parent in &entry.parent_hashes {
+                heads.remove(parent);
+            }
+            if entry.signer.public_key == host_key {
+                seq = seq.max(entry.seq.saturating_add(1));
+            }
+        }
+    }
+    let now = server.vault.now_recorded_at();
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: fold.vault_id,
+        seq,
+        parent_hashes: heads.into_iter().collect(),
+        op: AuthorityOp::BindActor {
+            authority_key: host_key.clone(),
+            actor_ref: owner,
+            actor_class: "human".into(),
+            epoch: 1,
+        },
+        signer: AuthoritySignature {
+            suite: host_key.suite(),
+            public_key: host_key,
+            signature: vec![0; 64],
+        },
+        cosigns: vec![],
+        ts: now,
+    };
+    entry.signer.signature = signing
+        .sign(&authority_transcript(&entry).unwrap())
+        .to_bytes()
+        .to_vec();
+    server
+        .vault
+        .put_authority_log_entry(
+            &entry,
+            oneiron::TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .unwrap();
+    assert!(actor_binding_is_active(
+        &server.vault.authority_fold().unwrap(),
+        &owner,
+        "human"
+    ));
+}
+
+async fn room_owner_json(
+    server: std::sync::Arc<SyncServer>,
+    owner: oneiron::EntityId,
+    request: &Value,
+) -> (StatusCode, Value) {
+    route_json(
+        server,
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-pack",
+            test_bearer(&format!(
+                "principal_ref={};actor_class=human",
+                owner.to_hex()
+            )),
+            Some(request),
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
+    let (_dir, server) = interlocutor_test_server();
+    let owner = seeded_test_entity_id(0x2094_0101);
+    let peer = seeded_test_entity_id(0x2094_0102);
+    for person in [owner, peer] {
+        server
+            .vault
+            .put_entity(
+                &person,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 1, end: 1 },
+                1,
+                b"room member",
+            )
+            .expect("onboard person");
+    }
+    bind_room_owner(&server, owner);
+    let root = server.vault.root_project().expect("root project");
+    let project = seeded_test_entity_id(0x2094_0103);
+    let mut roster =
+        oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
+    roster.roster.push(peer.to_hex());
+    let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
+    let exact_room = oneiron::workspace_roster::ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: project.to_hex(),
+        member_ids: roster.roster.clone(),
+        claims_scope_ref: roster.claims_scope_ref.clone(),
+    };
+    // A public batch can submit the exact derived room beside its PROJECT.
+    server
+        .vault
+        .batch()
+        .put(
+            &project,
+            server.vault.project_type_byte().unwrap(),
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&roster).unwrap(),
+        )
+        .put(
+            &room,
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &rmp_serde::to_vec_named(&exact_room).unwrap(),
+        )
+        .commit()
+        .expect("onboard exact project and room in one batch");
+    assert_eq!(
+        server.vault.room_audience_members(room).unwrap(),
+        vec![owner, peer]
+    );
+
+    let identity = seeded_test_entity_id(0x2094_0104);
+    let peer_contact = seeded_test_entity_id(0x2094_0106);
+    seed_counterparty_contact(&server, peer_contact, identity, "peer@example.com");
+    server
+        .vault
+        .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("peer contact link");
+    let tier_a = seed_text_turn(&server, "private room needle");
+    let tier_b = seed_text_turn(&server, "public room needle");
+    server
+        .vault
+        .set_disclosure_tier_a(&tier_a, 101)
+        .expect("private mark");
+    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
+
+    let request = |owner_present: bool| {
+        json!({
+            "conversation_id": room.to_hex(),
+            "query": "room needle",
+            "limit": 10,
+            "interlocutors": { "owner_present": owner_present }
+        })
+    };
+    let (status, absent) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{absent}");
+    assert_eq!(absent["disclosure"]["mode"], "absence_clamp");
+    let absent_ids: Vec<_> = absent["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    assert!(
+        !absent_ids.contains(&tier_a.to_hex().as_str()),
+        "tier A absent: {absent}"
+    );
+    assert!(
+        absent_ids.contains(&tier_b.to_hex().as_str()),
+        "both dials admit tier B: {absent}"
+    );
+
+    let (status, present) = room_owner_json(server.clone(), owner, &request(true)).await;
+    assert_eq!(status, StatusCode::OK, "{present}");
+    assert_eq!(present["disclosure"]["mode"], "supervised");
+    let present_ids: Vec<_> = present["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["id"].as_str())
+        .collect();
+    assert!(
+        !present_ids.contains(&tier_a.to_hex().as_str()),
+        "tier A stays private: {present}"
+    );
+    assert!(
+        present_ids.contains(&tier_b.to_hex().as_str()),
+        "tier B visible: {present}"
+    );
+
+    // The second member's dial is part of the meet, not replaced by the
+    // caller's list or the first member's clearance.
+    let mut public_only = oneiron::federation::Scope::top();
+    public_only.sensitivity =
+        oneiron::federation::SensitivityCeiling::AtMost(oneiron::federation::Sensitivity::Public);
+    server
+        .vault
+        .set_counterparty_disclosure_scope(
+            &peer_contact,
+            &oneiron::disclosure::DisclosureScope::new(public_only, "room public only", 101)
+                .unwrap(),
+        )
+        .unwrap();
+    let (status, narrowed) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{narrowed}");
+    assert!(
+        !narrowed["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "second dial refuses tier B: {narrowed}"
+    );
+    let (status, supervised_narrowed) =
+        room_owner_json(server.clone(), owner, &request(true)).await;
+    assert_eq!(status, StatusCode::OK, "{supervised_narrowed}");
+    assert_eq!(supervised_narrowed["disclosure"]["mode"], "supervised");
+    assert!(
+        !supervised_narrowed["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "owner presence alone cannot override a narrower peer clearance: {supervised_narrowed}"
+    );
+
+    // A client-supplied contact cannot replace a missing roster identity:
+    // losing the unique person link makes that member unknown and denies the
+    // absent-owner Tier-B read even when the caller names the contact.
+    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
+    assert!(
+        server
+            .vault
+            .delete_edge(&peer_contact, oneiron::EdgeKind::About, &peer)
+            .expect("unlink peer")
+    );
+    let (status, unlinked) = room_owner_json(
+        server.clone(),
+        owner,
+        &json!({
+            "conversation_id": room.to_hex(),
+            "query": "room needle",
+            "interlocutors": {
+                "owner_present": false,
+                "third_parties": [{ "contact_ref": peer_contact.to_hex() }]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{unlinked}");
+    assert!(
+        !unlinked["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "missing roster identity cannot be replaced by a wire party: {unlinked}"
+    );
+
+    server
+        .vault
+        .put_edge(&peer_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("relink peer");
+    let other_contact = seeded_test_entity_id(0x2094_0107);
+    seed_counterparty_contact(&server, other_contact, identity, "ambiguous@example.com");
+    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
+    server
+        .vault
+        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("second contact linked to peer");
+    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{two_contacts}");
+    assert!(
+        !two_contacts["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "two contacts for one person fail closed: {two_contacts}"
+    );
+    server
+        .vault
+        .delete_edge(&other_contact, oneiron::EdgeKind::About, &peer)
+        .expect("remove extra contact");
+    let stranger = seeded_test_entity_id(0x2094_0108);
+    server
+        .vault
+        .put_entity(
+            &stranger,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"stranger",
+        )
+        .expect("other person");
+    server
+        .vault
+        .put_edge(&peer_contact, oneiron::EdgeKind::About, &stranger, 1.0)
+        .expect("contact points to two people");
+    let (status, two_people) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{two_people}");
+    assert!(
+        !two_people["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "one contact for two people fails closed: {two_people}"
+    );
+
+    // Omission is not authenticated presence in a room, even on owner auth.
+    let (status, implicit) = room_owner_json(
+        server,
+        owner,
+        &json!({"conversation_id": room.to_hex(), "query": "room needle"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{implicit}");
+    assert_eq!(implicit["disclosure"]["mode"], "absence_clamp");
+}
+
+#[tokio::test]
+async fn owner_only_room_requires_an_authenticated_person_binding() {
+    let (_dir, server) = interlocutor_test_server();
+    let owner = seeded_test_entity_id(0x2094_0201);
+    server
+        .vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    bind_room_owner(&server, owner);
+    let root = server.vault.root_project().unwrap();
+    let project = seeded_test_entity_id(0x2094_0202);
+    let record = oneiron::workspace_roster::ProjectRecord::new(project, Some(root), root, owner);
+    server.vault.put_project(project, &record, 1).unwrap();
+    let room = oneiron::EntityId::from_hex(&record.home_room).unwrap();
+    let private = seed_text_turn(&server, "owner alone private2094");
+    server.vault.set_disclosure_tier_a(&private, 101).unwrap();
+    let request = json!({"conversation_id":room.to_hex(),"query":"private2094",
+        "interlocutors":{"owner_present":true}});
+    let (status, bound) = room_owner_json(server.clone(), owner, &request).await;
+    assert_eq!(status, StatusCode::OK, "{bound}");
+    assert_eq!(bound["disclosure"]["mode"], "owner_alone");
+    assert!(
+        bound["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == private.to_hex()),
+        "bound owner alone retains Tier A: {bound}"
+    );
+
+    // A bare owner-grade host secret names no PERSON. It cannot turn the
+    // roster's owner into an authenticated owner entry by assertion alone.
+    let (status, unbound) =
+        owner_json(server, "POST", "/v1/core/context-pack", Some(&request)).await;
+    assert_eq!(status, StatusCode::OK, "{unbound}");
+    assert_eq!(unbound["disclosure"]["mode"], "supervised");
+    assert!(
+        !unbound["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == private.to_hex()),
+        "unbound host cannot disclose Tier A: {unbound}"
+    );
 }

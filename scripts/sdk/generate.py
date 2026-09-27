@@ -414,6 +414,11 @@ export interface TaskAskClass {key: string; version: number; governance: boolean
 export type TaskAskWho = TaskAskTarget | string | string[] | null;
 export interface TaskAskShort {who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault}
 export interface TaskAskSpec { intent_key: string; task_ref?: string | null; class?: TaskAskClass | null; who?: TaskAskTarget | null; what: TaskAskQuestion; until?: number | null; default?: TaskAskDefault; need?: TaskAskNeed; decide?: TaskAskDecide | null; provisional?: "inform"; on_disagree?: TaskAskDisagree; remind?: number[] | null }
+export interface TaskCanAskRequest { ask: TaskAskSpec }
+export interface TaskAskPreflightRecipient { who: string; face: string | null; channel: string | null; word_required: boolean }
+export interface TaskAskPreflight { recipients: TaskAskPreflightRecipient[] }
+export type TaskAskPersonKind = "word" | "companion" | "default" | "unknown";
+export interface TaskAskPersonEvidence {who: string; answer: TaskAskWord | null; kind: TaskAskPersonKind; at: number; source: string | null}
 export interface TaskAskHandle { group_ref: string }
 export interface TaskAskReceipt { handle: TaskAskHandle; task_refs: string[]; hold: "NoLiveRoute" | null; idempotent_replay: boolean }
 export interface TaskAskWord {result_ref: string; option?: TaskAskOptionId | null; inform_for?: string | null; provenance_refs?: ConsultPayloadRef[]}

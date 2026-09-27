@@ -1,7 +1,6 @@
-//! Attributed takes, companion records, and imported-claim admission verbs.
+//! Attributed takes and imported-claim admission verbs.
 
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
+use crate::claim::ClaimApprovalStatus;
 use crate::edge::EdgeKind;
 
 use crate::error::ErrorKind;
@@ -9,19 +8,14 @@ use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
     NormalizedIngestClaim,
 };
-use crate::memory::claims::parse_claim_source;
-use crate::memory::support::{
-    facade_provenance, hard_deleted_refusal, id_from_optional_hex, json_to_rmpv,
-};
+use crate::memory::support::id_from_optional_hex;
 use crate::memory::{CommitReceipt, Memory, MemoryError, MemoryResult};
 use crate::note::{NoteBody, NoteKind, NoteScope, NoteWriteEnvelope, TakeTarget, encode_note_body};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::temporal::TimeRange;
-use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::WriteActor;
 
-use super::{
-    AdmitImportedClaimInput, CompanionRecordInput, EntityRefReceipt, registered_edge_weight,
-};
+use super::{AdmitImportedClaimInput, EntityRefReceipt, registered_edge_weight};
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
@@ -124,54 +118,6 @@ impl Memory<'_> {
             Ok(())
         })?;
         self.entity_ref_receipt(&note_id)
-    }
-
-    /// Registers a companion persona record (personal scope) with a
-    /// `created` lifecycle event, retiring it when `retired_at` is set.
-    pub fn put_companion_record(
-        &self,
-        input: &CompanionRecordInput,
-    ) -> MemoryResult<EntityRefReceipt> {
-        let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
-        self.refuse_hard_deleted_id(&id)?;
-        let owner = self.resolve_ref(&input.owner_ref)?;
-        let persona = self.resolve_ref(&input.persona_ref)?;
-        let source = match &input.source {
-            Some(source) => parse_claim_source(source)?,
-            None => ClaimSource::UserStated,
-        };
-        let envelope = WriteEnvelope::new(
-            WriteActor::new(self.actor, self.actor_class),
-            source,
-            WriteProvenance::new(facade_provenance("put_companion_record"))?,
-            ClaimApprovalStatus::Approved,
-        );
-        let record = CompanionRecord::persona(
-            CompanionScope::personal(owner),
-            persona,
-            json_to_rmpv(&input.value),
-            CompanionProvenance::from_envelope(&envelope),
-            crate::federation::Sensitivity::Restricted,
-        );
-        self.with_verified_actor_write_txn(|wtxn| {
-            // The early refusal above is only a fast path. Recheck in this
-            // transaction so a concurrent hard delete cannot land between
-            // the probe and companion creation, resurrecting a purged id.
-            if self
-                .vault
-                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
-            {
-                return Err(hard_deleted_refusal(&id));
-            }
-            self.vault
-                .create_companion_record_in_txn(wtxn, &id, &record, input.learned_at)?;
-            if let Some(retired_at) = input.retired_at {
-                self.vault
-                    .retire_companion_record_in_txn(wtxn, &id, retired_at)?;
-            }
-            Ok(())
-        })?;
-        self.entity_ref_receipt(&id)
     }
 
     /// Admits one imported-evidence claim through the registered ingest
