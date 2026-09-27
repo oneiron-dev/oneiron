@@ -577,6 +577,8 @@ pub(in crate::batch) fn apply_put(
         }
     }
 
+    crate::ingest::invalidate_docs_source_before_put(store, wtxn, &id, entity_type, data)?;
+
     // ONE-1449 MATERIAL-6 R1: staged in the SAME transaction as the body it
     // marks, so a rolled-back create leaves no marker and a committed one can
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
