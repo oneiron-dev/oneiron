@@ -456,8 +456,12 @@ mod tests {
             ]));
         let slip = vault.mint_capability_slip(&issuer, claims)?;
         let signature = issuer.binding_proof(&slip, b"standing-session")?;
-        let verified =
-            vault.verify_capability_slip(&issuer, &slip, b"standing-session", &signature)?;
+        let verified = vault.verify_capability_slip(
+            &issuer.public_key(),
+            &slip,
+            b"standing-session",
+            &signature,
+        )?;
         let reader = ScopedReadActorKey::from_verified_slip(&verified).ok_or_else(invalid)?;
         let mut cache = StandingBlockCache::default();
         let first =

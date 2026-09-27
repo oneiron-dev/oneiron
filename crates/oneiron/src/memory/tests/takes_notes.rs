@@ -591,12 +591,10 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
     };
     let proof_of = |slip: &crate::authority::CapabilitySlip| {
         let signature = issuer.binding_proof(slip, b"diary-read").unwrap();
-        vault
-            .verify_capability_slip(&issuer, slip, b"diary-read", &signature)
-            .unwrap()
-    };
-    let read_key = |slip: &crate::authority::CapabilitySlip| {
-        ScopedReadActorKey::from_verified_slip(&proof_of(slip)).unwrap()
+        let proof = vault
+            .verify_capability_slip(&issuer.public_key(), slip, b"diary-read", &signature)
+            .unwrap();
+        ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
     let owner_slip = mint_actor(owner);
     let other_slip = mint_actor(other);
@@ -616,11 +614,14 @@ fn diary_note_is_actor_private_across_reads_recall_and_pack_neighbors() {
             .is_none()
     );
     let mut narrowed = owner_slip;
-    narrowed
-        .attenuate(crate::authority::SlipCaveat {
-            records: Some(std::collections::BTreeSet::from([other.to_hex()])),
-            ..Default::default()
-        })
+    issuer
+        .attenuate(
+            &mut narrowed,
+            crate::authority::SlipCaveat {
+                records: Some(std::collections::BTreeSet::from([other.to_hex()])),
+                ..Default::default()
+            },
+        )
         .unwrap();
     let limited = vault.scoped_read(read_key(&narrowed));
     assert!(
@@ -1050,7 +1051,7 @@ fn diary_note_conjoins_actor_privacy_and_room_audience() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"diary-audience").unwrap();
         let proof = vault
-            .verify_capability_slip(&issuer, &slip, b"diary-audience", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"diary-audience", &signature)
             .unwrap();
         ScopedReadActorKey::from_verified_slip(&proof).unwrap()
     };
@@ -1127,7 +1128,7 @@ fn versioned_notes_gate_historic_private_bodies_when_live_note_is_public() {
         let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
         let signature = issuer.binding_proof(&slip, b"versioned-notes").unwrap();
         vault
-            .verify_capability_slip(&issuer, &slip, b"versioned-notes", &signature)
+            .verify_capability_slip(&issuer.public_key(), &slip, b"versioned-notes", &signature)
             .unwrap()
     };
     let (owner_proof, other_proof) = (proof_of(owner), proof_of(other));

@@ -1362,6 +1362,8 @@ fn anonymous_telemetry_never_falls_back_to_base_even_for_existing_run_ids() -> R
         claims_suppressed: 0,
         surfaced_result_ids: &[],
         empty_reason: None,
+        pack_output: None,
+        pack_config: None,
     })?;
     telemetry.discard_run(existing)?;
     assert_eq!(vault.retrieval_run(existing)?, Some(before));

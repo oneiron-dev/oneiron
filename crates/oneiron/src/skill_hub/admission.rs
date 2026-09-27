@@ -147,7 +147,14 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<HubAdmissionReceipt>> {
         let txn = self.store.env.read_txn()?;
-        ADMISSION_RECEIPT.get(&self.store, &txn, candidate)
+        self.hub_admission_receipt_in_txn(&txn, candidate)
+    }
+    pub(in crate::skill_hub) fn hub_admission_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        candidate: &EntityId,
+    ) -> Result<Option<HubAdmissionReceipt>> {
+        ADMISSION_RECEIPT.get(&self.store, txn, candidate)
     }
     pub(super) fn check_hub_ask_in_txn(
         &self,

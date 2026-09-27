@@ -63,7 +63,7 @@ impl Drop for OverlayShellReservation {
 /// Live session handle. Its borrow of the owning [`Vault`] makes it
 /// impossible for safe Rust to retain a session across `StoreOwner::drop`.
 pub struct OffRecordSession<'vault> {
-    pub(super) vault: &'vault Vault,
+    pub(in crate::off_record) vault: &'vault Vault,
     pub(super) session_ref: String,
     entry: Arc<OffRecordSessionEntry>,
 }

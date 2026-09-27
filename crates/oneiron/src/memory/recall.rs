@@ -483,6 +483,7 @@ impl Memory<'_> {
             }
             lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
         };
+
         let seeds = if effective != Effort::Light
             && !execution
                 .deadline
@@ -539,6 +540,7 @@ impl Memory<'_> {
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     pipeline = pipeline.in_session(telemetry);
                 }
+
                 if let Some(deadline) = execution.deadline {
                     pipeline = pipeline.deadline(deadline);
                 }
@@ -578,6 +580,7 @@ impl Memory<'_> {
                     }
                 }
                 let total = items.len() as u64;
+
                 (
                     items,
                     total,
@@ -596,6 +599,7 @@ impl Memory<'_> {
                     .retrieval_effort(effective, &seeds)
                     .authority_filter(plan_filter.clone());
                 builder = builder.filter_candidates(&admitted);
+
                 if let Some(telemetry) = session_telemetry.as_ref() {
                     builder = builder.in_session(telemetry);
                 }
@@ -641,6 +645,7 @@ impl Memory<'_> {
                 let (scoped, vector_completed) = builder.run_scoped_with_vector_status(&lane)?;
                 receipt.restrict_with(&scoped.receipt);
                 let pack = scoped.value;
+
                 let rendered = pack_format.map(|fmt| {
                     let config = SerializeConfig {
                         format: fmt,
@@ -674,6 +679,7 @@ impl Memory<'_> {
                     }
                 }
                 let total = items.len() as u64;
+
                 (
                     items,
                     total,

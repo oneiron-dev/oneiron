@@ -5,6 +5,7 @@ use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::vault::ReadMode;
 use crate::{EntityId, Error, HydratedShortIdDeletion, Result, TimeRange};
+type EntityParts = (u8, u64, Vec<u8>);
 
 /// What one point read names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +14,30 @@ pub enum ReadTarget<'r> {
     Id(EntityId),
     /// An engine-issued short reference: short id plus content-hash byte.
     ShortRef { short_id: &'r str, content_hash: u8 },
+}
+
+impl ScopedRead<'_> {
+    /// Recheck a graph-ask source against the current write transaction's
+    /// authority, deletion, NOTE privacy and live-body projection. It cannot
+    /// turn an earlier scoped read into a permission after grants change.
+    pub(crate) fn graph_ask_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<EntityParts>> {
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
+        let Some(raw) = self.entity_raw_with_mode_in(txn, &policy, &filter, id, ReadMode::Live)?
+        else {
+            return Ok(None);
+        };
+        let header = EntityMetadataHeader::parse(&raw.raw)
+            .ok_or(Error::CorruptedIndex("graph ask entity header"))?;
+        Ok(Some((
+            header.entity_type,
+            header.learned_at,
+            raw.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+        )))
+    }
 }
 
 /// One read in a [`ScopedRead::read`] slice: its target and its frontier.
@@ -89,6 +114,52 @@ impl ReadRow {
 }
 
 impl ScopedRead<'_> {
+    /// Compatibility projection of point rows; policy and body share the read snapshot.
+    pub fn get_entity_parts_with_receipt(
+        &self,
+        id: &EntityId,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Option<EntityParts>>> {
+        self.get_entity_parts_with_mode_with_receipt(id, ReadMode::Live, requested)
+    }
+
+    pub fn get_entity_parts_with_mode_with_receipt(
+        &self,
+        id: &EntityId,
+        mode: ReadMode,
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Option<EntityParts>>> {
+        let read = self.read(&[PointRead::id(*id).at(mode)], requested)?;
+        Ok(ScopedReadResult {
+            value: read
+                .value
+                .into_iter()
+                .next()
+                .flatten()
+                .and_then(|row| row.body.map(|body| (row.entity_type, row.learned_at, body))),
+            receipt: read.receipt,
+        })
+    }
+
+    pub fn get_entities_parts_with_receipt(
+        &self,
+        ids: &[EntityId],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<Option<EntityParts>>>> {
+        let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
+        let result = self.read(&reads, requested)?;
+        Ok(ScopedReadResult {
+            value: result
+                .value
+                .into_iter()
+                .map(|row| {
+                    row.and_then(|row| row.body.map(|body| (row.entity_type, row.learned_at, body)))
+                })
+                .collect(),
+            receipt: result.receipt,
+        })
+    }
+
     /// Reads every target in one snapshot under one policy resolution.
     ///
     /// Each slot answers its read in order; `None` is a missing target or a

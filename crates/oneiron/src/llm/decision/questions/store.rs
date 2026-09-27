@@ -17,7 +17,7 @@ pub(super) fn family_prefix(id: EntityId, family: &[u8]) -> Vec<u8> {
     out
 }
 
-fn decode_family<'b>(bytes: &'b [u8], family: &[u8]) -> Option<(EntityId, &'b [u8])> {
+pub(super) fn decode_family<'b>(bytes: &'b [u8], family: &[u8]) -> Option<(EntityId, &'b [u8])> {
     let (id_bytes, rest) = bytes.split_at_checked(16)?;
     let id = EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?;
     let suffix = rest
@@ -127,6 +127,9 @@ pub fn create_question(
     mut definition: QuestionDefinition,
     now: u64,
 ) -> Result<QuestionRecord> {
+    if definition.activation != QuestionActivation::Standing {
+        return Err(invalid("one-off questions only save receipts"));
+    }
     definition.question.id = EntityId::now();
     definition.question.version = 1;
     definition.validate()?;
@@ -196,6 +199,9 @@ pub fn edit_question(
             .version
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("question version"))?;
+        if definition.activation != QuestionActivation::Standing {
+            return Err(invalid("one-off questions only save receipts"));
+        }
         definition.question.id = id;
         definition.question.version = version;
         definition.validate()?;

@@ -1022,6 +1022,8 @@ fn context_pack_finalization_preserves_only_surfaced_trace_candidates() -> Resul
             claims_suppressed: 0,
             surfaced_result_ids: &[*kept.as_bytes()],
             empty_reason: None,
+            pack_output: None,
+            pack_config: None,
         })?;
 
     let finalized = vault
@@ -1113,6 +1115,8 @@ fn provisional_context_pack_trace_is_hidden_until_finalized() -> Result<()> {
             claims_suppressed: 0,
             surfaced_result_ids: &[*kept.as_bytes()],
             empty_reason: None,
+            pack_output: None,
+            pack_config: None,
         })?;
 
     let finalized = vault.retrieval_run(run_id)?.expect("published run");

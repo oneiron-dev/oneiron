@@ -26,6 +26,10 @@ mod pinned_reads;
 mod point_reads;
 mod receipt;
 mod retrieval_visibility;
+mod weave_report;
+pub use weave_report::{
+    WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
+};
 mod versions;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
@@ -305,7 +309,7 @@ impl<'a> ScopedRead<'a> {
         &self,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         self.resolve_retrieval_filter_in(&txn, requested)
     }
 
@@ -342,7 +346,7 @@ impl<'a> ScopedRead<'a> {
         previously_suppressed: usize,
         revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         // The scoring txn may have completed before a revocation. The final
         // read must satisfy BOTH the plan authority and this fresh snapshot.
         let (fresh_filter, fresh_policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
@@ -425,7 +429,7 @@ impl<'a> ScopedRead<'a> {
             return Ok(0);
         }
 
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         let policy = self.policy_manifest_in(&rtxn)?;
         let diagnostics = policy.diagnostics();
         if self.audience.is_none()
@@ -453,7 +457,7 @@ impl<'a> ScopedRead<'a> {
         requested: Option<&RetrievalFilter>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
         let before = results.len();
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
@@ -469,7 +473,7 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub fn is_entity_readable(&self, id: &EntityId) -> Result<bool> {
-        let rtxn = self.vault.store.env.read_txn()?;
+        let rtxn = self.grant_read_txn()?;
         self.is_entity_readable_in(&rtxn, id)
     }
 
@@ -563,9 +567,18 @@ impl<'a> ScopedRead<'a> {
             // The owner's ceiling is all of the owner's vault, stamped or not.
             Ok(true)
         } else {
-            let Some(scope) =
-                crate::federation::record_scope::scope_for_blob(&self.vault.store, rtxn, *id, raw)?
-            else {
+            let scope = match self.session_view {
+                Some(view) => {
+                    crate::federation::record_scope::scope_for_blob(view, rtxn, *id, raw)?
+                }
+                None => crate::federation::record_scope::scope_for_blob(
+                    &self.vault.store,
+                    rtxn,
+                    *id,
+                    raw,
+                )?,
+            };
+            let Some(scope) = scope else {
                 return Ok(false);
             };
             Ok(crate::gate::scoped_read_record_allowed(

@@ -18,7 +18,7 @@ use super::super::hydration::hydrate_entity;
 use super::super::psych_mirror::{PsychProfilePackSection, psych_profile_pack_section};
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
-    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
+    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry, raw_pack_output,
 };
 use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
 use super::super::validation::{
@@ -63,6 +63,21 @@ impl<'a> ContextPackBuilder<'a> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        let pack_output = match run
+            .capture_replay
+            .then(|| raw_pack_output(&run.pack))
+            .transpose()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
+                return Err(error);
+            }
+        };
+        let mut replay_config = run.replay_config;
+        if let Some(config) = replay_config.as_mut() {
+            config["terminal_kind"] = "structured".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -71,6 +86,8 @@ impl<'a> ContextPackBuilder<'a> {
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+            pack_output,
+            replay_config,
         )?;
         Ok((
             RetrievalWithTelemetry {
@@ -95,6 +112,8 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
+            capture_replay: run.capture_replay,
+            replay_config: run.replay_config,
         };
         lane.end_recall_plan()?;
         let receipt = match lane.filter_context_pack(&mut pending.value) {
@@ -149,6 +168,8 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
+            capture_replay: run.capture_replay,
+            replay_config: run.replay_config,
         })
     }
 
@@ -169,6 +190,12 @@ impl<'a> ContextPackBuilder<'a> {
         // suppressing capture is the fail-closed form of scrubbing every
         // stage. OwnerAlone (and no-context) assemblies keep the caller's
         // trace setting unchanged.
+        let replay_config = (self.pipeline.captures_replay()
+            && self
+                .disclosure
+                .as_ref()
+                .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
+        .then(|| self.pack_replay_config());
         let mut pipeline = self.pipeline;
         if self
             .disclosure
@@ -177,6 +204,7 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
+        let capture_replay = pipeline.captures_replay();
         // Captured BEFORE the run, from the same door the pipeline registers
         // the provisional row through, and carried on every outcome — so the
         // finalize and the failure discard both reach the row that was
@@ -225,6 +253,9 @@ impl<'a> ContextPackBuilder<'a> {
             let mut claims_suppressed = pipeline_output.claims_suppressed;
             let cosine_ghosts_dampened = pipeline_output.cosine_ghosts_dampened;
 
+            if let Some(reader) = self.l2_summary_reader {
+                reader.persist_grant_clock()?;
+            }
             let rtxn = self.vault.store.env.read_txn()?;
             let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
             let hydrate_result_edges = self.include_edges && self.edge_hop == 0;
@@ -547,6 +578,8 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry,
                 total_in_scope,
                 clamped_out,
+                capture_replay,
+                replay_config,
             })
         })();
 
@@ -584,6 +617,10 @@ impl<'a> ContextPackBuilder<'a> {
         };
         let run = self.run_unfinalized()?;
         let (bytes, telemetry) = serialize_pack_with_telemetry(&run.pack, &config);
+        let mut replay_config = run.replay_config;
+        if let Some(value) = replay_config.as_mut() {
+            value["terminal_kind"] = "serialized".into();
+        }
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -592,6 +629,12 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
+            run.capture_replay
+                .then(|| crate::store::RetrievalPackOutput {
+                    format: format!("{:?}", config.format),
+                    bytes: bytes.clone(),
+                }),
+            replay_config,
         )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: run.pack.retrieval_quality,

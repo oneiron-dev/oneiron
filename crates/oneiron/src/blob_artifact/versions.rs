@@ -1,7 +1,6 @@
 //! Blob version chain: version record codec and the Vault version-chain API.
 
 use heed::{RoTxn, RwTxn};
-use rmpv::Value;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -20,9 +19,10 @@ use super::provenance::{
     validate_provenance, write_provenance_value,
 };
 use super::store_keys::{
-    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, encode_value, entity_value,
-    hash_from_value, read_value, require_entity_type, u64_value,
+    BLOB_ARTIFACT_ASSET_ID_DOMAIN, BLOB_ARTIFACT_CONTENT_HASH_LEN, require_entity_type,
 };
+pub(super) use super::version_codec::decode_blob_artifact_version_record;
+use super::version_codec::encode_blob_artifact_version_record;
 use crate::error::ArtifactError;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
@@ -33,6 +33,10 @@ pub(super) const VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> 
 /// Key: id16 (artifact).
 pub(super) const HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_HEAD);
+
+/// Last issued version survives artifact deletion, as u64 big endian.
+const HIGHWATER: SideTable<EntityId, [u8; 8], Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_HIGHWATER);
 
 impl RawValue for BlobArtifactVersion {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -98,13 +102,17 @@ pub struct BlobArtifactVersion {
     pub calc_engine: Option<CalcEngineStamp>,
     pub claim_id: EntityId,
     pub created_at: u64,
+    /// Export presentation pinned when this version was appended, not read
+    /// from the mutable artifact body at serve time.
+    pub export_name: String,
+    pub export_media_type: String,
     /// The version this record descends from. Absent for roots and legacy rows.
     pub parent_version: Option<u64>,
     /// The selected base of an explicit fork; absent on ordinary head appends.
     pub fork_of_version: Option<u64>,
 }
 
-pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 10] = [
+pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 12] = [
     "version",
     "content_hash",
     "provenance",
@@ -115,6 +123,8 @@ pub const BLOB_ARTIFACT_VERSION_RECORD_KEYS: [&str; 10] = [
     "fork_of_version",
     "calc_engine",
     "calc_engine_version",
+    "export_name",
+    "export_media_type",
 ];
 
 pub(super) const KEY_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[0];
@@ -125,9 +135,9 @@ pub(super) const KEY_PROVENANCE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[2];
 
 pub(super) const KEY_RUN_REF: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[3];
 
-const KEY_CLAIM_ID: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[4];
+pub(super) const KEY_CLAIM_ID: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[4];
 
-const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
+pub(super) const KEY_CREATED_AT: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[5];
 
 pub(super) const KEY_PARENT_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[6];
 
@@ -136,6 +146,9 @@ pub(super) const KEY_FORK_OF_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[7
 pub(super) const KEY_CALC_ENGINE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[8];
 
 pub(super) const KEY_CALC_ENGINE_VERSION: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[9];
+
+pub(super) const KEY_EXPORT_NAME: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[10];
+pub(super) const KEY_EXPORT_MEDIA_TYPE: &str = BLOB_ARTIFACT_VERSION_RECORD_KEYS[11];
 
 impl Vault {
     pub fn put_blob_artifact(
@@ -347,9 +360,19 @@ impl Vault {
             ENTITY_TYPE_BLOB_ARTIFACT,
             "append target must be a BLOB_ARTIFACT entity",
         )?;
+        let body = self
+            .get_blob_artifact_in_txn(wtxn, artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
         let fingerprint =
             crate::ingest::prepare_blob_artifact_birth(&self.store, wtxn, artifact_id, bytes)?;
         let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
+        let highwater = read_blob_artifact_highwater_in_txn(&self.store, wtxn, artifact_id)?;
+        if head
+            .as_ref()
+            .is_some_and(|head| highwater != Some(head.version))
+        {
+            return Err(Error::CorruptedIndex("blob artifact version highwater"));
+        }
         let parent_version = match (fork_parent, &head) {
             (Some(parent), Some(head)) if parent > 0 && parent <= head.version => {
                 let record = VERSIONS
@@ -374,11 +397,13 @@ impl Vault {
             (None, Some(head)) => Some(head.version),
             (None, None) => None,
         };
-        let next_version = head.as_ref().map_or(Ok(1), |head| {
-            head.version
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
-        })?;
+        // Deletion removes the current chain but never its high-water mark.
+        let previous_version = head
+            .as_ref()
+            .map_or(highwater.unwrap_or(0), |head| head.version);
+        let next_version = previous_version
+            .checked_add(1)
+            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))?;
         if VERSIONS.contains(&self.store, wtxn, &(*artifact_id, next_version))? {
             return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
                 "blob artifact version is already recorded",
@@ -423,6 +448,8 @@ impl Vault {
             calc_engine: calc_engine.cloned(),
             claim_id,
             created_at: learned_at,
+            export_name: body.name,
+            export_media_type: body.media_type,
             parent_version,
             fork_of_version: fork_parent,
         };
@@ -445,6 +472,8 @@ impl Vault {
         )?;
         VERSIONS.put(&self.store, wtxn, &(*artifact_id, next_version), &record)?;
         HEAD.put(&self.store, wtxn, artifact_id, &record)?;
+        HIGHWATER.put(&self.store, wtxn, artifact_id, &next_version.to_be_bytes())?;
+
         fingerprint.persist(&self.store, wtxn, artifact_id)?;
         Ok(record)
     }
@@ -467,14 +496,25 @@ impl Vault {
         let mut versions = Vec::new();
         for entry in VERSIONS.iter_from(&self.store, &rtxn, artifact_id.as_bytes())? {
             let ((_, key_version), record) = entry?;
-            let expected = u64::try_from(versions.len())
-                .map_err(|_| Error::ArithmeticOverflow("blob artifact version overflow"))?
-                + 1;
+            let first_version = versions
+                .first()
+                .map_or(record.version, |first: &BlobArtifactVersion| first.version);
+            let expected =
+                versions
+                    .last()
+                    .map_or(Ok(record.version), |prior: &BlobArtifactVersion| {
+                        prior
+                            .version
+                            .checked_add(1)
+                            .ok_or(Error::ArithmeticOverflow("blob artifact version overflow"))
+                    })?;
             if record.version != expected || key_version != record.version {
                 return Err(Error::CorruptedIndex("blob artifact version chain"));
             }
             if let Some(parent) = record.parent_version
-                && (parent >= record.version || versions.get((parent - 1) as usize).is_none())
+                && (parent < first_version
+                    || parent >= record.version
+                    || versions.get((parent - first_version) as usize).is_none())
             {
                 return Err(Error::CorruptedIndex("blob artifact version parent"));
             }
@@ -503,14 +543,23 @@ impl Vault {
         version: u64,
     ) -> Result<Option<BlobArtifactVersion>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(record) = VERSIONS.get(&self.store, &rtxn, &(*artifact_id, version))? else {
+        self.blob_artifact_version_metadata_in_txn(&rtxn, artifact_id, version)
+    }
+
+    pub(crate) fn blob_artifact_version_metadata_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<BlobArtifactVersion>> {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
             return Ok(None);
         };
         if record.version != version {
             return Err(Error::CorruptedIndex("blob artifact version record"));
         }
         let claim = self
-            .get_claim_in_txn(&rtxn, &record.claim_id)?
+            .get_claim_in_txn(rtxn, &record.claim_id)?
             .ok_or(Error::CorruptedIndex("blob artifact version claim"))?;
         if claim.predicate != BLOB_VERSION_CLAIM_PREDICATE
             || claim.subject != ClaimSubject::Entity(*artifact_id)
@@ -553,212 +602,19 @@ impl Vault {
     }
 }
 
-fn encode_blob_artifact_version_record(record: &BlobArtifactVersion) -> Result<Vec<u8>> {
-    let mut entries = vec![
-        (
-            Value::from(KEY_VERSION),
-            Value::Integer(record.version.into()),
-        ),
-        (
-            Value::from(KEY_CONTENT_HASH),
-            Value::Binary(record.content_hash.to_vec()),
-        ),
-        (
-            Value::from(KEY_PROVENANCE),
-            Value::from(record.provenance.as_str()),
-        ),
-        (
-            Value::from(KEY_RUN_REF),
-            record.provenance.run_ref().map_or(Value::Nil, Value::from),
-        ),
-        (
-            Value::from(KEY_CLAIM_ID),
-            Value::Binary(record.claim_id.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_CREATED_AT),
-            Value::Integer(record.created_at.into()),
-        ),
-        (
-            Value::from(KEY_CALC_ENGINE),
-            record
-                .calc_engine
-                .as_ref()
-                .map_or(Value::Nil, |s| Value::from(s.engine())),
-        ),
-        (
-            Value::from(KEY_CALC_ENGINE_VERSION),
-            record
-                .calc_engine
-                .as_ref()
-                .map_or(Value::Nil, |s| Value::from(s.version())),
-        ),
-    ];
-    if let Some(parent) = record.parent_version {
-        entries.push((
-            Value::from(KEY_PARENT_VERSION),
-            Value::Integer(parent.into()),
-        ));
-    }
-    if let Some(fork) = record.fork_of_version {
-        entries.push((
-            Value::from(KEY_FORK_OF_VERSION),
-            Value::Integer(fork.into()),
-        ));
-    }
-    encode_value(
-        &Value::Map(entries),
-        "blob artifact version MessagePack encode failed",
-    )
-}
-
-pub(super) fn decode_blob_artifact_version_record(bytes: &[u8]) -> Result<BlobArtifactVersion> {
-    let value = read_value(bytes, "version record")?;
-    let Value::Map(entries) = value else {
-        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "version record must be a MessagePack map",
-        )));
+fn read_blob_artifact_highwater_in_txn(
+    store: &Store,
+    rtxn: &RoTxn<'_>,
+    artifact_id: &EntityId,
+) -> Result<Option<u64>> {
+    let Some(bytes) = HIGHWATER.get(store, rtxn, artifact_id)? else {
+        return Ok(None);
     };
-
-    let mut version = None;
-    let mut content_hash = None;
-    let mut provenance_kind: Option<String> = None;
-    let mut run_ref: Option<Option<String>> = None;
-    let mut claim_id = None;
-    let mut created_at = None;
-    let mut parent_version = None;
-    let mut fork_of_version = None;
-    let mut calc_engine: Option<Option<String>> = None;
-    let mut calc_engine_version: Option<Option<String>> = None;
-    let mut seen = [false; BLOB_ARTIFACT_VERSION_RECORD_KEYS.len()];
-
-    for (key, value) in &entries {
-        let key = key
-            .as_str()
-            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "version record keys must be strings",
-            )))?;
-        let Some(index) = BLOB_ARTIFACT_VERSION_RECORD_KEYS
-            .iter()
-            .position(|known| *known == key)
-        else {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "version record key is not in the pinned BLOB_ARTIFACT_VERSION_RECORD_KEYS set",
-            )));
-        };
-        if seen[index] {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "duplicate version record key",
-            )));
-        }
-        seen[index] = true;
-
-        match BLOB_ARTIFACT_VERSION_RECORD_KEYS[index] {
-            KEY_VERSION => version = Some(u64_value(value, "version")?),
-            KEY_CONTENT_HASH => content_hash = Some(hash_from_value(value, "content_hash")?),
-            KEY_PROVENANCE => {
-                let text = value.as_str().ok_or(Error::Artifact(
-                    ArtifactError::InvalidBlobArtifactBody("provenance must be a UTF-8 string"),
-                ))?;
-                provenance_kind = Some(text.to_owned());
-            }
-            KEY_RUN_REF => {
-                run_ref = Some(match value {
-                    Value::Nil => None,
-                    other => Some(
-                        other
-                            .as_str()
-                            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                                "run_ref must be a UTF-8 string or nil",
-                            )))?
-                            .to_owned(),
-                    ),
-                });
-            }
-            KEY_CLAIM_ID => claim_id = Some(entity_value(value, "claim_id")?),
-            KEY_CREATED_AT => created_at = Some(u64_value(value, "created_at")?),
-            KEY_PARENT_VERSION => parent_version = Some(u64_value(value, "parent_version")?),
-            KEY_FORK_OF_VERSION => fork_of_version = Some(u64_value(value, "fork_of_version")?),
-            KEY_CALC_ENGINE | KEY_CALC_ENGINE_VERSION => {
-                let text = match value {
-                    Value::Nil => None,
-                    other => Some(
-                        other
-                            .as_str()
-                            .ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                                "calc stamp must be a UTF-8 string or nil",
-                            )))?
-                            .to_owned(),
-                    ),
-                };
-                if key == KEY_CALC_ENGINE {
-                    calc_engine = Some(text);
-                } else {
-                    calc_engine_version = Some(text);
-                }
-            }
-            _ => unreachable!("index resolved from BLOB_ARTIFACT_VERSION_RECORD_KEYS"),
-        }
-    }
-
-    let version = version.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-        "missing required version record key version",
-    )))?;
+    let version = u64::from_be_bytes(bytes);
     if version == 0 {
-        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "version record version must be at least 1",
-        )));
+        return Err(Error::CorruptedIndex("blob artifact version highwater"));
     }
-    if parent_version.is_some_and(|parent| parent == 0 || parent >= version)
-        || fork_of_version.is_some_and(|fork| Some(fork) != parent_version)
-    {
-        return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "invalid blob artifact version parent/fork pointer",
-        )));
-    }
-    let provenance = BlobVersionProvenance::from_parts(
-        &provenance_kind.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing required version record key provenance",
-        )))?,
-        run_ref.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing required version record key run_ref",
-        )))?,
-    )?;
-    validate_provenance(&provenance)?;
-    let calc_engine = match (
-        calc_engine.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing calc_engine",
-        )))?,
-        calc_engine_version.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing calc_engine_version",
-        )))?,
-    ) {
-        (Some(engine), Some(version)) => Some(CalcEngineStamp::new(engine, version)?),
-        (None, None) => None,
-        _ => {
-            return Err(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-                "calc stamp must have both engine and version",
-            )));
-        }
-    };
-    Ok(BlobArtifactVersion {
-        version,
-        content_hash: content_hash.ok_or(Error::Artifact(
-            ArtifactError::InvalidBlobArtifactBody(
-                "missing required version record key content_hash",
-            ),
-        ))?,
-        provenance,
-        calc_engine,
-        claim_id: claim_id.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing required version record key claim_id",
-        )))?,
-        created_at: created_at.ok_or(Error::Artifact(ArtifactError::InvalidBlobArtifactBody(
-            "missing required version record key created_at",
-        )))?,
-        parent_version,
-        fork_of_version,
-    })
+    Ok(Some(version))
 }
 
 pub(crate) fn read_blob_artifact_head_in_txn(

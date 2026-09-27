@@ -34,6 +34,7 @@ impl Memory<'_> {
         } = lane.edges_out(id)?;
         receipt.restrict_with(&graph);
         let edges = edges.unwrap_or_default();
+
         let mut source_revision_ids = vec![id.to_hex()];
         source_revision_ids.extend(
             edges

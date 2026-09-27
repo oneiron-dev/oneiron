@@ -18,7 +18,6 @@ export_facade! {
 "neighbors" => fn neighbors(&self, entity_ref: String, opts: NeighborOpts) -> NeighborHits;
 "putStructural" => fn put_structural(&self, input: StructuralPutInput) -> EntityRefReceipt;
 "putHabitCheckin" => fn put_habit_checkin(&self, input: HabitCheckinInput) -> EntityRefReceipt;
-"putCompanionRecord" => fn put_companion_record(&self, input: CompanionRecordInput) -> EntityRefReceipt;
 "admitImportedClaim" => fn admit_imported_claim(&self, input: AdmitImportedClaimInput) -> CommitReceipt;
 "putBlobArtifact" => fn put_blob_artifact(&self, input: BlobArtifactInput) -> EntityRefReceipt;
 "appendBlobVersion" => fn append_blob_version(&self, artifact_ref: String, content: Vec<u8>, run_ref: Option<String>, occurred_at: Option<i64>, learned_at: Option<i64>) -> BlobVersionView;

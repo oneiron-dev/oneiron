@@ -1523,6 +1523,75 @@ fn dreamer_home_node_election_order_persists_and_reelects() -> Result<()> {
 }
 
 #[test]
+fn dreamer_sync_topology_change_reelects_and_gates_macro() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let local = runner.local_home_node_candidate(true, true, false)?;
+    let cloud = DreamerHomeNodeCandidate::cloud(different_node_id(local.node_id), true);
+    let queued = enqueue_consolidation_attempt(
+        &runner,
+        DreamerConsolidationScope::Macro,
+        Some("topology-change"),
+        1,
+    )?;
+
+    let home = runner.sync_topology_changed(&[local, cloud], 10)?.unwrap();
+    assert_eq!(home.node_id, cloud.node_id);
+    assert_eq!(home.class, DreamerHomeNodeClass::CloudAttached);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert_eq!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            12
+        )?,
+        DreamerConsolidationAdmissionOutcome::NotHomeNode(home)
+    );
+    assert_eq!(
+        runner.status(queued.attempt.id)?.unwrap().attempt.state,
+        AttemptState::Queued
+    );
+
+    // Only a host-authorized change to this cloud's attachment may promote
+    // the local node. A socket interruption is not such a change.
+    let detached = DreamerHomeNodeCandidate::cloud(cloud.node_id, false);
+    let home = runner
+        .sync_topology_changed(&[local, detached], 13)?
+        .unwrap();
+    assert_eq!(home.node_id, local.node_id);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    assert!(matches!(
+        admit_consolidation(
+            &runner,
+            DreamerConsolidationScope::Macro,
+            local.node_id,
+            "local",
+            14
+        )?,
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn dreamer_topology_change_preserves_each_cloud_attachment() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let runner = DreamerRunnerStore::new(&vault);
+    let lower_detached = DreamerHomeNodeCandidate::cloud(10, false);
+    let higher_attached = DreamerHomeNodeCandidate::cloud(20, true);
+    let local = DreamerHomeNodeCandidate::always_on_local(30);
+    let home = runner
+        .sync_topology_changed(&[lower_detached, higher_attached, local], 1)?
+        .expect("attached cloud beats local");
+    assert_eq!(home.node_id, 20, "detached cloud must not win by lower ID");
+    assert_eq!(home.class, DreamerHomeNodeClass::CloudAttached);
+    assert_eq!(runner.home_node_designation()?, Some(home));
+    Ok(())
+}
+
+#[test]
 fn dreamer_micro_meso_consolidation_uses_advisory_per_device_dedupe() -> Result<()> {
     let (_dir, vault) = open_vault();
     let runner = DreamerRunnerStore::new(&vault);

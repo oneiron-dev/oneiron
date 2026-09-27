@@ -114,6 +114,12 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<Option<DreamerHomeNodeDesignation>> {
         let designation = elect_home_node_designation(candidates, now)?;
         let mut wtxn = self.vault.store.env.write_txn()?;
+        let previous = self.home_node_designation_in_txn(&wtxn)?;
+        if previous.as_ref().map(|home| (home.node_id, home.class))
+            == designation.as_ref().map(|home| (home.node_id, home.class))
+        {
+            return Ok(previous);
+        }
         if let Some(designation) = designation {
             HOME_NODE.put(&self.vault.store, &mut wtxn, &(), &designation)?;
         } else {
@@ -121,6 +127,20 @@ impl DreamerRunnerStore<'_> {
         }
         wtxn.commit()?;
         Ok(designation)
+    }
+
+    /// Re-elects when the topology owner supplies a changed candidate set.
+    ///
+    /// This is an explicit topology update, not a socket liveness signal:
+    /// each cloud candidate's `attached` bit comes from the host-authorized
+    /// topology. A transport outage never revokes the current MACRO home.
+    /// An empty set clears the old designation after an explicit detach.
+    pub fn sync_topology_changed(
+        &self,
+        candidates: &[DreamerHomeNodeCandidate],
+        now: u64,
+    ) -> Result<Option<DreamerHomeNodeDesignation>> {
+        self.elect_home_node(candidates, now)
     }
 
     /// Reads the persisted MACRO home-node designation, if one exists.

@@ -269,10 +269,6 @@ impl Vault {
             || fold.roster != checkpoint.roster
             || fold.tier_floor != Some(checkpoint.tier_floor)
             || !fold.pending_widens.is_empty()
-            || fold
-                .authority_forks
-                .iter()
-                .any(|fork| fork.status == AuthorityForkStatus::Quarantined)
         {
             return Err(invalid_authority());
         }

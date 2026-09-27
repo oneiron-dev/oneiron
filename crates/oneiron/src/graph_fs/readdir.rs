@@ -387,6 +387,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -491,6 +492,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -547,6 +549,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_cursor = after;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         for (scanned, entry) in self
@@ -589,6 +592,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut days = BTreeSet::new();
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -651,6 +655,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
         let mut builder = PageBuilder::new(path, self.options);
         let mut next_cursor = None;
         let mut last_scanned = None;
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         let policy = self.scoped_read.policy_manifest_in(&rtxn)?;
         let query = crate::ports::TimelineQuery {
@@ -693,6 +698,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
     }
 
     pub(super) fn policy(&self) -> Result<PolicyManifestResolution> {
+        self.scoped_read.persist_grant_clock()?;
         let rtxn = self.scoped_read.vault().store.env.read_txn()?;
         resolve_policy_manifest(&self.scoped_read.vault().store, &rtxn)
     }

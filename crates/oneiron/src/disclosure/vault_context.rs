@@ -260,14 +260,16 @@ impl Vault {
 }
 
 /// The resolved disclosure state one context assembly is clamped against:
-/// mode, interlocutor set, and (owner-absent only) the met six-axis
-/// contact clearances. One value feeds builder, board, and response so the response can
+/// mode, interlocutor set, and the met six-axis contact clearances. Room
+/// assemblies keep the meet even when the owner is present. One value feeds
+/// builder, board, and response so the response can
 /// never describe a different clamp than the one applied (design §11 rule 6).
 #[derive(Debug, Clone)]
 pub struct DisclosureContext {
     mode: DisclosureMode,
     interlocutors: InterlocutorSet,
     scope: Option<Scope>,
+    room: bool,
 }
 
 impl DisclosureContext {
@@ -282,8 +284,19 @@ impl DisclosureContext {
     /// (`Vault::counterparty_disclosure_scope`) keeps erroring loudly so
     /// corruption stays visible on the consent surface.
     pub fn resolve(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
+        Self::resolve_with_room(vault, set, false)
+    }
+
+    /// Room disclosure never treats owner presence as permission to widen a
+    /// peer's contact clearance. Only a separate explicit owner request can
+    /// override that clearance; a presence signal is not such a request.
+    pub fn resolve_room(vault: &Vault, set: InterlocutorSet) -> Result<Self> {
+        Self::resolve_with_room(vault, set, true)
+    }
+
+    fn resolve_with_room(vault: &Vault, set: InterlocutorSet, room: bool) -> Result<Self> {
         let mode = DisclosureMode::from_set(&set);
-        let scope = if mode == DisclosureMode::AbsenceClamp && set.has_non_owner() {
+        let scope = if (room || mode == DisclosureMode::AbsenceClamp) && set.has_non_owner() {
             let mut folded = Scope::top();
             for entry in set.non_owner() {
                 let entry_scope = match entry.contact_ref() {
@@ -310,6 +323,7 @@ impl DisclosureContext {
             mode,
             interlocutors: set,
             scope,
+            room,
         })
     }
 
@@ -324,9 +338,10 @@ impl DisclosureContext {
     }
 
     /// The clamp's admission predicate: `OwnerAlone` admits everything;
-    /// `Supervised` admits everything not Tier A; `AbsenceClamp` admits only
-    /// non-Tier-A records whose record-position Scope is admitted by the
-    /// intersected contact Scope. Tier is checked FIRST so clearance can
+    /// `Supervised` admits non-Tier-A records (within the room's contact
+    /// clearance if in a room); `AbsenceClamp` admits only non-Tier-A records
+    /// whose record-position Scope is admitted by the intersected contact Scope.
+    /// Tier is checked FIRST so clearance can
     /// never override tier (never-widen, I2).
     pub(crate) fn admits(
         &self,
@@ -354,7 +369,7 @@ impl DisclosureContext {
         if disclosure_tier(store, rtxn, id, entity_type, body)? == DisclosureTier::TierA {
             return Ok(false);
         }
-        if self.mode == DisclosureMode::Supervised {
+        if self.mode == DisclosureMode::Supervised && !self.room {
             return Ok(true);
         }
         let Some(scope) = self.scope.as_ref() else {

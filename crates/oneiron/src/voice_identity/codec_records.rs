@@ -18,7 +18,7 @@ use super::types::{
     VoiceSessionRosterV1,
 };
 
-pub(super) const PRINT_KEYS: [&str; 13] = [
+pub(super) const PRINT_KEYS: [&str; 14] = [
     KEY_SCHEMA_VERSION,
     "subject_ref",
     "contact_ref",
@@ -32,6 +32,7 @@ pub(super) const PRINT_KEYS: [&str; 13] = [
     "created_at",
     "updated_at",
     "delete_after",
+    "print_generation",
 ];
 
 const ROSTER_KEYS: [&str; 7] = [
@@ -54,7 +55,13 @@ const SEGMENT_KEYS: [&str; 7] = [
     "evidence",
 ];
 
-const EVIDENCE_ENROLLED_KEYS: [&str; 4] = [KEY_KIND, "subject_ref", "score", "calibration"];
+const EVIDENCE_ENROLLED_KEYS: [&str; 5] = [
+    KEY_KIND,
+    "subject_ref",
+    "score",
+    "calibration",
+    "print_generation",
+];
 
 const EVIDENCE_INVITE_KEYS: [&str; 2] = [KEY_KIND, "attendee_ref"];
 
@@ -140,6 +147,10 @@ pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>
             Value::from(PRINT_KEYS[12]),
             record.delete_after.map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(PRINT_KEYS[13]),
+            encode_entity_ref(&record.print_generation),
+        ),
     ]);
     write_body(&value)
 }
@@ -178,6 +189,7 @@ pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
         created_at: decode_u64(required_value(entries, PRINT_KEYS[10])?)?,
         updated_at: decode_u64(required_value(entries, PRINT_KEYS[11])?)?,
         delete_after,
+        print_generation: decode_entity_ref(required_value(entries, PRINT_KEYS[13])?)?,
     })
 }
 
@@ -187,6 +199,7 @@ fn encode_evidence(evidence: &VoiceAttributionEvidence) -> Value {
             subject_ref,
             score,
             calibration,
+            print_generation,
         } => Value::Map(vec![
             (Value::from(KEY_KIND), Value::from(EVIDENCE_KIND_ENROLLED)),
             (
@@ -197,6 +210,10 @@ fn encode_evidence(evidence: &VoiceAttributionEvidence) -> Value {
             (
                 Value::from(EVIDENCE_ENROLLED_KEYS[3]),
                 Value::from(calibration.as_str()),
+            ),
+            (
+                Value::from(EVIDENCE_ENROLLED_KEYS[4]),
+                encode_entity_ref(print_generation),
             ),
         ]),
         VoiceAttributionEvidence::InviteElimination { attendee_ref } => Value::Map(vec![
@@ -232,6 +249,10 @@ fn decode_evidence(value: &Value) -> Result<VoiceAttributionEvidence> {
                     .as_deref()
                     .and_then(VoicePrintCalibration::parse)
                     .ok_or_else(corrupt_voice_row)?,
+                print_generation: decode_entity_ref(required_value(
+                    entries,
+                    EVIDENCE_ENROLLED_KEYS[4],
+                )?)?,
             })
         }
         EVIDENCE_KIND_INVITE => {

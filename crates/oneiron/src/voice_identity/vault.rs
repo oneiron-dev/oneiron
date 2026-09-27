@@ -113,6 +113,7 @@ impl Vault {
                 sample_ids: sample_ids.clone(),
                 sample_languages: sample_languages.clone(),
                 calibration,
+                print_generation: self.store.clock.entity_id()?,
                 created_at: previous.map_or(request.requested_at, |prior| prior.created_at),
                 updated_at: request.requested_at,
                 delete_after: None,
@@ -173,6 +174,7 @@ impl Vault {
                             subject_ref: candidate.subject_ref,
                             score,
                             calibration: candidate.calibration,
+                            print_generation: candidate.print_generation,
                         },
                     });
                 }
@@ -260,6 +262,48 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
         ROSTER.get(&self.store, &rtxn, &digest)
+    }
+
+    /// Display-only corroboration for a voice grant offer. No caller boolean
+    /// participates: the matched segment and current owner print are read from
+    /// the same vault. A match never authorizes consent on its own.
+    pub(crate) fn voice_owner_print_verified(
+        &self,
+        voice_session_ref: &str,
+        segment_id: &str,
+        owner_actor: EntityId,
+    ) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let digest = digest16(b"voice_identity.roster", voice_session_ref.as_bytes());
+        let Some(roster) = ROSTER.get(&self.store, &rtxn, &digest)? else {
+            return Ok(false);
+        };
+        let Some(print) = read_active_print(&self.store, &rtxn, &owner_actor)? else {
+            return Ok(false);
+        };
+        if print.contact_ref.is_some()
+            || print.space.space_id != roster.embedding_space_id
+            || print
+                .delete_after
+                .is_some_and(|deadline| deadline <= self.now_recorded_at())
+        {
+            return Ok(false);
+        }
+        Ok(roster.segments.iter().any(|segment| {
+            segment.segment_id == segment_id
+                && segment.subject_ref == Some(owner_actor)
+                && matches!(
+                    segment.evidence,
+                    VoiceAttributionEvidence::EnrolledPrint {
+                        subject_ref,
+                        score,
+                        print_generation,
+                        ..
+                    } if subject_ref == owner_actor
+                        && print_generation == print.print_generation
+                        && score >= roster.known_threshold
+                )
+        }))
     }
 
     /// Ends a voice-print retention relationship and stamps `delete_after`.
