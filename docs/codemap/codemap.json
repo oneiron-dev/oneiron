@@ -36989,11 +36989,40 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DirectOpenAiImageBackend",
+      "OpenAiImageBody",
+      "OpenAiImageHttpRequest",
+      "OpenAiImageHttpResponse",
+      "OpenAiImagePart",
+      "OpenAiImageTransport"
+     ],
+     "path": "src/lib/image.rs",
+     "purpose": "Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 4,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/lib/image/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -37066,7 +37095,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -37075,8 +37104,8 @@
    },
    "over_bar": 0,
    "purpose": "OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 6,
-   "test_files": 1
+   "source_files": 7,
+   "test_files": 2
   },
   "oneiron-llm-own-server": {
    "files": [
