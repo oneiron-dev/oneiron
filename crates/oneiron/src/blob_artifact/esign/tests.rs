@@ -1760,7 +1760,7 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         OutboundDispatchOutcome, OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft,
         OutboundIntentTrigger,
     };
-    let (_dir, vault, id, doc) = setup()?;
+    let (dir, vault, id, doc) = setup()?;
     let sender = EntityId::now();
     vault.put_entity(
         &sender,
@@ -1851,26 +1851,10 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
             OutboundDeliveryWindowDecision::DeliverNow,
         )
     };
-    let (denied_attempt, denied) = vault
-        .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
-        .unwrap();
-    assert_eq!(denied.principal.as_deref(), Some(sender.to_hex().as_str()));
-    let denied_result = vault
-        .dispatch_esign_notice(&denied_attempt, request(&denied, 1001, "deny", false, true))
-        .unwrap();
-    assert_ne!(
-        denied_result.outcome,
-        OutboundDispatchOutcome::DeliveredToChannel
-    );
-    assert!(
-        AttemptQueue::new(&vault)
-            .list()?
-            .iter()
-            .all(|a| a.kind != "esign.delivery")
-    );
     let (held_attempt, held) = vault
         .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
         .unwrap();
+    assert_eq!(held.principal.as_deref(), Some(sender.to_hex().as_str()));
     let held_result = vault
         .dispatch_esign_notice(&held_attempt, request(&held, 1002, "hold", true, false))
         .unwrap();
@@ -1881,21 +1865,11 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
             .iter()
             .all(|a| a.kind != "esign.delivery")
     );
-    // The second recipient's original row precedes the scheduled retry.
+    // The other recipient's original row precedes the scheduled retry.
     let (other, other_notice) = vault
         .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
         .unwrap();
     assert_ne!(other_notice, held);
-    let other_result = vault
-        .dispatch_esign_notice(
-            &other,
-            request(&other_notice, 1003, "deny-other", false, true),
-        )
-        .unwrap();
-    assert_ne!(
-        other_result.outcome,
-        OutboundDispatchOutcome::DeliveredToChannel
-    );
     let (retry, same_notice) = vault
         .claim_esign_notice("notice-worker", crate::unix_seconds_now())?
         .unwrap();
@@ -1909,6 +1883,56 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         OutboundDispatchOutcome::DeliveredToChannel,
         "{sent:?}"
     );
+    let replay = vault
+        .dispatch_esign_notice(&retry, request(&same_notice, 1065, "allow", true, true))
+        .unwrap();
+    assert_eq!(replay.outcome, sent.outcome);
+    assert_eq!(replay.receipt, sent.receipt);
+    assert!(
+        vault
+            .dispatch_esign_notice(
+                &retry,
+                request(&same_notice, 1065, "changed-receipt", true, true)
+            )
+            .is_err()
+    );
+    let key_id = EntityId::now();
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active("email", None, Vec::new(), 1066),
+    )?;
+    let pending = vault.propose_connector_charter(&key_id, "never send on email", 1067)?;
+    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1068)?;
+    let denied_result = vault
+        .dispatch_esign_notice(
+            &other,
+            request(&other_notice, 1070, "hard-deny", true, true),
+        )
+        .unwrap();
+    assert_eq!(denied_result.gate_outcome, "deny", "{denied_result:?}");
+    assert_eq!(denied_result.outcome, OutboundDispatchOutcome::Suppressed);
+    // All three outcomes are audit rows in the public outbound receipt family.
+    let receipt_query =
+        crate::receipt::ReceiptQuery::new(100).with_kind(crate::receipt::ReceiptKind::Outbound);
+    let expected = [held_result.receipt, sent.receipt, denied_result.receipt];
+    for entry in &expected {
+        assert!(vault.receipts(receipt_query.clone())?.contains(entry));
+        assert!(
+            vault
+                .scan_receipts(receipt_query.clone())?
+                .records
+                .contains(entry)
+        );
+    }
+    drop(vault);
+    let reopened = Vault::open(dir.path(), VaultConfig::default())?;
+    for entry in &expected {
+        assert!(reopened.receipts(receipt_query.clone())?.contains(entry));
+        let scan = reopened.scan_receipts(receipt_query.clone())?;
+        assert!(scan.complete);
+        assert!(scan.records.contains(entry));
+    }
+    let vault = reopened;
     let rows = AttemptQueue::new(&vault).list()?;
     assert_eq!(
         rows.iter().filter(|a| a.kind == "esign.delivery").count(),

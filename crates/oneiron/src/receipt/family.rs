@@ -103,6 +103,8 @@ impl Vault {
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
         scan.records.extend(durable.records);
+        scan.records
+            .extend(crate::blob_artifact::esign::notice_dispatch_receipts(self)?);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
     }
@@ -235,6 +237,11 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         );
         records.extend(
             attempt_pack_receipts(vault)?
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
+            crate::blob_artifact::esign::notice_dispatch_receipts(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );

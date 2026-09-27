@@ -3511,7 +3511,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 2,
       "re-export": 8
      }
@@ -3558,6 +3558,7 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
