@@ -1,5 +1,6 @@
 use super::*;
 
+mod atom_fuzz;
 mod genui_render;
 mod genui_validation;
 mod instrument;
