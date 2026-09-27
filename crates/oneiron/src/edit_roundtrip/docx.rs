@@ -76,7 +76,7 @@ pub(super) fn run_docx_revision_with_limits(
     if !report.ok {
         return Ok(EditOutcome::Rejected { inspection, report });
     }
-    Ok(EditOutcome::Proposed(EditProposal {
+    Ok(EditOutcome::Proposed(Box::new(EditProposal {
         run_ref: run_ref.to_owned(),
         format: OfficeFormat::Docx,
         new_bytes: current,
@@ -87,6 +87,8 @@ pub(super) fn run_docx_revision_with_limits(
             touched_parts: diff_parts(&before, &after),
             mutation_mode: MutationMode::Full,
             warnings: Vec::new(),
+            pptx_holder_limits: None,
+            slide_judgments: Vec::new(),
         },
         inspection,
         validation: report,
@@ -94,7 +96,8 @@ pub(super) fn run_docx_revision_with_limits(
         calc_engine: None,
         base_version: None,
         base_content_hash: *blake3::hash(input_bytes).as_bytes(),
-    }))
+        sheet_answers: None,
+    })))
 }
 
 /// Independently recheck the OPC linker/passthrough gate on the actual output
