@@ -19998,12 +19998,39 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DecisionInput",
+      "DecisionRule",
+      "DecisionSeat",
+      "LabelClassifier",
+      "LocalDecisionSeat",
+      "RuleExpression"
+     ],
+     "path": "src/llm/decision/local.rs",
+     "purpose": "Fixed-label local decision seat; runtime/model loading stays with the host",
+     "surface": {
+      "enum": 1,
+      "struct": 3,
+      "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/local/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -35035,7 +35062,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 71,
+     "files": 73,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35590,8 +35617,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2100,
-   "test_files": 719
+   "source_files": 2101,
+   "test_files": 720
   },
   "oneiron-android": {
    "files": [
