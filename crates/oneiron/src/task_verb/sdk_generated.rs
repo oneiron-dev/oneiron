@@ -74,8 +74,19 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "can",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::TaskCanAskRequest,
+                >(),
+            ),
+            (
+                "peek",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskHandle>(),
+            ),
+            (
                 "tasks.ask",
-                crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAskSpec>(),
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::TaskAskRequest>(
+                ),
             ),
             (
                 "tasks.wait",
@@ -308,8 +319,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "key_value_namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "can" => {
+            let _input: crate::task_verb::sdk::TaskCanAskRequest = decode(value.clone())?;
+        }
+        "peek" => {
+            let _input: crate::task_verb::TaskAskHandle = decode(value.clone())?;
+        }
         "tasks.ask" => {
-            let _input: crate::task_verb::TaskAskSpec = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::TaskAskRequest = decode(value.clone())?;
         }
         "tasks.wait" => {
             let _input: crate::task_verb::sdk::TaskWaitRequest = decode(value.clone())?;
@@ -355,6 +372,8 @@ pub fn invoke(
         "key_value_delete" => encode(key_value_delete(memory, decode(value)?)?),
         "key_value_search" => encode(key_value_search(memory, decode(value)?)?),
         "key_value_namespaces" => encode(key_value_namespaces(memory, decode(value)?)?),
+        "can" => encode(can(memory, decode(value)?)?),
+        "peek" => encode(peek(memory, decode(value)?)?),
         "tasks.ask" => encode(tasks_ask(memory, decode(value)?)?),
         "tasks.wait" => encode(tasks_wait(memory, decode(value)?)?),
         "tasks.answer" => encode(tasks_answer(memory, decode(value)?)?),
@@ -514,11 +533,23 @@ pub fn key_value_namespaces(
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
 }
+pub fn can(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::TaskCanAskRequest,
+) -> MemoryResult<crate::task_verb::TaskAskPreflight> {
+    memory.tasks_can_ask(&input.ask)
+}
+pub fn peek(
+    memory: &Memory<'_>,
+    input: crate::task_verb::TaskAskHandle,
+) -> MemoryResult<Vec<crate::task_verb::TaskAskPersonEvidence>> {
+    memory.tasks_ask_peek(input)
+}
 pub fn tasks_ask(
     memory: &Memory<'_>,
-    input: crate::task_verb::TaskAskSpec,
+    input: crate::task_verb::sdk::TaskAskRequest,
 ) -> MemoryResult<crate::task_verb::TaskAskReceipt> {
-    memory.tasks_ask(&input)
+    memory.tasks_ask(&input.into_spec()?)
 }
 pub fn tasks_wait(
     memory: &Memory<'_>,

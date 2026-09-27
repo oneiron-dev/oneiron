@@ -28,6 +28,7 @@ use super::projection::{
     finalize_receipt_scan, project_receipts_by_brief,
     project_receipts_by_counterparty_with_contacts, project_receipts_by_grant_limited,
 };
+use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -103,6 +104,8 @@ impl Vault {
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
         scan.records.extend(durable.records);
+        scan.records
+            .extend(scan_suppression_receipts(self)?.records);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
     }
@@ -234,6 +237,12 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
                 .filter(|receipt| query.matches(receipt)),
         );
         records.extend(
+            scan_suppression_receipts(vault)?
+                .records
+                .into_iter()
+                .filter(|receipt| query.matches(receipt)),
+        );
+        records.extend(
             attempt_pack_receipts(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
@@ -323,6 +332,9 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
         records.extend(federation_share_receipts(vault, &rtxn, query)?);
         records.extend(persona_snapshot_export_receipts(vault, &rtxn, query)?);
         records.extend(brief_share_receipts(vault, &rtxn, query)?);
+        records.extend(crate::artifact_hosting::artifact_publish_receipts(
+            vault, &rtxn, query,
+        )?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
     // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN

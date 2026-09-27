@@ -402,8 +402,8 @@ pub(crate) fn companion_profile_access_grant(
     principal_ref: &EntityId,
     person_ref: &EntityId,
     persona_ref: &EntityId,
+    now: u64,
 ) -> Result<Option<EntityId>> {
-    let now = store.clock.now_recorded_at();
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)? {
         let id = index_entry?;
         let Some(raw) = store.port_entity_record(txn, &id)?.map(|row| row.encode()) else {

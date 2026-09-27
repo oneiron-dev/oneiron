@@ -157,7 +157,8 @@ use self::params::{
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-use self::scoped_auth::{check_api_auth, scoped_read_for_core_auth, scoped_read_for_legacy_api};
+pub(crate) use self::scoped_auth::scoped_read_for_core_auth;
+use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
 pub(crate) use self::vad::*;
@@ -243,6 +244,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/run-tree/observe", get(core_run_tree_observe))
         .route("/run-tree/intervene", post(core_run_tree_intervene))
         .route("/memory/{id}/timeline", get(core_memory_timeline))
+        .route(
+            "/memory/{id}/watch",
+            get(memory::core_memory_watch_read)
+                .put(memory::core_memory_watch_enable)
+                .delete(memory::core_memory_watch_disable),
+        )
         .route(
             "/outbound/capabilities",
             get(list_core_outbound_capabilities),
@@ -372,7 +379,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // BK-08's machine-readable booking surface. Every route addresses the
         // page by opaque token and dispatches into the one shared executor.
         .merge(self::booking::booking_routes())
-        .merge(self::esign::routes())
+        .merge(self::esign::editor_routes())
         // ONE-1908: git smart-HTTP. Stock clients clone, fetch, and push here;
         // every route streams through one `git http-backend` child.
         .merge(self::git_http::git_http_routes())
@@ -398,6 +405,9 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // Config-only CIMD documents must be public before OAuth/lease bootstrap.
         .route("/oauth/client/native.json", get(client_metadata::native))
         .route("/oauth/client/web.json", get(client_metadata::web))
+        // The public ceremony bypasses the hosted device lease but retains
+        // matched-route wire receipts and threshold questions.
+        .merge(self::esign::public_routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

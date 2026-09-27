@@ -293,7 +293,7 @@ impl Vault {
             ))?;
         let emit_receipts_retained = post_flip_emit_log
             .map(SessionLocalReceiptLog::close)
-            .map_or_else(Vec::new, |close| close.retained);
+            .map_or_else(Vec::new, |mut close| std::mem::take(&mut close.retained));
 
         // The room's transcript stopped existing when the overlay evaporated.
         // Nothing in base is touched, so there is no delete pass to census and

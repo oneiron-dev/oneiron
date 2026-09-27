@@ -26,16 +26,7 @@ impl Memory<'_> {
                 return replay_receipt(group_ref, group, self.actor(), &digest);
             }
             // Revocation and admission observe the SAME snapshot.
-            let holders = match &input.who {
-                Some(TaskAskTarget::Authority(scope)) => self
-                    .vault()
-                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?,
-                Some(TaskAskTarget::Responder(assignee)) => {
-                    vec![assignee.entity_ref().unwrap_or(self.actor())]
-                }
-                Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
-                None => vec![self.actor()],
-            };
+            let holders = self.ask_holders_in_txn(txn, input)?;
             let context_class = self.ask_class_in_txn(txn, input.task_ref)?;
             let effective = input.effective(
                 &holders.iter().copied().collect(),
@@ -69,21 +60,16 @@ impl Memory<'_> {
                 ) {
                     return Err(MemoryError::bad_request("ask recipient is not an actor"));
                 }
-                let assignee = match &effective.who {
-                    Some(TaskAskTarget::Responder(assignee)) => *assignee,
-                    _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
-                        TaskAssignee::Human { actor_ref: *actor }
-                    }
-                    _ => TaskAssignee::Peer { actor_ref: *actor },
-                };
+                let assignee = ask_assignee(&effective.who, *actor, kind);
                 // No contact route is required to QUEUE a question. Human followup
                 // is registered only where the native route actually resolves.
                 let reachable = match assignee {
                     TaskAssignee::Human { actor_ref } => {
-                        crate::human_task::resolve_native_human_route_in(
+                        crate::human_task::resolve_native_human_route_for_actor_in(
                             self.vault(),
                             txn,
                             actor_ref,
+                            self.actor(),
                         )
                         .is_ok()
                     }
@@ -178,7 +164,105 @@ impl Memory<'_> {
         })
     }
 
-    fn ask_class_in_txn(
+    pub(super) fn ask_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<Vec<EntityId>> {
+        Ok(match &input.who {
+            Some(TaskAskTarget::Authority(scope)) => {
+                self.vault()
+                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?
+            }
+            Some(TaskAskTarget::Responder(assignee)) => {
+                vec![assignee.entity_ref().unwrap_or(self.actor())]
+            }
+            Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
+            None => vec![self.short_ask_principal_in_txn(txn)?],
+        })
+    }
+
+    /// A human can ask themselves. For an agent, an omitted target is the
+    /// unique verified human owner of its live assigned TASK, not the agent's
+    /// own actor id. The Owner fact is the binding; a caller-writable TASK
+    /// body by itself cannot nominate the principal.
+    fn short_ask_principal_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
+        if self.actor_class() == crate::EdgeActorClass::Human {
+            crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
+            return Ok(self.actor());
+        }
+        let scan = super::presence_scan::scan_task_entity_pages(
+            super::presence_scan::TASK_PRESENCE_PAGE_SIZE,
+            super::presence_scan::TASK_PRESENCE_SCAN_CAP,
+            |after, limit| {
+                crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                    &self.vault().store,
+                    txn,
+                    crate::registry::ENTITY_TYPE_TASK,
+                    after.copied(),
+                )?
+                .take(limit)
+                .collect()
+            },
+        )?;
+        if !scan.source_exhausted {
+            return Err(MemoryError::bad_request(
+                "agent principal cannot be resolved from a truncated task scan",
+            ));
+        }
+        // Before an authority root exists, only the seeded vault owner has
+        // an independently established human identity. A free-form PERSON
+        // owner fact cannot classify its writer as human rather than agent.
+        let rooted = self
+            .vault()
+            .authority_fold_readonly_in_txn(txn)?
+            .vault_id
+            .is_some();
+        let mut principal = None;
+        for task in scan.pages.into_iter().flatten() {
+            let Some(body) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)? else {
+                continue;
+            };
+            if body.task_kind() != TaskKind::Standard
+                || body.terminal().is_some()
+                || body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
+            {
+                continue;
+            }
+            let Some(proof) = self.vault().task_authority_state_in(txn, task)? else {
+                continue;
+            };
+            if proof.cancelled || proof.owner_ref.to_hex() != body.owner_ref {
+                continue;
+            }
+            let owner = proof.owner_ref;
+            // The Owner fact may be nominated by the creating agent. Only
+            // this independent human-authored witness can establish the
+            // principal relationship for an omitted recipient.
+            if self.vault().task_human_assigner_in(txn, task)? != Some((owner, self.actor())) {
+                continue;
+            }
+            if !rooted && owner != crate::vault::embedded_owner_actor_id()? {
+                continue;
+            }
+            if self.vault().get_entity_type_in_txn(txn, &owner)?
+                != Some(crate::registry::ENTITY_TYPE_PERSON)
+                || crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, owner)
+                    .is_err()
+            {
+                continue;
+            }
+            if principal.is_some_and(|found| found != owner) {
+                return Err(MemoryError::bad_request(
+                    "agent has more than one human principal",
+                ));
+            }
+            principal = Some(owner);
+        }
+        principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
+    }
+
+    pub(super) fn ask_class_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         task: Option<EntityId>,
@@ -629,6 +713,42 @@ impl Memory<'_> {
 }
 
 impl Memory<'_> {
+    /// `peek(ask)`: attributed partial words, then explicit unknowns at cutoff.
+    /// Reading this view never mints a TASK or settles an ask.
+    pub fn tasks_ask_peek(
+        &self,
+        handle: TaskAskHandle,
+    ) -> MemoryResult<Vec<TaskAskPersonEvidence>> {
+        verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        let group = ask_record::read_group(self.vault(), &txn, handle.group_ref)?
+            .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+        if group.owner != self.actor().to_hex()
+            && !group
+                .members
+                .iter()
+                .any(|member| member.actor == self.actor().to_hex())
+        {
+            return Err(consult_refusal(
+                crate::memory::MEMORY_CODE_FORBIDDEN,
+                "ask handle is not addressed to this actor",
+                "Read an ask you own or answer.",
+            ));
+        }
+        Ok(ask_record::person_evidence_in(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            &group,
+            self.vault().store.clock.now_recorded_at(),
+        )?)
+    }
+
     /// Live evidence includes late words, without rewriting the cutoff receipt.
     pub fn tasks_ask_evidence(&self, handle: TaskAskHandle) -> MemoryResult<Vec<TaskAskEvidence>> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -679,4 +799,20 @@ pub(crate) fn settle_waiting_asks(vault: &crate::Vault) -> crate::Result<()> {
         super::ask_settlement::settle_ask_if_due(vault, group)?;
     }
     Ok(())
+}
+
+/// Both `tasks_ask` and `can(ask)` preserve an explicitly addressed
+/// non-human responder, even when that actor is stored as a PERSON.
+pub(super) fn ask_assignee(
+    who: &Option<TaskAskTarget>,
+    actor: EntityId,
+    kind: Option<u8>,
+) -> TaskAssignee {
+    match who {
+        Some(TaskAskTarget::Responder(assignee)) => *assignee,
+        _ if kind == Some(crate::registry::ENTITY_TYPE_PERSON) => {
+            TaskAssignee::Human { actor_ref: actor }
+        }
+        _ => TaskAssignee::Peer { actor_ref: actor },
+    }
 }
