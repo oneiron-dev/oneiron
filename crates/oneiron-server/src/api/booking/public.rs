@@ -2,8 +2,8 @@
 
 use std::net::SocketAddr;
 
-use axum::extract::ConnectInfo;
 use axum::extract::rejection::PathRejection;
+use axum::extract::{ConnectInfo, RawQuery};
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, LOCATION, X_CONTENT_TYPE_OPTIONS};
 use axum::http::{HeaderValue, StatusCode};
 use oneiron::booking::{
@@ -69,6 +69,7 @@ pub(crate) async fn render_public_booking_page(
     State(server): State<Arc<SyncServer>>,
     peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
     path: Result<Path<String>, PathRejection>,
+    RawQuery(query): RawQuery,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Path(page_token) = path.map_err(|_| public_booking_not_found())?;
     let (_, publication) = resolve_public_booking_page(&server, &page_token)?;
@@ -119,6 +120,7 @@ pub(crate) async fn render_public_booking_page(
         publication.owner_display,
         publication.event_types,
         slots,
+        request.visitor_tz,
         publication.constraint_field,
         publication.theme,
     )
@@ -126,16 +128,21 @@ pub(crate) async fn render_public_booking_page(
         tracing::error!(?defect, "public booking model invariant failed");
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
-    public_booking_page_json(model, PublicBookingPageToken(page_token)).map(Json)
+    public_booking_page_json(model, PublicBookingPageToken(page_token), query.as_deref()).map(Json)
 }
 
 fn public_booking_page_json(
     model: BookingPageModel,
     token: PublicBookingPageToken,
+    query: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
+    let oneiron::booking::RungProjection::Slots(mask) = &model.slots else {
+        unreachable!("validated public slot projection")
+    };
+    let selected = oneiron::booking::booking_suggested_slot(&mask.slots, query);
     let card = BookingPageLens::card_with_actions(&model, &token, &[PublicBookingAction::Hold])
         .map_err(|_| ApiError::internal_server_error("public booking lens assembly failed"))?;
-    Ok(serde_json::json!({ "model": model, "card": card }))
+    Ok(serde_json::json!({ "model": model, "card": card, "suggested_slot": selected }))
 }
 
 async fn public_booking_availability(

@@ -4297,6 +4297,37 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "BookingIntakeStages",
+      "BookingReminder",
+      "BookingReminderWake",
+      "BookingShortlist",
+      "ConversionError",
+      "MeetingLocation",
+      "ReminderAction",
+      "ReminderStep",
+      "RepeatNoShowOffer",
+      "ZonedBookingTime"
+     ],
+     "path": "src/booking/conversion.rs",
+     "purpose": "BK-07 conversion data",
+     "surface": {
+      "enum": 5,
+      "fn": 10,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/booking/conversion/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BusyBlockRow",
       "CalendarDisclosureDefault",
       "DisclosureRung",
@@ -4578,7 +4609,7 @@
      "path": "src/booking/lifecycle/claim.rs",
      "purpose": "Booking facts on the EVENT: the four exact claims, their writes and supersessions, the family validator, and…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 6,
       "struct": 1
      }
@@ -4639,7 +4670,7 @@
      "path": "src/booking/lifecycle/mod.rs",
      "purpose": "ONE-1813 [BK-02] booking lifecycle verbs",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 5
      }
     },
@@ -4760,8 +4791,8 @@
      "path": "src/booking/mod.rs",
      "purpose": "Engine-generic booking module",
      "surface": {
-      "mod": 13,
-      "re-export": 10
+      "mod": 14,
+      "re-export": 11
      }
     },
     {
@@ -34258,7 +34289,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 75,
+     "files": 77,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35457,8 +35488,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2093,
-   "test_files": 718
+   "source_files": 2094,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [
@@ -39060,7 +39091,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/public.rs",

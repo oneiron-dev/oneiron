@@ -225,6 +225,7 @@ fn book_as(vault: &Vault, page_seed: u8, start: u64, host: u8) -> ConfirmReceipt
             hold_token: held.token,
             session_key: session,
             booker_contact: id(0x53),
+            intake: Vec::new(),
             idempotency_key: None,
         }),
         slot,

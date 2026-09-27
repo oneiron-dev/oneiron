@@ -243,6 +243,21 @@ fn confirm_in_writer(
     wtxn: &mut heed::RwTxn<'_>,
     now_utc: u64,
 ) -> Result<ConfirmOutcome, BookingError> {
+    if spec.intake.len() > 32 {
+        return Err(refused("booking confirm carries too many intake answers"));
+    }
+    let mut intake_keys = std::collections::BTreeSet::new();
+    for answer in &spec.intake {
+        if answer.field_key.trim().is_empty()
+            || answer.field_key.len() > 64
+            || answer.value.len() > 4096
+            || !intake_keys.insert(&answer.field_key)
+        {
+            return Err(refused(
+                "booking confirm intake answer is malformed or duplicated",
+            ));
+        }
+    }
     let hold_hash = token_digest(&spec.hold_token);
     let session_hash = session_digest(&spec.session_key);
     let receipt_key = confirm_receipt_key(&hold_hash);
@@ -330,6 +345,7 @@ fn confirm_in_writer(
         booker_ref: spec.booker_contact.to_hex(),
         visitor_tz: hold.visitor_tz.clone(),
         constraint: hold.constraint.clone(),
+        intake: spec.intake.clone(),
     };
     write_booking_event(vault, wtxn, &event_ref, &hold, spec.booker_contact, now_utc)?;
     write_outbound_passport(vault, wtxn, &event_ref, &uid, &hold, now_utc)?;

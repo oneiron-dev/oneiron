@@ -22,6 +22,14 @@ async fn public_booking_render_requires_no_authentication() {
         panic!("slots only")
     };
     assert!(!mask.slots.is_empty());
+    assert_eq!(
+        model.visitor_zone,
+        expected["initial_availability"]["visitor_tz"]
+    );
+    let shortlist = oneiron::booking::booking_shortlist(&mask.slots, 3).expect("shortlist");
+    assert_eq!(shortlist.recommended, mask.slots.first().cloned());
+    assert_eq!(shortlist.visible, mask.slots[..mask.slots.len().min(3)]);
+    assert_eq!(shortlist.more_count, mask.slots.len().saturating_sub(3));
     assert!(mask.window_start_utc >= before + 86_400);
     assert_eq!(mask.window_end_utc - mask.window_start_utc, 86_400);
     assert!(
@@ -59,6 +67,41 @@ async fn public_booking_render_requires_no_authentication() {
     assert_eq!(
         context.source_ip,
         "127.0.0.1".parse::<IpAddr>().expect("IP")
+    );
+}
+
+#[tokio::test]
+async fn linked_time_preselects_only_a_live_solver_slot() {
+    let fixture = Fixture::new();
+    let path = format!("/public/booking/{}", fixture.token);
+    let response = fixture.route("GET", &path, Value::Null).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let page: Value = serde_json::from_slice(&bytes(response).await).expect("page");
+    let slot = &page["model"]["slots"]["rows"]["slots"][0];
+    let start = slot["start_utc"].as_u64().expect("start");
+    let end = slot["end_utc"].as_u64().expect("end");
+    let linked = fixture
+        .route(
+            "GET",
+            &format!("{path}?start_utc={start}&end_utc={end}"),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(linked.status(), StatusCode::OK);
+    let selected: Value = serde_json::from_slice(&bytes(linked).await).expect("linked page");
+    assert_eq!(selected["suggested_slot"]["start_utc"], start);
+    assert_eq!(selected["suggested_slot"]["end_utc"], end);
+    let unoffered = fixture
+        .route(
+            "GET",
+            &format!("{path}?start_utc={start}&end_utc={}", end + 1),
+            Value::Null,
+        )
+        .await;
+    let page: Value = serde_json::from_slice(&bytes(unoffered).await).expect("unoffered page");
+    assert!(
+        page["suggested_slot"].is_null(),
+        "a query never invents availability"
     );
 }
 

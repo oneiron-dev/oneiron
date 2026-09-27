@@ -43,6 +43,9 @@ pub struct BookingConfirmationContext {
     pub booker_ref: String,
     pub visitor_tz: String,
     pub constraint: Option<ConstraintObject>,
+    /// The short answers given before confirm, bound to this EVENT's receipt.
+    #[serde(default)]
+    pub intake: Vec<crate::booking::agent_api::BookingIntakeAnswer>,
 }
 
 /// Reads only this booking's persisted confirmation context. Missing old data
@@ -62,6 +65,18 @@ fn confirmation_context_in(
 ) -> Result<Option<BookingConfirmationContext>, BookingError> {
     Ok(confirmation_receipt_in(vault, rtxn, event_ref)?
         .and_then(|(_, receipt)| receipt.confirmation))
+}
+
+/// Current start of a live confirmed booking, for BK-07 reminder wake checks.
+/// This reads status and occurrence in one snapshot. A missing or malformed
+/// booking fails closed rather than causing an outbound message.
+pub(in crate::booking) fn confirmed_start_for_reminder(
+    vault: &Vault,
+    event_ref: &EntityId,
+) -> Result<Option<u64>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let facts = read_booking_facts(vault, &rtxn, event_ref)?;
+    Ok((facts.status == BookingStatus::Confirmed).then_some(facts.slot.start))
 }
 
 /// Creates the EVENT and its four exact booking claims.

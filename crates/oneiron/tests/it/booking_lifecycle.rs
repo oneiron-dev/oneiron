@@ -338,6 +338,7 @@ fn confirm_spec(fixture: &Fixture, hold: &HoldReceipt, session_key: SessionKey) 
         hold_token: hold.token.clone(),
         session_key,
         booker_contact: fixture.booker,
+        intake: Vec::new(),
         idempotency_key: None,
     }
 }
@@ -397,6 +398,129 @@ fn book(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> ConfirmR
             )
             .expect("confirm"),
     )
+}
+
+// -------------------------------------------------------------------------
+// BK-07 progressive intake: pre-confirm answers survive the writer
+// -------------------------------------------------------------------------
+
+#[test]
+fn confirmation_persists_short_intake_on_the_booking_receipt() {
+    use oneiron::booking::agent_api::BookingIntakeAnswer;
+    use oneiron::booking::lifecycle::booking_confirmation_context;
+
+    let fixture = Fixture::open();
+    let slot = slot_of(&fixture.offered_slots()[0]);
+    let visitor = session(b"short-intake");
+    let hold = expect_held(
+        fixture
+            .run(
+                BookingVerbRequest::Hold(hold_spec(&fixture, visitor, slot)),
+                NOW,
+            )
+            .expect("hold"),
+    );
+    let intake = vec![
+        BookingIntakeAnswer {
+            field_key: "name".to_owned(),
+            value: "Visitor".to_owned(),
+        },
+        BookingIntakeAnswer {
+            field_key: "purpose".to_owned(),
+            value: "Discuss availability".to_owned(),
+        },
+    ];
+    let confirmed = expect_confirmed(
+        fixture
+            .run(
+                BookingVerbRequest::Confirm(ConfirmSpec {
+                    intake: intake.clone(),
+                    ..confirm_spec(&fixture, &hold, visitor)
+                }),
+                NOW,
+            )
+            .expect("confirm"),
+    );
+    let context = booking_confirmation_context(&fixture.vault, &confirmed.calendar.event_ref)
+        .expect("context read")
+        .expect("confirmed receipt");
+    assert_eq!(context.intake, intake);
+    let replay = expect_confirmed(
+        fixture
+            .run(
+                BookingVerbRequest::Confirm(ConfirmSpec {
+                    intake: vec![],
+                    ..confirm_spec(&fixture, &hold, visitor)
+                }),
+                NOW,
+            )
+            .expect("idempotent replay"),
+    );
+    assert_eq!(replay.calendar.event_ref, confirmed.calendar.event_ref);
+    assert_eq!(
+        booking_confirmation_context(&fixture.vault, &confirmed.calendar.event_ref)
+            .expect("context read")
+            .expect("confirmed receipt")
+            .intake,
+        intake,
+    );
+}
+
+// -------------------------------------------------------------------------
+// BK-07 reminder wake: live booking truth is rechecked at fire time
+// -------------------------------------------------------------------------
+
+#[test]
+fn reminder_wake_rechecks_confirmed_status_and_current_occurrence() {
+    use oneiron::booking::{ReminderAction, booking_due_reminder, booking_reminder_wakes};
+
+    let fixture = Fixture::open();
+    let slot = slot_of(&fixture.offered_slots()[0]);
+    let visitor = session(b"reminder-wake");
+    let confirmed = book(&fixture, visitor, slot);
+    let wakes = booking_reminder_wakes(
+        confirmed.calendar.event_ref,
+        slot.start,
+        NOW,
+        45 * 60,
+        15 * 60,
+    )
+    .expect("wake plan");
+    assert_eq!(wakes.len(), 2);
+    assert_ne!(wakes[0].id, wakes[1].id);
+    for wake in &wakes {
+        assert_eq!(
+            booking_due_reminder(&fixture.vault, wake, wake.due_utc - 1).unwrap(),
+            None
+        );
+        assert_eq!(
+            booking_due_reminder(&fixture.vault, wake, wake.due_utc).unwrap(),
+            Some(ReminderAction::RescheduleFirst)
+        );
+        assert_eq!(
+            booking_due_reminder(&fixture.vault, wake, slot.start).unwrap(),
+            None
+        );
+    }
+    let mut forged = wakes[0].clone();
+    forged.id.push_str("-other");
+    assert_eq!(
+        booking_due_reminder(&fixture.vault, &forged, forged.due_utc).unwrap(),
+        None
+    );
+    fixture
+        .run(
+            BookingVerbRequest::Cancel(CancelSpec {
+                token: confirmed.cancel_token,
+                idempotency_key: None,
+            }),
+            NOW,
+        )
+        .expect("cancel");
+    assert_eq!(
+        booking_due_reminder(&fixture.vault, &wakes[0], wakes[0].due_utc).unwrap(),
+        None
+    );
 }
 
 // -------------------------------------------------------------------------
@@ -691,6 +815,7 @@ fn confirm_excludes_own_hold_but_observes_other_live_holds() {
                     ),
                     session_key: third,
                     booker_contact: fixture.booker,
+                    intake: Vec::new(),
                     idempotency_key: None,
                 }),
                 NOW,
@@ -807,6 +932,7 @@ fn two_serialized_confirms_for_same_slot_only_one_commits() {
                     hold_token: loser_hold.token,
                     session_key: loser,
                     booker_contact: fixture.booker,
+                    intake: Vec::new(),
                     idempotency_key: Some("loser-key".to_owned()),
                 }),
                 NOW,
@@ -839,6 +965,7 @@ fn confirm_writes_event_claims_passport_tokens_and_consumes_hold_atomically() {
                     hold_token: hold_token.clone(),
                     session_key: visitor,
                     booker_contact: fixture.booker,
+                    intake: Vec::new(),
                     idempotency_key: None,
                 }),
                 NOW,
@@ -893,6 +1020,7 @@ fn confirm_writes_event_claims_passport_tokens_and_consumes_hold_atomically() {
                     hold_token,
                     session_key: visitor,
                     booker_contact: fixture.booker,
+                    intake: Vec::new(),
                     idempotency_key: None,
                 }),
                 NOW,
@@ -973,6 +1101,7 @@ fn confirm_retry_returns_same_event_uid_and_sequence() {
                     hold_token: hold.token.clone(),
                     session_key: visitor,
                     booker_contact: fixture.booker,
+                    intake: Vec::new(),
                     idempotency_key: Some("client-key-a".to_owned()),
                 }),
                 NOW,
@@ -990,6 +1119,7 @@ fn confirm_retry_returns_same_event_uid_and_sequence() {
                         hold_token: hold.token.clone(),
                         session_key: visitor,
                         booker_contact: fixture.booker,
+                        intake: Vec::new(),
                         idempotency_key: key,
                     }),
                     NOW + 30,
@@ -1358,6 +1488,7 @@ fn wrong_or_expired_session_cannot_confirm_hold() {
                 hold_token: hold.token.clone(),
                 session_key: attacker,
                 booker_contact: fixture.booker,
+                intake: Vec::new(),
                 idempotency_key: None,
             }),
             NOW,
@@ -1374,6 +1505,7 @@ fn wrong_or_expired_session_cannot_confirm_hold() {
                 hold_token: stale,
                 session_key: visitor,
                 booker_contact: fixture.booker,
+                intake: Vec::new(),
                 idempotency_key: None,
             }),
             NOW,
