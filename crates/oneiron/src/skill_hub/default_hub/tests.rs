@@ -175,11 +175,18 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
         ErrorKind::InvalidSkillBody
     );
     assert_eq!(
-        vault.restore_default_hub_skill_at_commit("skills/review-evidence", &commit, at, 2)?,
+        vault.restore_default_hub_skill_at_commit(
+            &owner,
+            "skills/review-evidence",
+            &commit,
+            at,
+            2
+        )?,
         id,
     );
     assert!(vault.delete_entity(&id)?);
     let restored = vault.restore_default_hub_skill_at_commit(
+        &owner,
         "skills/review-evidence",
         &commit,
         TimeRange { start: 3, end: 3 },
@@ -200,6 +207,14 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
             .unwrap()
             .content_hash,
         hash.to_hex()
+    );
+    // Even an idempotent restore is an owner-only verb; a stale owner proof
+    // cannot use the no-op branch to inspect a default's live holder.
+    assert!(vault.delete_entity(&owner.actor())?);
+    assert!(
+        vault
+            .restore_default_hub_skill_at_commit(&owner, "skills/review-evidence", &commit, at, 4,)
+            .is_err()
     );
     Ok(())
 }

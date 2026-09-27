@@ -113,15 +113,17 @@ impl Vault {
     /// a new Candidate rather than reviving the old entity or its authority.
     pub fn restore_default_hub_skill(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         subtree: &str,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.restore_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
+        self.restore_default_hub_skill_at_commit(owner, subtree, HUB_COMMIT, occurred, learned_at)
     }
 
     fn restore_default_hub_skill_at_commit(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         subtree: &str,
         commit: &str,
         occurred: TimeRange,
@@ -129,6 +131,7 @@ impl Vault {
     ) -> Result<EntityId> {
         use super::SkillHubAdapter;
         let id = default_skill_hub_id()?;
+        owner.revalidate_in_txn(self, &self.store.env.read_txn()?)?;
         let row = self.skill_hub_record(&id)?;
         if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
             return Err(crate::error::Error::InvalidConfig(
@@ -143,6 +146,7 @@ impl Vault {
         // network work inside the write transaction before minting an ID.
         let existing = {
             let txn = self.store.env.read_txn()?;
+            owner.revalidate_in_txn(self, &txn)?;
             if self.hub_record_in_txn(&txn, &id)? != row {
                 return Err(crate::error::Error::InvalidConfig(
                     "default skill hub configuration changed during fetch".to_owned(),
@@ -157,6 +161,7 @@ impl Vault {
         let (_, _, scans) =
             self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
         let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
         if self.hub_record_in_txn(&txn, &id)? != row {
             return Err(crate::error::Error::InvalidConfig(
                 "default skill hub configuration changed during fetch".to_owned(),
@@ -167,8 +172,9 @@ impl Vault {
         {
             return Ok(entity);
         }
-        let entity = self.restore_skill_from_hub_in_txn(
+        let entity = self.restore_default_skill_in_txn(
             &mut txn,
+            owner,
             &source,
             &package,
             self.store.clock.entity_id()?,

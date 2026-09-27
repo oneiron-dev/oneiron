@@ -278,10 +278,12 @@ impl Vault {
     /// seeding, this verb never grants activation authority.
     pub fn restore_default_skills(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<Vec<EntityId>> {
         let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
         let mut restored = Vec::new();
         for (name, markdown) in FILES {
             let package = package(name, markdown)?;
@@ -294,8 +296,8 @@ impl Vault {
                 continue;
             }
             let id = self.store.clock.entity_id()?;
-            self.restore_skill_from_hub_in_txn(
-                &mut txn, &source, &package, id, occurred, learned_at,
+            self.restore_default_skill_in_txn(
+                &mut txn, owner, &source, &package, id, occurred, learned_at,
             )?;
             restored.push(id);
         }

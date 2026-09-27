@@ -401,6 +401,23 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
     Ok(())
 }
 
+fn restore_owner(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
+    let actor = EntityId::now();
+    vault.put_entity(
+        &actor,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"restore owner",
+    )?;
+    vault.authenticate_owner(
+        actor,
+        "principal:skill-restore",
+        true,
+        crate::store::GateDecisionId::now(),
+    )
+}
+
 #[test]
 fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -412,7 +429,8 @@ fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()>
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
     assert!(vault.get_skill_record(&old)?.is_none());
-    let restored = vault.restore_default_skills(TimeRange { start: 2, end: 2 }, 2)?;
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
     assert_eq!(restored.len(), 1);
     let id = restored[0];
     assert_ne!(id, old);
@@ -428,7 +446,7 @@ fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()>
         hash.to_hex()
     );
     assert_eq!(
-        vault.restore_default_skills(TimeRange { start: 3, end: 3 }, 3)?,
+        vault.restore_default_skills(&owner, TimeRange { start: 3, end: 3 }, 3)?,
         Vec::<EntityId>::new()
     );
     Ok(())
@@ -443,7 +461,8 @@ fn restore_does_not_reactivate_retired_default_or_overwrite_foreign_holder() -> 
     retired.lifecycle_status = SkillLifecycle::Stale;
     vault.update_skill_record(&old, &retired, TimeRange { start: 1, end: 1 }, 1)?;
     let before = vault.get_raw(&old)?;
-    let restored = vault.restore_default_skills(TimeRange { start: 2, end: 2 }, 2)?;
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)?;
     assert_eq!(restored.len(), 1);
     assert_ne!(restored[0], old);
     assert_eq!(vault.get_raw(&old)?, before);
@@ -503,7 +522,8 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
     })?;
     record.lifecycle_status = SkillLifecycle::Stale;
     vault.update_skill_record(&old, &record, TimeRange { start: 3, end: 3 }, 3)?;
-    let restored = vault.restore_default_skills(TimeRange { start: 4, end: 4 }, 4)?;
+    let owner = restore_owner(&vault)?;
+    let restored = vault.restore_default_skills(&owner, TimeRange { start: 4, end: 4 }, 4)?;
     let replacement = restored
         .into_iter()
         .find(|id| {
@@ -526,8 +546,26 @@ fn later_normal_import_keeps_the_fresh_restored_source_holder() -> Result<()> {
     );
     assert_eq!(vault.skill_hub_provenance_count(&replacement)?, 1);
     assert_eq!(
-        vault.restore_default_skills(TimeRange { start: 6, end: 6 }, 6)?,
+        vault.restore_default_skills(&owner, TimeRange { start: 6, end: 6 }, 6)?,
         Vec::<EntityId>::new()
     );
+    Ok(())
+}
+
+#[test]
+fn restore_refuses_owner_who_is_no_longer_active() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let owner = restore_owner(&vault)?;
+    let old = stable_id("judge")?;
+    assert!(vault.delete_entity(&old)?);
+    assert!(vault.delete_entity(&owner.actor())?);
+    let before = vault.count_entities_by_type(ENTITY_TYPE_SKILL)?;
+    assert!(
+        vault
+            .restore_default_skills(&owner, TimeRange { start: 2, end: 2 }, 2)
+            .is_err()
+    );
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_SKILL)?, before);
     Ok(())
 }
