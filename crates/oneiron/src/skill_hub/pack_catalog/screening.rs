@@ -1,15 +1,14 @@
 //! Bounded, source-bound install rules for connector tool manifests.
+use super::tool_schema::{ResolvedToolSchema, TextRole};
 use super::{PackKind, PackObservedTool, PackQualification, PackSource, invalid};
 use crate::{Vault, consent::AuthenticatedOwner, error::Result, skill::SkillContentHash};
 use icu_normalizer::ComposingNormalizer;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use unicode_script::{Script, UnicodeScript};
 
 const RULES_KEY: &[u8] = b"pack.install.rules.v1";
-const MAX_NODES: usize = 8192;
-const MAX_DEPTH: usize = 32;
 
 /// Owner-managed install prohibitions. A scan verdict is a signal, not a rule.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,7 +99,7 @@ impl Vault {
                 return Ok(Some(format!("secret-shaped string in {}", file.path)));
             }
             if file.path.starts_with("scripts/")
-                && let Some(reason) = super::script_screen::screen_script(&file.path, text)
+                && let Some(reason) = super::script_policy::screen_script(&file.path, text)
             {
                 return Ok(Some(format!("{reason} in {}", file.path)));
             }
@@ -169,24 +168,21 @@ impl Vault {
             let Some(schema) = value.get("inputSchema") else {
                 return Ok(Some(format!("tool input schema absent: {name}")));
             };
-            let mut budget = MAX_NODES;
-            let resolved = match resolve(schema, schema, 0, &mut budget) {
-                Ok(resolved) => resolved,
+            let resolved = match ResolvedToolSchema::parse(schema) {
+                Ok(schema) => schema,
                 Err(reason) => return Ok(Some(format!("tool {name}: {reason}"))),
             };
-            if !resolved.is_object() {
-                return Ok(Some(format!("tool {name}: schema must be an object")));
-            }
-            if let Some(reason) = screen_text(name)
-                .or_else(|| screen_text(description))
-                .or_else(|| screen_schema(&resolved, false))
-                .or_else(|| known_bad_value(&resolved, &rules))
-                .or_else(|| known_bad(name, &rules))
-                .or_else(|| known_bad(description, &rules))
+            if let Some(reason) = decoded_rule(name, &rules)
+                .or_else(|| decoded_rule(description, &rules))
+                .map(str::to_owned)
+                .or_else(|| screen_resolved_schema(&resolved, &rules))
             {
                 return Ok(Some(format!("tool {name}: {reason}")));
             }
-            declared.insert(name.to_owned(), (description.to_owned(), resolved));
+            declared.insert(
+                name.to_owned(),
+                (description.to_owned(), resolved.canonical().clone()),
+            );
         }
         if declared.is_empty() {
             return Ok(Some("connector has no declared tool manifest".into()));
@@ -218,19 +214,17 @@ impl Vault {
             let Some((expected_description, expected_schema)) = declared.get(name) else {
                 return Ok(Some(format!("undeclared observed tool: {name}")));
             };
-            let mut budget = MAX_NODES;
-            let observed = match resolve(input_schema, input_schema, 0, &mut budget) {
-                Ok(resolved) => resolved,
+            let observed = match ResolvedToolSchema::parse(input_schema) {
+                Ok(schema) => schema,
                 Err(reason) => return Ok(Some(format!("observed tool {name}: {reason}"))),
             };
-            if let Some(reason) = screen_text(description)
-                .or_else(|| screen_schema(&observed, false))
-                .or_else(|| known_bad_value(&observed, &rules))
-                .or_else(|| known_bad(description, &rules))
+            if let Some(reason) = decoded_rule(description, &rules)
+                .map(str::to_owned)
+                .or_else(|| screen_resolved_schema(&observed, &rules))
             {
                 return Ok(Some(format!("observed tool {name}: {reason}")));
             }
-            if description != expected_description || &observed != expected_schema {
+            if description != expected_description || observed.canonical() != expected_schema {
                 return Ok(Some(format!("declared-vs-actual mismatch for {name}")));
             }
         }
@@ -238,155 +232,22 @@ impl Vault {
     }
 }
 
-// Resolve only schema positions. `const`, `enum`, `default`, examples and
-// extension payloads are *instance data*: their "$ref" and "allOf" keys are
-// ordinary text. Every branch and literal still pays the same depth/node budget.
-fn resolve(
-    value: &Value,
-    root: &Value,
-    depth: usize,
-    budget: &mut usize,
-) -> std::result::Result<Value, &'static str> {
-    debit(budget, depth)?;
-    match value {
-        Value::Bool(_) => Ok(value.clone()),
-        Value::Object(fields) => {
-            let mut result = Map::new();
-            let reference_target = if let Some(reference) = fields.get("$ref") {
-                let pointer = reference
-                    .as_str()
-                    .and_then(|s| s.strip_prefix('#'))
-                    .filter(|p| p.is_empty() || p.starts_with('/'))
-                    .ok_or("external or invalid schema ref")?;
-                let target = root.pointer(pointer).ok_or("unresolved schema ref")?;
-                let resolved = resolve(target, root, depth + 1, budget)?;
-                if !resolved.is_object() {
-                    return Err("ref must resolve to an object");
-                }
-                Some(resolved)
-            } else {
-                None
-            };
-            for (key, child) in fields {
-                if key == "$ref" {
-                    continue;
-                }
-                let resolved = match key.as_str() {
-                    "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
-                        let branches = child
-                            .as_array()
-                            .filter(|b| !b.is_empty())
-                            .ok_or("empty composition")?;
-                        let mut resolved = Vec::with_capacity(branches.len());
-                        for branch in branches {
-                            let schema = resolve(branch, root, depth + 1, budget)?;
-                            if key != "allOf" || !resolved.contains(&schema) {
-                                resolved.push(schema);
-                            }
-                        }
-                        Value::Array(resolved)
-                    }
-                    "properties" | "patternProperties" | "$defs" | "definitions"
-                    | "dependentSchemas" => {
-                        let entries = child.as_object().ok_or("schema map must be an object")?;
-                        let mut mapped = Map::new();
-                        for (name, schema) in entries {
-                            mapped.insert(name.clone(), resolve(schema, root, depth + 1, budget)?);
-                        }
-                        Value::Object(mapped)
-                    }
-                    "items"
-                    | "additionalProperties"
-                    | "unevaluatedProperties"
-                    | "contains"
-                    | "not"
-                    | "if"
-                    | "then"
-                    | "else"
-                    | "propertyNames"
-                    | "unevaluatedItems"
-                    | "additionalItems"
-                    | "contentSchema" => resolve(child, root, depth + 1, budget)?,
-                    _ => copy_literal(child, depth + 1, budget)?,
-                };
-                result.insert(key.clone(), resolved);
-            }
-            if let Some(target) = reference_target {
-                // The ref's annotations are visible to sibling
-                // `unevaluatedProperties` only when its applicator stays at
-                // THIS node. Never place those siblings in another branch.
-                match result.get_mut("allOf") {
-                    Some(Value::Array(branches)) => branches.push(target),
-                    _ => {
-                        result.insert("allOf".into(), Value::Array(vec![target]));
-                    }
-                }
-            }
-            // This one flattening is provable: there are NO validating
-            // siblings, only an inert definitions table. Do not lift a branch
-            // across `properties`, `additionalProperties`, `unevaluated*`, etc.
-            if result.keys().all(|key| key == "$defs" || key == "allOf")
-                && let Some(Value::Array(branches)) = result.get("allOf")
-                && branches.len() == 1
-                && let Value::Object(branch) = &branches[0]
-                && branch.keys().all(|key| !result.contains_key(key))
-            {
-                let branch = branch.clone();
-                result.remove("allOf");
-                result.extend(branch);
-            }
-            Ok(Value::Object(result))
+fn screen_resolved_schema(schema: &ResolvedToolSchema, rules: &PackInstallRules) -> Option<String> {
+    let fields = match schema.text() {
+        Ok(fields) => fields,
+        Err(reason) => return Some(reason),
+    };
+    for field in fields {
+        let reason = decoded_rule(&field.text, rules).or_else(|| {
+            (field.role == TextRole::ParameterDescription)
+                .then(|| screen_parameter(&field.text))
+                .flatten()
+        });
+        if let Some(reason) = reason {
+            return Some(format!("{}: {reason}", field.location));
         }
-        _ => Err("schema must be an object or boolean"),
     }
-}
-fn debit(budget: &mut usize, depth: usize) -> std::result::Result<(), &'static str> {
-    if depth > MAX_DEPTH || *budget == 0 {
-        return Err("schema resolution bound exceeded");
-    }
-    *budget -= 1;
-    Ok(())
-}
-fn copy_literal(
-    value: &Value,
-    depth: usize,
-    budget: &mut usize,
-) -> std::result::Result<Value, &'static str> {
-    debit(budget, depth)?;
-    match value {
-        Value::Object(fields) => {
-            let mut copied = Map::new();
-            for (name, child) in fields {
-                copied.insert(name.clone(), copy_literal(child, depth + 1, budget)?);
-            }
-            Ok(Value::Object(copied))
-        }
-        Value::Array(items) => items
-            .iter()
-            .map(|child| copy_literal(child, depth + 1, budget))
-            .collect(),
-        _ => Ok(value.clone()),
-    }
-}
-fn screen_schema(value: &Value, parameter: bool) -> Option<&'static str> {
-    match value {
-        Value::Object(fields) => fields.iter().find_map(|(key, value)| {
-            screen_text(key).or_else(|| match (key.as_str(), value) {
-                // A property called "description" is a schema, not an annotation.
-                ("description", Value::String(text)) => screen_text(text)
-                    .or_else(|| parameter.then(|| screen_parameter(text)).flatten()),
-                ("properties" | "patternProperties", Value::Object(properties)) => {
-                    properties.iter().find_map(|(name, schema)| {
-                        screen_text(name).or_else(|| screen_schema(schema, true))
-                    })
-                }
-                (_, child) => screen_schema(child, parameter),
-            })
-        }),
-        Value::Array(values) => values.iter().find_map(|v| screen_schema(v, parameter)),
-        Value::String(s) => screen_text(s),
-        _ => None,
-    }
+    None
 }
 fn decoded_rule(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
     let normalized = ComposingNormalizer::new_nfkc().normalize(text);
@@ -404,16 +265,6 @@ fn known_bad(text: &str, rules: &PackInstallRules) -> Option<&'static str> {
         .iter()
         .any(|pattern| lower.contains(&pattern.to_lowercase()))
         .then_some("known-bad pattern")
-}
-fn known_bad_value(value: &Value, rules: &PackInstallRules) -> Option<&'static str> {
-    match value {
-        Value::Object(fields) => fields.iter().find_map(|(key, value)| {
-            known_bad(key, rules).or_else(|| known_bad_value(value, rules))
-        }),
-        Value::Array(items) => items.iter().find_map(|item| known_bad_value(item, rules)),
-        Value::String(text) => known_bad(text, rules),
-        _ => None,
-    }
 }
 fn screen_parameter(text: &str) -> Option<&'static str> {
     let lower = ComposingNormalizer::new_nfkc()

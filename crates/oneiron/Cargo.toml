@@ -68,6 +68,7 @@ fastcdc = "=3.2.1"
 tempfile = "3"
 tree-sitter = "0.26.10"
 tree-sitter-rust = "0.24.2"
+tree-sitter-python = "=0.25.0"
 icu_normalizer = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_casemap = { version = "2.2", default-features = false, features = ["compiled_data"] }
 icu_segmenter = { version = "2.2", default-features = false, features = ["compiled_data", "auto"] }
