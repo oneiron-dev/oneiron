@@ -50,6 +50,10 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 (Value::from("vault_max"), Value::from(10_000)),
                 (Value::from("default"), Value::from(10_000)),
                 (Value::from("holders"), Value::Map(Vec::new())),
+                (
+                    Value::from("precedence"),
+                    Value::from("holder_then_default"),
+                ),
             ]),
         ),
         (

@@ -17322,7 +17322,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/weave_correction_policy.rs",
-     "purpose": "Vault-resident per-link correction quota",
+     "purpose": "Vault-resident per-link correction quota and resolution precedence",
      "surface": {
       "crate-vis": 5
      }

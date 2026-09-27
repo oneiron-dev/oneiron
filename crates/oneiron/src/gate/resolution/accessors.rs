@@ -44,13 +44,9 @@ impl PolicyManifestResolution {
         if self.diagnostics.loaded_manifest_forces_fail_closed() {
             return None;
         }
-        Some(
-            self.weave_correction_policy
-                .as_ref()
-                .cloned()
-                .unwrap_or_default()
-                .limit_for(holder),
-        )
+        self.weave_correction_policy
+            .as_ref()
+            .map(|policy| policy.limit_for(holder))
     }
 
     #[must_use]

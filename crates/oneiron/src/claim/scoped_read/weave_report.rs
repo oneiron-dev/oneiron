@@ -91,7 +91,7 @@ impl ScopedRead<'_> {
         reader: WeaveReader<'_>,
         recipe: &[WeaveSectionSpec],
     ) -> Result<ScopedReadResult<WeaveReport>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         self.weave_report_in_txn(&txn, reader, recipe)
     }
 
