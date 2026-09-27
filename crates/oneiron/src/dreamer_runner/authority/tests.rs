@@ -6,6 +6,30 @@ use crate::dreamer_runner::{
 };
 use crate::test_util::{embedding_test_config, open_test_vault_with};
 #[test]
+fn authority_receipt_uses_the_injected_id_source() -> Result<()> {
+    let clock = crate::ports::ManualClock::new(250);
+    let mut config = embedding_test_config();
+    config.store_clock = clock.bundle();
+    let (_dir, vault) = open_test_vault_with(config);
+    let runner = DreamerRunnerStore::new(&vault);
+    runner.enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now: 999,
+    })?;
+    let records = vault.store.gate_decisions(100)?;
+    let receipt = records
+        .iter()
+        .find(|row| row.content_kind == "dreamer_authority")
+        .expect("authority receipt");
+    assert_eq!(receipt.decision_id.as_bytes()[0], 0x71);
+    assert_eq!(receipt.created_at, 250);
+    Ok(())
+}
+#[test]
 fn micro_meso_and_skill_optimization_share_actor_and_receipt_ledger() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
     let runner = DreamerRunnerStore::new(&vault);

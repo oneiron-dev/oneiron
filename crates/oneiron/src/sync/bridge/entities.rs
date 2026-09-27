@@ -174,6 +174,12 @@ pub(super) fn materialize_entities_from_delta(
                         ) {
                             Ok(applied) => {
                                 savepoint.commit()?;
+                                // The savepoint has no postcommit owner. Carry
+                                // its claim change to the outer transaction's
+                                // watch, which fires only after THAT commit.
+                                if applied && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+                                    crate::batch::queue_proactivity_change(vault, wtxn);
+                                }
                                 Ok(applied)
                             }
                             Err(error) => Err(error),
