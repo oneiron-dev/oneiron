@@ -19,6 +19,9 @@ pub struct SyncClientConfig {
     /// `None` on the home node means sync all worlds; `Some(worlds)` follows
     /// only the named worlds. The device default follows none until selected.
     pub followed_worlds: Option<Vec<crate::EntityId>>,
+    /// Host-owned MACRO candidate feed. Its updates, not WebSocket liveness,
+    /// cause the connection to persist a new home-node designation.
+    pub home_node_topology: Option<crate::sync::connection::HomeNodeTopology>,
     /// Number of default windows to sync (current + previous). Default: 2.
     pub default_window_count: u8,
     /// Debounce interval for rapid edits before sending. Default: 50ms.
@@ -40,6 +43,7 @@ impl Default for SyncClientConfig {
             auth_token: String::new(),
             note_session: None,
             followed_worlds: Some(Vec::new()),
+            home_node_topology: None,
             default_window_count: 2,
             sync_debounce_ms: 50,
             reconnect_backoff_max_ms: 60_000,

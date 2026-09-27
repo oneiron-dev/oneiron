@@ -2,6 +2,7 @@ use super::*;
 use crate::config::VaultConfig;
 use crate::sync::bridge::Materializer;
 use core::assert_matches;
+use std::time::Duration;
 
 fn test_manager() -> Arc<WindowManager> {
     let config = VaultConfig::device();
@@ -255,6 +256,189 @@ async fn spawn_fake_sync_server(
         }
     });
     (format!("ws://{addr}"), handle)
+}
+
+#[tokio::test]
+async fn sync_socket_disconnect_and_restart_do_not_fail_over_macro_home() {
+    use crate::dreamer_runner::{
+        AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, DreamerAdmissionOutcome,
+        DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier,
+        DreamerConsolidationAdmissionOutcome, DreamerConsolidationScope, DreamerHomeNodeCandidate,
+        DreamerRunnerStore, EnqueueDreamerConsolidationAttempt,
+    };
+
+    let manager = test_manager();
+    let runner = DreamerRunnerStore::new(manager.vault());
+    let local = runner.local_home_node_candidate(true, true, false).unwrap();
+    let cloud = DreamerHomeNodeCandidate::cloud(
+        if local.node_id == u64::MAX {
+            1
+        } else {
+            local.node_id + 1
+        },
+        true,
+    );
+    let admission = |now| {
+        runner
+            .admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+                scope: DreamerConsolidationScope::Macro,
+                local_node_id: local.node_id,
+                claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+                claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+                admission: AdmitDreamerAttempt {
+                    lease_owner: "local".to_owned(),
+                    now,
+                    budget_id: "topology-test".to_owned(),
+                    budget_total_units: 10,
+                    reserve_units: 1,
+                    started_milestone: None,
+                },
+            })
+            .unwrap()
+    };
+    let queued = runner
+        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Macro,
+            input: rmpv::Value::from("topology-test"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: None,
+            now: 1,
+        })
+        .unwrap();
+    let attempt_id = match queued {
+        crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => {
+            status.attempt.id
+        }
+    };
+
+    // The host's feed, not an election call in this test, owns membership.
+    let detached = DreamerHomeNodeCandidate::cloud(cloud.node_id, false);
+    let topology = HomeNodeTopology::new(vec![local, detached]);
+    let mut designated = None;
+    for round in 0..2 {
+        let (server_url, server_task) =
+            spawn_fake_sync_server(FakeServer::new(), None, Arc::new(AtomicUsize::new(0))).await;
+        let conn = SyncConnection::new(
+            Arc::clone(&manager),
+            ConnectionConfig {
+                client_config: SyncClientConfig {
+                    server_url,
+                    home_node_topology: Some(topology.clone()),
+                    ..Default::default()
+                },
+                auto_reconnect: false,
+            },
+        )
+        .unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let running = tokio::spawn(async move { conn.run(shutdown_rx).await.unwrap() });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if round == 0 {
+            assert_eq!(
+                runner.home_node_designation().unwrap().unwrap().node_id,
+                local.node_id,
+                "initial detached cloud leaves always-on local home"
+            );
+            topology.publish(vec![local, cloud]);
+            tokio::time::timeout(Duration::from_secs(15), async {
+                loop {
+                    if runner
+                        .home_node_designation()
+                        .unwrap()
+                        .is_some_and(|home| home.node_id == cloud.node_id)
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("host attach must elect cloud during the live connection");
+            designated = runner.home_node_designation().unwrap();
+            assert_eq!(
+                admission(11),
+                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
+            );
+            // Lose the server unexpectedly while the cloud remains home.
+            server_task.abort();
+        } else {
+            assert_eq!(runner.home_node_designation().unwrap(), designated);
+            assert_eq!(
+                admission(12),
+                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
+            );
+            // Only a new host-authored topology snapshot may promote local.
+            topology.publish(vec![local, detached]);
+            tokio::time::timeout(Duration::from_secs(15), async {
+                loop {
+                    if runner
+                        .home_node_designation()
+                        .unwrap()
+                        .is_some_and(|home| home.node_id == local.node_id)
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("host detach must elect local during the live connection");
+            assert!(matches!(
+                admission(21),
+                DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+                    _
+                ))
+            ));
+            shutdown_tx.send(()).unwrap();
+        }
+        let mut events = tokio::time::timeout(Duration::from_secs(15), running)
+            .await
+            .expect("sync connection must shut down")
+            .unwrap();
+        server_task.abort();
+        let mut saw_synced = false;
+        let mut saw_disconnected = false;
+        let mut saw_socket_error = false;
+        while let Ok(event) = events.try_recv() {
+            match event {
+                SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Synced) => {
+                    saw_synced = true;
+                }
+                SyncEvent::StatusChanged(crate::sync::client::SyncStatus::Disconnected) => {
+                    saw_disconnected = true;
+                }
+                SyncEvent::Error(message) if message.contains("WebSocket disconnected") => {
+                    saw_socket_error = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_synced && saw_disconnected,
+            "round {round}: real socket lifecycle"
+        );
+        if round == 0 {
+            assert!(
+                saw_socket_error,
+                "network loss must reach the disconnect branch"
+            );
+            assert_eq!(runner.home_node_designation().unwrap(), designated);
+            assert_eq!(
+                admission(13),
+                DreamerConsolidationAdmissionOutcome::NotHomeNode(designated.unwrap())
+            );
+            assert_eq!(
+                runner.status(attempt_id).unwrap().unwrap().attempt.state,
+                crate::attempt_queue::AttemptState::Queued
+            );
+        }
+    }
+    assert_eq!(
+        runner.home_node_designation().unwrap().unwrap().node_id,
+        local.node_id
+    );
 }
 
 /// Drives client→server frames and all transitive replies to quiescence
