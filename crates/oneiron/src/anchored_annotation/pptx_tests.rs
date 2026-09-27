@@ -329,6 +329,18 @@ fn keep_creates_managed_thread_and_engine_author_owns_resolution() {
         .unwrap();
     let mut resolve = add.clone();
     resolve.action = PptxCommentAction::Resolve { resolved: true };
+    let wrong_name = crate::edit_roundtrip::pptx::PptxAuthor {
+        guid: resolve.author.guid.clone(),
+        name: "Different Author".into(),
+    };
+    let mut mismatched = resolve.clone();
+    mismatched.author = wrong_name;
+    assert!(matches!(
+        vault.propose_pptx_comment_edit(&artifact, &[mismatched], "managed-wrong-name"),
+        Err(crate::edit_roundtrip::pptx::PptxProposalError::Patch(
+            crate::edit_roundtrip::pptx::PptxError::AuthorConflict
+        ))
+    ));
     let resolution = vault
         .propose_pptx_comment_edit(&artifact, &[resolve], "managed-resolve")
         .unwrap();
@@ -352,7 +364,7 @@ fn keep_creates_managed_thread_and_engine_author_owns_resolution() {
             .unwrap()
             .is_none()
     );
-    vault
+    let selected = vault
         .settle_select_edit_proposal(&artifact, &resolution, &consent, actor, at(8), 8)
         .unwrap();
     let thread = vault
@@ -361,6 +373,25 @@ fn keep_creates_managed_thread_and_engine_author_owns_resolution() {
         .unwrap();
     assert_eq!(thread.state, ThreadState::Resolved);
     assert_eq!(thread.anchor.version, 4);
+    let settled = vault
+        .blob_artifact_settlement(&artifact, "managed-resolve")
+        .unwrap()
+        .unwrap();
+    let exported = &settled.pptx_review_identities[0];
+    assert_eq!(exported.export_author_guid, add.author.guid);
+    assert_eq!(exported.export_author_name, add.author.name);
+    let parts = support::unpack(
+        &vault
+            .read_blob_artifact_version(&artifact, 4)
+            .unwrap()
+            .unwrap(),
+    );
+    let authors = std::str::from_utf8(&parts["ppt/authors.xml"]).unwrap();
+    assert!(authors.contains("name=\"Selected Author\""));
+    assert!(!authors.contains("Different Author"));
+    let receipt = &selected.receipt.fields["pptx_review_identities"];
+    assert!(receipt.contains("Selected Author"));
+    assert!(!receipt.contains("Different Author"));
     assert_eq!(
         vault
             .annotation_thread_comments(&artifact, &add.thread_id)
@@ -500,4 +531,138 @@ fn pptx_proposal_cannot_settle_on_a_non_pptx_artifact() {
         Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
     ));
     assert_eq!(vault.blob_artifact_versions(&artifact).unwrap().len(), 1);
+}
+
+#[test]
+fn slide_comment_and_unrelated_edits_remap_but_changed_slide_text_drifts() {
+    let (_dir, vault, artifact, actor, input) = setup(false);
+    let thread = vault
+        .open_annotation_thread(
+            &Anchor::new(artifact, 1, Locator::pptx(1, "slide").unwrap()),
+            actor,
+            "Review",
+            at(4),
+            4,
+        )
+        .unwrap();
+    let comment =
+        crate::edit_roundtrip::pptx::comment_patch(&input, &[support::patch(false)]).unwrap();
+    vault
+        .append_blob_artifact_version(
+            &artifact,
+            &comment.new_bytes,
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(5),
+            5,
+        )
+        .unwrap();
+    let first = vault
+        .reanchor_annotation_threads(&artifact, 1, 2, &[], actor, at(6), 6)
+        .unwrap();
+    assert_eq!(first.remapped.len(), 1);
+    assert!(first.drifted.is_empty());
+    assert_eq!(
+        first.remapped[0].anchor.locator,
+        Locator::pptx(1, "slide").unwrap()
+    );
+
+    let mut unchanged_slide = support::unpack(&comment.new_bytes);
+    unchanged_slide.insert(
+        "customXml/unreachable.xml".into(),
+        b"changed unrelated data".to_vec(),
+    );
+    vault
+        .append_blob_artifact_version(
+            &artifact,
+            &support::bytes(&unchanged_slide),
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(7),
+            7,
+        )
+        .unwrap();
+    let second = vault
+        .reanchor_annotation_threads(&artifact, 2, 3, &[], actor, at(8), 8)
+        .unwrap();
+    assert_eq!(second.remapped.len(), 1);
+    assert!(second.drifted.is_empty());
+
+    support::with_text(
+        &mut unchanged_slide,
+        "ppt/slides/slide9.xml",
+        "Original text",
+        "Changed text",
+    );
+    vault
+        .append_blob_artifact_version(
+            &artifact,
+            &support::bytes(&unchanged_slide),
+            &BlobVersionProvenance::UserUpload,
+            actor,
+            at(9),
+            9,
+        )
+        .unwrap();
+    let third = vault
+        .reanchor_annotation_threads(&artifact, 3, 4, &[], actor, at(10), 10)
+        .unwrap();
+    assert!(third.remapped.is_empty());
+    assert_eq!(third.drifted.len(), 1);
+    assert_eq!(third.drifted[0].thread_id, thread.thread_id);
+    assert_eq!(third.drifted[0].anchor.version, 3);
+    let pinned = vault
+        .get_annotation_thread(&artifact, &thread.thread_id)
+        .unwrap()
+        .unwrap();
+    assert!(pinned.is_drifted());
+    assert_eq!(pinned.anchor.version, 3);
+}
+
+#[test]
+fn slide_creation_id_mint_keeps_unchanged_slide_review_current() {
+    let (_dir, vault, artifact, actor, _) = setup(true);
+    let thread = vault
+        .open_annotation_thread(
+            &Anchor::new(artifact, 1, Locator::pptx(1, "slide").unwrap()),
+            actor,
+            "Review",
+            at(4),
+            4,
+        )
+        .unwrap();
+    let mut patch = support::patch(false);
+    if let PptxCommentAction::Add { target, .. } = &mut patch.action {
+        target.slide_creation_id = None;
+    }
+    let proposal = vault
+        .propose_pptx_comment_edit(&artifact, &[patch], "slide-mint")
+        .unwrap();
+    let selected = vault
+        .settle_select_edit_proposal(
+            &artifact,
+            &proposal,
+            &SettleConsent::OwnerConsent { brief_ref: None },
+            actor,
+            at(5),
+            5,
+        )
+        .unwrap();
+    assert!(
+        selected
+            .reanchor
+            .remapped
+            .iter()
+            .any(|anchor| anchor.thread_id == thread.thread_id && anchor.anchor.version == 2)
+    );
+    assert!(selected.reanchor.drifted.is_empty());
+    assert_eq!(
+        vault
+            .get_annotation_thread(&artifact, &thread.thread_id)
+            .unwrap()
+            .unwrap()
+            .anchor
+            .version,
+        2
+    );
 }

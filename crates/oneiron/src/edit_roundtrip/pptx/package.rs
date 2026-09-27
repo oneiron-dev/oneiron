@@ -154,6 +154,8 @@ pub struct PptxSlideIdentity {
     pub sld_id: u32,
     /// p14 creation IDs are unsigned 32-bit integers, not GUIDs.
     pub creation_id: Option<u32>,
+    /// Normalized slide content; ignores only declared review metadata extensions.
+    pub fingerprint: [u8; 32],
     pub shapes: Vec<PptxShapeIdentity>,
 }
 

@@ -15208,7 +15208,7 @@
      "path": "src/edit_roundtrip/pptx/xml.rs",
      "purpose": "Namespace-aware XML spans for surgical edits",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {

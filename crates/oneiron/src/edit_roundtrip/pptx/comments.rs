@@ -177,6 +177,10 @@ pub(super) fn patch_with_mints(
                 if owner != &author {
                     return Err(PptxError::NotAuthor);
                 }
+                // Verify the selected display name against the imported author
+                // before the receipt may persist it. This is read-only for an
+                // existing GUID: Resolve never creates an author-part write.
+                links::ensure_author(&mut parts, &mut allowed, &patch.author)?;
                 let xml = Xml::parse(text(&parts, part)?)?;
                 let node = find_thread(&xml, &thread)?;
                 let status = if *resolved { "resolved" } else { "active" };

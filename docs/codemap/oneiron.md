@@ -1219,7 +1219,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_roundtrip/pptx/proposal.rs` | src | s | 3 fn | — | Modern comments use the existing retained-output proposal and consume-once settle |
 | `src/edit_roundtrip/pptx/tests.rs` | test | m | 1 crate-vis | — | Returned bytes and typed refusals; no assertions of PowerPoint visibility |
 | `src/edit_roundtrip/pptx/tests/support.rs` | test | s | 7 crate-vis | — | Small OPC fixtures, not PowerPoint application-oracle evidence |
-| `src/edit_roundtrip/pptx/xml.rs` | src | m | 17 crate-vis | — | Namespace-aware XML spans for surgical edits |
+| `src/edit_roundtrip/pptx/xml.rs` | src | m | 18 crate-vis | — | Namespace-aware XML spans for surgical edits |
 | `src/edit_roundtrip/session_validate.rs` | src | m | 5 struct · 1 trait · 2 fn · 6 crate-vis | AppliedEdit, EditPlan, EditSession, OfficeDoc, ValidationCheck, ValidationReport | Edit session seam and validation |
 | `src/edit_roundtrip/tests.rs` | test | L | — | — | ARTL-3 pipeline tests |
 | `src/edit_roundtrip/xml.rs` | src | s | 7 crate-vis | — | Namespace-aware OPC and worksheet XML reads for the edit gate |
