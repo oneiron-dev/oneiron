@@ -1,6 +1,7 @@
 //! On-demand docs NER: only a named trigger crosses the thin-star boundary.
 use super::{DocsDerivationEnvelope, DocsSegment, docs_semantic_segments};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -41,10 +42,26 @@ pub struct DocsDeepReceipt {
     pub claim_refs: Vec<String>,
 }
 
+pub(super) struct DeepApproval<'a> {
+    pub(super) owner: EntityId,
+    pub(super) digest: &'a str,
+}
+
+struct PreparedDeepClaim {
+    id: EntityId,
+    chunk: EntityId,
+    segment_hash: String,
+    source_record_id: String,
+    predicate: String,
+    value: Value,
+}
+
 #[derive(Serialize, Deserialize)]
 struct DeepCeiling {
     source_hash: String,
     allowed: bool,
+    owner: String,
+    approval_digest: String,
 }
 
 fn invalid(message: &str) -> Error {
@@ -56,8 +73,12 @@ fn ceiling_key(asset: EntityId) -> String {
 fn receipt_key(asset: EntityId) -> String {
     format!("docs-deep-receipt:v1:{}", asset.to_hex())
 }
-fn source_hash(text: &str) -> String {
-    blake3::hash(text.as_bytes()).to_hex().to_string()
+pub(super) fn source_hash(text: &str) -> String {
+    let normalized = text
+        .strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .replace("\r\n", "\n");
+    blake3::hash(normalized.as_bytes()).to_hex().to_string()
 }
 
 /// The import's approved revision is the only source that can enable deep work.
@@ -68,6 +89,7 @@ pub(super) fn set_deep_ceiling(
     asset: EntityId,
     text: &str,
     allowed: bool,
+    approval: DeepApproval<'_>,
     now: u64,
 ) -> Result<()> {
     let key = ceiling_key(asset);
@@ -100,6 +122,8 @@ pub(super) fn set_deep_ceiling(
     let data = serde_json::to_vec(&DeepCeiling {
         source_hash: hash,
         allowed,
+        owner: approval.owner.to_hex(),
+        approval_digest: approval.digest.to_owned(),
     })
     .map_err(|_| invalid("docs deep ceiling encoding"))?;
     vault.store.vault_meta.put(txn, key.as_bytes(), &data)?;
@@ -118,20 +142,47 @@ impl Vault {
         extractor: &dyn DocsDeepExtractor,
         now: u64,
     ) -> Result<DocsDeepReceipt> {
+        if trigger == DocsDeepTrigger::OnRead {
+            return Err(invalid("on-read deep ingest requires a scoped reader"));
+        }
+        self.deep_ingest_docs_asset_checked(owner, asset, trigger, extractor, now, None)
+    }
+
+    /// Internal read-triggered door binds the observed source revision and
+    /// the acting reader to both the model-input and writer snapshots.
+    pub(crate) fn deep_ingest_docs_asset_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        asset: EntityId,
+        trigger: DocsDeepTrigger,
+        extractor: &dyn DocsDeepExtractor,
+        now: u64,
+        read: Option<(&crate::claim::ScopedRead<'_>, &str)>,
+    ) -> Result<DocsDeepReceipt> {
         if extractor.binding().trim().is_empty() {
             return Err(invalid("docs deep extractor needs a binding"));
         }
-        let (text, corpus, page, hash) = {
+        let (text, corpus, page, hash, approval_digest) = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
-            let (text, corpus, page, hash) = self.deep_source_in(&txn, asset)?;
+            if let Some((reader, _)) = read
+                && !reader.is_entity_readable_in(&txn, &asset)?
+            {
+                return Err(invalid("docs source no longer readable by scoped actor"));
+            }
+            let (text, corpus, page, hash, approval_digest) =
+                self.deep_source_in(&txn, asset, owner.actor())?;
+            if read.is_some_and(|(_, expected)| expected != hash) {
+                return Err(invalid("docs source changed since authorized expansion"));
+            }
             if let Some(receipt) = self.deep_receipt_in(&txn, asset)?
                 && receipt.derivation.source_hash == hash
                 && receipt.derivation.producer == extractor.binding()
             {
+                self.require_live_deep_receipt(&txn, &receipt)?;
                 return Ok(receipt);
             }
-            (text, corpus, page, hash)
+            (text, corpus, page, hash, approval_digest)
         };
         // Model work never holds the LMDB writer slot. Every quote is checked
         // against the corresponding unmodified source unit before admission.
@@ -147,17 +198,29 @@ impl Vault {
                 if prepared.len() == MAX_DEEP_CLAIMS {
                     return Err(invalid("docs deep claim ceiling exceeded"));
                 }
-                prepared.push((segment.block.clone(), source_hash(&segment.text), claim));
+                prepared.push((
+                    segment.block.clone(),
+                    segment.text.clone(),
+                    source_hash(&segment.text),
+                    claim,
+                ));
             }
         }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        let (_, current_corpus, current_page, current_hash) = self.deep_source_in(&txn, asset)?;
+        if let Some((reader, _)) = read
+            && !reader.is_entity_readable_in(&txn, &asset)?
+        {
+            return Err(invalid("docs source no longer readable by scoped actor"));
+        }
+        let (_, current_corpus, current_page, current_hash, current_approval_digest) =
+            self.deep_source_in(&txn, asset, owner.actor())?;
         if (
             current_corpus.as_str(),
             current_page.as_str(),
             current_hash.as_str(),
         ) != (corpus.as_str(), page.as_str(), hash.as_str())
+            || current_approval_digest != approval_digest
         {
             return Err(invalid("docs source changed during deep ingest; retry"));
         }
@@ -165,6 +228,7 @@ impl Vault {
             if previous.derivation.source_hash == hash
                 && previous.derivation.producer == extractor.binding()
             {
+                self.require_live_deep_receipt(&txn, &previous)?;
                 return Ok(previous);
             }
             for reference in &previous.claim_refs {
@@ -188,21 +252,13 @@ impl Vault {
             claim_refs: Vec::new(),
         };
         let actor = WriteActor::new(owner.actor(), EdgeActorClass::Human);
-        for (block, segment_hash, claim) in prepared {
-            let chunk = super::docs_extraction_id(&corpus, &page, &format!("chunk:{block}"));
-            let key = format!("docs-extraction:v1:{chunk}");
-            let raw = self
-                .store
-                .vault_meta
-                .get(&txn, key.as_bytes())?
-                .ok_or_else(|| invalid("docs deep source chunk missing"))?;
-            let chunk = EntityId::from_bytes(
-                raw.as_ref()
-                    .try_into()
-                    .map_err(|_| invalid("corrupt docs deep chunk reference"))?,
-            )?;
-            let claim_id = EntityId::now();
-            let normalized = super::NormalizedIngestClaim {
+        let mut claims = Vec::new();
+        for (block, segment_text, segment_hash, claim) in prepared {
+            let chunk = self.deep_chunk_in(&txn, asset, &corpus, &page, &block, &segment_text)?;
+            claims.push(PreparedDeepClaim {
+                id: EntityId::now(),
+                chunk,
+                segment_hash,
                 source_record_id: format!(
                     "{}:{hash}:{}:{}",
                     chunk.to_hex(),
@@ -211,54 +267,70 @@ impl Vault {
                 ),
                 predicate: claim.predicate,
                 value: claim.value,
-            };
-            let admission = super::ImportedEvidenceAdmission::proposed(
-                super::DOCS_EXPORT_SOURCE_ID,
-                claim_id,
-                super::ImportedEvidenceEntityResolution::subject(asset),
-                actor,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            );
-            let (candidate, envelope) = super::admission::imported_candidate(
-                &normalized.predicate,
-                super::admission::json_to_msgpack_value(&normalized.value),
-                &normalized.source_record_id,
-                &admission,
-            )?;
-            // Keep a structured envelope on EACH claim as well as the batch
-            // receipt, so provenance survives a claim-only export or lookup.
-            let v = rmpv::Value::from;
-            let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
-                super::DOCS_EXPORT_SOURCE_ID,
-                &normalized.source_record_id,
-            ) else {
-                unreachable!("imported evidence is a map")
-            };
-            evidence.push((
-                v("derivation"),
-                rmpv::Value::Map(vec![
-                    (v("source_ref"), rmpv::Value::from(chunk.to_hex())),
-                    (v("source_hash"), v(segment_hash.as_str())),
-                    (v("producer"), v(extractor.binding())),
-                    (v("source"), v("imported")),
-                    (v("derived_kind"), v("ner_claim")),
-                ]),
-            ));
-            let candidate = candidate.with_evidence(rmpv::Value::Map(evidence));
-            self.batch_in()
-                .claim_candidate(
-                    &claim_id,
-                    candidate,
+            });
+        }
+        // Follow the import-batch Gate door: Proposed preflight, then the
+        // approved transition under the stored, source-revision-bound bulk act.
+        // Pending rows are transient in this writer txn and never reach a tray.
+        for approval in [ClaimApprovalStatus::Proposed, ClaimApprovalStatus::Approved] {
+            let mut builder = self.batch_in();
+            for claim in &claims {
+                let admission = super::ImportedEvidenceAdmission::proposed(
+                    super::DOCS_EXPORT_SOURCE_ID,
+                    claim.id,
+                    super::ImportedEvidenceEntityResolution::subject(asset),
+                    actor,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                )
+                .with_approval(approval);
+                let (candidate, envelope) = super::admission::imported_candidate(
+                    &claim.predicate,
+                    super::admission::json_to_msgpack_value(&claim.value),
+                    &claim.source_record_id,
+                    &admission,
+                )?;
+                let v = rmpv::Value::from;
+                let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
+                    super::DOCS_EXPORT_SOURCE_ID,
+                    &claim.source_record_id,
+                ) else {
+                    unreachable!("imported evidence is a map")
+                };
+                evidence.push((
+                    v("derivation"),
+                    rmpv::Value::Map(vec![
+                        (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
+                        (v("source_hash"), v(claim.segment_hash.as_str())),
+                        (v("producer"), v(extractor.binding())),
+                        (v("source"), v("imported")),
+                        (v("derived_kind"), v("ner_claim")),
+                        (v("approval_digest"), v(approval_digest.as_str())),
+                    ]),
+                ));
+                builder = builder.claim_candidate(
+                    &claim.id,
+                    candidate.with_evidence(rmpv::Value::Map(evidence)),
                     &envelope,
                     admission.occurred,
                     admission.learned_at,
-                )
-                .apply(&mut txn)?;
-            receipt.claim_refs.push(claim_id.to_hex());
+                );
+            }
+            builder.apply(&mut txn)?;
+        }
+        for claim in &claims {
+            crate::ports::record_derived_edge_in_txn(
+                &self.store,
+                &mut txn,
+                &claim.id,
+                &claim.chunk,
+            )?;
+            self.store
+                .delete_pending_gate_consent_in_txn(&mut txn, &claim.id)?;
+            receipt.claim_refs.push(claim.id.to_hex());
         }
         let encoded =
             serde_json::to_vec(&receipt).map_err(|_| invalid("docs deep receipt encoding"))?;
@@ -267,6 +339,70 @@ impl Vault {
             .put(&mut txn, receipt_key(asset).as_bytes(), &encoded)?;
         txn.commit()?;
         Ok(receipt)
+    }
+
+    fn deep_chunk_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        asset: EntityId,
+        corpus: &str,
+        page: &str,
+        block: &str,
+        text: &str,
+    ) -> Result<EntityId> {
+        let extraction = super::docs_extraction_id(corpus, page, &format!("chunk:{block}"));
+        let key = format!("docs-extraction:v1:{extraction}");
+        let raw_id = self
+            .store
+            .vault_meta
+            .get(txn, key.as_bytes())?
+            .ok_or_else(|| invalid("docs deep source chunk missing"))?;
+        let id = EntityId::from_bytes(
+            raw_id
+                .as_ref()
+                .try_into()
+                .map_err(|_| invalid("corrupt docs deep chunk reference"))?,
+        )?;
+        let visibility =
+            crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &id)?;
+        if visibility.deleted || visibility.stale {
+            return Err(invalid("docs deep source chunk invalidated"));
+        }
+        let raw = self
+            .get_raw_in(txn, &id)?
+            .ok_or_else(|| invalid("docs deep source chunk deleted"))?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("docs deep chunk header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_ASSET_TEXT {
+            return Err(invalid("docs deep source chunk has wrong kind"));
+        }
+        let body: Value = rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..])
+            .map_err(|_| invalid("docs deep source chunk body invalid"))?;
+        if body.get("text").and_then(Value::as_str) != Some(text)
+            || body.get("source").and_then(Value::as_str) != Some("imported")
+            || body.get("asset_ref").and_then(Value::as_str) != Some(asset.to_hex().as_str())
+        {
+            return Err(invalid("docs deep source chunk changed"));
+        }
+        Ok(id)
+    }
+
+    fn require_live_deep_receipt(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        receipt: &DocsDeepReceipt,
+    ) -> Result<()> {
+        for reference in &receipt.claim_refs {
+            let id = EntityId::from_hex(reference)?;
+            if crate::ports::stale_in_txn(&self.store, txn, &id)?
+                || !self.get_claim_in_txn(txn, &id)?.is_some_and(|body| {
+                    body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                })
+            {
+                return Err(invalid("docs deep receipt has invalidated claims"));
+            }
+        }
+        Ok(())
     }
 
     fn deep_receipt_in(
@@ -287,7 +423,8 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         asset: EntityId,
-    ) -> Result<(String, String, String, String)> {
+        owner: EntityId,
+    ) -> Result<(String, String, String, String, String)> {
         let raw = self.get_raw_in(txn, &asset)?.ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("docs asset header"))?;
@@ -318,7 +455,11 @@ impl Vault {
             })
             .transpose()?
             .ok_or_else(|| invalid("docs deep import consent missing"))?;
-        if !ceiling.allowed || ceiling.source_hash != hash {
+        if !ceiling.allowed
+            || ceiling.source_hash != hash
+            || ceiling.owner != owner.to_hex()
+            || ceiling.approval_digest.is_empty()
+        {
             return Err(invalid(
                 "docs deep import ceiling or source revision refused",
             ));
@@ -330,6 +471,9 @@ impl Vault {
         {
             return Err(invalid("docs deep asset lacks imported identity"));
         }
-        Ok((text, corpus, page, hash))
+        for segment in docs_semantic_segments(&text) {
+            self.deep_chunk_in(txn, asset, &corpus, &page, &segment.block, &segment.text)?;
+        }
+        Ok((text, corpus, page, hash, ceiling.approval_digest))
     }
 }

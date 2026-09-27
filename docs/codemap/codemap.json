@@ -7478,7 +7478,7 @@
      "path": "src/claim/scoped_read.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 14,
       "re-export": 2,
       "struct": 1
@@ -18165,7 +18165,7 @@
      "path": "src/ingest/docs_deep.rs",
      "purpose": "On-demand docs NER: only a named trigger crosses the thin-star boundary",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "struct": 2,

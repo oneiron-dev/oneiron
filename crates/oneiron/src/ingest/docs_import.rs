@@ -274,6 +274,10 @@ impl Vault {
                 asset,
                 &page.text,
                 ceiling.allow_derivations,
+                super::docs_deep::DeepApproval {
+                    owner: owner.actor(),
+                    digest: &digest.to_hex(),
+                },
                 now,
             )?;
             ops.push(put(asset,crate::registry::ENTITY_TYPE_ASSET,json!({"corpus":docs.corpus_id,"page_id":page.page_id,"path":page.path,"text":page.text,"registry":docs.registry,"source":"imported"}),now)?);
