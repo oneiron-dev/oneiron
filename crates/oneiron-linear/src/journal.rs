@@ -50,6 +50,18 @@ impl<T> LinearResponseJournal<T> {
         id: &[u8; 32],
         call: &GraphQlCall,
     ) -> LinearSyncResult<String> {
+        self.stage_request_with(id, call, |_| Ok(()))
+    }
+
+    /// The injection point models a host dying after a partial temporary write
+    /// but before it publishes a final operation name. Production supplies a
+    /// no-op; tests can interrupt this exact staging path.
+    pub(crate) fn stage_request_with(
+        &self,
+        id: &[u8; 32],
+        call: &GraphQlCall,
+        before_write: impl FnOnce(&mut tempfile::NamedTempFile) -> LinearSyncResult<()>,
+    ) -> LinearSyncResult<String> {
         let reference = Self::request_ref(id);
         let path = self.path(id).with_extension("request");
         let body = call.body();
@@ -66,21 +78,36 @@ impl<T> LinearResponseJournal<T> {
             }
             return Ok(reference);
         }
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(path)
+        // The temporary file lives in the SAME private directory. An
+        // interrupted/partial write leaves only an unbound orphan, never the
+        // final operation name the next attempt must read. persist_noclobber
+        // atomically links the fully synced bytes without replacing a winner.
+        let mut staged = tempfile::NamedTempFile::new_in(&self.journal_dir)
             .map_err(|_| invalid("Linear request could not be staged"))?;
-        file.write_all(&bytes)
-            .and_then(|()| file.sync_all())
+        before_write(&mut staged)?;
+        staged
+            .as_file_mut()
+            .write_all(&bytes)
+            .and_then(|()| staged.as_file().sync_all())
             .map_err(|_| invalid("Linear request could not be synced"))?;
-        self.sync_directory()
-            .map_err(oneiron::LinearSyncError::from)?;
+        match staged.persist_noclobber(&path) {
+            Ok(_) => {
+                self.sync_directory()
+                    .map_err(oneiron::LinearSyncError::from)?;
+            }
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A concurrent writer won the name. Accept only the identical
+                // frozen request, never the caller's changed payload.
+                if self.read_request(&reference)?.as_ref() != Some(&body) {
+                    return Err(invalid(
+                        "Linear operation ID was reused for another request",
+                    ));
+                }
+                self.sync_directory()
+                    .map_err(oneiron::LinearSyncError::from)?;
+            }
+            Err(_) => return Err(invalid("Linear request could not be published")),
+        }
         Ok(reference)
     }
 

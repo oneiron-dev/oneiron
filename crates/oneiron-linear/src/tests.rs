@@ -346,6 +346,21 @@ fn linear_receipts(vault: &oneiron::Vault) -> Vec<oneiron::receipt::ReceiptRecor
         .collect()
 }
 
+fn linear_scanned_receipts(vault: &oneiron::Vault) -> Vec<oneiron::receipt::ReceiptRecord> {
+    let mut query = oneiron::receipt::ReceiptQuery::new(32);
+    query.kinds.insert(oneiron::receipt::ReceiptKind::Outbound);
+    let scan = vault.scan_receipts(query).expect("outbound receipt scan");
+    assert!(scan.complete, "receipt scan must be complete");
+    scan.records
+        .into_iter()
+        .filter(|row| {
+            row.fields
+                .get("channel")
+                .is_some_and(|value| value == "linear")
+        })
+        .collect()
+}
+
 fn grant_linear_effects(vault: &oneiron::Vault, actor: EntityId) {
     use rmpv::Value as V;
     let mut scope = oneiron::federation::Scope::top();
@@ -664,4 +679,222 @@ fn uncertain_delivery_has_ordinary_receipt_and_never_blindly_resends_after_resta
     assert_eq!(*calls.borrow(), 1);
     assert_eq!(*writes.borrow(), 0);
     assert_eq!(linear_receipts(&reopened), recorded);
+}
+
+#[test]
+fn definite_failure_then_uncertain_send_preserves_both_receipts_after_reopen() {
+    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    fn make<'a>(
+        vault: &'a oneiron::Vault,
+        responses: &tempfile::TempDir,
+        actor: EntityId,
+        calls: &Rc<RefCell<usize>>,
+        writes: &Rc<RefCell<usize>>,
+        failure: Option<GraphQlTransportError>,
+        now: u64,
+    ) -> crate::VaultLinearOutboundDoor<'a, JournalTransport> {
+        let transport = JournalTransport {
+            writes: writes.clone(),
+            calls: calls.clone(),
+            failure,
+        };
+        crate::VaultLinearOutboundDoor::new(
+            vault,
+            transport,
+            responses.path().to_path_buf(),
+            OutboundDispatchActor::agent(actor),
+            OutboundDispatchGate::allow_when_policy_grants(),
+            now,
+        )
+        .expect("door")
+    }
+    let dir = tempfile::tempdir().expect("vault");
+    let responses = tempfile::tempdir().expect("responses");
+    let vault = oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("open");
+    let actor = EntityId::from_bytes([0x67; 16]).expect("actor");
+    vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("person");
+    grant_linear_effects(&vault, actor);
+    let calls = Rc::new(RefCell::new(0));
+    let writes = Rc::new(RefCell::new(0));
+    let mut first = LinearHostEgress::new(
+        make(
+            &vault,
+            &responses,
+            actor,
+            &calls,
+            &writes,
+            Some(GraphQlTransportError::NotSent),
+            1000,
+        ),
+        config(),
+    )
+    .expect("egress");
+    assert!(first.create_issue([45; 32], actor, &fields()).is_err());
+    assert_eq!(*calls.borrow(), 1);
+    let definite = linear_receipts(&vault);
+    assert_eq!(definite.len(), 1);
+    assert_eq!(definite[0].outcome, "failed");
+    assert_eq!(
+        definite[0]
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        Some("false")
+    );
+    drop(first);
+    let mut second = LinearHostEgress::new(
+        make(
+            &vault,
+            &responses,
+            actor,
+            &calls,
+            &writes,
+            Some(GraphQlTransportError::Uncertain),
+            1001,
+        ),
+        config(),
+    )
+    .expect("egress");
+    assert!(second.create_issue([45; 32], actor, &fields()).is_err());
+    assert_eq!(*calls.borrow(), 2);
+    let outcomes = linear_receipts(&vault);
+    assert_eq!(
+        outcomes.len(),
+        2,
+        "later uncertain send must not be hidden by the first failure"
+    );
+    assert!(outcomes.iter().any(|row| {
+        row.fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str)
+            == Some("false")
+    }));
+    assert!(outcomes.iter().any(|row| {
+        row.fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str)
+            == Some("true")
+            && row.fields.contains_key("retry_state")
+    }));
+    assert_eq!(linear_scanned_receipts(&vault), outcomes);
+    drop(second);
+    drop(vault);
+    let reopened =
+        oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    let mut replay = LinearHostEgress::new(
+        make(&reopened, &responses, actor, &calls, &writes, None, 1002),
+        config(),
+    )
+    .expect("egress");
+    assert!(replay.create_issue([45; 32], actor, &fields()).is_err());
+    assert_eq!(
+        *calls.borrow(),
+        2,
+        "uncertain response must not be blindly resent"
+    );
+    assert_eq!(*writes.borrow(), 0);
+    assert_eq!(linear_receipts(&reopened), outcomes);
+    assert_eq!(linear_scanned_receipts(&reopened), outcomes);
+}
+
+#[test]
+fn interrupted_request_staging_retries_same_operation_after_restart() {
+    use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate};
+    use std::io::Write;
+    let vault_dir = tempfile::tempdir().expect("vault");
+    let responses = tempfile::tempdir().expect("host response custody");
+    let vault =
+        oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default()).expect("open");
+    let actor = EntityId::from_bytes([0x68; 16]).expect("actor");
+    vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .expect("person");
+    grant_linear_effects(&vault, actor);
+    let calls = Rc::new(RefCell::new(0));
+    let writes = Rc::new(RefCell::new(0));
+    let op = [46; 32];
+    let call = GraphQlCall {
+        query: crate::egress::CREATE,
+        variables: json!({"input":{"teamId":"team-1"}}),
+    };
+    let journal = crate::journal::LinearResponseJournal::new(
+        JournalTransport {
+            writes: writes.clone(),
+            calls: calls.clone(),
+            failure: None,
+        },
+        responses.path().to_path_buf(),
+    )
+    .expect("journal");
+    // Interrupt the exact staging path after writing only part of its
+    // temporary file, leaving an orphan as a process crash would. The final
+    // request name must not exist; no gate or transport has run.
+    let interrupted = journal.stage_request_with(&op, &call, |staged| {
+        staged.as_file_mut().write_all(b"{").expect("partial write");
+        staged.as_file().sync_all().expect("partial sync");
+        std::fs::hard_link(
+            staged.path(),
+            responses.path().join("crashed-staging-partial"),
+        )
+        .expect("leave crash orphan");
+        Err(LinearSyncError::Transport(
+            "injected pre-publish crash".into(),
+        ))
+    });
+    assert!(interrupted.is_err());
+    let reference = format!("linear:request:v1:{}", blake3::Hash::from(op).to_hex());
+    assert_eq!(
+        journal.read_request(&reference).expect("request lookup"),
+        None
+    );
+    assert_eq!(*calls.borrow(), 0);
+    drop(journal);
+    drop(vault);
+    let reopened =
+        oneiron::Vault::open(vault_dir.path(), oneiron::VaultConfig::default()).expect("reopen");
+    let door = crate::VaultLinearOutboundDoor::new(
+        &reopened,
+        JournalTransport {
+            writes: writes.clone(),
+            calls: calls.clone(),
+            failure: None,
+        },
+        responses.path().to_path_buf(),
+        OutboundDispatchActor::agent(actor),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1000,
+    )
+    .expect("door");
+    let mut egress = LinearHostEgress::new(door, config()).expect("egress");
+    let created = egress
+        .create_issue(op, actor, &fields())
+        .expect("safe retry");
+    assert_eq!(created.issue.issue_id, "created");
+    assert_eq!(*calls.borrow(), 1);
+    assert_eq!(*writes.borrow(), 1);
+    let door = egress.into_door();
+    assert!(door.request_by_ref(&reference).expect("resolve").is_some());
+    let mut egress = LinearHostEgress::new(door, config()).expect("egress");
+    assert_eq!(
+        egress.create_issue(op, actor, &fields()).expect("replay"),
+        created
+    );
+    let mut altered = fields();
+    altered.title = "changed payload".into();
+    assert!(egress.create_issue(op, actor, &altered).is_err());
+    assert_eq!(*calls.borrow(), 1);
 }

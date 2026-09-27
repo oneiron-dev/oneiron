@@ -37851,7 +37851,7 @@
      "path": "src/journal.rs",
      "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -37880,7 +37880,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/tests.rs",

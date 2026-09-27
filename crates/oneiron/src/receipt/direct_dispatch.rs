@@ -10,8 +10,8 @@ use super::{ReceiptKind, ReceiptRecord};
 use crate::Vault;
 use crate::error::{Error, Result};
 
-const PREFIX: &[u8] = b"outbound_direct_receipt:v1:";
-const VERSION: u8 = 1;
+const PREFIX: &[u8] = b"outbound_direct_receipt:v2:";
+const VERSION: u8 = 2;
 
 #[derive(Serialize, Deserialize)]
 struct DirectReceipt {
@@ -20,27 +20,68 @@ struct DirectReceipt {
     receipt: ReceiptRecord,
 }
 
-fn key(logical_ref: &str, outcome: &str) -> Vec<u8> {
+/// A delivered replay remains one logical receipt; negative dispatches are
+/// distinct when their actionable result changes. In particular, a connect
+/// failure and a later uncertain send both say `failed`, but their delivery
+/// certainty and retry instructions are different evidence. Clock stamps and
+/// gate-decision IDs and policy traces are intentionally not identity: a
+/// replay may omit the original gate decision, but it must not add a thinner
+/// duplicate just because its observation time or provenance changed.
+fn evidence(receipt: &ReceiptRecord) -> String {
+    if receipt.outcome == "delivered_to_channel" {
+        return receipt.outcome.clone();
+    }
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:direct-outbound-receipt:v1");
+    hasher.update(b"oneiron:direct-outbound-result:v2");
+    for value in [
+        Some(receipt.outcome.as_str()),
+        receipt
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        receipt.fields.get("retry_state").map(String::as_str),
+        receipt.fields.get("intent_state").map(String::as_str),
+        receipt.fields.get("gate_outcome").map(String::as_str),
+        receipt.fields.get("hold_reason").map(String::as_str),
+        receipt.fields.get("suppression_reason").map(String::as_str),
+        receipt.fields.get("provider_ref").map(String::as_str),
+    ] {
+        match value {
+            Some(value) => {
+                hasher.update(&[1]);
+                hasher.update(&(value.len() as u64).to_le_bytes());
+                hasher.update(value.as_bytes());
+            }
+            None => {
+                hasher.update(&[0]);
+            }
+        }
+    }
+    format!("{}:{}", receipt.outcome, hasher.finalize().to_hex())
+}
+
+fn key(logical_ref: &str, receipt: &ReceiptRecord) -> Vec<u8> {
+    let result = evidence(receipt);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:direct-outbound-receipt:v2");
     hasher.update(&(logical_ref.len() as u64).to_le_bytes());
     hasher.update(logical_ref.as_bytes());
-    hasher.update(&(outcome.len() as u64).to_le_bytes());
-    hasher.update(outcome.as_bytes());
+    hasher.update(&(result.len() as u64).to_le_bytes());
+    hasher.update(result.as_bytes());
     [PREFIX, hasher.finalize().as_bytes()].concat()
 }
 
-/// Stores the first result for one logical dispatch/outcome pair. Negative
-/// outcomes remain visible if a later retry delivers; a delivered replay
-/// does not mint another row or debit. The pipeline result, not a host-authored
+/// Stores the first receipt for each material result of a logical dispatch.
+/// A later uncertain result does not hide behind an earlier definite failure;
+/// a delivered replay still has one logical outcome and cannot mint a new row. The pipeline result, not a host-authored
 /// imitation, supplies the receipt body.
 pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
     if receipt.receipt_kind != ReceiptKind::Outbound {
         return Err(Error::InvariantViolation("direct dispatch receipt kind"));
     }
     let logical_ref = receipt.receipt_id.clone();
-    let key = key(&logical_ref, &receipt.outcome);
-    receipt.receipt_id = format!("{}:{}", logical_ref, receipt.outcome);
+    let key = key(&logical_ref, &receipt);
+    receipt.receipt_id = format!("{}:{}", logical_ref, evidence(&receipt));
     let row = DirectReceipt {
         version: VERSION,
         logical_ref,
@@ -69,8 +110,9 @@ pub(super) fn receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
                 .map_err(|_| Error::CorruptedIndex("direct dispatch receipt"))?;
             if row.version != VERSION
                 || row.receipt.receipt_kind != ReceiptKind::Outbound
-                || row.receipt.receipt_id != format!("{}:{}", row.logical_ref, row.receipt.outcome)
-                || key_bytes.as_ref() != key(&row.logical_ref, &row.receipt.outcome)
+                || row.receipt.receipt_id
+                    != format!("{}:{}", row.logical_ref, evidence(&row.receipt))
+                || key_bytes.as_ref() != key(&row.logical_ref, &row.receipt)
             {
                 return Err(Error::CorruptedIndex("direct dispatch receipt"));
             }
