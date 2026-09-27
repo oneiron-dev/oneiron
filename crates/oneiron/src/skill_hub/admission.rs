@@ -150,9 +150,16 @@ impl Vault {
         candidate: &EntityId,
     ) -> Result<Option<HubAdmissionReceipt>> {
         let txn = self.store.env.read_txn()?;
+        self.hub_admission_receipt_in_txn(&txn, candidate)
+    }
+    pub(in crate::skill_hub) fn hub_admission_receipt_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        candidate: &EntityId,
+    ) -> Result<Option<HubAdmissionReceipt>> {
         self.store
             .vault_meta
-            .get(&txn, &receipt_key(candidate))?
+            .get(txn, &receipt_key(candidate))?
             .map(|raw| {
                 serde_json::from_slice(&raw).map_err(|_| invalid("invalid admission receipt"))
             })

@@ -167,6 +167,36 @@ fn assert_native_reimport(
         .expect("bundle fixture");
     assert!(agent_bundle.fork_hash.is_some());
     assert_eq!(agent_bundle.omission, None);
+    // A native export must enter the same hub pack consumer without a second schema.
+    let native_files = agent_bundle
+        .source_tree
+        .as_ref()
+        .expect("native agent source")
+        .import_files()?;
+    let source = crate::skill_hub::pack_catalog::PackSource::from_files(native_files.clone())?;
+    assert_eq!(
+        source.manifest().kind,
+        crate::skill_hub::pack_catalog::PackKind::Agent
+    );
+    assert_eq!(
+        source.content_hash(),
+        crate::skill::canonical_skill_tree_hash(
+            native_files
+                .iter()
+                .map(|file| (file.path.as_str(), file.content.as_slice()))
+        )?
+    );
+    let refs: Vec<serde_json::Value> = serde_json::from_slice(
+        &native_files
+            .iter()
+            .find(|file| file.path == "skills.json")
+            .expect("native skills facet")
+            .content,
+    )
+    .expect("native references");
+    assert_eq!(refs[0]["entity_id"], skill.to_hex());
+    assert_eq!(refs[0]["content_hash"], expected.content_hash()?.to_hex());
+    install_native_agent_pack(&target, source)?;
     assert!(
         agent_bundle
             .source_tree
@@ -493,5 +523,106 @@ fn missing_source_and_historic_fork_binding_are_explicit_not_invented() -> Resul
             .content_hash
             .is_some()
     );
+    Ok(())
+}
+
+fn install_native_agent_pack(
+    vault: &Vault,
+    source: crate::skill_hub::pack_catalog::PackSource,
+) -> Result<()> {
+    use crate::skill_hub::pack_catalog::{
+        PackFitPolicy, PackFitVerdict, PackInstallDisposition, PackPermissions, PackSourceAdapter,
+    };
+    use crate::skill_hub::{
+        HubSyncPolicy, SkillHubAdapter, SkillHubKind, SkillHubRecord, SkillHubTrustTier,
+    };
+    struct NativeAdapter {
+        hub: EntityId,
+        endpoint: String,
+        source: crate::skill_hub::pack_catalog::PackSource,
+    }
+    impl SkillHubAdapter for NativeAdapter {
+        fn hub_id(&self) -> EntityId {
+            self.hub
+        }
+        fn kind(&self) -> SkillHubKind {
+            SkillHubKind::Git
+        }
+        fn endpoint(&self) -> Option<&str> {
+            Some(&self.endpoint)
+        }
+        fn fetch_package(&self, _: &HubRef) -> Result<HubPackage> {
+            Err(crate::Error::EntityNotFound)
+        }
+    }
+    impl PackSourceAdapter for NativeAdapter {
+        fn fetch_pack_source(
+            &self,
+            _: &HubRef,
+        ) -> Result<crate::skill_hub::pack_catalog::PackSource> {
+            Ok(self.source.clone())
+        }
+    }
+    struct Fit;
+    impl PackFitPolicy for Fit {
+        fn evaluate(
+            &self,
+            _: &crate::skill_hub::pack_catalog::PackSource,
+            permissions: &PackPermissions,
+        ) -> Result<PackFitVerdict> {
+            assert!(permissions.bundled_skills.is_empty());
+            Ok(PackFitVerdict {
+                fits: true,
+                rules_hit: false,
+                code_auto_install: true,
+            })
+        }
+    }
+    let owner_id = EntityId::now();
+    vault.put_entity(
+        &owner_id,
+        crate::registry::ENTITY_TYPE_PERSON,
+        time(),
+        131,
+        b"native owner",
+    )?;
+    let owner = vault.authenticate_owner(
+        owner_id,
+        "principal:native-pack",
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let hub = EntityId::now();
+    let endpoint = "https://example.invalid/native-hub";
+    vault.configure_skill_hub(
+        &owner,
+        &hub,
+        &SkillHubRecord::new(
+            SkillHubKind::Git,
+            endpoint,
+            SkillHubTrustTier::Verified,
+            HubSyncPolicy::PinnedCommit,
+        )?,
+        time(),
+        132,
+    )?;
+    let publisher = vault.admit_skill_publisher(&owner, "publisher:native-pack", hub)?;
+    let adapter = NativeAdapter {
+        hub,
+        endpoint: endpoint.to_owned(),
+        source: source.clone(),
+    };
+    let reference = HubRef::new(
+        hub,
+        "agents/fixture.agent",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let PackInstallDisposition::Installed(receipt) =
+        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, time(), 133)?
+    else {
+        panic!("native pack install");
+    };
+    assert_eq!(receipt.content_hash, source.content_hash().to_hex());
+    assert_eq!(receipt.pin_value, source.content_hash().to_hex());
     Ok(())
 }

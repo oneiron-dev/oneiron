@@ -33,11 +33,15 @@ pub(super) async fn state(
     server: &SyncServer,
     actor: &McpResolvedActor,
 ) -> Result<(SessionReadSet, ChangedLine), McpGatewayError> {
+    let packs = super::board_setup::mcp_visible_pack_inventory(server, actor)?;
     let observations = read_set(server, actor).await.clone();
     let read = mcp_scoped_read(&server.vault, actor)?;
-    let changed = observations
+    let mut changed = observations
         .refresh(&read, 16)
         .map_err(|error| mcp_engine_error("mcp session refresh failed", error))?;
+    let installs = observations.pack_changes(&packs, 16_usize.saturating_sub(changed.rows.len()));
+    changed.rows.extend(installs.rows);
+    changed.overflow += installs.overflow;
     Ok((observations, changed))
 }
 

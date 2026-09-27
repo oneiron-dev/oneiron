@@ -18,6 +18,12 @@ pub(crate) struct HubAdmissionProof {
     binding: blake3::Hash,
 }
 impl HubAdmissionProof {
+    pub(in crate::skill_hub) fn post_fit(id: EntityId, data: &[u8]) -> Self {
+        Self {
+            id,
+            binding: blake3::hash(data),
+        }
+    }
     pub(super) fn id(&self) -> EntityId {
         self.id
     }

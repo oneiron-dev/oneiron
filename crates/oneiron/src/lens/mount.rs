@@ -59,11 +59,7 @@ impl Vault {
         let Some(install) = self.mounted_pack_in_txn(&txn, pack_name)? else {
             return Ok(false);
         };
-        if !install
-            .candidate_skills
-            .iter()
-            .any(|id| id == &skill_id.to_hex())
-        {
+        if !install.skills.iter().any(|id| id == &skill_id.to_hex()) {
             return Ok(false);
         }
         // A soft erase leaves a valid type-7 header without a SKILL body.
