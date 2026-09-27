@@ -29,12 +29,10 @@ pub(crate) async fn admit_http_binding(
         && token.starts_with("v2.slip.")
     {
         let accepted = BindingProof::from_headers(request.headers()).and_then(|proof| {
-            CoreAuth::bind_transport_once(token, &proof, &server.config, server.vault().as_ref())
+            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
         });
         if let Err(error) = accepted {
-            // Preserve the route's error contract: `/v1` callers receive
-            // the typed envelope even when the transport door refuses
-            // before the handler runs; other planes keep the flat shape.
+            // Keep the /v1 envelope when the transport door refuses first.
             if request.uri().path().starts_with("/v1/") {
                 return crate::error::EnvelopedApiError::from(error).into_response();
             }
