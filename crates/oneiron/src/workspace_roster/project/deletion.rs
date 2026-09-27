@@ -29,7 +29,7 @@ pub(crate) fn deindex_project_room(
                 .map_err(|_| Error::CorruptedIndex("project type index"))?,
         )?;
         if let Some(child) = record::<ProjectRecord>(store, txn, child_id, header.entity_type)?
-            && child.parent.as_deref() == Some(id.to_hex().as_str())
+            && child.parents.contains(&id.to_hex())
         {
             return Err(
                 crate::error::RecordError::InvalidProjectBody("project has live children").into(),

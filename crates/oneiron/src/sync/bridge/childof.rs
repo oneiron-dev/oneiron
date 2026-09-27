@@ -186,7 +186,7 @@ pub(super) fn replayed_child_of_candidates(
 }
 
 #[derive(Clone)]
-pub(super) struct PendingChildOfOp {
+pub(super) struct PendingEdgeOp {
     index: usize,
     src: EntityId,
     tgt: EntityId,
@@ -202,10 +202,12 @@ pub(super) fn apply_materialized_edge_ops(
     ops: Vec<BatchOp>,
     metas: &[EdgeOpMeta],
     window_key: &str,
+    tombstones_map: &LoroMap,
 ) -> Result<()> {
     debug_assert_eq!(ops.len(), metas.len());
-    let mut child_of_adds = Vec::<PendingChildOfOp>::new();
-    let mut child_of_deletes = Vec::<PendingChildOfOp>::new();
+    let mut child_of_adds = Vec::<PendingEdgeOp>::new();
+    let mut child_of_deletes = Vec::<PendingEdgeOp>::new();
+    let mut parent_adds = Vec::<PendingEdgeOp>::new();
 
     for (index, op) in ops.into_iter().enumerate() {
         // ARCH-0052 P6: no incident-edge membership walk here. A replicated
@@ -218,7 +220,7 @@ pub(super) fn apply_materialized_edge_ops(
             | BatchOp::Edge { src, kind, tgt, .. }
                 if *kind == EdgeKind::ChildOf =>
             {
-                child_of_adds.push(PendingChildOfOp {
+                child_of_adds.push(PendingEdgeOp {
                     index,
                     src: *src,
                     tgt: *tgt,
@@ -226,7 +228,18 @@ pub(super) fn apply_materialized_edge_ops(
                 });
             }
             BatchOp::DeleteEdge { src, kind, tgt } if *kind == EdgeKind::ChildOf => {
-                child_of_deletes.push(PendingChildOfOp {
+                child_of_deletes.push(PendingEdgeOp {
+                    index,
+                    src: *src,
+                    tgt: *tgt,
+                    op,
+                });
+            }
+            BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. }
+            | BatchOp::Edge { src, kind, tgt, .. }
+                if *kind == EdgeKind::Parent =>
+            {
+                parent_adds.push(PendingEdgeOp {
                     index,
                     src: *src,
                     tgt: *tgt,
@@ -343,10 +356,41 @@ pub(super) fn apply_materialized_edge_ops(
             Ok(()) => {}
         }
     }
+
+    // Parent candidates use the ONE admission door after this delta's
+    // ChildOf winners have landed. Each accepted write is visible to the
+    // next candidate's prospective check in the same transaction.
+    parent_adds
+        .sort_by_key(|entry| Store::encode_edge_key(&entry.src, EdgeKind::Parent, &entry.tgt));
+    for pending in parent_adds {
+        let BatchOp::EdgeWithCreatedAt {
+            weight, created_at, ..
+        } = &pending.op
+        else {
+            return Err(crate::Error::CorruptedIndex("received Parent operation"));
+        };
+        let bytes =
+            super::encode_edge_value_for_crdt(EdgeKind::Parent, *weight, *created_at, None, None)?;
+        let tombstoned =
+            crate::sync::loro_support::tombstone_map_contains_id(tombstones_map, &pending.src)
+                || crate::sync::loro_support::tombstone_map_contains_id(
+                    tombstones_map,
+                    &pending.tgt,
+                );
+        super::parent_retry::submit(
+            vault,
+            wtxn,
+            window_key,
+            pending.src,
+            pending.tgt,
+            &bytes,
+            tombstoned,
+        )?;
+    }
     Ok(())
 }
 
-fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
+fn child_of_components(ops: &[PendingEdgeOp]) -> Vec<Vec<PendingEdgeOp>> {
     let mut adjacency = HashMap::<EntityId, HashSet<EntityId>>::new();
     for op in ops {
         adjacency.entry(op.src).or_default().insert(op.tgt);
@@ -388,23 +432,251 @@ fn child_of_components(ops: &[PendingChildOfOp]) -> Vec<Vec<PendingChildOfOp>> {
     components
 }
 
-fn pending_child_of_sort_key(op: &PendingChildOfOp) -> [u8; 33] {
+fn pending_child_of_sort_key(op: &PendingEdgeOp) -> [u8; 33] {
     Store::encode_edge_key(&op.src, EdgeKind::ChildOf, &op.tgt)
 }
 
-fn cmp_pending_child_of_ops(
-    left: &PendingChildOfOp,
-    right: &PendingChildOfOp,
-) -> std::cmp::Ordering {
+fn cmp_pending_child_of_ops(left: &PendingEdgeOp, right: &PendingEdgeOp) -> std::cmp::Ordering {
     pending_child_of_sort_key(left)
         .cmp(&pending_child_of_sort_key(right))
         .then_with(|| left.index.cmp(&right.index))
 }
 
-fn child_of_component_sort_key(component: &[PendingChildOfOp]) -> [u8; 33] {
+fn child_of_component_sort_key(component: &[PendingEdgeOp]) -> [u8; 33] {
     component
         .iter()
         .map(pending_child_of_sort_key)
         .min()
         .expect("child-of component must be non-empty")
+}
+
+// Cross-window ChildOf can precede either endpoint. Keep the exact admitted
+// candidate and an endpoint index so later entity delivery can replay it
+// through the ordinary ChildOf winner arbitration, not a raw LMDB insert.
+const PENDING_CHILD_OF: &str = "dc:w:";
+const CHILD_OF_ENDPOINT: &str = "de:";
+
+fn pending_child_of_key(window: &str, src: &EntityId, tgt: &EntityId) -> String {
+    format!(
+        "{PENDING_CHILD_OF}{window}:{}:{}",
+        src.to_hex(),
+        tgt.to_hex()
+    )
+}
+fn child_of_endpoint_key(id: &EntityId, pending: &str) -> String {
+    format!("{CHILD_OF_ENDPOINT}{}:{pending}", id.to_hex())
+}
+fn parse_pending_child_of(row: &str) -> Result<(&str, EntityId, EntityId)> {
+    let rest = row
+        .strip_prefix(PENDING_CHILD_OF)
+        .ok_or(crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
+    let mut parts = rest.split(':');
+    let (Some(window), Some(src), Some(tgt), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(crate::Error::CorruptedIndex("deferred ChildOf obligation"));
+    };
+    if crate::sync::types::WindowKey::try_new(window).is_none() {
+        return Err(crate::Error::CorruptedIndex("deferred ChildOf obligation"));
+    }
+    let src = EntityId::from_hex(src)
+        .map_err(|_| crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
+    let tgt = EntityId::from_hex(tgt)
+        .map_err(|_| crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
+    if row != pending_child_of_key(window, &src, &tgt) {
+        return Err(crate::Error::CorruptedIndex("deferred ChildOf obligation"));
+    }
+    Ok((window, src, tgt))
+}
+
+pub(in crate::sync) fn has_pending_child_of_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    window: &str,
+    src: &EntityId,
+) -> Result<bool> {
+    let prefix = format!("{PENDING_CHILD_OF}{window}:{}:", src.to_hex());
+    let mut rows = vault.store.sync_state.prefix_iter(txn, &prefix)?;
+    Ok(rows.next().transpose()?.is_some())
+}
+
+pub(in crate::sync) fn defer_child_of(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &str,
+    src: &EntityId,
+    tgt: &EntityId,
+    value: &[u8],
+) -> Result<()> {
+    decode_edge_value_for_kind(EdgeKind::ChildOf, value)
+        .map_err(|_| crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
+    let row = pending_child_of_key(window, src, tgt);
+    vault.store.sync_state.put(txn, &row, value)?;
+    for id in [src, tgt] {
+        vault
+            .store
+            .sync_state
+            .put(txn, &child_of_endpoint_key(id, &row), &[1])?;
+    }
+    crate::sync::quarantine::set_replay_remat_marker_in_txn(vault, txn, window, src)
+}
+
+pub(in crate::sync) fn settle_child_of(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    window: &str,
+    src: &EntityId,
+    tgt: &EntityId,
+) -> Result<()> {
+    let row = pending_child_of_key(window, src, tgt);
+    if vault.store.sync_state.get(txn, &row)?.is_none() {
+        return Ok(());
+    }
+    vault.store.sync_state.delete(txn, &row)?;
+    for id in [src, tgt] {
+        vault
+            .store
+            .sync_state
+            .delete(txn, &child_of_endpoint_key(id, &row))?;
+    }
+    if !super::parent_retry::has_pending_source_in_txn(vault, txn, window, src)? {
+        crate::sync::quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, src)?;
+    }
+    Ok(())
+}
+
+fn retry_child_of_row(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &str,
+) -> Result<Option<crate::conversation_dag::topology::Dependency>> {
+    let Some(value) = vault
+        .store
+        .sync_state
+        .get(txn, row)?
+        .map(|bytes| bytes.to_vec())
+    else {
+        return Ok(None);
+    };
+    let (window, src, tgt) = parse_pending_child_of(row)?;
+    let decoded = decode_edge_value_for_kind(EdgeKind::ChildOf, &value)
+        .map_err(|_| crate::Error::CorruptedIndex("deferred ChildOf obligation"))?;
+    let mut absent = false;
+    for id in [src, tgt] {
+        if vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
+            settle_child_of(vault, txn, window, &src, &tgt)?;
+            return Ok(None);
+        }
+        match crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)? {
+            crate::vault::LiveEntityRow::Absent => absent = true,
+            crate::vault::LiveEntityRow::DeletedShell => {
+                settle_child_of(vault, txn, window, &src, &tgt)?;
+                return Ok(None);
+            }
+            crate::vault::LiveEntityRow::Live { .. } => {}
+        }
+    }
+    if absent {
+        return Ok(None);
+    }
+    let op = BatchOp::EdgeWithCreatedAt {
+        src,
+        kind: EdgeKind::ChildOf,
+        tgt,
+        weight: decoded.weight,
+        created_at: decoded.created_at,
+        vad: decoded.vad.unwrap_or(crate::affect::Vad::NEUTRAL),
+        provenance: decoded.provenance,
+    };
+    let applied = batch::apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        vec![op],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        false,
+    );
+    match applied {
+        Ok(()) => {
+            settle_child_of(vault, txn, window, &src, &tgt)?;
+            let stored = crate::ports::EdgeStoreRead::port_edge_get(
+                &vault.store,
+                &*txn,
+                &src,
+                EdgeKind::ChildOf,
+                &tgt,
+            )?
+            .is_some();
+            Ok(stored.then_some(
+                crate::conversation_dag::topology::Dependency::ConversationMembership(src),
+            ))
+        }
+        Err(remote) if remote_rejection_reason(&remote).is_some() => {
+            crate::sync::quarantine::quarantine_rejected_op_in_txn(
+                vault,
+                txn,
+                window,
+                crate::sync::quarantine::QuarantineContainer::Edges,
+                &format_edge_key(&src, EdgeKind::ChildOf, &tgt),
+                &remote,
+                &value,
+            )?;
+            settle_child_of(vault, txn, window, &src, &tgt)?;
+            Ok(None)
+        }
+        Err(local) => Err(local),
+    }
+}
+
+pub(in crate::sync) fn wake_pending_child_of(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    facts: &[crate::conversation_dag::topology::Dependency],
+) -> Result<Vec<crate::conversation_dag::topology::Dependency>> {
+    let mut rows = std::collections::BTreeSet::new();
+    for &fact in facts {
+        if let crate::conversation_dag::topology::Dependency::Entity(id) = fact {
+            let prefix = format!("{CHILD_OF_ENDPOINT}{}:", id.to_hex());
+            for entry in vault.store.sync_state.prefix_iter(&*txn, &prefix)? {
+                let (key, _) = entry?;
+                rows.insert(
+                    key.strip_prefix(&prefix)
+                        .ok_or(crate::Error::CorruptedIndex("deferred ChildOf index"))?
+                        .to_string(),
+                );
+            }
+        }
+    }
+    let mut produced = Vec::new();
+    for row in rows {
+        if let Some(fact) = retry_child_of_row(vault, txn, &row)? {
+            produced.push(fact);
+        }
+    }
+    Ok(produced)
+}
+
+pub(in crate::sync) fn retry_all_pending_child_of(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<Vec<crate::conversation_dag::topology::Dependency>> {
+    let rows: Vec<String> = {
+        let iter = vault
+            .store
+            .sync_state
+            .prefix_iter(&*txn, PENDING_CHILD_OF)?;
+        iter.map(|entry| entry.map(|(key, _)| key.to_string()))
+            .collect::<Result<_>>()?
+    };
+    let mut produced = Vec::new();
+    for row in rows {
+        if let Some(fact) = retry_child_of_row(vault, txn, &row)? {
+            produced.push(fact);
+        }
+    }
+    Ok(produced)
 }

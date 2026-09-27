@@ -52,8 +52,9 @@ try {
   assert.equal(vault.entityExists(id), true)
   assert.deepEqual(vault.getEntity(id), stored)
   assert.equal(vault.deleteEntity(id), true)
-  assert.equal(vault.getEntity(id), null)
-  assert.equal(vault.deleteEntity(id), false)
+  assert.deepEqual(vault.getEntity(id), Buffer.alloc(0)) // shell, not hard purge
+  assert.equal(vault.entityExists(id), true)
+  assert.equal(vault.deleteEntity(id), true) // the shell still exists
 
   // ONE-479: reject JS-owned input before napi-rs builds owned String/Vec/DTO.
   // Throwing index getters prove oversized arrays are rejected without traversal.

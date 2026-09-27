@@ -479,9 +479,19 @@ pub(super) fn gate_edge(
     // Gate 1 — not-traversed kinds: `child_of` and `assigned_to` are NEVER
     // traversed, regardless of the stored weight bytes (contract
     // `lambda: null`, "Not traversed.").
-    let Some(lambda) = lambda_for_kind(kind) else {
+    let Some(mut lambda) = lambda_for_kind(kind) else {
         return Ok(None);
     };
+    // `belongs_to` is the existing contract vocabulary for both ordinary
+    // relations and collection membership. A hop touching a PROJECT hub has
+    // its own low budget; lowering only the stored weight would cancel under
+    // same-kind normalization when the hub has one or many members.
+    if kind == EdgeKind::BelongsTo
+        && (crate::workspace_roster::is_project_entity(store, txn, current)?
+            || crate::workspace_roster::is_project_entity(store, txn, neighbor)?)
+    {
+        lambda = crate::workspace_roster::HUB_BELONGS_TO_LAMBDA;
+    }
 
     // Gate 2 — kind-level block: λ_τ = 0.0 (`opposes`) propagates nothing
     // even when the stored weight byte is non-zero (contradiction isolation).

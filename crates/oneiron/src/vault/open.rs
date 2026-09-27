@@ -570,6 +570,7 @@ impl Vault {
             // Every vault opens FULL; only an explicit ctl-driven shed parks
             // it, and only an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
+            wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
             conversation_presence: Default::default(),
             message_streams: Default::default(),
             #[cfg(feature = "sync")]
