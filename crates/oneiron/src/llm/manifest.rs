@@ -318,14 +318,20 @@ impl Vault {
         }
         if matches!(bound.envelope.purpose, super::CallPurpose::Extraction)
             && bound.envelope.locality != ModelLocality::OnDevice
-            && let Some(table) = &table
-            && (super::defaults::locality_rank(bound.envelope.locality)
-                > super::defaults::locality_rank(table.extraction_max_locality)
-                || !egress.is_some_and(|predicate| predicate.permits(&bound)))
         {
-            return Err(invalid(
-                "nonlocal extraction needs host egress authorization",
-            ));
+            // The shipped bound applies even when the vault has no stored
+            // table. An absent predicate cannot turn host egress into a default.
+            let max_locality = table.as_ref().map_or(ModelLocality::OnDevice, |table| {
+                table.extraction_max_locality
+            });
+            if super::defaults::locality_rank(bound.envelope.locality)
+                > super::defaults::locality_rank(max_locality)
+                || !egress.is_some_and(|predicate| predicate.permits(&bound))
+            {
+                return Err(invalid(
+                    "nonlocal extraction needs host egress authorization",
+                ));
+            }
         }
         *request = bound;
         Ok(())

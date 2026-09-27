@@ -590,6 +590,42 @@ mod tests {
     }
 
     #[test]
+    fn nonlocal_extraction_without_stored_table_still_requires_host_egress() {
+        use super::super::{CallClass, LlmRequest};
+        let dir = tempfile::tempdir().unwrap();
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+        let mut request = LlmRequest {
+            model: ModelId::new("test/remote@r1").unwrap(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                purpose: CallPurpose::Extraction,
+                class: CallClass::BestEffort,
+                tier: TierPrecedence::for_purpose(
+                    &CallPurpose::Extraction,
+                    ModelTierRef("global".into()),
+                ),
+                response_format: super::super::ResponseFormat::Text,
+                locality: ModelLocality::OwnServer,
+            },
+            messages: vec![],
+            tools: vec![],
+            params: Default::default(),
+            provider_options: Default::default(),
+        };
+        let prior = request.clone();
+        let allow = |_: &LlmRequest| true;
+        assert!(matches!(
+            vault.bind_model_role_with_egress(
+                super::super::manifest::ModelRole::ExtractionTeacher,
+                &mut request,
+                Some(&allow)
+            ),
+            Err(Error::InvalidConfig(_))
+        ));
+        assert_eq!(request, prior);
+    }
+
+    #[test]
     fn nonlocal_extraction_requires_host_egress_verdict_before_binding() {
         use super::super::{CallClass, LlmRequest};
         let dir = tempfile::tempdir().unwrap();
