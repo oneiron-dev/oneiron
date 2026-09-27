@@ -240,10 +240,8 @@ impl Vault {
             };
             let mut index = None;
             for (i, (key, _)) in entries.iter().enumerate() {
-                if key.as_str() == Some(KEY) {
-                    if index.replace(i).is_some() {
-                        return Err(Error::CorruptedIndex("duplicate pack install policy"));
-                    }
+                if key.as_str() == Some(KEY) && index.replace(i).is_some() {
+                    return Err(Error::CorruptedIndex("duplicate pack install policy"));
                 }
             }
             let index = index.ok_or(Error::CorruptedIndex("pack install policy missing"))?;
