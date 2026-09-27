@@ -70,6 +70,7 @@ pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior
 pub use self::read::{
     rebuild_skill_confidence_cache, skill_reliability_posterior, skill_selection_score,
 };
+pub(crate) use self::read::{selection_posterior_in_txn, skill_selection_score_from_posterior};
 pub use self::resident::rank_resident_skill_versions;
 
 #[cfg(test)]

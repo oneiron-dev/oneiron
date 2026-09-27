@@ -39,6 +39,9 @@ pub const PROVENANCE_OPTIMIZE_OF_VERSION_KEY: &str = "optimizeOfVersion";
 /// Provenance key carrying the author's rationale.
 pub const PROVENANCE_OPTIMIZE_RATIONALE_KEY: &str = "rationale";
 
+/// The authenticated preference audience of an optimizer-born proposal.
+pub(super) const PROVENANCE_OPTIMIZE_PRINCIPAL_KEY: &str = "preferencePrincipal";
+
 /// Provenance key carrying the receipt ids the draft rests on.
 pub const PROVENANCE_OPTIMIZE_RECEIPTS_KEY: &str = "evidenceReceipts";
 
@@ -285,7 +288,7 @@ fn run_skill_optimize_bound(
         ]);
         if let Some(owner) = owner {
             provenance.push((
-                Value::from("preferencePrincipal"),
+                Value::from(PROVENANCE_OPTIMIZE_PRINCIPAL_KEY),
                 Value::from(owner.entity_ref().to_hex()),
             ));
         }
