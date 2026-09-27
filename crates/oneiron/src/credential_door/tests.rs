@@ -122,7 +122,7 @@ fn witnessed(door: &CredentialDoorService) -> VaultInstant {
 /// A verified holder view good for pushing, injecting and leasing, issued at
 /// `issued_at` and alive for `lifetime_secs` from there.
 fn push_credential_from(issued_at: u64, lifetime_secs: u64) -> DoorCredential {
-    let verbs = [DOOR_VERB_RECEIVE_PACK, "inject", "lease"];
+    let classes = ["door.push", "door.inject", "door.lease"];
     let records = [repo_record(&repo()), DOOR_SECRET.to_owned()];
     DoorCredential::verified(
         "slip-push-1",
@@ -130,7 +130,7 @@ fn push_credential_from(issued_at: u64, lifetime_secs: u64) -> DoorCredential {
         issued_at,
         issued_at + lifetime_secs,
     )
-    .with_verbs(verbs)
+    .with_classes(classes)
     .with_records(records)
     .with_channels([EFFECTOR])
 }
@@ -331,7 +331,7 @@ fn a_slip_may_not_name_a_floor_either() {
     let (_tmp, _vault, door) = door_fixture();
     let now = witnessed(&door).secs();
     let credential = DoorCredential::verified("slip-floor", "holder:t", now, now + 60)
-        .with_verbs(["DOOR_SCAN_ALWAYS_ON"])
+        .with_classes(["DOOR_SCAN_ALWAYS_ON"])
         .with_records([repo_record(&repo())])
         .with_channels([EFFECTOR]);
 
@@ -448,25 +448,25 @@ fn expired_and_insufficient_slips_default_deny() {
     let record = repo_record(&repo());
 
     let expired = DoorCredential::verified("slip-expired", "holder:t", now - 600, now - 1)
-        .with_verbs([DOOR_VERB_RECEIVE_PACK])
+        .with_classes(["door.push"])
         .with_records([record.clone()])
         .with_channels([EFFECTOR]);
     // Insufficient: a slip that may lease but never got the push verb.
     let insufficient = DoorCredential::verified("slip-lease-only", "holder:t", now, now + 60)
-        .with_verbs(["lease"])
+        .with_classes(["door.lease"])
         .with_records([record.clone()])
         .with_channels([EFFECTOR]);
     let other_repo = DoorCredential::verified("slip-other-repo", "holder:t", now, now + 60)
-        .with_verbs([DOOR_VERB_RECEIVE_PACK])
+        .with_classes(["door.push"])
         .with_records(["github:oneiron/other"])
         .with_channels([EFFECTOR]);
     let other_channel = DoorCredential::verified("slip-other-chan", "holder:t", now, now + 60)
-        .with_verbs([DOOR_VERB_RECEIVE_PACK])
+        .with_classes(["door.push"])
         .with_records([record.clone()])
         .with_channels(["connector:gmail"]);
     // A blank holder view is not a verified holder.
     let blank = DoorCredential::verified("", "", now, now + 60)
-        .with_verbs([DOOR_VERB_RECEIVE_PACK])
+        .with_classes(["door.push"])
         .with_records([record])
         .with_channels([EFFECTOR]);
 
@@ -524,7 +524,7 @@ fn a_door_operation_takes_its_instant_from_the_vault_clock_seam() {
     // window is compared against the vault's reading, and there is no longer
     // any argument that could tell the door otherwise.
     let wall_live = DoorCredential::verified("slip-wall", "holder:t", wall, wall + 600)
-        .with_verbs([DOOR_VERB_RECEIVE_PACK])
+        .with_classes(["door.push"])
         .with_records([repo_record(&repo())])
         .with_channels([EFFECTOR]);
     let err = door
@@ -1025,7 +1025,7 @@ fn all_scope_admits_only_the_live_door_preset_vocabulary() {
             DoorDenyReason::VerbNotInSlip
         );
     }
-    let explicit = push_credential(now).with_verbs(["mint"]);
+    let explicit = push_credential(now).with_classes(["mint"]);
     assert_eq!(
         deny_reason(
             explicit
@@ -1035,4 +1035,139 @@ fn all_scope_admits_only_the_live_door_preset_vocabulary() {
         DoorDenyReason::VerbNotInSlip
     );
     assert!(super::verb_class::preset("door.mint").is_none());
+}
+
+#[test]
+fn class_membership_is_resolved_at_check_time_against_the_registry() {
+    let (_tmp, _vault, door) = door_fixture();
+    let now = witnessed(&door);
+    let record = repo_record(&repo());
+    // This class contains three verbs, but the slip keeps only its one name.
+    let credential = push_credential(now).with_classes(["door.credential"]);
+    let super::door_credential::DoorGrant::Witnessed(scope) = &credential.grant else {
+        panic!("witnessed fixture")
+    };
+    assert_eq!(
+        scope.verbs,
+        crate::federation::ScopeAxis::Some(["door.credential".to_owned()].into())
+    );
+    for verb in ["inject", "lease", "redeem"] {
+        credential.evaluate(verb, &record, EFFECTOR, now).unwrap();
+    }
+    assert_eq!(
+        deny_reason(
+            credential
+                .evaluate("receive-pack", &record, EFFECTOR, now)
+                .unwrap_err()
+        ),
+        DoorDenyReason::VerbNotInSlip
+    );
+    // An unregistered name must not grant a verb, even if the name is on a slip.
+    let unknown_class = push_credential(now).with_classes(["door.unregistered"]);
+    assert_eq!(
+        deny_reason(
+            unknown_class
+                .evaluate("lease", &record, EFFECTOR, now)
+                .unwrap_err()
+        ),
+        DoorDenyReason::VerbNotInSlip
+    );
+    // An enumerated verb string is not a class, including the verb on a known preset.
+    let raw_verb = push_credential(now).with_classes(["receive-pack"]);
+    assert_eq!(
+        deny_reason(
+            raw_verb
+                .evaluate("receive-pack", &record, EFFECTOR, now)
+                .unwrap_err()
+        ),
+        DoorDenyReason::VerbNotInSlip
+    );
+}
+
+#[test]
+fn verb_outside_slip_class_asks_until_owner_widens_consent() {
+    use crate::consent::{ActionClass, ActionEnvelope, ActorBound, GrantBound};
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::store::GateDecisionId;
+    use crate::temporal::TimeRange;
+
+    let (_tmp, vault, door) = door_fixture();
+    let now = witnessed(&door);
+    let record = repo_record(&repo());
+    let credential = push_credential(now).with_classes(["door.push"]);
+    // A valid verb outside this class reaches ASK, not a silent terminal deny.
+    let ask = door
+        .authorize(&credential, "lease", &record, EFFECTOR, now)
+        .expect_err("lease lies outside the push class");
+    let CredentialDoorError::Ask { reason, effect } = ask else {
+        panic!("outside-class verb must raise ASK: {ask:?}")
+    };
+    assert_eq!(reason, DoorDenyReason::VerbNotInSlip);
+    assert_eq!(
+        effect,
+        Box::new(credential.ask_effect("lease", &record, EFFECTOR).unwrap())
+    );
+
+    let owner_id = EntityId::from_bytes([0x51; ENTITY_ID_LEN]).unwrap();
+    vault
+        .put_entity(
+            &owner_id,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let owner = vault
+        .authenticate_owner(owner_id, "principal:owner", true, GateDecisionId::now())
+        .unwrap();
+    let bound = |class| {
+        GrantBound::action(
+            ActorBound::new(credential.holder_ref()).unwrap(),
+            ActionClass::new(class).unwrap(),
+            ActionEnvelope::new(vec![
+                format!("record:{record}"),
+                format!("channel:{EFFECTOR}"),
+            ])
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    vault
+        .create_standing_grant(&owner, bound("door.push"))
+        .unwrap();
+    assert!(matches!(
+        door.authorize(&credential, "lease", &record, EFFECTOR, now),
+        Err(CredentialDoorError::Ask {
+            reason: DoorDenyReason::VerbNotInSlip,
+            ..
+        })
+    ));
+    vault
+        .create_standing_grant(&owner, bound("door.lease"))
+        .unwrap();
+    door.authorize(&credential, "lease", &record, EFFECTOR, now)
+        .expect("the widened, owner-minted class grant resolves the ASK");
+    // A wider registered class covers its member verb too, even though the
+    // default ASK proposes the narrowest class for least privilege.
+    assert!(matches!(
+        door.authorize(&credential, "redeem", &record, EFFECTOR, now),
+        Err(CredentialDoorError::Ask {
+            reason: DoorDenyReason::VerbNotInSlip,
+            ..
+        })
+    ));
+    vault
+        .create_standing_grant(&owner, bound("door.credential"))
+        .unwrap();
+    door.authorize(&credential, "redeem", &record, EFFECTOR, now)
+        .expect("a wider registered class grant also resolves the ASK");
+    assert_eq!(
+        deny_reason(
+            door.authorize(&credential, "lease", "github:other/repo", EFFECTOR, now)
+                .unwrap_err()
+        ),
+        DoorDenyReason::RecordOutsideSlip,
+        "consent cannot widen a different slip axis"
+    );
 }

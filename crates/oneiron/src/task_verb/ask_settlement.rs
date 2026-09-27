@@ -81,6 +81,11 @@ pub(super) fn settle_in(
     let mut unmet_sources = BTreeSet::new();
     let (coverage, decision) = reduce(&group.effective, &who, &mut evidence, &mut unmet_sources)?;
     let stale = is_stale(vault, txn, &group)?;
+    if stale {
+        for entry in &mut evidence {
+            entry.ladder_changed = None;
+        }
+    }
     let deadline = group.effective.until.ok_or_else(ask_record::invalid)?;
     let mut all_responded = true;
     for member in &group.members {
@@ -357,6 +362,15 @@ fn reduce(
             }
             TaskAskSource::Human => TaskAskEvidenceReason::Counted,
         };
+        entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted {
+            spec.what
+                .ladder_answer
+                .as_ref()
+                .zip(entry.word.option.as_ref())
+                .map(|(ladder, person)| &ladder.option != person)
+        } else {
+            None
+        };
     }
     let words: Vec<_> = evidence
         .iter()
@@ -475,6 +489,7 @@ pub(super) fn evidence(
                     .find(|at_cut| at_cut.answer.word_ref == entry.answer.word_ref)
                 {
                     entry.reason = counted.reason;
+                    entry.ladder_changed = counted.ladder_changed;
                 } else {
                     entry.reason = TaskAskEvidenceReason::Late;
                 }
@@ -519,6 +534,9 @@ pub(super) fn validate_result(id: EntityId, result: &TaskAskResult) -> Result<()
     let stale = settlement.reason == TaskAskSettlementReason::Stale;
     if stale {
         decision = TaskAskDecision::Unknown;
+        for entry in &mut evidence {
+            entry.ladder_changed = None;
+        }
     }
     if coverage != result.coverage
         || decision != result.decision
