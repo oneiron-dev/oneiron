@@ -79,6 +79,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(crate) proposal_check_threshold: Option<u64>,
+    pub(crate) voice_ref_defaults: Option<crate::voice_identity::ref_limits::VoiceRefLimitPolicy>,
+    pub(crate) voice_ref_limits: crate::voice_identity::ref_limits::VoiceRefLimitPolicy,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(super) packs: Vec<PolicyPack>,

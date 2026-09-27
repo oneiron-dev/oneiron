@@ -111,6 +111,35 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                 (Value::from(AXIS_SENSITIVITY_KEY), Value::from("normal")),
             ]),
         ),
+        // Shipped voice-reference limits are editable policy data. Owner packs
+        // replace named defaults; the default precedence keeps holders under
+        // the vault ceiling and narrows multiple trusted contributions.
+        (
+            Value::from("voice_ref_limits"),
+            Value::Map(vec![
+                (Value::from("precedence"), Value::from("nested_narrowing")),
+                (
+                    Value::from("vault"),
+                    Value::Map(vec![
+                        (Value::from("max_clips_per_pack"), Value::from(32u64)),
+                        (
+                            Value::from("max_audio_bytes_per_pack"),
+                            Value::from(16u64 * 1024 * 1024),
+                        ),
+                        (Value::from("max_register_bytes"), Value::from(128u64)),
+                        (Value::from("max_transcript_bytes"), Value::from(16_384u64)),
+                        (
+                            Value::from("max_design_vendor_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                        (
+                            Value::from("max_vendor_voice_id_bytes"),
+                            Value::from(4_096u64),
+                        ),
+                    ]),
+                ),
+            ]),
+        ),
         (
             Value::from(POLICY_RULES_KEY),
             Value::Array(vec![

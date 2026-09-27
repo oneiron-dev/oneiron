@@ -543,9 +543,20 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         4,
     )?;
     let publisher = vault.admit_skill_publisher(&owner, "publisher:git-pack", hub_id)?;
-    let PackInstallDisposition::Installed(receipt) =
-        vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4)?
-    else {
+    // Install screening reads the seeded pack-install policy and fails closed
+    // without it (ONE-2019). Restore the shipped manifest this legacy fixture
+    // cleared for the install only; the rest keeps its manifest-free Gate.
+    let policy_id = crate::gate::default_policy_manifest_id()?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        policy_id,
+        &crate::gate::default_policy_manifest(),
+    )?;
+    let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
+    vault.with_write_txn(|txn| {
+        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
+    })?;
+    let PackInstallDisposition::Installed(receipt) = installed? else {
         panic!("post-fit connector");
     };
     assert_eq!(receipt.content_hash, source.content_hash().to_hex());
