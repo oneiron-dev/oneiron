@@ -1613,6 +1613,95 @@ fn local_repo_ingest_keeps_excluded_hash_used_by_another_snapshot() -> Result<()
 }
 
 #[test]
+fn local_repo_ingest_preserves_clean_historical_body_at_newly_quarantined_path() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let clean = b"pub fn safe_historical_source() -> u8 { 7 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/declared.rs",
+        clean,
+        "add declared source",
+    )?;
+    commit_test_file(
+        repo_dir.path(),
+        "src/safe.rs",
+        clean,
+        "add shared safe source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let clean_asset = codebase_asset_entity_id(blake3::hash(clean).as_bytes())?;
+    assert_eq!(
+        vault.get_entity_type(&clean_asset)?,
+        Some(ENTITY_TYPE_ASSET)
+    );
+
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "historical-shared-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"declared path fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/declared.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    run_git(repo_dir.path(), &["rm", "src/declared.rs"])?;
+    run_git(repo_dir.path(), &["commit", "-m", "remove declared source"])?;
+    let detected = format!("pub const TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");
+    commit_test_file(
+        repo_dir.path(),
+        "src/safe.rs",
+        detected.as_bytes(),
+        "replace safe source",
+    )?;
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("quarantine report");
+    assert_eq!(report.quarantined_paths, ["src/safe.rs"]);
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|entry| entry.path != "src/safe.rs")
+    );
+    assert_eq!(
+        vault.get_entity_type(&clean_asset)?,
+        Some(ENTITY_TYPE_ASSET)
+    );
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/safe.rs")?,
+        Some(clean.to_vec()),
+    );
+    let detected_asset = codebase_asset_entity_id(blake3::hash(detected.as_bytes()).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&detected_asset)?, None);
+    Ok(())
+}
+
+#[test]
 fn local_repo_ingest_quarantines_detector_hit_without_persisting_its_blob() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let leaked = format!("pub const LEAKED_TOKEN: &str = \"{GITHUB_TOKEN_SECRET_FIXTURE}\";\n");

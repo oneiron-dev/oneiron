@@ -59,6 +59,14 @@ pub(super) fn reclaimable_asset_hashes(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
+    // A scan hit classifies the bytes at this revision, not every older
+    // body ever seen under the same path. Declarations remain path-wide.
+    let quarantined_blobs = current
+        .files
+        .iter()
+        .filter(|file| quarantined_paths.contains(file.path.as_str()))
+        .map(|file| (file.path.as_str(), file.content_hash))
+        .collect::<BTreeSet<_>>();
     let mut protected = BTreeSet::new();
     for row in vault
         .store
@@ -75,7 +83,7 @@ pub(super) fn reclaimable_asset_hashes(
                         &file.path,
                         &file.content_hash,
                         snapshot_root(&prior.repo_ref),
-                    ) || quarantined_paths.contains(file.path.as_str())))
+                    ) || quarantined_blobs.contains(&(file.path.as_str(), file.content_hash))))
             {
                 protected.insert(file.content_hash);
             }
