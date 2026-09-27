@@ -4,6 +4,11 @@
 //! authentication, cancellation wiring, and retry policy stay host-owned.
 
 mod backend;
+mod image;
+pub use self::image::{
+    DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse,
+    OpenAiImagePart, OpenAiImageTransport, OpenAiImageTransportFuture,
+};
 mod options;
 mod stream;
 mod transport;

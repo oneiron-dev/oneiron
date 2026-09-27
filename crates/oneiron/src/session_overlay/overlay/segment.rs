@@ -223,3 +223,56 @@ impl SessionOverlay {
         Ok(Arc::new(next))
     }
 }
+
+#[cfg(test)]
+mod hygiene_tests {
+    use super::*;
+    use crate::batch::BatchOp;
+    use crate::entity_id::EntityId;
+    use crate::session_overlay::hygiene_tests::{allocation, observe_drop};
+    use crate::session_overlay::{JournalRole, JournalScope, OverlayKeyspace};
+    use crate::temporal::TimeRange;
+
+    #[test]
+    fn aborted_segment_scrubs_its_owned_mutation_and_journal_buffers() -> Result<()> {
+        let overlay = SessionOverlay::new(4096);
+        let segment = overlay.install_txn_segment()?;
+        overlay.put(OverlayKeyspace::Entities, b"key", b"mutation-private")?;
+        let watched = ACTIVE_SEGMENT.with(|slot| {
+            let borrow = slot.borrow();
+            let OverlayMutation::Put { value, .. } = &borrow.as_ref().unwrap().mutations[0] else {
+                panic!("staged put");
+            };
+            allocation(value)
+        });
+        observe_drop(watched, true, || drop(segment));
+
+        let segment = overlay.install_txn_segment()?;
+        let scope = JournalScope::new(EntityId::now(), EntityId::now());
+        overlay.stage_journal_entry(JournalEntry {
+            scope,
+            role: JournalRole::TurnPut,
+            learned_at: 1,
+            occurred: TimeRange { start: 1, end: 1 },
+            op: BatchOp::Put {
+                id: scope.turn(),
+                entity_type: 1,
+                occurred: TimeRange { start: 1, end: 1 },
+                learned_at: 1,
+                data: b"journal-private".to_vec(),
+                allow_maintenance: false,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            },
+        })?;
+        let watched = ACTIVE_SEGMENT.with(|slot| {
+            let borrow = slot.borrow();
+            let BatchOp::Put { data, .. } = &borrow.as_ref().unwrap().journal[0].op else {
+                panic!("staged journal put");
+            };
+            allocation(data)
+        });
+        observe_drop(watched, true, || drop(segment));
+        Ok(())
+    }
+}
