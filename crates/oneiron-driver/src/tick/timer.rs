@@ -88,6 +88,10 @@ impl<'v> AttemptQueueDeadlines<'v> {
 }
 
 impl DeadlineSource for AttemptQueueDeadlines<'_> {
+    fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.vault.subscribe_proactivity_changes())
+    }
+
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
         // The commitment lane runs FIRST (CMT-3, ONE-1540). Consuming a due
         // phase COMMITS a Dreamer attempt, so reading the attempt queue after
@@ -134,18 +138,53 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
         }
-        // An unreadable home designation refuses Macro, but an independent
-        // queued Micro/Meso/maintenance or commitment still makes progress.
-        // With no other work, propagate the error rather than call it quiet.
+        // A digest is per vault, so only the elected home node arms its
+        // cadence. Macro admission's local-home check is also the digest's
+        // home check, even when no Macro attempt is queued.
+        let digest_home = match macro_admissible {
+            Some(eligible) => eligible,
+            None => match self.macro_locally_admissible() {
+                Ok(eligible) => eligible,
+                Err(error) => {
+                    macro_error = Some(error);
+                    false
+                }
+            },
+        };
+        if digest_home {
+            // A broken digest index is observable, but cannot silence a
+            // separately valid attempt or commitment deadline.
+            let digest = match self.vault.next_proactivity_digest_at() {
+                Ok(digest) => digest,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "digest deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = digest {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
+        }
+        // An unreadable home designation refuses Macro and digest, but
+        // independent Micro/Meso/maintenance or commitment work continues.
         if next.is_none()
             && commitment.is_none()
             && let Some(error) = macro_error
         {
             return Err(error);
         }
-        // The two lanes are independent durable sources; the earlier one arms
-        // the timer. A TIE keeps the attempt deadline, so wiring the commitment
-        // lane in can never displace a deadline this source already surfaced.
+        // The lanes are independent durable sources; the earlier one arms
+        // the timer. A tie keeps the attempt deadline.
         Ok(match (next, commitment) {
             (Some(attempt), Some(due)) if due.due_at_ms < attempt.due_at_ms => Some(due),
             (Some(attempt), _) => Some(attempt),
@@ -304,6 +343,10 @@ pub struct TimerTick<D> {
 }
 
 impl<D: DeadlineSource> TimerTick<D> {
+    pub(super) fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        self.source.subscribe_changes()
+    }
+
     /// Timer over the system wall clock.
     #[must_use]
     pub fn new(source: D) -> Self {
