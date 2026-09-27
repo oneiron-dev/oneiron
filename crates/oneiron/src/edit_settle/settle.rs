@@ -131,7 +131,8 @@ impl Vault {
                     manifest_ref: Some(manifest_hash),
                     manifest_ops,
                     pptx_slide_creation_id_mints: Vec::new(),
-                    pptx_review_identities: Vec::new(),
+                    pptx_review_identities: pptx_review_identities(proposal),
+                    pptx_judgments: proposal.manifest.slide_judgments.clone(),
                     anchors: Vec::new(),
                     reason: Some("stale_base".to_owned()),
                     sheet_answers: proposal.sheet_answers.clone(),
@@ -241,23 +242,8 @@ impl Vault {
                         }
                     })
                     .collect(),
-                pptx_review_identities: proposal
-                    .manifest
-                    .ops
-                    .iter()
-                    .filter_map(|op| {
-                        let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
-                            return None;
-                        };
-                        Some(super::records::PptxReviewIdentity {
-                            thread_id: patch.thread_id,
-                            asked_by: patch.asked_by,
-                            answered_by: patch.answered_by,
-                            export_author_guid: patch.author.guid.clone(),
-                            export_author_name: patch.author.name.clone(),
-                        })
-                    })
-                    .collect(),
+                pptx_review_identities: pptx_review_identities(proposal),
+                pptx_judgments: proposal.manifest.slide_judgments.clone(),
                 anchors: settled_anchors_from_summary(&reanchor),
                 reason: None,
                 sheet_answers: proposal.sheet_answers.clone(),
@@ -293,6 +279,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SettleDiscardOutcome> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
@@ -310,7 +297,8 @@ impl Vault {
             manifest_ref: None,
             manifest_ops: 0,
             pptx_slide_creation_id_mints: Vec::new(),
-            pptx_review_identities: Vec::new(),
+            pptx_review_identities: pptx_review_identities(proposal),
+            pptx_judgments: proposal.manifest.slide_judgments.clone(),
             anchors: Vec::new(),
             reason: (!reason.is_empty()).then(|| reason.to_owned()),
             sheet_answers: None,
@@ -505,6 +493,7 @@ impl Vault {
 
     fn ensure_selectable(&self, artifact_id: &EntityId, proposal: &EditProposal) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
+        crate::edit_roundtrip::slides_review::verify_judgments(proposal)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
         if !proposal.validation.ok {
@@ -566,6 +555,26 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+fn pptx_review_identities(proposal: &EditProposal) -> Vec<super::records::PptxReviewIdentity> {
+    proposal
+        .manifest
+        .ops
+        .iter()
+        .filter_map(|op| {
+            let crate::edit_roundtrip::EditOp::PptxComment { patch } = op else {
+                return None;
+            };
+            Some(super::records::PptxReviewIdentity {
+                thread_id: patch.thread_id,
+                asked_by: patch.asked_by,
+                answered_by: patch.answered_by,
+                export_author_guid: patch.author.guid.clone(),
+                export_author_name: patch.author.name.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Validates a proposal ref before it lands in a durable ledger row — the same
