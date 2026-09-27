@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use heed::RoTxn;
 use rmpv::Value;
 
@@ -217,6 +218,8 @@ pub(super) struct EntityMetadataCache {
 #[derive(Default)]
 pub(super) struct ClaimStatusGateCache {
     pub(super) include_stale: bool,
+    /// Authenticated, transaction-local diary admission for this retrieval run.
+    pub(super) private_note_ids: Option<std::sync::Arc<crate::claim::ScopedDiaryCandidates>>,
     pub(super) decisions: HashMap<EntityId, Option<ClaimBody>>,
     #[cfg(test)]
     pub(super) body_loads: usize,
@@ -264,6 +267,26 @@ pub struct RetrievalWithPendingVectors<T> {
 }
 
 impl EntityMetadataCache {
+    /// A suppressed private NOTE or pair grant contributes no observable
+    /// receipt count, even when a pipeline probe rejected it before the
+    /// scoped caller's final admission gate.
+    pub(super) fn countable_suppressed(&self, store: &Store, txn: &RoTxn<'_>) -> Result<usize> {
+        let mut count = 0;
+        for id in &self.read_suppressed {
+            let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+                continue;
+            };
+            let Some(header) = EntityMetadataHeader::parse(&raw) else {
+                continue;
+            };
+            count += usize::from(crate::note::countable_read_suppression(
+                header.entity_type,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            ));
+        }
+        Ok(count)
+    }
+
     pub(super) fn get(
         &mut self,
         store: &Store,
