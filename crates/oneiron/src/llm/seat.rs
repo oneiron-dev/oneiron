@@ -2,10 +2,13 @@
 //! A host supplies the typed judgment; the engine owns eligibility, reuse and pinning.
 use std::collections::BTreeSet;
 
+mod policy;
+pub use policy::{SeatPolicy, SeatPrecedence};
+
 use serde::{Deserialize, Serialize};
 
 use super::registry::ModelWireFormat;
-use super::{LlmCapability, ModelId, ModelLocality, ReasoningEffort};
+use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -48,8 +51,12 @@ pub struct DescriptionLine {
 
 impl ModelDescription {
     pub fn validate(&self) -> Result<()> {
+        self.validate_with(&SeatPolicy::bundled()?)
+    }
+
+    fn validate_with(&self, policy: &SeatPolicy) -> Result<()> {
         if self.facet.trim().is_empty()
-            || self.facet.len() > 256
+            || self.facet.len() > policy.facet_max_bytes
             || [
                 self.owner.as_ref(),
                 self.measured.as_ref(),
@@ -58,7 +65,7 @@ impl ModelDescription {
             ]
             .into_iter()
             .flatten()
-            .any(|text| text.trim().is_empty() || text.len() > 4096)
+            .any(|text| text.trim().is_empty() || text.len() > policy.line_max_bytes)
             || self.lines().is_empty()
         {
             return Err(invalid("invalid model description"));
@@ -91,9 +98,24 @@ fn description_key(model: &ModelId) -> Vec<u8> {
 }
 
 impl Vault {
+    /// Resolve the owner manifest row, or the shipped default data for v2
+    /// manifests that do not set an explicit seat policy.
+    pub fn seat_policy(&self) -> Result<SeatPolicy> {
+        match self
+            .model_manifest()?
+            .and_then(|manifest| manifest.seat_policy)
+        {
+            Some(policy) => {
+                policy.validate()?;
+                Ok(policy)
+            }
+            None => SeatPolicy::bundled(),
+        }
+    }
+
     /// Set a revision-pinned description for a registered MODEL identity.
     pub fn set_model_description(&self, description: &ModelDescription) -> Result<()> {
-        description.validate()?;
+        description.validate_with(&self.seat_policy()?)?;
         if self.model_registry_row(&description.model)?.is_none() {
             return Err(invalid("model description requires a registered model"));
         }
@@ -107,6 +129,7 @@ impl Vault {
     }
 
     pub fn model_description(&self, model: &ModelId) -> Result<Option<ModelDescription>> {
+        let policy = self.seat_policy()?;
         let txn = self.store.env.read_txn()?;
         self.store
             .vault_meta
@@ -114,7 +137,7 @@ impl Vault {
             .map(|bytes| {
                 let description: ModelDescription =
                     serde_json::from_slice(&bytes).map_err(|e| invalid(e.to_string()))?;
-                description.validate()?;
+                description.validate_with(&policy)?;
                 if &description.model != model {
                     return Err(invalid("model description identity mismatch"));
                 }
@@ -141,6 +164,7 @@ pub struct SeatTask {
     pub kind: SeatKind,
     pub warm_scope: String,
     pub task: String,
+    pub purpose: CallPurpose,
     pub facet: String,
     pub required: Vec<LlmCapability>,
     pub min_context_tokens: u64,
@@ -160,6 +184,7 @@ pub struct SeatCandidate {
     pub reasoning: bool,
     /// First rung of the default effort ladder for this model.
     pub default_effort: ReasoningEffort,
+    pub allowed_efforts: Vec<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,6 +294,9 @@ impl SeatPool {
         if rank(route) > rank(allowed) {
             return Err(invalid("seat route widens manifest"));
         }
+        let policy = vault.seat_policy()?;
+        let descriptions = vault.description_policy()?;
+        let purpose = super::routing::purpose_key(&task.purpose);
         let rows = vault.model_registry_rows()?;
         let mut candidates = Vec::new();
         for row in rows {
@@ -293,14 +321,42 @@ impl SeatPool {
                 continue;
             }
             let reasoning = catalog.supports(&LlmCapability::Reasoning);
+            let model_policy = descriptions.as_ref().and_then(|configured| {
+                configured
+                    .models
+                    .iter()
+                    .find(|model| model.model == catalog.model)
+            });
+            if model_policy
+                .is_some_and(|model| model.wire != row.wire || model.locality != catalog.locality)
+            {
+                return Err(invalid("description policy disagrees with model catalog"));
+            }
+            let ladder = model_policy.map_or_else(
+                || policy.ladder(&catalog.model, row.wire, reasoning),
+                |model| model.effort_ladder.clone(),
+            );
+            let default_effort = match policy.resolve_default(
+                &ladder,
+                &purpose,
+                descriptions
+                    .as_ref()
+                    .and_then(|configured| configured.vault_effort),
+                descriptions
+                    .as_ref()
+                    .and_then(|configured| configured.purpose_effort.get(&purpose).copied()),
+                descriptions
+                    .as_ref()
+                    .and_then(|configured| configured.global_effort),
+            ) {
+                Ok(effort) => effort,
+                Err(_) => continue,
+            };
             candidates.push(SeatCandidate {
                 reasoning,
                 wire: row.wire,
-                default_effort: if reasoning && row.wire != ModelWireFormat::Gemini {
-                    ReasoningEffort::Low
-                } else {
-                    ReasoningEffort::None
-                },
+                default_effort,
+                allowed_efforts: ladder,
                 model: catalog.model,
                 locality: route,
                 description: description.lines(),
@@ -317,6 +373,18 @@ impl SeatPool {
                 && seat.facet == task.facet
                 && seat.locality == route
                 && eligible.contains(&seat.model)
+                && candidates
+                    .iter()
+                    .find(|candidate| candidate.model == seat.model)
+                    .is_some_and(|candidate| {
+                        policy
+                            .choose(
+                                candidate.default_effort,
+                                Some(seat.effort),
+                                &candidate.allowed_efforts,
+                            )
+                            .is_ok()
+                    })
                 && task
                     .override_effort
                     .is_none_or(|effort| effort == seat.effort)
@@ -337,10 +405,11 @@ impl SeatPool {
             .iter()
             .find(|c| c.model == judgment.model)
             .ok_or_else(|| invalid("seat judgment selected ineligible model"))?;
-        let effort = task
-            .override_effort
-            .or(judgment.effort)
-            .unwrap_or(candidate.default_effort);
+        let effort = policy.choose(
+            candidate.default_effort,
+            task.override_effort.or(judgment.effort),
+            &candidate.allowed_efforts,
+        )?;
         if judgment.why.trim().is_empty()
             || (effort != ReasoningEffort::None
                 && (!candidate.reasoning || candidate.wire == ModelWireFormat::Gemini))

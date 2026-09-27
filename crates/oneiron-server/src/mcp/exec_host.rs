@@ -303,6 +303,9 @@ fn run_engine_native_code_mode(
             kind: SeatKind::Attempt,
             warm_scope: format!("mcp-execute-code:{}", config.run_id.to_hex()),
             task: config.task.clone(),
+            purpose: oneiron::CallPurpose::Other {
+                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+            },
             facet: facet.to_owned(),
             required: Vec::new(),
             min_context_tokens: 1,

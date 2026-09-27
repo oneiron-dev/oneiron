@@ -31,6 +31,7 @@ fn manifest() -> ModelManifest {
             .map(|slot| (slot, ModelLocality::ThirdParty))
             .collect(),
         verdict: None,
+        seat_policy: None,
     }
 }
 fn register(vault: &Vault, name: &str, locality: ModelLocality, facet: &str) -> Result<ModelId> {
@@ -71,6 +72,7 @@ fn task() -> SeatTask {
         kind: SeatKind::Attempt,
         warm_scope: "run-1".into(),
         task: "Analyze this task".into(),
+        purpose: crate::llm::CallPurpose::AnswerGen,
         facet: "long-context reasoning".into(),
         required: vec![LlmCapability::ToolCalling],
         min_context_tokens: 4000,
@@ -86,7 +88,11 @@ impl SeatJudge for Judge {
     fn judge(&self, task: &SeatTask, candidates: &[SeatCandidate]) -> Result<SeatJudgment> {
         assert!(!task.task.is_empty());
         for candidate in candidates {
-            assert_eq!(candidate.default_effort, ReasoningEffort::Low);
+            assert!(
+                candidate
+                    .allowed_efforts
+                    .contains(&candidate.default_effort)
+            );
             assert_eq!(
                 candidate
                     .description
@@ -127,6 +133,10 @@ fn task_judgment_uses_descriptions_not_static_role_and_reuses_eligible_warm_seat
     )?;
     let mut pool = SeatPool::new();
     let chosen = pool.birth(&vault, &task(), &Judge { choice: b.clone() })?;
+    assert_eq!(
+        chosen.effort(),
+        SeatPolicy::bundled()?.default_reasoning_ladder[0]
+    );
     assert_eq!(chosen.model(), &b);
     assert_ne!(
         chosen.model(),
@@ -146,7 +156,11 @@ fn task_judgment_uses_descriptions_not_static_role_and_reuses_eligible_warm_seat
 #[test]
 fn fold_changes_model_only_by_new_seat_and_old_pin_survives() -> Result<()> {
     let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
-    vault.set_model_manifest(&manifest())?;
+    let mut config = manifest();
+    let mut policy = SeatPolicy::bundled()?;
+    policy.precedence = SeatPrecedence::SeatOverride;
+    config.seat_policy = Some(policy);
+    vault.set_model_manifest(&config)?;
     let a = register(
         &vault,
         "provider/a@r1",
@@ -429,5 +443,146 @@ fn run_seat_receipt_is_persisted_before_calls_and_reused_after_reopen() -> Resul
             )
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn manifest_and_description_policy_rows_drive_defaults_and_cap_holder_widening() -> Result<()> {
+    use crate::llm::routing::{DescriptionPolicy, ModelDescription as PolicyModel, OwnerModelLine};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut config = manifest();
+    let mut policy = SeatPolicy::bundled()?;
+    policy.vault_ceiling = ReasoningEffort::High;
+    policy.precedence = SeatPrecedence::SeatOverride;
+    policy.global_default = Some(ReasoningEffort::Low);
+    policy
+        .purpose_defaults
+        .insert("answer_gen".into(), ReasoningEffort::Medium);
+    config.seat_policy = Some(policy.clone());
+    vault.set_model_manifest(&config)?;
+    let model = register(
+        &vault,
+        "provider/worker@r1",
+        ModelLocality::ThirdParty,
+        "long-context reasoning",
+    )?;
+    // Existing per-model description-policy ladders are authoritative over the
+    // bundled reasoning ladder; vault/purpose/global rows resolve here too.
+    vault.set_description_policy(&DescriptionPolicy {
+        models: vec![PolicyModel {
+            model: model.clone(),
+            wire: ModelWireFormat::OpenaiCompat,
+            locality: ModelLocality::ThirdParty,
+            owner: Some(OwnerModelLine {
+                model: model.clone(),
+                text: "task worker".into(),
+                expected_quality: 900_000,
+            }),
+            public_benchmark: None,
+            vendor: None,
+            effort_ladder: vec![
+                ReasoningEffort::High,
+                ReasoningEffort::Medium,
+                ReasoningEffort::Low,
+                ReasoningEffort::XHigh,
+            ],
+        }],
+        contradiction_margin_millionths: 100_000,
+        vault_effort: None,
+        purpose_effort: BTreeMap::new(),
+        global_effort: None,
+    })?;
+    let mut task = task();
+    task.warm_scope = "policy-worker".into();
+    let seat = vault.birth_model_seat(
+        crate::test_util::entity(0xd1),
+        &task,
+        &Judge {
+            choice: model.clone(),
+        },
+    )?;
+    assert_eq!(seat.effort(), ReasoningEffort::Medium);
+    assert_eq!(seat.receipt().effort, ReasoningEffort::Medium);
+    // Changing a policy-manifest row changes a *new* seat, not the old pin.
+    policy
+        .purpose_defaults
+        .insert("answer_gen".into(), ReasoningEffort::High);
+    config.seat_policy = Some(policy.clone());
+    vault.set_model_manifest(&config)?;
+    task.warm_scope = "policy-worker-2".into();
+    let next = vault.birth_model_seat(
+        crate::test_util::entity(0xd2),
+        &task,
+        &Judge {
+            choice: model.clone(),
+        },
+    )?;
+    assert_eq!(next.effort(), ReasoningEffort::High);
+    assert_eq!(seat.effort(), ReasoningEffort::Medium);
+    // The holder override cannot escape the vault ceiling, even in
+    // SeatOverride mode and even when the model's ladder contains xhigh.
+    policy.model_ladders.insert(
+        model.clone(),
+        vec![
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+            ReasoningEffort::Medium,
+        ],
+    );
+    config.seat_policy = Some(policy);
+    vault.set_model_manifest(&config)?;
+    task.warm_scope = "policy-worker-3".into();
+    task.override_effort = Some(ReasoningEffort::XHigh);
+    let run_id = crate::test_util::entity(0xd3);
+    assert!(
+        vault
+            .birth_model_seat(run_id, &task, &Judge { choice: model })
+            .is_err()
+    );
+    assert!(vault.model_seat_receipt(run_id)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn default_nested_narrowing_and_manifest_description_budgets() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut config = manifest();
+    vault.set_model_manifest(&config)?;
+    let model = register(
+        &vault,
+        "provider/worker@r1",
+        ModelLocality::ThirdParty,
+        "long-context reasoning",
+    )?;
+    let mut task = task();
+    task.warm_scope = "narrowing".into();
+    task.override_effort = Some(ReasoningEffort::High);
+    assert!(
+        vault
+            .birth_model_seat(
+                crate::test_util::entity(0xd4),
+                &task,
+                &Judge {
+                    choice: model.clone()
+                }
+            )
+            .is_err()
+    );
+    let description = ModelDescription {
+        model: model.clone(),
+        facet: "profile".into(),
+        owner: Some("x".repeat(4097)),
+        measured: None,
+        benchmarks: None,
+        vendor: None,
+    };
+    assert!(vault.set_model_description(&description).is_err());
+    let mut policy = SeatPolicy::bundled()?;
+    policy.line_max_bytes = 5000;
+    policy.facet_max_bytes = 512;
+    config.seat_policy = Some(policy);
+    vault.set_model_manifest(&config)?;
+    vault.set_model_description(&description)?;
+    assert_eq!(vault.model_description(&model)?, Some(description));
     Ok(())
 }

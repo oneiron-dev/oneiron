@@ -48,6 +48,7 @@ fn configure_seat_vault(vault: &Vault) -> Result<ModelId> {
             .map(|slot| (slot, ModelLocality::OwnServer))
             .collect(),
         verdict: None,
+        seat_policy: None,
     };
     vault.set_model_manifest(&manifest)?;
     vault.put_model_registry_row(&ModelRegistryRow {
@@ -97,6 +98,7 @@ fn runtime_attempt_child_and_follower_births_bind_recorded_backend_requests() ->
             kind,
             warm_scope: format!("run-tree-{index}"),
             task: format!("resolve work {index}"),
+            purpose: CallPurpose::AnswerGen,
             facet: "tool-use reasoning".into(),
             required: Vec::new(),
             min_context_tokens: 1024,

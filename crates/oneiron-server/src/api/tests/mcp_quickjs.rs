@@ -42,7 +42,7 @@ impl SeatJudge for Judge {
         );
         Ok(SeatJudgment {
             model: self.model.clone(),
-            effort: Some(ReasoningEffort::Low),
+            effort: None,
             why: "The owner's code-task description fits this run".into(),
         })
     }
@@ -133,6 +133,17 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
                 .map(|slot| (slot, ModelLocality::OnDevice))
                 .collect(),
             verdict: None,
+            seat_policy: Some(oneiron::llm::seat::SeatPolicy {
+                purpose_defaults: BTreeMap::from([(
+                    format!(
+                        "other:{}",
+                        oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME
+                    ),
+                    ReasoningEffort::High,
+                )]),
+                vault_ceiling: ReasoningEffort::High,
+                ..oneiron::llm::seat::SeatPolicy::bundled().unwrap()
+            }),
         })
         .unwrap();
     vault
@@ -273,7 +284,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     assert_eq!(results[1]["run_id"], results[2]["run_id"]);
     assert_eq!(judge.calls.load(Ordering::Relaxed), 1);
     assert_eq!(results[0]["model_choice"]["model"], seat_model.as_str());
-    assert_eq!(results[0]["model_choice"]["effort"], "low");
+    assert_eq!(results[0]["model_choice"]["effort"], "high");
     assert_eq!(results[0]["model_choice"]["reused"], false);
     assert_eq!(results[1]["model_choice"]["reused"], true);
     {
@@ -281,7 +292,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         assert_eq!(seen.len(), 2);
         for request in seen.iter() {
             assert_eq!(request.model, seat_model);
-            assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::Low));
+            assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::High));
         }
     }
     for result in &results {

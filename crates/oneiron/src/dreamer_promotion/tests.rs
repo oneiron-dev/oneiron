@@ -1535,6 +1535,7 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
                 floor: ConfidenceBand::High,
                 mode,
             }),
+            seat_policy: None,
         })?;
         let fx = fixture(&vault)?;
         let allow = CountingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict {

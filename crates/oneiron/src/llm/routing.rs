@@ -251,7 +251,7 @@ fn seat_key(id: &str) -> Result<Vec<u8>> {
     }
     Ok([SEAT_PREFIX, id.as_bytes()].concat())
 }
-fn purpose_key(purpose: &CallPurpose) -> String {
+pub(crate) fn purpose_key(purpose: &CallPurpose) -> String {
     match purpose {
         CallPurpose::Other { name } => format!("other:{name}"),
         other => serde_json::to_value(other)

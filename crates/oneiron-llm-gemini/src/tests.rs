@@ -771,6 +771,7 @@ fn manifest_gemini_seat_none_clears_stale_thinking_on_recorded_wire() {
                 .map(|slot| (slot, ModelLocality::ThirdParty))
                 .collect(),
             verdict: None,
+            seat_policy: None,
         })
         .unwrap();
     let row = ModelRegistryRow {
@@ -809,6 +810,7 @@ fn manifest_gemini_seat_none_clears_stale_thinking_on_recorded_wire() {
         kind: SeatKind::Attempt,
         warm_scope: "gemini-run".into(),
         task: "judge a task".into(),
+        purpose: CallPurpose::AnswerGen,
         facet: "reasoning".into(),
         required: vec![LlmCapability::JsonResponse],
         min_context_tokens: 1000,

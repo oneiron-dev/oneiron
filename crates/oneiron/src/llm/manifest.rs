@@ -122,6 +122,9 @@ pub struct ModelManifest {
     pub routes: BTreeMap<ModelSlot, ModelLocality>,
     #[serde(default)]
     pub verdict: Option<VerdictBinding>,
+    /// Owner-configured runtime seat policy. An absent row takes bundled data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat_policy: Option<super::seat::SeatPolicy>,
 }
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
@@ -158,6 +161,10 @@ impl ModelManifest {
         Self::from_json(&std::fs::read(path)?)
     }
     pub fn validate(&self) -> Result<()> {
+        self.seat_policy.as_ref().map_or_else(
+            || super::seat::SeatPolicy::bundled().map(|_| ()),
+            super::seat::SeatPolicy::validate,
+        )?;
         if self.version != 2
             || MODEL_ROLES
                 .iter()

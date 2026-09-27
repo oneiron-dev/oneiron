@@ -20768,6 +20768,7 @@
      "path": "src/llm/routing.rs",
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 13,
       "struct": 11,
@@ -20877,9 +20878,26 @@
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
       "enum": 2,
-      "fn": 16,
+      "fn": 17,
+      "re-export": 1,
       "struct": 8,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatPolicy",
+      "SeatPrecedence"
+     ],
+     "path": "src/llm/seat/policy.rs",
+     "purpose": "Manifest-owned runtime seat policy; shipped defaults are data, not routing code",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -35741,7 +35759,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36296,7 +36314,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
+   "source_files": 2141,
    "test_files": 733
   },
   "oneiron-android": {
