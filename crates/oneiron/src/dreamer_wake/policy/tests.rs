@@ -66,6 +66,20 @@ fn claims(vault: &Vault, source: ClaimSource, count: usize, at_time: u64) -> Res
     batch.commit()?;
     Ok(())
 }
+fn user_turn(vault: &Vault, learned_at: u64) -> Result<()> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(&mut body, &Value::Map(vec![("spkr".into(), "user".into())]))
+        .expect("fixture turn body");
+    vault.put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_TURN,
+        at(learned_at),
+        learned_at,
+        &body,
+    )?;
+    Ok(())
+}
+
 fn idle(last: u64) -> WakeIdleState {
     WakeIdleState {
         running_turns: false,
@@ -90,7 +104,8 @@ fn v3() -> DreamerWakePolicy {
         new_records: 50,
         longest_wait_secs: 8 * 3600,
         nightly_secs: 24 * 3600,
-        idle_secs: 3600,
+        idle_secs: 60,
+        quiet_weave_secs: 3600,
     }
 }
 
@@ -101,21 +116,21 @@ fn explicit_threshold_and_generated_only_growth() -> Result<()> {
     // The non-Generated source is what counts, never actor/subject scaffolding.
     claims(&vault, ClaimSource::UserStated, 49, 10)?;
     assert_eq!(
-        vault.evaluate_dreamer_wake(idle(0), 3601)?,
+        vault.evaluate_dreamer_wake(idle(3500), 3601)?,
         WakePolicyDecision::ArmIdle {
-            due_at: 10 + 8 * 3600
+            due_at: 3500 + 3600
         }
     );
     claims(&vault, ClaimSource::Generated, 60, 11)?;
     assert_eq!(
-        vault.enqueue_due_dreamer_wake(idle(0), 3601)?.decision,
+        vault.enqueue_due_dreamer_wake(idle(3500), 3601)?.decision,
         WakePolicyDecision::ArmIdle {
-            due_at: 10 + 8 * 3600
+            due_at: 3500 + 3600
         }
     );
     assert!(AttemptQueue::new(&vault).list()?.is_empty());
     claim(&vault, ClaimSource::Observed, 12)?;
-    let outcome = vault.enqueue_due_dreamer_wake(idle(0), 3601)?;
+    let outcome = vault.enqueue_due_dreamer_wake(idle(3500), 3601)?;
     assert_eq!(
         outcome.decision,
         WakePolicyDecision::Enqueue {
@@ -125,7 +140,7 @@ fn explicit_threshold_and_generated_only_growth() -> Result<()> {
     assert!(outcome.attempt.is_some());
     assert!(
         vault
-            .enqueue_due_dreamer_wake(idle(0), 3601)?
+            .enqueue_due_dreamer_wake(idle(3500), 3601)?
             .attempt
             .is_none(),
         "same rows never wake twice"
@@ -148,7 +163,7 @@ fn explicit_threshold_and_generated_only_growth() -> Result<()> {
 }
 
 #[test]
-fn quiet_window_cancels_on_inbound_or_running_work_and_longest_wait_fires() -> Result<()> {
+fn quiet_window_cancels_on_inbound_or_running_work_and_wakes_below_threshold() -> Result<()> {
     let (_dir, vault) = open();
     row(&vault, v3())?;
     claim(&vault, ClaimSource::UserStated, 1)?;
@@ -158,7 +173,7 @@ fn quiet_window_cancels_on_inbound_or_running_work_and_longest_wait_fires() -> R
     );
     assert_eq!(
         vault.enqueue_due_dreamer_wake(idle(3699), 3700)?.decision,
-        WakePolicyDecision::ArmIdle { due_at: 7299 }
+        WakePolicyDecision::ArmIdle { due_at: 3759 }
     );
     assert_eq!(
         vault.evaluate_dreamer_wake(
@@ -180,12 +195,15 @@ fn quiet_window_cancels_on_inbound_or_running_work_and_longest_wait_fires() -> R
         )?,
         WakePolicyDecision::Silent
     );
-    // Bootstrap with less than 50 records waits until the first configured
-    // longest-wait boundary; one timed wake establishes its durable baseline.
+    // Quiet alone admits below the 50-record accumulation threshold.
     assert_eq!(
-        vault.enqueue_due_dreamer_wake(idle(0), 3601)?.decision,
-        WakePolicyDecision::ArmIdle {
-            due_at: 1 + 8 * 3600
+        vault.enqueue_due_dreamer_wake(idle(1), 3600)?.decision,
+        WakePolicyDecision::ArmIdle { due_at: 3601 }
+    );
+    assert_eq!(
+        vault.enqueue_due_dreamer_wake(idle(1), 3601)?.decision,
+        WakePolicyDecision::Enqueue {
+            recipe: WakeRecipe::Weave
         }
     );
     // A default row sees a user TURN as one-per-turn once quiet.
@@ -204,13 +222,7 @@ fn quiet_window_cancels_on_inbound_or_running_work_and_longest_wait_fires() -> R
     );
     claim(&vault, ClaimSource::Observed, 3604)?;
     assert_eq!(
-        vault.evaluate_dreamer_wake(idle(0), 1 + 8 * 3600 - 1)?,
-        WakePolicyDecision::ArmIdle {
-            due_at: 1 + 8 * 3600
-        }
-    );
-    assert_eq!(
-        vault.evaluate_dreamer_wake(idle(0), 1 + 8 * 3600)?,
+        vault.evaluate_dreamer_wake(idle(1), 3604)?,
         WakePolicyDecision::Enqueue {
             recipe: WakeRecipe::Weave
         }
@@ -419,20 +431,20 @@ fn continuous_wake_does_not_consume_pending_weave_records() -> Result<()> {
         .unwrap();
     vault.put_entity(&EntityId::now(), ENTITY_TYPE_TURN, at(2), 2, &body)?;
     assert_eq!(
-        vault.enqueue_due_dreamer_wake(idle(0), 3601)?.decision,
+        vault.enqueue_due_dreamer_wake(idle(3500), 3601)?.decision,
         WakePolicyDecision::Enqueue {
             recipe: WakeRecipe::Continuous
         }
     );
     assert_eq!(
-        vault.evaluate_dreamer_wake(idle(0), 3602)?,
+        vault.evaluate_dreamer_wake(idle(3500), 3602)?,
         WakePolicyDecision::ArmIdle {
-            due_at: 1 + 8 * 3600
+            due_at: 3500 + 3600
         }
     );
     claim(&vault, ClaimSource::UserStated, 3)?;
     assert_eq!(
-        vault.enqueue_due_dreamer_wake(idle(0), 3602)?.decision,
+        vault.enqueue_due_dreamer_wake(idle(3500), 3602)?.decision,
         WakePolicyDecision::Enqueue {
             recipe: WakeRecipe::Weave
         }
@@ -451,6 +463,7 @@ fn nightly_recipe_is_a_separate_row_dial() -> Result<()> {
             longest_wait_secs: 2 * 86_400,
             nightly_secs: 3_600,
             idle_secs: 60,
+            quiet_weave_secs: 2 * 86_400,
         },
     )?;
     claim(&vault, ClaimSource::UserStated, 1)?;
@@ -529,5 +542,85 @@ fn zero_compute_suspends_even_with_due_explicit_input() -> Result<()> {
             .is_none()
     );
     assert!(vault.dreamer_wake_recipe_inputs()?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn longest_wait_still_wakes_before_the_separate_quiet_window() -> Result<()> {
+    let (_dir, vault) = open();
+    row(
+        &vault,
+        DreamerWakePolicy {
+            quiet_weave_secs: 2 * 86_400,
+            ..v3()
+        },
+    )?;
+    claim(&vault, ClaimSource::UserStated, 1)?;
+    assert_eq!(
+        vault.evaluate_dreamer_wake(idle(1), 1 + 8 * 3600 - 1)?,
+        WakePolicyDecision::ArmIdle {
+            due_at: 1 + 8 * 3600
+        }
+    );
+    assert_eq!(
+        vault
+            .enqueue_due_dreamer_wake(idle(1), 1 + 8 * 3600)?
+            .decision,
+        WakePolicyDecision::Enqueue {
+            recipe: WakeRecipe::Weave
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn interleaved_recipe_wakes_merge_each_component_once() -> Result<()> {
+    for interleaved in [WakeRecipe::Weave, WakeRecipe::Nightly] {
+        let (_dir, vault) = open();
+        let mut policy = v3();
+        policy.new_records = if interleaved == WakeRecipe::Weave {
+            1
+        } else {
+            100
+        };
+        policy.nightly_secs = if interleaved == WakeRecipe::Nightly {
+            60
+        } else {
+            86_400
+        };
+        row(&vault, policy)?;
+        user_turn(&vault, 1)?;
+        assert_eq!(
+            vault.enqueue_due_dreamer_wake(idle(0), 100)?.decision,
+            WakePolicyDecision::Enqueue {
+                recipe: WakeRecipe::Continuous
+            }
+        );
+        assert_eq!(
+            vault.enqueue_due_dreamer_wake(idle(0), 100)?.decision,
+            WakePolicyDecision::Enqueue {
+                recipe: interleaved
+            }
+        );
+        for (learned_at, now) in [(2, 101), (3, 102)] {
+            user_turn(&vault, learned_at)?;
+            assert_eq!(
+                vault.enqueue_due_dreamer_wake(idle(0), now)?.decision,
+                WakePolicyDecision::Enqueue {
+                    recipe: WakeRecipe::Continuous
+                }
+            );
+        }
+        let continuous = vault
+            .dreamer_wake_recipe_inputs()?
+            .into_iter()
+            .find(|input| input.recipe == WakeRecipe::Continuous)
+            .expect("continuous outbox survives the interleaved recipe");
+        assert_eq!(continuous.turn_count, 3);
+        assert_eq!(continuous.record_count, 3, "interleaved {interleaved:?}");
+        assert_eq!(continuous.nightly_count, 3, "interleaved {interleaved:?}");
+        assert_eq!(continuous.after_record, None);
+        assert_eq!(continuous.after_nightly, None);
+    }
     Ok(())
 }

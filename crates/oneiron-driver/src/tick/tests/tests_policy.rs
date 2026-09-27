@@ -20,6 +20,33 @@ fn seed_user_turn(vault: &Vault) {
         )
         .unwrap();
 }
+fn configure_quiet_window(vault: &Vault) {
+    let owner = EntityId::now();
+    vault
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner",
+        )
+        .unwrap();
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let mut policy = vault.dreamer_wake_policy().unwrap();
+    policy.wake_grain_turns = 100;
+    policy.new_records = 100;
+    policy.idle_secs = 60;
+    policy.quiet_weave_secs = 3_600;
+    vault.set_dreamer_wake_policy(&proof, policy).unwrap();
+}
+
 fn sample(last: Arc<AtomicU64>) -> IdleSample {
     Arc::new(move || WakeIdleState {
         running_turns: false,
@@ -33,6 +60,7 @@ fn sample(last: Arc<AtomicU64>) -> IdleSample {
 async fn policy_timer_cancels_on_inbound_and_fires_at_new_quiet_deadline() {
     let (_dir, vault) = open_vault();
     seed_user_turn(&vault);
+    configure_quiet_window(&vault);
     let node_id = vault_client_node_id(&vault);
     let started = tokio::time::Instant::now();
     let now_ms: NowMillis = Arc::new(move || {

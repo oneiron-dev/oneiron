@@ -29,15 +29,19 @@ pub struct DreamerWakePolicy {
     pub new_records: u64,
     pub longest_wait_secs: u64,
     pub nightly_secs: u64,
+    /// Minimum inbound silence for any idle recipe to run.
     pub idle_secs: u64,
+    /// Independent quiet-window trigger for Weave, even below accumulation.
+    pub quiet_weave_secs: u64,
 }
 impl DreamerWakePolicy {
-    fn validate(self) -> Result<Self> {
+    pub(crate) fn validate(self) -> Result<Self> {
         if self.wake_grain_turns == 0
             || self.new_records == 0
             || self.longest_wait_secs == 0
             || self.nightly_secs == 0
             || self.idle_secs == 0
+            || self.quiet_weave_secs < self.idle_secs
         {
             return Err(invalid());
         }
@@ -98,6 +102,15 @@ pub struct WakePolicyTrigger {
     pub after_record: Option<[u8; 16]>,
     pub through: [u8; 16],
     pub observed_at: u64,
+    // The latest snapshot for each component is distinct from the EARLIEST
+    // cursor above. A later wake can overlap this snapshot after another
+    // recipe advanced its own cursor; compare to this segment, not the origin.
+    latest_after_turn: Option<[u8; 16]>,
+    latest_after_record: Option<[u8; 16]>,
+    latest_after_nightly: Option<[u8; 16]>,
+    latest_turn_count: u64,
+    latest_record_count: u64,
+    latest_nightly_count: u64,
 }
 
 /// Exclusive in-process timer ownership for one open vault. The private
@@ -282,9 +295,9 @@ fn decide(
     if !idle.compute_available || idle.running_turns || idle.live_background_work {
         return WakePolicyDecision::Silent;
     }
-    let quiet_due = idle.last_inbound_at.saturating_add(policy.idle_secs);
-    if now < quiet_due {
-        return WakePolicyDecision::ArmIdle { due_at: quiet_due };
+    let idle_due = idle.last_inbound_at.saturating_add(policy.idle_secs);
+    if now < idle_due {
+        return WakePolicyDecision::ArmIdle { due_at: idle_due };
     }
     if counts.turns >= policy.wake_grain_turns {
         return WakePolicyDecision::Enqueue {
@@ -296,12 +309,15 @@ fn decide(
         .or(counts.first)
         .unwrap_or(now)
         .saturating_add(policy.longest_wait_secs);
+    let quiet_due = idle.last_inbound_at.saturating_add(policy.quiet_weave_secs);
     let nightly_due = state
         .last_nightly_at
         .or(counts.first_nightly)
         .unwrap_or(now)
         .saturating_add(policy.nightly_secs);
-    if counts.records > 0 && (counts.records >= policy.new_records || now >= longest_due) {
+    if counts.records > 0
+        && (counts.records >= policy.new_records || now >= quiet_due || now >= longest_due)
+    {
         return WakePolicyDecision::Enqueue {
             recipe: WakeRecipe::Weave,
         };
@@ -311,18 +327,41 @@ fn decide(
             recipe: WakeRecipe::Nightly,
         };
     }
+    let weave_deadline = if counts.records > 0 {
+        quiet_due.min(longest_due)
+    } else {
+        u64::MAX
+    };
+    let nightly_deadline = if counts.nightly > 0 {
+        nightly_due
+    } else {
+        u64::MAX
+    };
     WakePolicyDecision::ArmIdle {
-        due_at: if counts.records > 0 {
-            longest_due
-        } else {
-            nightly_due
-        }
-        .min(if counts.nightly > 0 {
-            nightly_due
-        } else {
-            longest_due
-        }),
+        due_at: weave_deadline.min(nightly_deadline),
     }
+}
+
+/// Combine the distinct prefix already in the outbox with the latest
+/// snapshot. An unchanged segment cursor means the new count REPLACES that
+/// segment, rather than adding its older rows again.
+fn merge_component(
+    new_count: u64,
+    new_after: Option<[u8; 16]>,
+    old_total: u64,
+    old_latest_count: u64,
+    old_latest_after: Option<[u8; 16]>,
+) -> Result<u64> {
+    if new_after < old_latest_after {
+        return Err(Error::CorruptedIndex("dreamer wake outbox cursor rewound"));
+    }
+    Ok(if new_after == old_latest_after {
+        old_total
+            .saturating_sub(old_latest_count)
+            .saturating_add(new_count)
+    } else {
+        old_total.saturating_add(new_count)
+    })
 }
 
 /// A policy dispatch receipt may complete only while its recipe input is
@@ -461,6 +500,12 @@ impl Vault {
                     .last
                     .ok_or(Error::CorruptedIndex("wake policy mutation head"))?,
                 observed_at: now,
+                latest_after_turn: state.turn_change_id,
+                latest_after_record: state.record_change_id,
+                latest_after_nightly: state.nightly_change_id,
+                latest_turn_count: counts.turns,
+                latest_record_count: counts.records,
+                latest_nightly_count: counts.nightly,
             };
             let attempt =
                 DreamerRunnerStore::new(self).enqueue_policy_wake_in_txn(txn, &trigger, now)?;
@@ -472,19 +517,27 @@ impl Vault {
                 if prior.recipe != recipe {
                     return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
                 }
-                // A stream whose cursor has not moved is CUMULATIVE in the
-                // current snapshot: replacing its count avoids counting the
-                // old range twice. A moved cursor names a disjoint suffix.
-                if pending.after_turn != prior.after_turn {
-                    pending.turn_count = pending.turn_count.saturating_add(prior.turn_count);
-                }
-                if pending.after_record != prior.after_record {
-                    pending.record_count = pending.record_count.saturating_add(prior.record_count);
-                }
-                if pending.after_nightly != prior.after_nightly {
-                    pending.nightly_count =
-                        pending.nightly_count.saturating_add(prior.nightly_count);
-                }
+                pending.turn_count = merge_component(
+                    pending.turn_count,
+                    pending.latest_after_turn,
+                    prior.turn_count,
+                    prior.latest_turn_count,
+                    prior.latest_after_turn,
+                )?;
+                pending.record_count = merge_component(
+                    pending.record_count,
+                    pending.latest_after_record,
+                    prior.record_count,
+                    prior.latest_record_count,
+                    prior.latest_after_record,
+                )?;
+                pending.nightly_count = merge_component(
+                    pending.nightly_count,
+                    pending.latest_after_nightly,
+                    prior.nightly_count,
+                    prior.latest_nightly_count,
+                    prior.latest_after_nightly,
+                )?;
                 pending.after_turn = prior.after_turn;
                 pending.after_record = prior.after_record;
                 pending.after_nightly = prior.after_nightly;
