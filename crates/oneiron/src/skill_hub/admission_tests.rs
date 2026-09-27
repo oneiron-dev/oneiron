@@ -482,6 +482,9 @@ impl UsefulUpstreamJudge for Useful {
                     version: "1".to_owned(),
                 }],
                 band: DecisionBand::default(),
+                band_version: 0,
+                evidence_versions: Vec::new(),
+                cost_per_thousand: None,
             },
             human_ask: None,
         })

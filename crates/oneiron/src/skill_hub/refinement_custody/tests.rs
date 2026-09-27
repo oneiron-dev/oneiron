@@ -34,6 +34,9 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
                 version: "1".into(),
             }],
             band: DecisionBand::default(),
+            band_version: 0,
+            evidence_versions: Vec::new(),
+            cost_per_thousand: None,
         },
         human_ask: None,
     };
