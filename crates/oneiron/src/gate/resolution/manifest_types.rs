@@ -125,6 +125,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) budget_policy: BudgetPolicyTable,
     pub(crate) pack_install_policy: Option<crate::gate::PackInstallPolicy>,
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
+    pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) hosted_tts: HostedTtsPolicy,
     pub(super) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
     pub(in crate::gate) docedit_resource_policy:
