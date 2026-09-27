@@ -856,13 +856,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/ask_holders.rs` | src | s | 1 crate-vis | — | Scope ask recipients resolved from live, owner-stamped action grants |
 | `src/consent/bound.rs` | src | m | 7 struct · 4 enum · 33 fn · 3 const · 6 crate-vis | ActionClass, ActionEnvelope, ActorBound, AudienceBound, BoundClass, BoundEnvelope, BoundSubject, ConsentDomain +3 | — |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 13 crate-vis | — | — |
-| `src/consent/doors.rs` | src | m | 2 struct · 16 fn · 8 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
+| `src/consent/doors.rs` | src | m | 2 struct · 16 fn · 10 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/effect.rs` | src | m | 3 struct · 4 enum · 22 fn · 3 const · 3 crate-vis | CatastropheClass, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, ReversibilityClass, UndoFidelity | — |
 | `src/consent/grant.rs` | src | m | 5 struct · 4 enum · 1 trait · 16 fn · 6 const | ActionGrant, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal, ConsentReceipt +2 | — |
-| `src/consent/mod.rs` | src | s | 1 mod · 7 re-export · 3 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
+| `src/consent/mod.rs` | src | s | 1 mod · 8 re-export · 3 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
+| `src/consent/owner_reason.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 1 crate-vis | OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo, OwnerReasonVerdict, ReasonMatchConfidence | Owner-authenticated confirm reasons, bounded rule rows, and their derived grants |
+| `src/consent/owner_reason/selection.rs` | src | s | 4 crate-vis | — | Pure nearest-reason selection: remove dominated covering bounds first |
+| `src/consent/owner_reason/selection/tests.rs` | test | s | — | — | — |
 | `src/consent/registry.rs` | src | s | 4 struct · 1 fn · 1 const · 1 crate-vis | ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction | — |
 | `src/consent/support.rs` | src | s | 19 crate-vis | — | — |
 | `src/consent/tests.rs` | test | XL | — | — | DEC-0006 unified consent-mode conformance |
+| `src/consent/tests/owner_reason.rs` | test | m | — | — | — |
 | `src/consent/tests/shared_brief.rs` | test | s | — | — | — |
 | `src/consent/widen.rs` | src | m | 1 struct · 1 enum · 6 fn | WidenKind, WidenProposal | Propose-only authority widening |
 | `src/consent_graduation/doors.rs` | src | s | 10 fn · 1 crate-vis | — | Public Vault doors plus the shared accept-offer txn helper used by ED-05 |
@@ -2917,6 +2921,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it_sync/sync_window_manager.rs` | test | L | — | — | Integration tests for the production window manager (ONE-1125) |
 | `tests/it_sync/task_authority_convergence.rs` | test | m | — | — | TASK authority across two real vaults |
 | `tests/lens_regen.rs` | test | L | — | — | ONE-1431 — lens regen-on-update with the behavior-diff auto-adopt gate |
+| `tests/owner_reason.rs` | test | m | — | — | Public confirm → unsure re-ask → reconfirm → undo contract |
 | `tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs` | test | s | — | — | (a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor… |
 | `tests/relay_attestation_compilefail/a_witness_struct_literal_private_field.rs` | test | s | — | — | (a.1) Out-of-boundary construction of `AttestedRelayDomain` must fail: BOTH fields are private — the trust… |
 | `tests/relay_attestation_compilefail/b_identity_construction_outside_edge_auth.rs` | test | s | — | — | (b) `AuthenticatedConnectionIdentity` must not be constructible outside the edge-auth path: both fields are… |
