@@ -49,8 +49,7 @@ fn bridge_authenticates_pull_and_idempotent_push_with_normalized_receipts() {
                     let content_length = headers
                         .lines()
                         .find_map(|line| line.strip_prefix("content-length: "))
-                        .map(|value| value.parse::<usize>().expect("length"))
-                        .unwrap_or(0);
+                        .map_or(0, |value| value.parse::<usize>().expect("length"));
                     if data.len() >= end + 4 + content_length {
                         break;
                     }
@@ -134,7 +133,7 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
         updated_at_ms: 1000,
         fields: initial.clone(),
     };
-    let mut changed = initial.clone();
+    let mut changed = initial;
     changed.description = Some("from Linear".into());
     let page = LinearChangePage {
         changes: vec![LinearIssueChange {
@@ -143,12 +142,17 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
             updated_at_ms: 1001,
             fields: changed.clone(),
         }],
-        next_cursor: Some("cursor-2".into()),
+        next_cursor: None,
     };
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("address");
     let server = std::thread::spawn(move || {
         for response in [
+            serde_json::to_vec(&LinearChangePage {
+                changes: vec![],
+                next_cursor: None,
+            })
+            .unwrap(),
             serde_json::to_vec(&created).unwrap(),
             serde_json::to_vec(&page).unwrap(),
         ] {
@@ -176,11 +180,13 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
     };
-    let (push, pull) = synchronize_once(&vault, bridge.clone(), bridge, 100).expect("pass");
+    let (push, initial_pull) =
+        synchronize_once(&vault, bridge.clone(), bridge.clone(), 100).expect("link pass");
     assert_eq!(push.len(), 1);
     assert_eq!(push[0].status, LinearMirrorStatus::Linked);
-    assert_eq!(pull.applied, 1);
-    assert_eq!(pull.new_cursor.as_deref(), Some("cursor-2"));
+    assert_eq!(initial_pull.applied, 0);
+    let (_push, pulled) = synchronize_once(&vault, bridge.clone(), bridge, 101).expect("pull pass");
+    assert_eq!(pulled.applied, 1);
     assert_eq!(
         VaultLinearTaskStore::new(&vault)
             .task_snapshot(task)
@@ -189,4 +195,85 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
         changed
     );
     server.join().expect("provider exchange");
+}
+
+#[tokio::test]
+async fn configured_bridge_builds_inside_tokio_without_blocking_client_panic() {
+    let bridge = build_bridge(
+        Some("http://127.0.0.1:12345/".to_owned()),
+        Some("test-token".to_owned()),
+    )
+    .await
+    .expect("construct blocking client off runtime thread")
+    .expect("configured");
+    assert_eq!(bridge.base.scheme(), "http");
+    assert_eq!(
+        bridge.credential,
+        reqwest::header::HeaderValue::from_static("Bearer test-token")
+    );
+}
+
+#[test]
+fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let fields = MirroredTaskFields {
+        title: "task".into(),
+        description: None,
+        priority: None,
+        assignee_ref: None,
+        status: "queued".into(),
+    };
+    let expected = fields.field_hashes();
+    let title_hash = hex_operation_id(expected["title"]);
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().expect("accept");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("timeout");
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let size = socket.read(&mut buf).expect("read");
+            assert!(size > 0);
+            raw.extend_from_slice(&buf[..size]);
+            if let Some(end) = raw.windows(4).position(|chunk| chunk == b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&raw[..end]).to_lowercase();
+                let len: usize = header
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length: "))
+                    .expect("body length")
+                    .parse()
+                    .expect("valid length");
+                if raw.len() >= end + 4 + len {
+                    break;
+                }
+            }
+        }
+        let request = String::from_utf8_lossy(&raw);
+        assert!(request.starts_with("POST /issues/update "));
+        assert!(request.contains("Bearer test-token"));
+        assert!(request.contains("expected_base_field_hashes"));
+        assert!(request.contains(&title_hash));
+        socket.write_all(b"HTTP/1.1 412 Precondition Failed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .expect("reject without a remote write");
+    });
+    let mut bridge = LinearBridge {
+        client: Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .expect("client"),
+        base: reqwest::Url::parse(&format!("http://{addr}/")).expect("url"),
+        credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+    };
+    let issue = LinearIssueRef {
+        issue_id: "opaque".into(),
+        team_id: "team".into(),
+        identifier: "TEAM-1".into(),
+    };
+    assert!(matches!(
+        bridge.update_issue([1u8; 32], &issue, &expected, &fields),
+        Err(LinearSyncError::RemoteChanged)
+    ));
+    server.join().expect("provider checked precondition");
 }

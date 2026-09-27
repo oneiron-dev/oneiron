@@ -171,6 +171,7 @@ impl LinearEgress for FakeEgress {
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,
+        _expected_base: &BTreeMap<String, [u8; 32]>,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
         self.updated += 1;

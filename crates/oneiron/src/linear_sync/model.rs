@@ -362,6 +362,10 @@ pub enum LinearSyncError {
         /// Link revision the store actually holds, or `None` when unlinked.
         found: Option<u64>,
     },
+    /// The tracker changed after the base snapshot was observed. The host
+    /// must leave the remote issue untouched and retry after another pull.
+    #[error("linear remote issue changed before conditional update")]
+    RemoteChanged,
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
@@ -392,7 +396,8 @@ pub struct LinearPullReceipt {
     /// its NON-conflicting issue-owned fields — the refusal is per field — so
     /// this is a count of changes, not of untouched TASKs.
     pub conflicts: Vec<LinearMirrorReceipt>,
-    /// Cursor to resume from; `None` means caught up.
+    /// Cursor to resume from. `pull_page` returns `None` when caught up;
+    /// `synchronize` reports its last durably committed cursor after draining.
     pub new_cursor: Option<String>,
     /// Wall-clock stamp of the pass.
     pub pulled_at: u64,
@@ -448,15 +453,21 @@ pub trait LinearEgress {
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange>;
 
-    /// Updates an already-linked tracker issue.
+    /// Conditionally updates an already-linked issue. The host MUST atomically
+    /// compare the tracker's current five field hashes against `expected_base`
+    /// before publishing the whole snapshot. A read-then-write in the host is
+    /// not atomic, and a timestamp alone can collapse distinct events.
+    /// If the provider cannot guarantee this comparison, refuse the write.
     ///
     /// # Errors
     ///
-    /// Returns a transport error when the update cannot be performed.
+    /// Returns [`LinearSyncError::RemoteChanged`] without any remote write
+    /// when the remote values differ, or a transport error on failure.
     fn update_issue(
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,
+        expected_base: &BTreeMap<String, [u8; 32]>,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange>;
 }

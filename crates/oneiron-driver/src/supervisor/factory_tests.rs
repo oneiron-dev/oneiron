@@ -390,3 +390,251 @@ fn planner_builder_rejects_non_agent_actor() {
         .expect("a System actor may not author gated proposals");
     assert!(matches!(error, oneiron::Error::InvalidClaimBody(_)));
 }
+
+#[derive(Clone, Default)]
+struct HostMirror {
+    events: Arc<std::sync::Mutex<Vec<oneiron::LinearIssueChange>>>,
+}
+
+impl oneiron::LinearChangeSource for HostMirror {
+    fn changes_since(
+        &mut self,
+        _cursor: Option<&str>,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearChangePage> {
+        Ok(oneiron::LinearChangePage {
+            changes: std::mem::take(&mut *self.events.lock().expect("source events")),
+            next_cursor: None,
+        })
+    }
+}
+
+impl oneiron::LinearEgress for HostMirror {
+    fn create_issue(
+        &mut self,
+        _operation_id: [u8; 32],
+        task: oneiron::EntityId,
+        fields: &oneiron::MirroredTaskFields,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        Ok(oneiron::LinearIssueChange {
+            event_id: format!("create-{}", task.to_hex()),
+            issue: oneiron::LinearIssueRef {
+                issue_id: task.to_hex(),
+                team_id: "team".into(),
+                identifier: task.to_hex(),
+            },
+            updated_at_ms: 1000,
+            fields: fields.clone(),
+        })
+    }
+
+    fn update_issue(
+        &mut self,
+        _operation_id: [u8; 32],
+        issue: &oneiron::LinearIssueRef,
+        _expected_base: &std::collections::BTreeMap<String, [u8; 32]>,
+        fields: &oneiron::MirroredTaskFields,
+    ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        Ok(oneiron::LinearIssueChange {
+            event_id: format!("update-{}", issue.issue_id),
+            issue: issue.clone(),
+            updated_at_ms: 2000,
+            fields: fields.clone(),
+        })
+    }
+}
+
+struct HostCutPlanner {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl oneiron::WavePlanner for HostCutPlanner {
+    fn cut_plan(
+        &self,
+        request: oneiron::WavePlanRequest,
+    ) -> oneiron::WaveResult<oneiron::WavePlan> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(oneiron::WavePlan {
+            schema_version: oneiron::wave_orchestration::WAVE_PLAN_SCHEMA_VERSION,
+            plan_ref: "host-cut".into(),
+            epic_task_ref: request.epic_task_ref,
+            tasks: vec![
+                oneiron::PlannedTask {
+                    local_key: "first".into(),
+                    label: "First".into(),
+                    spec: serde_json::json!({"work": 1}),
+                    assignee_ref: None,
+                    blocked_by: vec![],
+                },
+                oneiron::PlannedTask {
+                    local_key: "second".into(),
+                    label: "Second".into(),
+                    spec: serde_json::json!({"work": 2}),
+                    assignee_ref: None,
+                    blocked_by: vec!["first".into()],
+                },
+            ],
+        })
+    }
+}
+
+#[tokio::test]
+async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
+    use oneiron::attempt_queue::{AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome};
+    use oneiron::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+    use oneiron::{LinearSyncAdapter, LinearTaskStore};
+
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0x91, oneiron::registry::ENTITY_TYPE_PERSON);
+    let epic = vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("epic id");
+    let queued = vault
+        .enqueue_wave_plan(epic, "agent cuts this", serde_json::Value::Null, 100)
+        .expect("enqueue");
+    let attempt = match queued {
+        oneiron::attempt_queue::EnqueueOutcome::Enqueued(row)
+        | oneiron::attempt_queue::EnqueueOutcome::Existing(row) => row,
+        _ => panic!("unexpected wave enqueue outcome"),
+    };
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let dispatched = Arc::new(std::sync::Mutex::new(Vec::<oneiron::EntityId>::new()));
+    let observer = Arc::clone(&dispatched);
+    let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
+        .with_wave_planner(
+            Arc::new(HostCutPlanner {
+                calls: Arc::clone(&calls),
+            }),
+            Box::new(move |ready| {
+                observer
+                    .lock()
+                    .expect("ready observer")
+                    .extend_from_slice(ready);
+                Ok(())
+            }),
+        );
+    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    drop(wake);
+    drop(hint);
+    let report = tokio::time::timeout(
+        Duration::from_secs(5),
+        WakeSupervisor::new(&vault, push, factory, test_config()).run(),
+    )
+    .await
+    .expect("wave supervisor must not loop on its own empty-claim notification");
+    assert_eq!(report.passes_completed, 0, "planning is not a Dreamer pass");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .get(attempt.id)
+            .expect("attempt")
+            .unwrap()
+            .state,
+        AttemptState::Completed
+    );
+    let ready = dispatched.lock().expect("ready observer").clone();
+    assert_eq!(ready.len(), 1, "blocked second TASK was not dispatched");
+    let first = ready[0];
+    let ClaimOutcome::Claimed(claimed) = AttemptQueue::new(&vault)
+        .claim_kind(
+            "tasks.realize",
+            ClaimAttempt {
+                lease_owner: "executor".into(),
+                now: u64::MAX,
+            },
+        )
+        .expect("claim first")
+    else {
+        panic!("ready TASK claim");
+    };
+    assert_eq!(claimed.task_ref.as_deref(), Some(first.to_hex().as_str()));
+    assert!(matches!(
+        AttemptQueue::new(&vault)
+            .claim_kind(
+                "tasks.realize",
+                ClaimAttempt {
+                    lease_owner: "executor".into(),
+                    now: u64::MAX
+                }
+            )
+            .expect("blocked claim"),
+        ClaimOutcome::Empty
+    ));
+    vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .land_task_result(
+            first,
+            &TaskResultInput {
+                result_ref: actor,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("clock")
+                    .as_secs()
+                    + 1,
+            },
+        )
+        .expect("complete blocker");
+    assert!(matches!(
+        AttemptQueue::new(&vault)
+            .claim_kind(
+                "tasks.realize",
+                ClaimAttempt {
+                    lease_owner: "executor".into(),
+                    now: u64::MAX
+                }
+            )
+            .expect("unblocked claim"),
+        ClaimOutcome::Claimed(_)
+    ));
+
+    // Same running-host flow crosses the durable TASK outbox and the
+    // normalized Linear source: a wave TASK pushes, then a later poll applies.
+    let mirror = HostMirror::default();
+    let mut sync = LinearSyncAdapter::new(
+        oneiron::linear_sync::VaultLinearTaskStore::new(&vault),
+        mirror.clone(),
+        mirror.clone(),
+    );
+    let (pushed, _) = sync.synchronize(200).expect("wave TASKs push");
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == first));
+    let second = pushed
+        .iter()
+        .find(|receipt| receipt.task_ref != first && receipt.task_ref != epic)
+        .expect("dependent TASK pushed")
+        .task_ref;
+    let link = sync
+        .tasks()
+        .link(second)
+        .expect("link read")
+        .expect("linked issue");
+    let mut from_tracker = sync.tasks().task_snapshot(second).expect("snapshot").fields;
+    from_tracker.description = Some("tracker handoff".into());
+    mirror
+        .events
+        .lock()
+        .expect("source events")
+        .push(oneiron::LinearIssueChange {
+            event_id: "inbound-wave-edit".into(),
+            issue: link.issue,
+            updated_at_ms: 3000,
+            fields: from_tracker.clone(),
+        });
+    let (_, pulled) = sync.synchronize(201).expect("scheduled source poll");
+    assert_eq!(pulled.applied, 1);
+    assert_eq!(
+        sync.tasks()
+            .task_snapshot(second)
+            .expect("after poll")
+            .fields
+            .description,
+        from_tracker.description
+    );
+}

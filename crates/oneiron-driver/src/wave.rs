@@ -4,7 +4,7 @@
 //! polling timer, or authority of its own: the queue leases the attempt, and
 //! the vault validates/lands its cut under that lease.
 
-use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt};
+use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use oneiron::wave_orchestration::{
     VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WaveOrchestrator, WavePlanReceipt, WavePlanRequest,
     WavePlanner,
@@ -84,12 +84,6 @@ impl<'v, P: WavePlanner> WaveHost<'v, P> {
             plan,
             now,
         )?;
-        queue.complete(CompleteAttempt {
-            id: attempt.id,
-            lease_owner: lease_owner.to_owned(),
-            attempt_count: attempt.attempt_count,
-            now,
-        })?;
         Ok(Some(receipt))
     }
 

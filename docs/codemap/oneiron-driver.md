@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/budget_ids.rs` | src | s | 4 crate-vis | — | Durable per-pass budget-id derivation and occupied-row index scan |
 | `src/supervisor/budget_tests.rs` | test | m | — | — | Durable budget-id, index-scan, and config-validation tests |
 | `src/supervisor/config.rs` | src | s | 2 struct · 2 fn · 1 type · 1 const · 8 crate-vis | RestartBackoffConfig, WakeSupervisorConfig | Static config, restart backoff, and budget-id length ceilings |
-| `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 4 fn | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
+| `src/supervisor/factory.rs` | src | s | 1 struct · 1 trait · 5 fn · 1 type | ConsolidationExecutorFactory, PassExecutorFactory | Per-pass attempt-executor factory trait and default implementation |
 | `src/supervisor/factory_tests.rs` | test | m | — | — | Factory, planner-routing, and attempt-fixture tests |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 5 fn · 2 crate-vis | WakeSupervisor, WakeSupervisorReport | Biased-select supervisor loop with panic containment and backoff |
 | `src/supervisor/loop_tests.rs` | test | m | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |

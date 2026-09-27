@@ -31450,7 +31450,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -31743,7 +31743,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultWaveTaskPort"
@@ -36623,9 +36623,10 @@
      "path": "src/supervisor/factory.rs",
      "purpose": "Per-pass attempt-executor factory trait and default implementation",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1,
-      "trait": 1
+      "trait": 1,
+      "type": 1
      }
     },
     {
@@ -42262,16 +42263,6 @@
      "surface": {}
     },
     {
-     "bucket": "s",
-     "kind": "test",
-     "notable": [],
-     "path": "tests/it_linear_host.rs",
-     "purpose": "Compile the exact host module as an isolated transport test",
-     "surface": {
-      "crate-vis": 1
-     }
-    },
-    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -42490,7 +42481,7 @@
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
-   "test_files": 98
+   "test_files": 97
   },
   "oneiron-uniffi": {
    "files": [

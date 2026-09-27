@@ -258,23 +258,16 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 }
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
+const MAX_PULL_PAGES_PER_PASS: usize = 64;
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Scheduled host entry: drain TASK writes then consume one source page.
-    /// Errors retain dirty revisions/cursor for retry. The injected egress is
-    /// still the authenticated OF-327 rail, never a credential in core.
+    /// Scheduled host entry: reconcile every available inbound page BEFORE
+    /// publishing any dirty TASK snapshot. A rejected outbound item retains
+    /// its revision without starving later items or the pull cursor.
     pub fn synchronize(
         &mut self,
         now: u64,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
-        let mut pushed = Vec::new();
-        for (task, revision) in self.tasks().dirty_tasks()? {
-            let receipt = self.push_task(task, now)?;
-            if receipt.status != LinearMirrorStatus::Conflict {
-                self.tasks().acknowledge_push(task, revision)?;
-            }
-            pushed.push(receipt);
-        }
-        let cursor = {
+        let mut cursor = {
             let txn = self
                 .tasks()
                 .vault
@@ -293,16 +286,66 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
                 })
                 .transpose()?
         };
-        let pulled = self.pull_page(cursor.as_deref(), now)?;
-        if let Some(cursor) = &pulled.new_cursor {
+        let mut pulled = LinearPullReceipt {
+            applied: 0,
+            skipped_echo: 0,
+            conflicts: Vec::new(),
+            new_cursor: cursor.clone(),
+            pulled_at: now,
+        };
+        // A malicious or broken source cannot keep the pass inside pagination
+        // forever. The cursor of each completed page is durable before reading
+        // the next; no outbound write occurs until a terminal page is reached.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut caught_up = false;
+        for _ in 0..MAX_PULL_PAGES_PER_PASS {
+            let page = self.pull_page(cursor.as_deref(), now)?;
+            pulled.applied += page.applied;
+            pulled.skipped_echo += page.skipped_echo;
+            pulled.conflicts.extend(page.conflicts);
+            let Some(next) = page.new_cursor else {
+                caught_up = true;
+                break;
+            };
+            if cursor.as_deref() == Some(next.as_str()) || !seen.insert(next.clone()) {
+                return Err(
+                    Error::InvalidConfig("linear source repeated its cursor".into()).into(),
+                );
+            }
             self.tasks().vault.with_write_txn(|txn| {
                 self.tasks()
                     .vault
                     .store
                     .vault_meta
-                    .put(txn, PULL_CURSOR, cursor.as_bytes())?;
+                    .put(txn, PULL_CURSOR, next.as_bytes())?;
                 Ok(())
             })?;
+            cursor = Some(next);
+            pulled.new_cursor = cursor.clone();
+        }
+        if !caught_up {
+            return Err(Error::InvalidConfig("linear source page bound exceeded".into()).into());
+        }
+
+        let mut pushed = Vec::new();
+        let mut first_failure = None;
+        for (task, revision) in self.tasks().dirty_tasks()? {
+            match self.push_task(task, now) {
+                Ok(receipt) => {
+                    if receipt.status != LinearMirrorStatus::Conflict
+                        && let Err(error) = self.tasks().acknowledge_push(task, revision)
+                    {
+                        first_failure.get_or_insert_with(|| error.into());
+                    }
+                    pushed.push(receipt);
+                }
+                Err(error) => {
+                    first_failure.get_or_insert(error);
+                }
+            }
+        }
+        if let Some(error) = first_failure {
+            return Err(error);
         }
         Ok((pushed, pulled))
     }

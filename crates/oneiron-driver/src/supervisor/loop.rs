@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use oneiron::{Vault, WakeCancellation, WakePassReport, WakePassStop};
+use crate::WaveHost;
+use oneiron::{AttemptQueue, Vault, WakeCancellation, WakePassReport, WakePassStop};
 use tokio::sync::{Semaphore, watch};
 
 use super::budget_ids::{
@@ -160,8 +161,46 @@ where
         // push-only host does not lose remaining backlog (or the only wake).
         // HybridTick deadline redelivery makes redrive idempotent there.
         let mut redrive_tick: Option<Tick> = None;
+        // Subscribe before the startup scan: a concurrent enqueue can neither
+        // disappear between snapshot and receiver nor need a polling timer.
+        let mut wave_events = AttemptQueue::new(vault).subscribe();
+        let wave_planner = factory.wave_planner();
+        let mut wave_pending = wave_planner.is_some();
 
         loop {
+            if wave_pending {
+                wave_pending = false;
+                if let (Some(planner), Some(actor)) = (wave_planner.as_ref(), factory.actor()) {
+                    let host = WaveHost::new(
+                        vault,
+                        Arc::clone(planner),
+                        actor.entity_ref(),
+                        actor.actor_class(),
+                    );
+                    match host.run_plan_once(&config.lease_owner, now_secs()) {
+                        Ok(Some(receipt)) => {
+                            let candidates: Vec<_> = receipt.task_refs.values().copied().collect();
+                            match host.ready_to_dispatch(&candidates) {
+                                Ok(ready) => {
+                                    if let Err(error) = factory.dispatch_wave_ready(&ready) {
+                                        tracing::error!(?error, "wave ready-set dispatch failed");
+                                    }
+                                }
+                                Err(error) => tracing::error!(%error, "wave readiness read failed"),
+                            }
+                            // One claim per iteration bounds work; drain all
+                            // already-queued waves before waiting for a signal.
+                            wave_pending = true;
+                        }
+                        Ok(None) => {}
+                        Err(error) => tracing::error!(%error, "wave plan attempt failed"),
+                    }
+                }
+                if shutdown.requested() {
+                    break;
+                }
+                continue;
+            }
             // ONE biased select: shutdown always beats a ready tick.
             // A re-drive reuses the last tick without waiting on the source
             // (and without blocking shutdown — checked after backoff).
@@ -171,6 +210,10 @@ where
                 tokio::select! {
                     biased;
                     () = shutdown.triggered() => break,
+                    _ = wave_events.recv(), if wave_planner.is_some() => {
+                        wave_pending = true;
+                        continue;
+                    }
                     tick = ticks.next_tick() => match tick {
                         Some(tick) => tick,
                         // Source exhausted: nothing can ever wake us again.

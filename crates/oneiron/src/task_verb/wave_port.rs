@@ -1,6 +1,7 @@
 //! Vault-backed, atomic wave plan application through the ordinary TASK doors.
 use super::create_validation::ValidatedTaskCreate;
 use super::{TaskAssignee, TaskKind};
+use crate::attempt_queue::{AttemptQueue, CompleteAttempt};
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::gate::PolicyApprovalCeiling;
@@ -222,9 +223,28 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                     .store
                     .vault_meta
                     .put(txn, &seal_key, &fingerprint)?;
+                if let Some(attempt) = &self.attempt {
+                    let owner = attempt.lease_owner.as_ref().ok_or_else(|| {
+                        MemoryError::bad_request("wave planner lease has no owner")
+                    })?;
+                    AttemptQueue::new(self.vault).complete_in_txn(
+                        txn,
+                        CompleteAttempt {
+                            id: attempt.id,
+                            lease_owner: owner.clone(),
+                            attempt_count: attempt.attempt_count,
+                            now,
+                        },
+                    )?;
+                }
                 Ok(writes)
             })
             .map_err(engine_error)
+            .inspect(|_| {
+                if self.attempt.is_some() {
+                    self.vault.store.notify_attempt_observers();
+                }
+            })
     }
 
     fn task_terminal_success(&self, task: EntityId) -> WaveResult<bool> {
@@ -265,9 +285,9 @@ impl Vault {
         )
     }
 
-    /// Apply a host-produced cut against the current planning lease. Retries
-    /// recover the same TASK ids through the plan index. Completing the attempt
-    /// remains the executor's existing queue operation.
+    /// Apply a host-produced cut and complete its planning attempt in one
+    /// transaction. A crash cannot leave TASKs committed under a reclaimable
+    /// lease, even if the agent would propose a different cut on retry.
     pub fn apply_wave_plan_attempt(
         &self,
         actor: EntityId,

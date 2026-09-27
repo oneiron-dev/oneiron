@@ -117,3 +117,104 @@ fn invalid_agent_cut_does_not_complete_attempt_or_land_tasks() -> WaveResult<()>
     assert!(host.ready_to_dispatch(&[])?.is_empty());
     Ok(())
 }
+
+struct DifferentCut(std::cell::Cell<usize>);
+impl WavePlanner for DifferentCut {
+    fn cut_plan(&self, request: WavePlanRequest) -> WaveResult<WavePlan> {
+        self.0.set(self.0.get() + 1);
+        Ok(WavePlan {
+            schema_version: WAVE_PLAN_SCHEMA_VERSION,
+            plan_ref: "different-cut".into(),
+            epic_task_ref: request.epic_task_ref,
+            tasks: vec![PlannedTask {
+                local_key: "duplicate".into(),
+                label: "Must not land".into(),
+                spec: serde_json::Value::Null,
+                assignee_ref: None,
+                blocked_by: vec![],
+            }],
+        })
+    }
+}
+
+/// The old host could stop after TASK commit and before a separate queue
+/// completion. Reclaim then ran a DIFFERENT planner cut and minted duplicates.
+#[test]
+fn completed_cut_survives_restart_and_reclaim_without_a_second_plan() -> WaveResult<()> {
+    use oneiron::attempt_queue::{AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases};
+    let dir = tempfile::tempdir().map_err(oneiron::Error::from)?;
+    let owner = EntityId::now();
+    let (attempt_id, first, second) = {
+        let vault = Vault::open(dir.path(), VaultConfig::default())?;
+        let epic = fixture(&vault, owner)?;
+        vault.enqueue_wave_plan(epic, "stable objective", serde_json::Value::Null, 100)?;
+        let queue = AttemptQueue::new(&vault);
+        let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
+            WAVE_PLAN_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "crashed-host".into(),
+                now: 100,
+            },
+        )?
+        else {
+            panic!("plan claim");
+        };
+        let first_cut = AgentPlanner {
+            seen: RefCell::new(Vec::new()),
+            bad: false,
+        }
+        .cut_plan(WavePlanRequest {
+            epic_task_ref: epic,
+            planner_attempt_ref: attempt.id,
+            objective: "stable objective".into(),
+            constraints: serde_json::Value::Null,
+            now: 100,
+        })?;
+        // Simulates the crash exactly after the old core apply returned,
+        // BEFORE the old driver could call queue.complete separately.
+        let receipt = vault.apply_wave_plan_attempt(
+            owner,
+            EdgeActorClass::Human,
+            &attempt,
+            first_cut,
+            100,
+        )?;
+        assert_eq!(
+            queue.get(attempt.id)?.expect("attempt").state,
+            AttemptState::Completed
+        );
+        (
+            attempt.id,
+            receipt.task_refs["first"],
+            receipt.task_refs["second"],
+        )
+    };
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let queue = AttemptQueue::new(&vault);
+    let cleanup = queue.cleanup_leases(CleanupAttemptLeases {
+        now: u64::MAX,
+        lease_timeout_secs: 1,
+    })?;
+    assert_eq!(
+        cleanup.stale_requeued, 0,
+        "a committed cut cannot be reclaimed"
+    );
+    assert_eq!(
+        queue.get(attempt_id)?.expect("attempt after restart").state,
+        AttemptState::Completed
+    );
+    let host = WaveHost::new(
+        &vault,
+        DifferentCut(std::cell::Cell::new(0)),
+        owner,
+        EdgeActorClass::Human,
+    );
+    assert!(host.run_plan_once("restarted-host", 100_001)?.is_none());
+    assert_eq!(
+        host.planner.0.get(),
+        0,
+        "no second planner cut after reclaim"
+    );
+    assert_eq!(host.ready_to_dispatch(&[first, second])?, vec![first]);
+    Ok(())
+}

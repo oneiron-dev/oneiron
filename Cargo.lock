@@ -7285,6 +7285,7 @@ dependencies = [
  "oneiron-llm-local",
  "oneiron-server",
  "rmpv",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

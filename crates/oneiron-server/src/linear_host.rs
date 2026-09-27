@@ -4,6 +4,7 @@
 //! The bridge, not the vault, owns the Linear provider credential and the
 //! outbound effect door. A raw issue-list poll cannot supply exact event IDs.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,9 +28,7 @@ struct LinearBridge {
 }
 
 impl LinearBridge {
-    fn configured() -> anyhow::Result<Option<Self>> {
-        let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
-        let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
+    fn configured(base: Option<String>, token: Option<String>) -> anyhow::Result<Option<Self>> {
         anyhow::ensure!(
             base.is_some() == token.is_some(),
             "Linear bridge requires both URL and token"
@@ -88,6 +87,11 @@ impl LinearBridge {
         let response = request
             .send()
             .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
+        if response.status() == reqwest::StatusCode::CONFLICT
+            || response.status() == reqwest::StatusCode::PRECONDITION_FAILED
+        {
+            return Err(LinearSyncError::RemoteChanged);
+        }
         if !response.status().is_success() {
             // Provider bodies can contain secrets; report the status only.
             return Err(LinearSyncError::Transport(format!(
@@ -159,14 +163,22 @@ impl LinearEgress for LinearBridge {
         &mut self,
         operation_id: [u8; 32],
         issue: &LinearIssueRef,
+        expected_base: &BTreeMap<String, [u8; 32]>,
         fields: &MirroredTaskFields,
     ) -> LinearSyncResult<LinearIssueChange> {
+        // The bridge MUST enforce this base atomically with the provider write.
+        // A read-then-write implementation is unsafe: an edit can race the read.
+        let expected_base: BTreeMap<&str, String> = expected_base
+            .iter()
+            .map(|(field, hash)| (field.as_str(), hex_operation_id(*hash)))
+            .collect();
         // Fixed path: opaque issue IDs never become URL path components.
         serde_json::from_value(self.request(
             reqwest::Method::POST,
             "issues/update",
             Some(json!({
-                "operation_id": hex_operation_id(operation_id), "issue": issue, "fields": fields,
+                "operation_id": hex_operation_id(operation_id), "issue": issue,
+                "expected_base_field_hashes": expected_base, "fields": fields,
             })),
         )?)
         .map_err(|error| {
@@ -191,13 +203,26 @@ fn synchronize_once(
     LinearSyncAdapter::new(VaultLinearTaskStore::new(vault), inbound, outbound).synchronize(now)
 }
 
+/// Construct the blocking HTTP client off the Tokio runtime thread. Inputs
+/// are explicit so a parallel test needs no process-global env mutation.
+async fn build_bridge(
+    base: Option<String>,
+    token: Option<String>,
+) -> anyhow::Result<Option<LinearBridge>> {
+    tokio::task::spawn_blocking(move || LinearBridge::configured(base, token))
+        .await
+        .map_err(|error| anyhow::anyhow!("Linear bridge setup failed: {error}"))?
+}
+
 /// Start a scheduled mirror when the host configured its authenticated bridge.
 /// Every pass uses the vault's durable dirty outbox and pull cursor; errors
 /// leave both for the next pass. This timer lives in the server, never core.
-pub(crate) fn spawn(
+pub(crate) async fn spawn(
     server: Arc<SyncServer>,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
-    let Some(bridge) = LinearBridge::configured()? else {
+    let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
+    let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
+    let Some(bridge) = build_bridge(base, token).await? else {
         return Ok(None);
     };
     let handle = tokio::spawn(async move {

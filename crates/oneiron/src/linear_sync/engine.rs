@@ -342,9 +342,12 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let expected_link_revision = link.link_revision;
         let next_link_revision = link.next_revision()?;
-        let pushed = self
-            .outbound
-            .update_issue(operation_id, &link.issue, &snapshot.fields)?;
+        let pushed = self.outbound.update_issue(
+            operation_id,
+            &link.issue,
+            &link.base_field_hashes,
+            &snapshot.fields,
+        )?;
         let updated = TaskIssueLink {
             task_ref: snapshot.task_ref,
             issue: pushed.issue.clone(),

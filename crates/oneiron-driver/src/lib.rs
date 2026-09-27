@@ -40,7 +40,7 @@ pub use session::{
 pub use supervisor::{
     ConsolidationExecutorFactory, MAX_PASS_BUDGET_BASE_LEN, NowSeconds, PassExecutorFactory,
     RestartBackoffConfig, ShutdownHandle, WakeSupervisor, WakeSupervisorConfig,
-    WakeSupervisorReport,
+    WakeSupervisorReport, WaveReadyDispatcher,
 };
 pub use tick::{
     AttemptQueueDeadlines, CommitmentDeadline, CommitmentDueDeadlines, DeadlineSource, HintPusher,

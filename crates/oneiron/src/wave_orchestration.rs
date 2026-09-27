@@ -172,6 +172,14 @@ pub trait WavePlanner {
     fn cut_plan(&self, request: WavePlanRequest) -> WaveResult<WavePlan>;
 }
 
+// Agent hosts may share a planner between the running supervisor and its
+// caller without manufacturing an engine-owned planner or changing its policy.
+impl<P: WavePlanner + ?Sized> WavePlanner for std::sync::Arc<P> {
+    fn cut_plan(&self, request: WavePlanRequest) -> WaveResult<WavePlan> {
+        (**self).cut_plan(request)
+    }
+}
+
 /// One TASK row a [`WaveTaskPort`] landed for a planned task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaveTaskWrite {

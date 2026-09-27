@@ -108,8 +108,17 @@ It exposes three JSON operations below the configured URL:
   stable nonempty `event_id`, `issue`, `updated_at_ms`, and `fields`.
 - `POST issues` accepts `operation_id` (64 lowercase hex), `task_ref` (entity
   hex), and `fields`; returns `LinearIssueChange` for the created issue.
-- `POST issues/update` accepts `operation_id`, `issue` (`LinearIssueRef`), and
-  `fields`; returns `LinearIssueChange` for the updated issue.
+- `POST issues/update` accepts `operation_id`, `issue` (`LinearIssueRef`),
+  `expected_base_field_hashes` (all five canonical field names to 64-hex
+  hashes), and `fields`. It must atomically compare the CURRENT remote fields
+  against every expected hash before applying the full snapshot. A mismatch
+  returns 409/412 without writing; the daemon retains that TASK's dirty row.
+  Replayed `operation_id`s return their original receipt before the compare;
+  otherwise a lost response after a successful write would look like a new
+  remote conflict on retry. A bridge that cannot provide an atomic compare
+  must refuse linked updates rather than publish best-effort last-write-wins. Linear's public GraphQL
+  `issueUpdate` alone is not a CAS primitive, so a bridge must not claim this
+  guarantee by merely reading the issue immediately before a mutation.
 
 The bridge must return non-2xx on transport or authority failure, not an empty
 success page. The pass reads one page at a time and stores its cursor only
