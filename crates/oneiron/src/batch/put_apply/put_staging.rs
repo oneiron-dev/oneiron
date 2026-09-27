@@ -10,19 +10,18 @@ use crate::side_table::StagedRow;
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
 
-/// Stages the ONE-1449 MATERIAL-6 R1 optimizer-birth marker row, if this put
-/// produced one, in the caller's transaction and immediately before the body
-/// row it marks. `None` writes nothing.
+/// Stages an optional typed optimizer-birth or hub-origin row at the put's
+/// established transaction point. `None` writes nothing.
 ///
 /// # Errors
 ///
 /// The `vault_meta` write's own error, propagated before the body write.
-pub(super) fn stage_optimizer_birth_marker_row(
+pub(super) fn stage_optional_side_row(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
-    optimizer_birth_marker: Option<StagedRow>,
+    row: Option<StagedRow>,
 ) -> Result<()> {
-    if let Some(row) = optimizer_birth_marker {
+    if let Some(row) = row {
         row.put(store, wtxn)?;
     }
     Ok(())
@@ -299,6 +298,71 @@ pub(super) fn validate_scope_carriers(
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;
+    }
+    Ok(())
+}
+
+/// The local Proposed-submission observation. Replay and envelope-less puts
+/// cannot attribute a proposal to an actor; retries are counted only on change.
+pub(super) struct ProposedClaimObservation<'a> {
+    pub(super) id: EntityId,
+    pub(super) replicated: bool,
+    pub(super) body: Option<&'a crate::claim::ClaimBody>,
+    pub(super) envelope: Option<&'a crate::write_envelope::WriteEnvelope>,
+    pub(super) policy: Option<&'a crate::gate::PolicyManifestResolution>,
+    pub(super) body_changed: bool,
+}
+
+pub(super) fn stage_local_proposal_observation(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    observation: ProposedClaimObservation<'_>,
+) -> Result<()> {
+    let ProposedClaimObservation {
+        id,
+        replicated,
+        body,
+        envelope,
+        policy,
+        body_changed,
+    } = observation;
+    if !replicated
+        && body.is_some_and(|body| body.approval == crate::claim::ClaimApprovalStatus::Proposed)
+        && let Some(envelope) = envelope
+    {
+        let threshold = match policy {
+            Some(policy) => policy.proposal_check_threshold(),
+            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
+        };
+        crate::gate::proposal_observation::observe_submission_in_txn(
+            store,
+            wtxn,
+            envelope.actor().entity_ref(),
+            &format!("claim:{}", id.to_hex()),
+            threshold,
+            body_changed,
+        )?;
+    }
+    Ok(())
+}
+
+/// Maintain task ownership and turn carrier rows alongside the entity body.
+pub(super) fn stage_task_and_turn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: EntityId,
+    entity_type: u8,
+    data: &[u8],
+    body_changed: bool,
+) -> Result<()> {
+    if entity_type == crate::registry::ENTITY_TYPE_TASK {
+        crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
+        if body_changed {
+            crate::task_verb::note_task_write(store, wtxn, id, data)?;
+        }
+    }
+    if entity_type == crate::registry::ENTITY_TYPE_TURN {
+        crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
     }
     Ok(())
 }

@@ -11,7 +11,7 @@ use super::{
     authority_observation_secs_for_write, check_authority_log_store_key,
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
     plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
-    stage_entity_body_row, stage_entity_index_rows, stage_optimizer_birth_marker_row,
+    stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
     validate_companion_register_put, validate_local_agent_definition_create,
     validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
     validate_skill_body_overwrite, validate_task_checkin_immutable,
@@ -574,7 +574,7 @@ pub(in crate::batch) fn apply_put(
     // marks, so a rolled-back create leaves no marker and a committed one can
     // never be re-presented as an ordinary birth. Only a genuine optimizer-born
     // create at an unmarked id produces a row here.
-    stage_optimizer_birth_marker_row(store, wtxn, optimizer_birth_marker)?;
+    stage_optional_side_row(store, wtxn, optimizer_birth_marker)?;
     crate::ports::audit_entity_put_in_txn(
         store,
         wtxn,
@@ -597,9 +597,7 @@ pub(in crate::batch) fn apply_put(
     )?;
     crate::ingest::invalidate_blob_fingerprint(store, wtxn, &id)?;
     stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
-    if let Some(row) = hub_origin_marker {
-        row.put(store, wtxn)?;
-    }
+    stage_optional_side_row(store, wtxn, hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
         store,
         wtxn,
@@ -610,37 +608,19 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
     )?;
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
-    // Count authenticated local Proposed submissions, including changed bodies
-    // under an actor-owned claim ID. An exact same-body retry is not new.
-    // Replays and envelope-less system puts cannot be assigned to an actor.
-    if !replicated
-        && decoded_claim_body
-            .as_ref()
-            .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)
-        && let Some(envelope) = write_envelope
-    {
-        let threshold = match write_policy {
-            Some(policy) => policy.proposal_check_threshold(),
-            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
-        };
-        crate::gate::proposal_observation::observe_submission_in_txn(
-            store,
-            wtxn,
-            envelope.actor().entity_ref(),
-            &format!("claim:{}", id.to_hex()),
-            threshold,
+    super::put_staging::stage_local_proposal_observation(
+        store,
+        wtxn,
+        super::put_staging::ProposedClaimObservation {
+            id,
+            replicated,
+            body: decoded_claim_body.as_ref(),
+            envelope: write_envelope,
+            policy: write_policy,
             body_changed,
-        )?;
-    }
-    if entity_type == ENTITY_TYPE_TASK {
-        crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
-        if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
-        }
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_TURN {
-        crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
-    }
+        },
+    )?;
+    super::put_staging::stage_task_and_turn(store, wtxn, id, entity_type, data, body_changed)?;
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         super::put_staging::stage_skill_index_rows(
