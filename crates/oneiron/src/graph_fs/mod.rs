@@ -7,6 +7,7 @@
 
 mod claim_grep;
 mod coreutils;
+mod coreutils_text;
 mod model;
 mod paging;
 mod readdir;

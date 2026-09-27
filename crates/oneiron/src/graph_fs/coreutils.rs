@@ -14,6 +14,7 @@ use crate::gate::{PolicyManifestResolution, SCOPED_READ_EFFECTOR_CORE_READ};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD};
 use crate::store::{RetrievalAction, RetrievalRunId, RetrievalRunRecord, RetrievalSignal, Store};
 
+use super::coreutils_text::{append_grep_file_matches, join_graph_path, literal_grep_pattern};
 use super::model::{
     GRAPH_FS_COREUTILS_MAX_RESULT_CAP, GRAPH_FS_MAX_SCAN_ROWS, GraphFsCommandOutput,
     GraphFsCoreutilsDecision, GraphFsCoreutilsVerb, GraphFsEntryKind, GraphFsResolver,
@@ -670,59 +671,6 @@ fn parse_byte_cursor(cursor: Option<&str>) -> Result<usize> {
             .parse::<usize>()
             .map_err(|_| Error::InvalidConfig("invalid graph-fs byte cursor".to_owned())),
         None => Ok(0),
-    }
-}
-
-fn literal_grep_pattern(pattern: &str) -> Option<&str> {
-    let pattern = pattern.trim();
-    if pattern.is_empty() || !pattern.is_ascii() {
-        return None;
-    }
-    if pattern.bytes().any(|byte| {
-        matches!(
-            byte,
-            b'.' | b'*'
-                | b'+'
-                | b'?'
-                | b'['
-                | b']'
-                | b'('
-                | b')'
-                | b'{'
-                | b'}'
-                | b'|'
-                | b'^'
-                | b'$'
-                | b'\\'
-        )
-    }) {
-        return None;
-    }
-    Some(pattern)
-}
-
-fn append_grep_file_matches(
-    path: &str,
-    bytes: &[u8],
-    pattern: &str,
-    out: &mut CommandOutputBuilder,
-    total: &mut usize,
-) {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines().filter(|line| line.contains(pattern)) {
-        let rendered = format!("{path}:{line}\n");
-        if !out.try_push(rendered.as_bytes()) {
-            break;
-        }
-        *total += 1;
-    }
-}
-
-fn join_graph_path(parent: &str, name: &str) -> String {
-    if parent == "/" {
-        format!("/{name}")
-    } else {
-        format!("{parent}/{name}")
     }
 }
 

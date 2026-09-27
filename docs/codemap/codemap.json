@@ -12211,7 +12211,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CriticLens",
@@ -12307,6 +12307,16 @@
      "path": "src/critic/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/critic/validation.rs",
+     "purpose": "Bounds and shape checks for critic lenses, artifacts and learned reliability",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -17506,7 +17516,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/graph_fs/coreutils.rs",
@@ -17514,6 +17524,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graph_fs/coreutils_text.rs",
+     "purpose": "Bounded text rendering for Graph-FS grep and path walks",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34545,9 +34565,9 @@
      "purpose": "Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning"
     },
     "critic": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Multi-critic review node primitives"
     },
@@ -34762,9 +34782,9 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Graph-FS read projection over the vault graph"
     },
@@ -35434,9 +35454,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 8,
+   "over_bar": 6,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2098,
+   "source_files": 2100,
    "test_files": 718
   },
   "oneiron-android": {
