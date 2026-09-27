@@ -6803,7 +6803,7 @@
      "path": "src/channel_identity/vault_doors.rs",
      "purpose": "Vault doors for ChannelIdentity create, provision, transition, reads, and body apply",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7
      }
     },
@@ -8967,7 +8967,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/code_sandbox/firecracker/protocol/tests.rs",
@@ -10273,6 +10273,7 @@
      "path": "src/connector_key/events.rs",
      "purpose": "Durable, revocable connector-event subscriptions and atomic wake decisions",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -10376,7 +10377,7 @@
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "mod": 1,
       "re-export": 8
      }
@@ -29549,12 +29550,12 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/skill_hub/pack_catalog/admission_tests.rs",
@@ -29573,15 +29574,18 @@
       "PackInstallDisposition",
       "PackInstallReceipt",
       "PackInstallStatus",
-      "PackPermissions"
+      "PackPermissions",
+      "PackQualification",
+      "PackQualifier",
+      "PackRuntimeRecipe"
      ],
      "path": "src/skill_hub/pack_catalog/admission_types.rs",
      "purpose": "Source-bound post-fit decisions and install receipts; install never grants authority",
      "surface": {
       "enum": 3,
-      "fn": 5,
-      "struct": 5,
-      "trait": 1
+      "fn": 6,
+      "struct": 7,
+      "trait": 2
      }
     },
     {
@@ -29651,8 +29655,8 @@
      "path": "src/skill_hub/pack_catalog/mod.rs",
      "purpose": "Exact, inert PACK.md source catalogs",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 5
+      "crate-vis": 5,
+      "re-export": 6
      }
     },
     {
@@ -29664,6 +29668,40 @@
      "surface": {
       "crate-vis": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/script_plan.rs",
+     "purpose": "One qualified execution shape for both pack admission and foreign launch",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PackScriptGrant",
+      "PackScriptOutcome",
+      "PackScriptRun"
+     ],
+     "path": "src/skill_hub/pack_catalog/script_runtime.rs",
+     "purpose": "Foreign pack scripts run only through the existing propose-only code-mode VM",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/script_runtime/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -31085,7 +31123,7 @@
      "purpose": "Durable admission txn, attempt payload codec, dispatch handoff, and status reads",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 9,
       "struct": 5,
@@ -31112,7 +31150,7 @@
      "purpose": "Inbound surface event, source and action types, channel routing, and route receipts",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 7,
       "fn": 14,
       "struct": 4
@@ -36497,7 +36535,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 50,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36702,8 +36740,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2177,
-   "test_files": 736
+   "source_files": 2179,
+   "test_files": 737
   },
   "oneiron-android": {
    "files": [
@@ -40008,6 +40046,94 @@
    "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
    "source_files": 11,
    "test_files": 10
+  },
+  "oneiron-sandbox-contract": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProgramBudget"
+     ],
+     "path": "src/budget.rs",
+     "purpose": "Host-authored prelude plus source under one guest program ceiling",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShapeError"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "Portable, pure shape rules shared by the host and the isolated guest",
+     "surface": {
+      "const": 8,
+      "fn": 1,
+      "re-export": 3,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkspacePath"
+     ],
+     "path": "src/path.rs",
+     "purpose": "Canonical guest-workspace addressing, including byte-counted components",
+     "surface": {
+      "const": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutputReservation",
+      "WorkspaceShape"
+     ],
+     "path": "src/workspace.rs",
+     "purpose": "Checked file and directory shape; reservations compose before execution",
+     "surface": {
+      "fn": 11,
+      "struct": 2
+     }
+    }
+   ],
+   "modules": {
+    "budget": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Host-authored prelude plus source under one guest program ceiling"
+    },
+    "path": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Canonical guest-workspace addressing, including byte-counted components"
+    },
+    "workspace": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Checked file and directory shape; reservations compose before execution"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "Portable, pure shape rules shared by the host and the isolated guest",
+   "source_files": 4,
+   "test_files": 0
   },
   "oneiron-seal": {
    "files": [
