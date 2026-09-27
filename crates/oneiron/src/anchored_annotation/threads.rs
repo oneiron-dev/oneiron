@@ -17,7 +17,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::habit::TaskRole;
-use crate::registry::ENTITY_TYPE_TASK;
+use crate::registry::{ArtifactFamilyKindId, ENTITY_TYPE_TASK, artifact_family_kind_of};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 
@@ -453,11 +453,24 @@ impl Vault {
                 "anchor version must be at least 1",
             )));
         }
-        let head =
-            crate::blob_artifact::read_blob_artifact_head_in_txn(&self.store, rtxn, artifact_id)?
-                .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
-                "anchor artifact has no versions",
-            )))?;
+        // The family identifies eligible entities; each body's version adapter
+        // remains kind-specific. Code revisions do not use blob's u64 chain.
+        let kind = self
+            .get_entity_type_in_txn(rtxn, artifact_id)?
+            .and_then(artifact_family_kind_of);
+        let head = match kind {
+            Some(ArtifactFamilyKindId::Blob) => {
+                crate::blob_artifact::read_blob_artifact_head_in_txn(
+                    &self.store,
+                    rtxn,
+                    artifact_id,
+                )?
+            }
+            Some(ArtifactFamilyKindId::Code) | None => None,
+        }
+        .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(
+            "anchor artifact has no versions",
+        )))?;
         if version > head.version {
             return Err(Error::Artifact(ArtifactError::InvalidAnchor(
                 "anchor version is beyond the artifact head",
