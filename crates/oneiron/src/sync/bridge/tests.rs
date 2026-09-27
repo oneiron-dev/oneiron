@@ -4143,3 +4143,94 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     );
     Ok(())
 }
+
+#[test]
+fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> crate::Result<()> {
+    let source = test_vault();
+    let root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    source.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader),
+        1,
+    )?;
+    let human = EntityId::now();
+    source.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBB)?;
+    let history = source.export_signed_authority_history()?;
+    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBB)?;
+    let body = rmp_serde::to_vec_named(&source.project(id)?.unwrap()).expect("signed body");
+
+    let target = test_vault();
+    let target_root = target.root_project()?;
+    let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
+    target.put_project(
+        root,
+        &crate::workspace_roster::ProjectRecord::new(
+            root,
+            Some(target_root),
+            target_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader),
+        1,
+    )?;
+    target.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&history[..1])?;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let window = "2026-03";
+    let window_key = crate::sync::types::WindowKey::new(window);
+    let _subscription = register_observer_b(&doc, &target, &materializer, window);
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &id.to_hex(),
+        &entity_blob(
+            target.project_type_byte()?,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &body,
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(target.project(id)?.unwrap().depth, 10);
+    assert!(
+        crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
+    );
+    // No new project delta arrives between these retries.
+    assert_eq!(
+        crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key,)?,
+        0
+    );
+    assert!(
+        crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
+    );
+    target.import_signed_authority_history(&history[1..])?;
+    assert_eq!(
+        crate::sync::window::forward_rematerialize(&target, &doc, &materializer, &window_key,)?,
+        1
+    );
+    assert_eq!(target.project(id)?.unwrap().depth, 2);
+    assert!(
+        !crate::sync::quarantine::pending_remat_entities(&target, window)?.contains(&id.to_hex())
+    );
+    Ok(())
+}

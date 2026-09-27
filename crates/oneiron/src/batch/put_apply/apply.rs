@@ -78,7 +78,10 @@ pub(in crate::batch) fn apply_put(
         entity_type,
         data,
         origin,
-        posture,
+        super::put_staging::ProjectPutContext {
+            posture,
+            replicated,
+        },
     )?;
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;

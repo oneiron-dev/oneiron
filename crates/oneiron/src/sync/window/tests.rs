@@ -3879,3 +3879,276 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
     );
     Ok(())
 }
+
+#[test]
+fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()> {
+    let (_source_dir, source) = test_vault();
+    let source_root = source.root_project()?;
+    let leader = EntityId::from_hex(&source.project(source_root)?.unwrap().leader)?;
+    let id = EntityId::now();
+    source.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(id, Some(source_root), source_root, leader),
+        1,
+    )?;
+    let human = EntityId::now();
+    source.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBA)?;
+    let history = source.export_signed_authority_history()?;
+    assert_eq!(history.len(), 2);
+    crate::workspace_roster::set_project_depth_signed_for_test(&source, id, 2, &writer, 2, 0xBA)?;
+    let signed = source.project(id)?.unwrap();
+
+    let (_target_dir, target) = test_vault();
+    let target_root = target.root_project()?;
+    let target_leader = EntityId::from_hex(&target.project(target_root)?.unwrap().leader)?;
+    target.put_project(
+        source_root,
+        &crate::workspace_roster::ProjectRecord::new(
+            source_root,
+            Some(target_root),
+            target_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_project(
+        id,
+        &crate::workspace_roster::ProjectRecord::new(
+            id,
+            Some(source_root),
+            source_root,
+            target_leader,
+        ),
+        1,
+    )?;
+    target.put_entity(
+        &human,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    target.import_signed_authority_history(&history[..1])?; // rooted, but no BindActor
+    let key = WindowKey::new("2026-03");
+    let stamp = key.start_timestamp().expect("window start") + 60;
+    let doc = create_window_doc("project-first", &key);
+    doc.get_map("entities")
+        .insert(
+            id.to_hex().as_str(),
+            make_entity_blob(
+                target.project_type_byte()?,
+                stamp,
+                &rmp_serde::to_vec_named(&signed).expect("signed body"),
+            )
+            .as_slice(),
+        )
+        .expect("insert project");
+    doc.commit();
+    let materializer = Materializer::new();
+    assert_eq!(
+        forward_rematerialize(&target, &doc, &materializer, &key)?,
+        0
+    );
+    assert_eq!(target.project(id)?.unwrap().depth, 10);
+    assert!(quarantine::pending_remat_entities(&target, key.as_str())?.contains(&id.to_hex()));
+    // A normal retry drain while authority is absent must NOT mark this terminal.
+    assert_eq!(
+        forward_rematerialize(&target, &doc, &materializer, &key)?,
+        0
+    );
+    assert!(quarantine::pending_remat_entities(&target, key.as_str())?.contains(&id.to_hex()));
+    target.import_signed_authority_history(&history[1..])?;
+    assert_eq!(
+        forward_rematerialize(&target, &doc, &materializer, &key)?,
+        1
+    );
+    assert_eq!(target.project(id)?.unwrap().depth, 2);
+    assert!(!quarantine::pending_remat_entities(&target, key.as_str())?.contains(&id.to_hex()));
+    Ok(())
+}
+
+#[test]
+fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_order() -> Result<()>
+{
+    for reverse in [false, true] {
+        let (_a_dir, a) = test_vault();
+        let (_b_dir, b) = test_vault();
+        let root_a = a.root_project()?;
+        let root_b = b.root_project()?;
+        let leader_a = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+        let leader_b = EntityId::from_hex(&b.project(root_b)?.unwrap().leader)?;
+        b.put_project(
+            root_a,
+            &crate::workspace_roster::ProjectRecord::new(root_a, Some(root_b), root_b, leader_b),
+            1,
+        )?;
+        let id = EntityId::now();
+        let base = crate::workspace_roster::ProjectRecord::new(id, Some(root_a), root_a, leader_a);
+        a.put_project(id, &base, 1)?;
+        b.put_project(id, &base, 1)?;
+        let owner_id = EntityId::now();
+        let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
+        for vault in [&a, &b] {
+            vault.put_entity(
+                &owner_id,
+                crate::registry::ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"owner",
+            )?;
+        }
+        crate::subject_model::tests::authorization::root_owner(&a, owner, 0xBC)?;
+        b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+        crate::workspace_roster::set_project_depth_signed_for_test(&a, id, 2, &owner, 2, 0xBC)?;
+        crate::workspace_roster::set_project_depth_signed_for_test(&b, id, 0, &owner, 2, 0xBC)?;
+        let a_body = a.project(id)?.unwrap();
+        let b_body = b.project(id)?.unwrap();
+        assert_eq!(a_body.depth_proof.as_ref().unwrap().revision, 1);
+        assert_eq!(b_body.depth_proof.as_ref().unwrap().revision, 1);
+        assert_eq!(
+            a.put_project(id, &b_body, 3).unwrap_err().kind(),
+            crate::error::ErrorKind::InvalidProjectBody,
+            "a generic local put cannot switch an equal-revision owner fact"
+        );
+
+        let window = WindowKey::new("2026-03");
+        let stamp = window.start_timestamp().expect("window start") + 60;
+        let doc_a = create_window_doc("offline-a", &window);
+        let doc_b = create_window_doc("offline-b", &window);
+        doc_a.set_peer_id(1).expect("peer A");
+        doc_b.set_peer_id(2).expect("peer B");
+        let id_key = id.to_hex();
+        let kind = a.project_type_byte()?;
+        let a_blob = make_entity_blob(
+            kind,
+            stamp,
+            &rmp_serde::to_vec_named(&a_body).expect("A body"),
+        );
+        let b_blob = make_entity_blob(
+            kind,
+            stamp,
+            &rmp_serde::to_vec_named(&b_body).expect("B body"),
+        );
+        doc_a
+            .get_map("entities")
+            .insert(id_key.as_str(), a_blob.as_slice())
+            .expect("A edit");
+        doc_b
+            .get_map("entities")
+            .insert(id_key.as_str(), b_blob.as_slice())
+            .expect("B edit");
+        doc_a.commit();
+        doc_b.commit();
+        let update_a = loro_support::export_all_updates(&doc_a)?;
+        let update_b = loro_support::export_all_updates(&doc_b)?;
+        let first = create_window_doc("first-merge", &window);
+        let second = create_window_doc("second-merge", &window);
+        if reverse {
+            import_doc(&first, &update_b)?;
+            import_doc(&first, &update_a)?;
+            import_doc(&second, &update_a)?;
+            import_doc(&second, &update_b)?;
+        } else {
+            import_doc(&first, &update_a)?;
+            import_doc(&first, &update_b)?;
+            import_doc(&second, &update_b)?;
+            import_doc(&second, &update_a)?;
+        }
+        let chosen =
+            loro_support::map_get_bytes(&first.get_map("entities"), &id_key).expect("Loro winner");
+        assert_eq!(
+            loro_support::map_get_bytes(&second.get_map("entities"), &id_key),
+            Some(chosen.clone()),
+            "Loro agrees regardless of import order"
+        );
+        let expected: crate::workspace_roster::ProjectRecord =
+            rmp_serde::from_slice(&chosen[25..]).expect("winner body");
+        assert_eq!(expected.depth_proof.as_ref().unwrap().revision, 1);
+        // Observer B sees actual Loro update imports, not just a hand-written
+        // replicated body. Register it on the replica holding the losing fact.
+        let losing = if chosen == a_blob { &b } else { &a };
+        let observer_doc = create_window_doc("observer", &window);
+        let materializer = std::sync::Arc::new(Materializer::new());
+        let _subscription =
+            bridge::register_observer_b(&observer_doc, losing, &materializer, window.as_str());
+        if reverse {
+            import_doc(&observer_doc, &update_b)?;
+            import_doc(&observer_doc, &update_a)?;
+        } else {
+            import_doc(&observer_doc, &update_a)?;
+            import_doc(&observer_doc, &update_b)?;
+        }
+        assert_eq!(
+            loro_support::map_get_bytes(&observer_doc.get_map("entities"), &id_key),
+            Some(chosen.clone())
+        );
+        assert_eq!(
+            losing.project(id)?,
+            Some(expected.clone()),
+            "Observer B must admit the winning concurrent signed fact"
+        );
+        forward_rematerialize(&a, &first, &Materializer::new(), &window)?;
+        forward_rematerialize(&b, &second, &Materializer::new(), &window)?;
+        assert_eq!(a.project(id)?, Some(expected.clone()));
+        assert_eq!(b.project(id)?, Some(expected.clone()));
+        let agent = EntityId::from_hex(&a.project(root_a)?.unwrap().leader)?;
+        for (vault, project_root) in [(&a, root_a), (&b, root_b)] {
+            let dispatcher = crate::agent_dispatch::AgentDispatcher::new(vault);
+            let root_attempt = dispatcher.dispatch(crate::agent_dispatch::DispatchAgent {
+                target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now: 4,
+            })?;
+            let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(root_attempt) =
+                root_attempt
+            else {
+                panic!("root dispatch in {project_root:?}")
+            };
+            let parent = if project_root == root_a {
+                root_attempt.attempt.id
+            } else {
+                let intermediate = dispatcher.dispatch_with_context(
+                    crate::agent_dispatch::DispatchAgent {
+                        target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                        parent_attempt: Some(root_attempt.attempt.id),
+                        dedupe_key: None,
+                        run_id: None,
+                        now: 5,
+                    },
+                    crate::agent_dispatch::AgentSpawnContext::default().with_project(root_a),
+                )?;
+                let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(intermediate) =
+                    intermediate
+                else {
+                    panic!("intermediate project dispatch")
+                };
+                intermediate.attempt.id
+            };
+            let child = dispatcher.dispatch_with_context(
+                crate::agent_dispatch::DispatchAgent {
+                    target: crate::agent_dispatch::AgentDispatchTarget::Custom(agent),
+                    parent_attempt: Some(parent),
+                    dedupe_key: None,
+                    run_id: None,
+                    now: 5,
+                },
+                crate::agent_dispatch::AgentSpawnContext::default().with_project(id),
+            )?;
+            let crate::agent_dispatch::AgentDispatchOutcome::Dispatched(child) = child else {
+                panic!("child project dispatch")
+            };
+            assert_eq!(child.input.depth_remaining, Some(expected.depth.min(9)));
+        }
+    }
+    Ok(())
+}

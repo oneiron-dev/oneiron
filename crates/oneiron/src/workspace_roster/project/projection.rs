@@ -119,13 +119,19 @@ fn verify_depth_proof(
         return Err(invalid());
     }
     let fold = crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
-    if fold.vault_id != Some(proof.vault_id)
-        || fold.vault_root_is_conflicted()
-        || fold.actor_bindings.get(&key).is_none_or(|binding| {
-            binding.actor_ref != actor
-                || binding.actor_class != "human"
-                || binding.status != crate::authority::ActorBindingStatus::Active
-        })
+    if fold.vault_root_is_conflicted() || fold.vault_id.is_some_and(|vault| vault != proof.vault_id)
+    {
+        return Err(invalid());
+    }
+    // A signed fact may arrive before its owner BindActor. The project
+    // remains unmaterialized, but sync keeps its rematerialization marker;
+    // a known revoked/mismatched binding is a terminal rejection instead.
+    let Some(binding) = fold.actor_bindings.get(&key) else {
+        return Err(crate::error::RecordError::ProjectDependencyPending.into());
+    };
+    if binding.actor_ref != actor
+        || binding.actor_class != "human"
+        || binding.status != crate::authority::ActorBindingStatus::Active
     {
         return Err(invalid());
     }
@@ -139,6 +145,7 @@ pub(crate) fn validate_project_depth_change(
     id: EntityId,
     kind: u8,
     bytes: &[u8],
+    replicated: bool,
 ) -> Result<()> {
     let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
     if body
@@ -167,14 +174,18 @@ pub(crate) fn validate_project_depth_change(
         if history.is_some_and(|history| history != prior) {
             return Err(invalid());
         }
-        if next == prior {
-            if body.depth_proof != old.depth_proof {
-                return Err(invalid());
-            }
+        if next == prior && body.depth_proof == old.depth_proof {
+            // An ordinary member update does not change the depth fact.
         } else {
-            if next.revision <= prior.revision {
+            if next.revision < prior.revision
+                || (next.revision == prior.revision && (!replicated || next.revision == 0))
+            {
                 return Err(invalid());
             }
+            // Equal positive revisions are concurrent signed owner acts. The
+            // Loro entity map selects the winning blob in either merge order;
+            // only that replicated winner reaches this materializer. Local
+            // generic writes cannot select another equal-revision winner.
             verify_depth_proof(store, txn, posture, id, &body)?;
             let marker = depth_edit_key(id);
             if let Some(staged) = store.vault_meta.get(txn, &marker)? {
