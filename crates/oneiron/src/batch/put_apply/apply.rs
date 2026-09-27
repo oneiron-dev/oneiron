@@ -71,6 +71,9 @@ pub(in crate::batch) fn apply_put(
     };
     let data = normalized_policy.as_deref().unwrap_or(data);
     super::put_staging::validate_scope_carriers(store, wtxn, id, entity_type, data, origin)?;
+    if crate::workspace_roster::is_project_type(store, entity_type) {
+        crate::workspace_roster::guard_goal_pointer_put(store, wtxn, id, data, replicated)?;
+    }
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;

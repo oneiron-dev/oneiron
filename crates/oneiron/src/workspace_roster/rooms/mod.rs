@@ -44,7 +44,7 @@ fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<Proje
     }
     Ok(room)
 }
-fn require_member(
+pub(in crate::workspace_roster) fn require_member(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
@@ -56,7 +56,11 @@ fn require_member(
     }
     Ok(record)
 }
-fn turn_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<RoomTurn> {
+pub(in crate::workspace_roster) fn turn_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<RoomTurn> {
     let bytes = vault
         .store
         .vault_meta

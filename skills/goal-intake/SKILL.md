@@ -39,9 +39,21 @@ maximum). Include a `human_minutes` cost axis. Do not invent bounds or convert
 an unanswered question into a blank field; pause to ask. Show the draft to the
 human and accept their explicit confirmation.
 
-The host authenticates that human and calls
-`Vault::write_project_goal_from_intake(&AuthenticatedOwner, project_id, &record, now)`.
-Do not use `put_project`, a raw claim or a generic batch to write the goal.
+At attempt start the host loads this Active skill with `load_attempt_skill_pack`,
+which stamps the attempt manifest. For the v1 room interview, ask the question
+in the project's home room. Have the human answer with a JSON `GoalRecord`
+using the fields above; ask again if any answer is missing. Show that exact
+JSON draft back to the human. Ask the human to reply `confirm <digest>`, where
+`<digest>` is the BLAKE3 hex digest of the draft's UTF-8 bytes. Their reply must
+name the draft turn. No confirmation, no write.
+
+The host independently authenticates that human, then calls
+`Vault::write_project_goal_from_room_intake` with the attempt, project and
+four witnessed turn IDs (agent question, human answer, agent draft, human
+confirmation). The engine reads those stored turns, checks the skill load,
+answer, draft and confirmation, and writes the typed record. The host must not
+infer authentication from transcript text. Do not use `put_project`, a raw
+claim or a generic batch to write the goal.
 On success, read `Vault::project_goal_record(project_id)` and return the goal
 claim ID, project ID, confirmed fields and next useful task. Make a separate
 bounded task brief with acceptance, constraints, responsible person, evidence

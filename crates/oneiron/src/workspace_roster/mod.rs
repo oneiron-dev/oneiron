@@ -113,12 +113,13 @@ mod tests;
 
 mod project;
 pub use project::{
-    GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord, PROJECT_TYPE_BYTE, ProjectRecord,
-    ProjectRoom, ProjectRoomChange,
+    GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
+    PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom, ProjectRoomChange,
 };
 pub(crate) use project::{
-    deindex_project_room, is_project_type, reconcile_project_rooms, seed_root_project,
-    validate_project_body, validate_room_body,
+    deindex_project_room, guard_goal_claim_put, guard_goal_delete, guard_goal_pointer_put,
+    is_project_type, reconcile_project_rooms, seed_root_project, validate_project_body,
+    validate_room_body,
 };
 
 mod rooms;

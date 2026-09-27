@@ -1,6 +1,8 @@
 //! Human-authenticated project goal intake; proposals never write this record.
 use super::{ProjectRecord, encode, invalid};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -10,7 +12,28 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-const PREDICATE: &str = "project.goal_intake";
+pub(crate) const PREDICATE: &str = "project.goal_intake";
+mod admission;
+mod interview;
+pub(crate) use admission::{guard_claim_put, guard_goal_delete, guard_pointer_put};
+pub use interview::GoalInterviewTurns;
+
+fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> {
+    if body.predicate != PREDICATE
+        || body.subject != ClaimSubject::Entity(project)
+        || body.source != Some(ClaimSource::UserStated)
+        || body.approval != ClaimApprovalStatus::Approved
+        || body.lifecycle != ClaimLifecycleStatus::Active
+    {
+        return Err(invalid());
+    }
+    let Value::Binary(bytes) = &body.value else {
+        return Err(invalid());
+    };
+    let record: GoalRecord = super::decode(bytes)?;
+    record.validate()?;
+    Ok(record)
+}
 #[cfg(test)]
 mod tests;
 
@@ -112,13 +135,28 @@ impl Vault {
     /// Commit an interview answered by an authenticated human. A loop proposal
     /// has no `AuthenticatedOwner` and cannot call this door on its own.
     /// Replaces the project pointer and supersedes the prior goal atomically.
-    pub fn write_project_goal_from_intake(
+    #[cfg(test)]
+    pub(crate) fn write_project_goal_from_intake(
         &self,
         owner: &AuthenticatedOwner,
         project_id: EntityId,
         record: &GoalRecord,
         now: u64,
     ) -> Result<EntityId> {
+        self.with_write_txn(|txn| {
+            self.write_project_goal_in_txn(txn, owner, project_id, record, now)
+        })
+    }
+
+    pub(super) fn write_project_goal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        project_id: EntityId,
+        record: &GoalRecord,
+        now: u64,
+    ) -> Result<EntityId> {
+        owner.revalidate_in_txn(self, txn)?;
         record.validate()?;
         let id = EntityId::now();
         let envelope = WriteEnvelope::new(
@@ -133,79 +171,73 @@ impl Vault {
             ]))?,
             ClaimApprovalStatus::Approved,
         );
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let mut project: ProjectRecord =
-                super::record(&self.store, txn, project_id, self.project_type_byte()?)?
-                    .ok_or_else(invalid)?;
-            let previous = project
-                .goal
-                .as_deref()
-                .map(EntityId::from_hex)
-                .transpose()?;
-            self.batch_in()
-                .claim_candidate(
-                    &id,
-                    ClaimCandidate::new(
-                        PREDICATE,
-                        ClaimSubject::Entity(project_id),
-                        Value::Binary(encode(record)?),
-                        1.0,
-                    ),
-                    &envelope,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .apply(txn)?;
-            project.goal = Some(id.to_hex());
-            self.batch_in()
-                .put(
-                    &project_id,
-                    self.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&project)?,
-                )
-                .apply(txn)?;
-            if let Some(old) = previous
-                && self.get_claim_in_txn(txn, &old)?.is_some()
-            {
-                self.supersede_claim_in_txn(txn, &id, &old, now)?;
-            }
-            Ok(())
-        })?;
+
+        let mut project: ProjectRecord =
+            super::record(&self.store, txn, project_id, self.project_type_byte()?)?
+                .ok_or_else(invalid)?;
+        let previous = project
+            .goal
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
+        admission::arm_birth(&self.store, txn, id, project_id, record)?;
+        self.batch_in()
+            .claim_candidate(
+                &id,
+                ClaimCandidate::new(
+                    PREDICATE,
+                    ClaimSubject::Entity(project_id),
+                    Value::Binary(encode(record)?),
+                    1.0,
+                ),
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .apply(txn)?;
+        admission::seal_claim(&self.store, txn, id)?;
+        project.goal = Some(id.to_hex());
+        let project_bytes = encode(&project)?;
+        admission::arm_pointer(&self.store, txn, project_id, previous, id, &project_bytes)?;
+        self.batch_in()
+            .put(
+                &project_id,
+                self.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &project_bytes,
+            )
+            .apply(txn)?;
+        admission::disarm_pointer(&self.store, txn, project_id)?;
+        if let Some(old) = previous {
+            let prior = admission::trusted_active_claim(&self.store, txn, old, project_id)?;
+            admission::arm_supersession(&self.store, txn, old, &prior, now)?;
+            self.supersede_claim_in_txn(txn, &id, &old, now)?;
+            admission::seal_claim(&self.store, txn, old)?;
+        }
         Ok(id)
     }
 
     /// Read the project's current goal, never the leader's instructions.
     pub fn project_goal_record(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
-        let Some(project) = self.project(project_id)? else {
+        let txn = self.store.env.read_txn()?;
+        let Some(project): Option<ProjectRecord> =
+            super::record(&self.store, &txn, project_id, self.project_type_byte()?)?
+        else {
             return Ok(None);
         };
         let Some(id) = project.goal else {
             return Ok(None);
         };
         let id = EntityId::from_hex(&id).map_err(|_| invalid())?;
-        let claim = self.get_claim(&id)?.ok_or_else(invalid)?;
-        if claim.predicate != PREDICATE
-            || claim.subject != ClaimSubject::Entity(project_id)
-            || claim.source != Some(ClaimSource::UserStated)
-            || claim.approval != ClaimApprovalStatus::Approved
-            || claim.lifecycle != ClaimLifecycleStatus::Active
-        {
-            return Err(invalid());
-        }
-        let Value::Binary(bytes) = claim.value else {
-            return Err(invalid());
-        };
-        let record: GoalRecord = super::decode(&bytes)?;
-        record.validate()?;
+        let claim = admission::trusted_active_claim(&self.store, &txn, id, project_id)?;
+        let record = decode_goal_claim(&claim, project_id)?;
         Ok(Some(record))
     }
 }

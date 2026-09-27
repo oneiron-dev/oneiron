@@ -4,7 +4,11 @@ mod deletion;
 mod goal;
 mod projection;
 pub(crate) use deletion::deindex_project_room;
-pub use goal::{GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord};
+pub use goal::{GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord};
+pub(crate) use goal::{
+    guard_claim_put as guard_goal_claim_put, guard_goal_delete,
+    guard_pointer_put as guard_goal_pointer_put,
+};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
