@@ -26171,6 +26171,7 @@
       "CanonicalContainerManifest",
       "CanonicalEntity",
       "CanonicalSchemaManifest",
+      "CanonicalShellWorld",
       "CanonicalSnapshot",
       "CanonicalTombstone"
      ],
@@ -26180,7 +26181,7 @@
       "const": 2,
       "crate-vis": 9,
       "fn": 6,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -30847,7 +30848,7 @@
      "path": "src/sync/client/sync_frames.rs",
      "purpose": "Initial-connect and re-bootstrap sync frame builders",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -31627,7 +31628,7 @@
      "path": "src/sync/types.rs",
      "purpose": "Sync-specific types for the CRDT sync layer",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 12,
       "struct": 3
      }
@@ -34452,6 +34453,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/it/world_month_recovery.rs",
+     "purpose": "Featureless canonical world-month carry and retained-shell round trip",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/it_sync/main.rs",
      "purpose": "Consolidated integration-test binary for the `sync`-feature cluster",
      "surface": {}
@@ -34600,6 +34609,14 @@
      "notable": [],
      "path": "tests/it_sync/sync_window_manager.rs",
      "purpose": "Integration tests for the production window manager (ONE-1125)",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it_sync/sync_world_residence.rs",
+     "purpose": "World-month residence regressions through public engine doors",
      "surface": {}
     },
     {
@@ -36036,7 +36053,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2128,
-   "test_files": 724
+   "test_files": 726
   },
   "oneiron-android": {
    "files": [

@@ -16,6 +16,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         return Err(invalid("unsupported schema manifest"));
     }
     strict(snapshot.entity_blobs.iter().map(|row| row.id))?;
+    strict(snapshot.retained_claim_worlds.iter().map(|row| row.id))?;
     strict(
         snapshot
             .base_edges
@@ -52,6 +53,31 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         .iter()
         .map(|row| (row.id, crate::deletion::decode_tombstone_value(&row.value)))
         .collect();
+    let shell_worlds: BTreeMap<_, _> = snapshot
+        .retained_claim_worlds
+        .iter()
+        .map(|row| (row.id, row.world))
+        .collect();
+    for row in &snapshot.retained_claim_worlds {
+        id(row.id)?;
+        let Some(world) = world else {
+            return Err(invalid("base shell world proof"));
+        };
+        if row.world != *world.as_bytes()
+            || !snapshot.entity_blobs.iter().any(|entity| {
+                entity.id == row.id
+                    && entity.blob.len() == ENTITY_METADATA_HEADER_LEN
+                    && EntityMetadataHeader::parse(&entity.blob).is_some_and(|header| {
+                        header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                    })
+            })
+            || !deleted.get(&row.id).is_some_and(|value| {
+                value.reason == Some(crate::deletion::TombstoneReason::UserDelete)
+            })
+        {
+            return Err(invalid("retained claim world proof"));
+        }
+    }
     for entity in &snapshot.entity_blobs {
         id(entity.id)?;
         if let Some(tombstone) = deleted.get(&entity.id)
@@ -77,7 +103,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         } else if world.is_some()
             && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 || !body.is_empty()
-                || !deleted.contains_key(&entity.id))
+                || !deleted.contains_key(&entity.id)
+                || world.as_ref().is_some_and(|world_id| {
+                    shell_worlds.get(&entity.id) != Some(world_id.as_bytes())
+                }))
         {
             // A bodiless CLAIM is admissible only as a soft-deletion shell,
             // bound by its tombstone and the canonical window address.

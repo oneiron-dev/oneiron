@@ -184,6 +184,52 @@ pub(crate) fn entity_belongs_to_window(raw: &[u8], key: &WindowKey) -> bool {
     }
 }
 
+/// Exact retained CLAIM shells carry no body/world field. Only a paired
+/// canonical soft tombstone plus trusted recovery, or this vault's durable
+/// deletion address, can bind the shell to a world window.
+pub(crate) fn retained_world_shell_belongs_to_window(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    doc: &loro::LoroDoc,
+    id: &crate::EntityId,
+    blob: &[u8],
+    key: &WindowKey,
+    trusted: bool,
+) -> crate::error::Result<bool> {
+    if key.world().is_none() || blob.len() != crate::batch::ENTITY_METADATA_HEADER_LEN {
+        return Ok(false);
+    }
+    let Some(header) = crate::batch::EntityMetadataHeader::parse(blob) else {
+        return Ok(false);
+    };
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || WindowKey::from_timestamp(header.learned_at).0 != key.0[..7]
+    {
+        return Ok(false);
+    }
+    let tombstones = doc.get_map("tombstones");
+    let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(value))) =
+        tombstones.get(&id.to_hex())
+    else {
+        return Ok(false);
+    };
+    if crate::deletion::decode_tombstone_value(&value).reason
+        != Some(crate::deletion::TombstoneReason::UserDelete)
+        || crate::sync::loro_support::tombstone_values_for_id(&tombstones, id).len() != 1
+    {
+        return Ok(false);
+    }
+    if doc.get_map("entities").get(&id.to_hex()).is_some()
+        && crate::recovery::retained_soft_shell(doc, id).is_none()
+    {
+        return Ok(false);
+    }
+    if trusted {
+        return Ok(true);
+    }
+    Ok(tombstone_residence_in(vault, txn, id, key)? == TombstoneResidence::Match)
+}
+
 /// An edge with a world endpoint lives in that world, alongside the shared
 /// base endpoint. Edges joining two different worlds are not replicated.
 pub(crate) fn edge_worlds_match(
@@ -215,11 +261,46 @@ pub(crate) fn edge_belongs_to_window(
         // world edge with no proof of its second endpoint cannot travel.
         return Ok(key.world().is_none());
     };
-    Ok(edge_worlds_match(
-        entity_world(&src)?,
-        entity_world(&tgt)?,
-        key,
-    ))
+    let resident_world = |id: &crate::EntityId,
+                          raw: &[u8]|
+     -> crate::error::Result<Option<Option<crate::EntityId>>> {
+        match entity_world(raw) {
+            Ok(world) => Ok(Some(world)),
+            Err(error) => {
+                let shell = crate::batch::EntityMetadataHeader::parse(raw).is_some_and(|header| {
+                    header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                        && raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                });
+                if !shell || key.world().is_none() {
+                    return Err(error);
+                }
+                let txn = vault.store.env.read_txn()?;
+                if tombstone_residence_in(vault, &txn, id, key)? == TombstoneResidence::Match {
+                    Ok(Some(key.world()))
+                } else {
+                    Ok(None) // A shell assigned to another world cannot travel here.
+                }
+            }
+        }
+    };
+    let Some(src_world) = resident_world(source, &src)? else {
+        return Ok(false);
+    };
+    let Some(tgt_world) = resident_world(target, &tgt)? else {
+        return Ok(false);
+    };
+    if !edge_worlds_match(src_world, tgt_world, key) {
+        return Ok(false);
+    }
+    if key.world().is_some() {
+        // Base→world edges reside with the world TARGET's birth month.
+        // All other world edges reside with their source's birth month.
+        let carrier = if src_world.is_none() { &tgt } else { &src };
+        let header = crate::batch::EntityMetadataHeader::parse(carrier)
+            .ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
+        return Ok(WindowKey::from_timestamp(header.learned_at).0 == key.0[..7]);
+    }
+    Ok(true)
 }
 
 /// Validate a received edge against both CRDT carriers and LMDB rows.
@@ -235,6 +316,7 @@ pub(crate) fn edge_belongs_to_window_in(
 ) -> crate::error::Result<bool> {
     let entities = doc.get_map("entities");
     let mut worlds = [None, None];
+    let mut learned_at = [None, None];
     for (index, id) in [source, target].iter().enumerate() {
         let in_doc = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
         let stored = vault.store.entities.get(txn, id.as_bytes())?;
@@ -244,25 +326,68 @@ pub(crate) fn edge_belongs_to_window_in(
         let doc_world = match in_doc.as_ref().map(|raw| entity_world(raw)) {
             Some(Ok(world)) => Some(world),
             Some(Err(_)) if key.world().is_none() => None,
+            Some(Err(_))
+                if retained_world_shell_belongs_to_window(
+                    vault,
+                    txn,
+                    doc,
+                    id,
+                    in_doc.as_deref().expect("matched"),
+                    key,
+                    false,
+                )? =>
+            {
+                Some(key.world())
+            }
             Some(Err(_)) => return Ok(false),
             None => None,
         };
-        let stored_world = stored.as_ref().map(|raw| entity_world(raw)).transpose()?;
+        let stored_world = match stored.as_ref().map(|raw| entity_world(raw)) {
+            Some(Ok(world)) => Some(world),
+            Some(Err(_))
+                if retained_world_shell_belongs_to_window(
+                    vault,
+                    txn,
+                    doc,
+                    id,
+                    stored.as_deref().expect("matched"),
+                    key,
+                    false,
+                )? =>
+            {
+                Some(key.world())
+            }
+            Some(Err(error)) => return Err(error),
+            None => None,
+        };
         if let (Some(doc_world), Some(stored_world)) = (doc_world, stored_world)
             && doc_world != stored_world
         {
             return Ok(false);
         }
         worlds[index] = doc_world.or(stored_world);
+        let carrier = in_doc.as_deref().or(stored.as_deref());
+        learned_at[index] = carrier
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .map(|header| header.learned_at);
     }
-    if key.world().is_some() && worlds.iter().any(Option::is_none) {
+    if key.world().is_some()
+        && (worlds.iter().any(Option::is_none) || learned_at.iter().any(Option::is_none))
+    {
         return Ok(false);
     }
-    Ok(edge_worlds_match(
-        worlds[0].flatten(),
-        worlds[1].flatten(),
-        key,
-    ))
+    if !edge_worlds_match(worlds[0].flatten(), worlds[1].flatten(), key) {
+        return Ok(false);
+    }
+    if key.world().is_some() {
+        let carrier_at = if worlds[0].flatten().is_none() {
+            learned_at[1]
+        } else {
+            learned_at[0]
+        };
+        return Ok(carrier_at.is_some_and(|at| WindowKey::from_timestamp(at).0 == key.0[..7]));
+    }
+    Ok(true)
 }
 
 /// Proof of residence for a delete which has no body of its own. An unknown

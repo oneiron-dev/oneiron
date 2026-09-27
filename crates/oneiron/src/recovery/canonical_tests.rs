@@ -221,6 +221,130 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
 }
 
 #[test]
+fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let world = EntityId::now();
+    let person = EntityId::now();
+    let claim = EntityId::now();
+    let at = 1_771_027_200;
+    let occurred = TimeRange { start: at, end: at };
+    vault.put_entity(
+        &world,
+        crate::registry::ENTITY_TYPE_WORLD,
+        occurred,
+        at,
+        b"world",
+    )?;
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        occurred,
+        at,
+        b"person",
+    )?;
+    let mut body = crate::claim::ClaimBody::new(
+        "test.canonical_soft_world",
+        crate::claim::ClaimSubject::Entity(person),
+        rmpv::Value::from("fact"),
+        1.0,
+        crate::claim::ClaimApprovalStatus::Proposed,
+        crate::claim::ClaimLifecycleStatus::Active,
+    );
+    body.world = Some(world);
+    vault.put_claim(&claim, &body, occurred, at)?;
+    vault
+        .batch()
+        .edge(&claim, EdgeKind::About, &person, 1.0)
+        .commit()?;
+    vault.delete_entity_with_reason(&claim, crate::deletion::DeleteReason::UserDelete)?;
+    let key = format!("2026-02@{}", world.to_hex());
+    #[cfg(feature = "sync")]
+    let source_doc = crate::sync::window::load_window_from_state(
+        &vault,
+        "source",
+        &crate::sync::WindowKey::new(&key),
+    )?;
+    #[cfg(not(feature = "sync"))]
+    let source_doc = LoroDoc::new();
+    let snapshot = capture_canonical_window(&vault, &key, &source_doc)?;
+    assert!(
+        snapshot
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *claim.as_bytes()
+                && row.blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN)
+    );
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|row| row.source == *claim.as_bytes() && row.target == *person.as_bytes())
+    );
+    let encoded = snapshot.encode()?;
+    assert_eq!(CanonicalSnapshot::decode(&encoded)?, snapshot);
+    let rebuilt = rebuild_vault_window_from_canonical(&snapshot)?;
+    #[cfg(feature = "sync")]
+    {
+        let peer_dir = tempfile::tempdir()?;
+        let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.put_entity(
+            &world,
+            crate::registry::ENTITY_TYPE_WORLD,
+            occurred,
+            at,
+            b"world",
+        )?;
+        peer.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            at,
+            b"person",
+        )?;
+        let window = crate::sync::WindowKey::new(&key);
+        crate::sync::window::forward_recovery(
+            &peer,
+            &rebuilt,
+            &crate::sync::bridge::Materializer::new(),
+            &window,
+            &snapshot,
+        )?;
+        assert_eq!(
+            peer.get_raw_unsealed(&claim)?.unwrap().len(),
+            crate::batch::ENTITY_METADATA_HEADER_LEN
+        );
+        assert_eq!(
+            peer.sync_state_get(&format!("m:dw:{}", claim.to_hex()))?
+                .as_deref(),
+            Some(key.as_bytes())
+        );
+        assert!(
+            peer.edges_out(&claim)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::About && edge.target == person)
+        );
+        crate::sync::server_state::persist_window_snapshot(&peer, &window, &rebuilt)?;
+        let manager = std::sync::Arc::new(crate::sync::WindowManager::new(
+            std::sync::Arc::new(peer),
+            std::sync::Arc::new(crate::sync::bridge::Materializer::new()),
+            "peer",
+        ));
+        let reopened = manager.open_window(&window)?;
+        assert!(
+            reopened
+                .doc
+                .get_map("tombstones")
+                .get(&claim.to_hex())
+                .is_some()
+        );
+    }
+    #[cfg(not(feature = "sync"))]
+    let _ = rebuilt;
+    Ok(())
+}
+
+#[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;

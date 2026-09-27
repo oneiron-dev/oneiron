@@ -4038,3 +4038,77 @@ fn world_export_does_not_pick_up_a_shared_note_from_the_same_month() -> Result<(
     assert!(base.get_map("entities").get(&note.to_hex()).is_some());
     Ok(())
 }
+
+#[test]
+fn late_follow_accepts_deleted_world_claim_edge_history_without_foreign_edges() -> Result<()> {
+    for reason in [
+        crate::deletion::TombstoneReason::UserDelete,
+        crate::deletion::TombstoneReason::UserHardDelete,
+    ] {
+        let (_dir, source) = test_vault();
+        let (_peer_dir, peer) = test_vault();
+        let key = WindowKey::for_world(1_771_027_200, EntityId::from_bytes([0x91; 16])?);
+        let world = key.world().unwrap();
+        let person = EntityId::from_bytes([0x92; 16])?;
+        let deleted = EntityId::from_bytes([0x93; 16])?;
+        let survivor = EntityId::from_bytes([0x94; 16])?;
+        let at = key.start_timestamp().unwrap() + 60;
+        let occurred = TimeRange { start: at, end: at };
+        for vault in [&source, &peer] {
+            vault.put_entity(
+                &world,
+                crate::registry::ENTITY_TYPE_WORLD,
+                occurred,
+                at,
+                b"world",
+            )?;
+            vault.put_entity(
+                &person,
+                crate::registry::ENTITY_TYPE_PERSON,
+                occurred,
+                at,
+                b"person",
+            )?;
+        }
+        for id in [deleted, survivor] {
+            let mut body = crate::claim::ClaimBody::new(
+                "test.world_history",
+                crate::claim::ClaimSubject::Entity(person),
+                Value::from("fact"),
+                1.0,
+                ClaimApprovalStatus::Proposed,
+                crate::claim::ClaimLifecycleStatus::Active,
+            );
+            body.world = Some(world);
+            source.put_claim(&id, &body, occurred, at)?;
+        }
+        source
+            .batch()
+            .edge(&deleted, EdgeKind::About, &person, 1.0)
+            .commit()?;
+        let doc = create_window_doc("source", &key);
+        reverse_rematerialize(&source, &doc, &key)?;
+        let value = crate::deletion::TombstoneValueV2 {
+            reason,
+            deleted_at: at + 1,
+            request_id: [7; 16],
+        }
+        .encode();
+        apply_tombstone_to_window_doc(&doc, &deleted, &value)?;
+        doc.commit();
+        let update =
+            export_window_updates_since(&source, &key, &doc, &VersionVector::default().encode())?;
+        let received = create_window_doc("peer", &key);
+        validate_window_update_residence_with_vault(&peer, &received, &update, &key)?;
+        import_doc(&received, &update)?;
+        forward_rematerialize(&peer, &received, &Materializer::new(), &key)?;
+        assert!(
+            received
+                .get_map("tombstones")
+                .get(&deleted.to_hex())
+                .is_some()
+        );
+        assert_eq!(peer.get(&survivor)?, source.get(&survivor)?);
+    }
+    Ok(())
+}

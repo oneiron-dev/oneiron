@@ -41,6 +41,8 @@ pub struct SyncClient {
     /// the local doc holds.
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
+    pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
+    pub(crate) root_bootstrapped: bool,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -142,6 +144,8 @@ impl SyncClient {
             config,
             server_vvs: HashMap::new(),
             requested_windows: Mutex::new(HashSet::new()),
+            pending_world_windows: Mutex::new(HashSet::new()),
+            root_bootstrapped: false,
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,

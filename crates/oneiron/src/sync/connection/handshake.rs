@@ -201,7 +201,9 @@ impl SyncConnection {
 
         let (mut write, mut read) = ws_stream.split();
 
-        // Phase 1-2: Initial sync (send our VVs, receive server state)
+        // Phase 1-2: this socket needs fresh window subscriptions even if
+        // the same client instance survived a prior disconnect.
+        client.begin_connection_sync();
         let initial_messages = client
             .try_generate_initial_sync()
             .map_err(|e| format!("Generate initial sync failed: {e}"))?;

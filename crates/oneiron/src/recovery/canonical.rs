@@ -53,6 +53,14 @@ pub struct CanonicalTombstone {
     pub value: Vec<u8>,
 }
 
+/// World proof retained when a soft-deleted CLAIM has only its header left.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalShellWorld {
+    pub id: [u8; 16],
+    pub world: [u8; 16],
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanonicalContainerManifest {
@@ -78,6 +86,7 @@ pub struct CanonicalSchemaManifest {
 pub struct CanonicalSnapshot {
     pub window: String,
     pub entity_blobs: Vec<CanonicalEntity>,
+    pub retained_claim_worlds: Vec<CanonicalShellWorld>,
     pub base_edges: Vec<CanonicalBaseEdge>,
     pub tombstones: Vec<CanonicalTombstone>,
     pub doc_snapshots: Vec<CanonicalDocument>,
@@ -185,6 +194,7 @@ pub fn capture_canonical_window(
     let mut snapshot = CanonicalSnapshot {
         window: window.to_owned(),
         entity_blobs: Vec::new(),
+        retained_claim_worlds: Vec::new(),
         base_edges: Vec::new(),
         tombstones: Vec::new(),
         doc_snapshots: Vec::new(),
@@ -392,6 +402,26 @@ pub fn capture_canonical_window(
     }
     document::capture(vault, &txn, &mut snapshot)?;
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    if let Some((_, hex)) = window.split_once('@') {
+        let world = EntityId::from_hex(hex).map_err(|_| invalid("window world"))?;
+        for entity in &snapshot.entity_blobs {
+            let header = crate::batch::EntityMetadataHeader::parse(&entity.blob)
+                .ok_or(invalid("entity metadata"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                || entity.blob.len() != crate::batch::ENTITY_METADATA_HEADER_LEN
+            {
+                continue;
+            }
+            let mapping = format!("m:dw:{}", id(entity.id)?.to_hex());
+            if vault.store.sync_state.get(&txn, &mapping)?.as_deref() != Some(window.as_bytes()) {
+                return Err(invalid("soft claim world address"));
+            }
+            snapshot.retained_claim_worlds.push(CanonicalShellWorld {
+                id: entity.id,
+                world: *world.as_bytes(),
+            });
+        }
+    }
     snapshot
         .base_edges
         .sort_by_key(|row| (row.source, row.kind, row.target));

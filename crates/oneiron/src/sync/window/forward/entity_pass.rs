@@ -114,11 +114,33 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 return;
             }
 
-            if !crate::sync::types::entity_belongs_to_window(blob, window_key) {
-                entity_error = Some(Error::InvalidConfig(
-                    "entity outside window residence".into(),
-                ));
-                return;
+            let belongs = crate::sync::types::entity_belongs_to_window(blob, window_key);
+            let retained = if belongs {
+                Ok(false)
+            } else {
+                crate::sync::types::retained_world_shell_belongs_to_window(
+                    vault,
+                    &rtxn,
+                    doc,
+                    &id,
+                    blob,
+                    window_key,
+                    ctx.trusted,
+                )
+            };
+            match retained {
+                Ok(true) => return, // The dedicated shell restorer runs after this pass.
+                Ok(false) if belongs => {}
+                Ok(false) => {
+                    entity_error = Some(Error::InvalidConfig(
+                        "entity outside window residence".into(),
+                    ));
+                    return;
+                }
+                Err(error) => {
+                    entity_error = Some(error);
+                    return;
+                }
             }
 
             // Observer-B parity: internal chunk bytes never materialize from

@@ -11,6 +11,21 @@ use crate::sync::transport::{TAG_VERSION_VECTOR, TransportError, window_sub_tags
 use crate::sync::types::WindowKey;
 
 impl SyncClient {
+    /// Every socket has its own subscribed-key set. A reconnect retains its
+    /// local Docs and root, but must negotiate every world VV again after
+    /// the server's root response (and after all shared base VVs).
+    pub(in crate::sync) fn begin_connection_sync(&mut self) {
+        self.requested_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.pending_world_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.root_bootstrapped = false;
+    }
+
     /// Drops all in-memory CRDT state for a forced re-bootstrap (ARCH-0023b
     /// Fig. 2: "drop Docs + queue").
     ///
@@ -31,6 +46,11 @@ impl SyncClient {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.pending_world_windows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.root_bootstrapped = false;
         let root_doc = LoroDoc::new();
         let _meta = root_doc.get_map("meta");
         // Same peer-id pinning as `new`: the client never authors root ops,
@@ -173,7 +193,23 @@ impl SyncClient {
             }
         }
 
+        keys.sort_by(|left, right| {
+            left.world()
+                .is_some()
+                .cmp(&right.world().is_some())
+                .then_with(|| left.as_str().cmp(right.as_str()))
+        });
         for key in keys {
+            if key.world().is_some() {
+                // The server sends root first, but initial frames are already
+                // queued on this socket. Wait for that root response, request
+                // every shared base month, THEN this world's VV.
+                self.pending_world_windows
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key);
+                continue;
+            }
             match self.window_vv_for_initial_sync(&key) {
                 Ok(vv) => {
                     let frame = transport::encode_window_sync(
@@ -245,12 +281,38 @@ impl SyncClient {
     /// Request newly advertised, followed world windows only after the root
     /// import is durable. A repeat root update never requests the same key.
     pub(super) fn newly_followed_window_requests(
-        &self,
+        &mut self,
     ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        let mut frames = Vec::new();
-        for key in
-            self.selected_discovered_windows(crate::sync::schema::read_window_list(&self.root_doc))
+        let mut discovered = crate::sync::schema::read_window_list(&self.root_doc);
+        discovered.extend(self.manager.loaded_keys());
+        discovered.extend(
+            self.pending_world_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        if !self.root_bootstrapped
+            && self
+                .config
+                .followed_worlds
+                .as_ref()
+                .is_none_or(|worlds| !worlds.is_empty())
         {
+            discovered.extend(
+                crate::sync::discover_local_window_keys(&self.vault)
+                    .map_err(|error| TransportError::Storage(error.to_string()))?,
+            );
+        }
+        let mut keys = self.selected_discovered_windows(discovered);
+        keys.sort_by(|left, right| {
+            left.world()
+                .is_some()
+                .cmp(&right.world().is_some())
+                .then_with(|| left.as_str().cmp(right.as_str()))
+        });
+        let mut frames = Vec::new();
+        for key in keys {
             if self
                 .requested_windows
                 .lock()
@@ -268,9 +330,14 @@ impl SyncClient {
             self.requested_windows
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(key);
+                .insert(key.clone());
+            self.pending_world_windows
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key);
             frames.push(frame);
         }
+        self.root_bootstrapped = true;
         Ok(frames)
     }
 

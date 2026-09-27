@@ -26,6 +26,7 @@ struct RematCtx<'a> {
     doc: &'a LoroDoc,
     window_key: &'a WindowKey,
     lease_vault_id: u64,
+    trusted: bool,
     entities_map: LoroMap,
     edges_map: LoroMap,
     tombstones_map: LoroMap,
@@ -112,6 +113,7 @@ fn forward_with_recovery(
         doc,
         window_key,
         lease_vault_id,
+        trusted: trusted.is_some(),
         entities_map,
         edges_map,
         tombstones_map,
@@ -138,6 +140,22 @@ fn forward_with_recovery(
         )?);
     }
     crate::recovery::materialize_retained_shells(vault, doc)?;
+    if let Some(snapshot) = trusted.filter(|_| window_key.world().is_some()) {
+        // The validated canonical artifact binds every retained soft shell
+        // to this world. Persist that address before the edge pass and the
+        // next ordinary reopen consult the same durable proof.
+        vault.with_write_txn(|txn| {
+            for shell in &snapshot.retained_claim_worlds {
+                let id = EntityId::from_bytes(shell.id)?;
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("m:dw:{}", id.to_hex()),
+                    window_key.as_str().as_bytes(),
+                )?;
+            }
+            Ok(())
+        })?;
+    }
     edge_pass::run(&ctx, &mut ledger)?;
     // A SESSION/SpawnedBy or ChildOf in this window can satisfy a bounded
     // Parent obligation left by a different window whose doc is not loaded.

@@ -1,12 +1,15 @@
 //! Full-window UPDATE locality admission without live document side effects.
 
+use std::collections::HashMap;
+
 use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
+use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
 use crate::error::SyncError;
 use crate::registry::ENTITY_TYPE_DIAGNOSTIC;
-use crate::sync::loro_support::map_for_each_value_bytes;
+use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes};
 use crate::{Error, Result};
 
 /// Refuses diagnostic carriers before a full-window update can mutate the
@@ -92,22 +95,6 @@ fn validate_window_update(
             ));
         }
     }
-    if metadata.mode.is_snapshot()
-        && let (Some(key), Some(vault)) = (key, vault)
-    {
-        let edges = candidate.get_map("edges");
-        let mut edge_keys = Vec::new();
-        edges.for_each(|edge, _| edge_keys.push(edge.to_owned()));
-        for edge in edge_keys {
-            check_edge_residence(vault, &candidate, &edge, key)?;
-        }
-        let tombstones = candidate.get_map("tombstones");
-        let mut tombstone_keys = Vec::new();
-        tombstones.for_each(|id, _| tombstone_keys.push(id.to_owned()));
-        for id in tombstone_keys {
-            check_tombstone_residence(vault, &id, key)?;
-        }
-    }
     let entities = ContainerID::new_root("entities", ContainerType::Map);
     let edges = ContainerID::new_root("edges", ContainerType::Map);
     let tombstones = ContainerID::new_root("tombstones", ContainerType::Map);
@@ -133,6 +120,37 @@ fn validate_window_update(
         return Err(Error::InvalidConfig(
             "window update history is unavailable".into(),
         ));
+    }
+    // A deleted world's live map has no claim body, but ordinary Loro
+    // history retains the validated insertion that assigned its world. Keep
+    // that evidence until every edge op in this same import is inspected.
+    let mut historical = HashMap::<EntityId, Vec<u8>>::new();
+    for op in operations.changes.iter().flat_map(|change| &change.ops) {
+        if op.container == entities
+            && let JsonOpContent::Map(MapOp::Insert {
+                key: raw_key,
+                value: LoroValue::Binary(blob),
+            }) = &op.content
+            && let Ok(id) = EntityId::from_hex(raw_key)
+        {
+            historical.insert(id, blob.to_vec());
+        }
+    }
+    if metadata.mode.is_snapshot()
+        && let (Some(key), Some(vault)) = (key, vault)
+    {
+        let edges = candidate.get_map("edges");
+        let mut edge_keys = Vec::new();
+        edges.for_each(|edge, _| edge_keys.push(edge.to_owned()));
+        for edge in edge_keys {
+            check_edge_residence(vault, &candidate, &edge, key, &historical)?;
+        }
+        let tombstones = candidate.get_map("tombstones");
+        let mut tombstone_keys = Vec::new();
+        tombstones.for_each(|id, _| tombstone_keys.push(id.to_owned()));
+        for id in tombstone_keys {
+            check_tombstone_residence(vault, &id, key)?;
+        }
     }
     for op in operations.changes.into_iter().flat_map(|change| change.ops) {
         let JsonOpContent::Map(MapOp::Insert {
@@ -165,7 +183,7 @@ fn validate_window_update(
             }
         } else if let (Some(key), Some(vault)) = (key, vault) {
             if op.container == edges {
-                check_edge_residence(vault, &candidate, &map_key, key)?;
+                check_edge_residence(vault, &candidate, &map_key, key, &historical)?;
             } else if op.container == tombstones {
                 check_tombstone_residence(vault, &map_key, key)?;
             }
@@ -179,7 +197,9 @@ fn check_edge_residence(
     doc: &LoroDoc,
     edge: &str,
     key: &crate::sync::WindowKey,
+    historical: &HashMap<EntityId, Vec<u8>>,
 ) -> Result<()> {
+    let denied = || Error::InvalidConfig("edge outside window residence".into());
     let Some((src, _, tgt)) = crate::sync::bridge::parse_edge_key(edge) else {
         return if key.world().is_none() {
             Ok(())
@@ -188,8 +208,55 @@ fn check_edge_residence(
         };
     };
     let txn = vault.store.env.read_txn()?;
-    if !crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, &src, &tgt, key)? {
-        return Err(Error::InvalidConfig("edge outside window residence".into()));
+    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, &src, &tgt, key)? {
+        return Ok(());
+    }
+    if key.world().is_none() {
+        return Err(denied());
+    }
+    let entities = doc.get_map("entities");
+    let mut worlds = [None, None];
+    let mut learned = [None, None];
+    for (index, id) in [src, tgt].iter().enumerate() {
+        let stored = vault.store.entities.get(&txn, id.as_bytes())?;
+        let live = map_get_bytes(&entities, &id.to_hex());
+        let old = historical.get(id);
+        let raw = if let Some(stored) = stored.as_deref() {
+            let header = EntityMetadataHeader::parse(stored)
+                .ok_or(Error::CorruptedIndex("entity metadata"))?;
+            if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && stored.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+            {
+                let old = old.ok_or_else(denied)?;
+                let old_header = EntityMetadataHeader::parse(old).ok_or_else(denied)?;
+                if old_header.learned_at != header.learned_at {
+                    return Err(denied());
+                }
+                old.as_slice()
+            } else {
+                stored
+            }
+        } else if let Some(live) = live.as_deref() {
+            live
+        } else {
+            old.map(Vec::as_slice).ok_or_else(denied)?
+        };
+        let header = EntityMetadataHeader::parse(raw).ok_or_else(denied)?;
+        worlds[index] = Some(crate::sync::types::entity_world(raw)?);
+        learned[index] = Some(header.learned_at);
+    }
+    if !crate::sync::types::edge_worlds_match(worlds[0].flatten(), worlds[1].flatten(), key) {
+        return Err(denied());
+    }
+    let carrier = if worlds[0].flatten().is_none() {
+        learned[1]
+    } else {
+        learned[0]
+    };
+    if carrier
+        .is_none_or(|at| crate::sync::WindowKey::from_timestamp(at).as_str() != &key.as_str()[..7])
+    {
+        return Err(denied());
     }
     Ok(())
 }

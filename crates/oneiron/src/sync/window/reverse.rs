@@ -45,7 +45,16 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
     let mut base_edge_sources = Vec::new();
     for id in vault.entities_in_learned_range(start_ts, end_ts)? {
         if let Some(raw) = vault.get_raw_unsealed(&id)? {
-            if super::types::entity_belongs_to_window(&raw, window_key) {
+            let belongs = super::types::entity_belongs_to_window(&raw, window_key);
+            let retained = if belongs {
+                false
+            } else {
+                let txn = vault.store.env.read_txn()?;
+                super::types::retained_world_shell_belongs_to_window(
+                    vault, &txn, doc, &id, &raw, window_key, false,
+                )?
+            };
+            if belongs || retained {
                 entities_in_range.push(id);
             } else if window_key.world().is_some()
                 && super::types::entity_world(&raw).ok() == Some(None)
@@ -146,10 +155,16 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             continue;
         };
 
+        let retained_shell = {
+            let txn = vault.store.env.read_txn()?;
+            super::types::retained_world_shell_belongs_to_window(
+                vault, &txn, doc, id, &raw, window_key, false,
+            )?
+        };
         // Excluded credentials and the local default manifest have no live
         // carrier or incident edge. Scrub history as well as the live map when
         // a local dial narrows an existing portable credential.
-        if !claim_sync_allowed(&raw)
+        if (!claim_sync_allowed(&raw) && !retained_shell)
             || is_unsyncable_secret_custody(&raw)
             || *id == crate::gate::default_policy_manifest_id()?
         {
@@ -167,7 +182,8 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
         // restore the carrier. Ordinary rows retain delete-wins semantics,
         // including non-binary values and case-shifted aliases.
         let protected_tombstone = protected_tombstones.contains(id);
-        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) {
+        if !protected_tombstone && tombstone_map_contains_id(&tombstones_map, id) && !retained_shell
+        {
             continue;
         }
 
@@ -307,6 +323,49 @@ pub fn reverse_rematerialize(vault: &Vault, doc: &LoroDoc, window_key: &WindowKe
             )?;
             map_insert_bytes(&edges_map, edge_key.as_str(), &edge_val)?;
             wrote_any = true;
+        }
+    }
+
+    // Base→world edges live in the world TARGET's birth month, not the
+    // older base source's month. The target index finds those sources without
+    // scanning every historic base row or inventing edge-only world windows.
+    if window_key.world().is_some() {
+        for target in &entities_in_range {
+            if tombstone_map_contains_id(&tombstones_map, target) {
+                continue;
+            }
+            for edge in vault.edges_in(target)? {
+                let source = edge.target; // edges_in names the source as its neighbor.
+                let Some(source_raw) = vault.get_raw_unsealed(&source)? else {
+                    continue;
+                };
+                if super::types::entity_world(&source_raw)?.is_some()
+                    || is_unsyncable_secret_custody(&source_raw)
+                    || edge.kind == EdgeKind::Blocks
+                    || window_packing_excludes_entity(vault, &device_only, &source)?
+                    || window_packing_excludes_entity(vault, &device_only, target)?
+                    || !local_claim_sync_allowed(vault, &source)?
+                    || !local_claim_sync_allowed(vault, target)?
+                    || local_entity_is_unsyncable_companion(vault, &source)?
+                    || local_entity_is_unsyncable_companion(vault, target)?
+                    || !super::types::edge_belongs_to_window(vault, &source, target, window_key)?
+                {
+                    continue;
+                }
+                let key = format_edge_key(&source, edge.kind, target);
+                if map_contains_binary(&edges_map, &key) {
+                    continue;
+                }
+                let value = encode_edge_value_for_crdt(
+                    edge.kind,
+                    edge.weight,
+                    edge.created_at,
+                    edge.vad,
+                    edge.provenance,
+                )?;
+                map_insert_bytes(&edges_map, &key, &value)?;
+                wrote_any = true;
+            }
         }
     }
 
