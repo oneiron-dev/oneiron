@@ -35,6 +35,7 @@ pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
 };
 pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
+pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub use self::dispatch_pipeline::OutboundDispatchPipeline;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub use self::dispatch_types::{

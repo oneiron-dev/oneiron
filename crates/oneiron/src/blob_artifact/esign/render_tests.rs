@@ -132,6 +132,7 @@ impl Evidence {
             }],
             fields,
             full_trail_appendix: trail,
+            lifecycle: None,
         };
         let state = EsignState::draft(document.clone(), 1).unwrap();
         let mut result = Self {
