@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::ManifestEntry;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::ReceiptRecord;
