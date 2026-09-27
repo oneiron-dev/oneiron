@@ -28,6 +28,7 @@ pub use crate::gate::manifest_authenticity::ManifestContribution;
 
 mod ancestor_index;
 mod ancestry_bypass;
+mod ancestry_evaluator;
 mod causal_write;
 mod checkpoint;
 mod claim_write;
@@ -48,6 +49,7 @@ mod observation_policy;
 mod op_apply;
 mod readonly_fold;
 mod recovery_ceremony;
+mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;
 mod slip;

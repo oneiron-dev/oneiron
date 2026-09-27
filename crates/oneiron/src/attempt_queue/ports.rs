@@ -37,6 +37,14 @@ impl JobQueue for AttemptQueue<'_> {
         let cutoff = cutoff.min(input.now);
         self.claim_kind_storage_in_txn(txn, kind, input, cutoff)
     }
+    fn port_job_claim_id(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome> {
+        self.claim_id_in_txn(txn, id, input)
+    }
     fn port_job_complete(
         &self,
         txn: &mut heed::RwTxn<'_>,
