@@ -598,8 +598,8 @@ fn accepted_in_cycle_in_txn(
 /// then refused at the admission door has been answered, and the superseded
 /// acceptance is history rather than a live permission.
 ///
-/// Two rulings qualify, and both are answers a REDELIVERY must return rather
-/// than re-earn:
+/// Three rulings qualify, and each is an answer a REDELIVERY must return
+/// rather than re-earn:
 ///
 /// - a standing ACCEPTANCE over exactly this basis, whatever cycle it was ruled
 ///   in — an acceptance keeps the cycle it was ruled in, and a duplicate
@@ -607,9 +607,12 @@ fn accepted_in_cycle_in_txn(
 /// - a standing CAP DEFERRAL over exactly this basis AND this same cycle. The
 ///   cycle equality is load-bearing in the other direction: a deferral from
 ///   wake X says nothing about wake Y, so a genuine later-cycle pickup still
-///   re-scores and is counted against the cycle that picked it up.
+///   re-scores and is counted against the cycle that picked it up;
+/// - a pending TRADEOFF ASK over the same scored basis and goal/preference
+///   frontier while the same bound question is still pending. A human pick
+///   changes the frontier and makes the next delivery rule again.
 ///
-/// Returning the standing row is what makes delivery idempotent on BOTH arms:
+/// Returning the standing row makes delivery idempotent on all three arms:
 /// no second replay is paid, no second row is appended, and the cap is neither
 /// re-spent nor re-measured.
 fn standing_ruling_in_txn(
@@ -625,12 +628,18 @@ fn standing_ruling_in_txn(
     {
         return Ok(None);
     }
-    Ok(standing.filter(|verdict| {
-        basis.matches(verdict)
-            && (verdict.disposition.admits()
-                || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
-                    && verdict.cycle == cycle.as_str()))
-    }))
+    let Some(verdict) = standing else {
+        return Ok(None);
+    };
+    if !basis.matches(&verdict) {
+        return Ok(None);
+    }
+    let reusable = verdict.disposition.admits()
+        || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
+            && verdict.cycle == cycle.as_str())
+        || (verdict.disposition == SkillEditDisposition::DeferredTradeoffAsk
+            && tradeoff::ask_matches_verdict_in_txn(vault, rtxn, &verdict)?);
+    Ok(reusable.then_some(verdict))
 }
 
 /// The most recent ruling on one proposal, whatever it said.

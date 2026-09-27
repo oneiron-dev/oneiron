@@ -29270,7 +29270,7 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "Goal-axis tradeoff policy for optimizer admissions",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 4,
       "struct": 6

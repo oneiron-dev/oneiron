@@ -112,6 +112,7 @@ pub(crate) fn with_optimized_skill_admission(
     validate_skill_update(&staged, &admitted)?;
     let data = crate::skill::encode_skill_record(&admitted)?;
     apply(wtxn, data)?;
+    tradeoff::carry_goal_in_txn(vault, wtxn, &target, proposal)?;
     Ok(None)
 }
 

@@ -119,6 +119,10 @@ fn put_actor(vault: &Vault, id: &EntityId) {
 /// Runs one attempt whose pack loaded `skill_id@1.0.0` to its terminal door
 /// and returns the receipt id its close STAMPED.
 fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
+    stamped_receipt_version(vault, skill_id, FIXTURE_VERSION, now)
+}
+
+fn stamped_receipt_version(vault: &Vault, skill_id: &str, version: &str, now: u64) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
         .enqueue(EnqueueAttempt {
@@ -135,7 +139,7 @@ fn stamped_receipt(vault: &Vault, skill_id: &str, now: u64) -> String {
     queue
         .append_manifest_entry(
             attempt.id,
-            ManifestEntry::new(ManifestKind::Skill, skill_id, FIXTURE_VERSION, now),
+            ManifestEntry::new(ManifestKind::Skill, skill_id, version, now),
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
@@ -5043,50 +5047,71 @@ fn tradeoff_goal(owner: &crate::consent::AuthenticatedOwner) -> SkillTradeoffGoa
 
 struct TradeoffScorer {
     calls: RefCell<usize>,
+    phases: RefCell<Vec<&'static str>>,
     jev: Option<(f64, bool)>, // confidence, corrupt question binding
+    choice: TradeoffChoice,
+    incumbent: &'static str,
 }
 impl TradeoffScorer {
     fn new(jev: Option<(f64, bool)>) -> Self {
         Self {
             calls: RefCell::new(0),
+            phases: RefCell::new(Vec::new()),
             jev,
+            choice: TradeoffChoice::Candidate,
+            incumbent: TARGET_DESC,
         }
+    }
+    fn choosing(mut self, choice: TradeoffChoice) -> Self {
+        self.choice = choice;
+        self
+    }
+    fn against(mut self, incumbent: &'static str) -> Self {
+        self.incumbent = incumbent;
+        self
     }
 }
 impl HeldOutReplayScorer for TradeoffScorer {
     fn score(&self, case: &HeldOutReplayCase<'_>) -> Result<f32> {
-        Ok(if case.instructions == TARGET_DESC {
+        self.phases.borrow_mut().push("score");
+        Ok(if case.instructions == self.incumbent {
             0.4
         } else {
             0.75
         })
     }
     fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+        self.phases.borrow_mut().push("structural");
         Ok(0.5)
     }
     fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+        self.phases.borrow_mut().push("blind");
         Ok(vec![BlindPreference {
             pair_ref: "pair".into(),
             preferred: PreferredResponse::First,
         }])
     }
     fn contrastive_audit(&self, _: &HeldOutReplayCase<'_>, _: &[BlindPreference]) -> Result<f32> {
+        self.phases.borrow_mut().push("contrastive");
         Ok(0.5)
     }
     fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        self.phases.borrow_mut().push("predict");
         Ok(vec![0.5; case.held_out_receipts.len()])
     }
     fn goal_axes(
         &self,
         case: &HeldOutReplayCase<'_>,
     ) -> Result<Option<std::collections::BTreeMap<String, f32>>> {
-        let proposed = case.instructions != TARGET_DESC;
+        self.phases.borrow_mut().push("axes");
+        let proposed = case.instructions != self.incumbent;
         Ok(Some(std::collections::BTreeMap::from([
             ("quality".into(), if proposed { 0.8 } else { 0.5 }),
             ("human_minutes".into(), if proposed { 12.0 } else { 10.0 }),
         ])))
     }
     fn jev_tradeoff(&self, question: &SkillTradeoffQuestion) -> Result<Option<JevTradeoffVerdict>> {
+        self.phases.borrow_mut().push("jev");
         *self.calls.borrow_mut() += 1;
         self.jev
             .map(|(probability, corrupt)| {
@@ -5096,7 +5121,7 @@ impl HeldOutReplayScorer for TradeoffScorer {
                     } else {
                         question.digest()?
                     },
-                    choice: TradeoffChoice::Candidate,
+                    choice: self.choice,
                     probability,
                     pin: crate::llm::decision::ProviderPin {
                         rung: crate::llm::decision::DecisionRung::SystemOne,
@@ -5191,11 +5216,30 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
     assert_eq!(ask.question.proposal, proposal);
     assert_eq!(ask.jev.as_ref().unwrap().pin.model, "jev");
     let stranger = tradeoff_owner(&vault);
+    let ask_digest = ask.question.digest()?;
     assert!(
-        settle_skill_tradeoff_ask(&vault, &stranger, &proposal, TradeoffChoice::Candidate).is_err()
+        settle_skill_tradeoff_ask(
+            &vault,
+            &stranger,
+            &proposal,
+            &ask_digest,
+            TradeoffChoice::Candidate
+        )
+        .is_err()
     );
     assert_eq!(skill_tradeoff_ask(&vault, &proposal)?.unwrap(), ask);
-    // Re-delivery does not ask Jev again or create another question.
+    // Re-delivery returns the exact ruling without repeating any scorer
+    // callback, appending a verdict, or creating another question.
+    let phases = scorer.phases.borrow().clone();
+    let history = skill_edit_verdicts_for_proposal(&vault, &proposal)?;
+    let receipt_count = vault
+        .receipts(crate::receipt::ReceiptQuery::default())?
+        .into_iter()
+        .filter(|receipt| {
+            is_skill_edit_verdict_receipt(receipt)
+                && receipt.fields.get("skill_edit_proposal") == Some(&proposal.to_hex())
+        })
+        .count();
     let again = score_gate_skill_edit_in_cycle(
         &vault,
         &proposal,
@@ -5203,10 +5247,31 @@ fn responsible_pick_is_durable_and_settles_the_next_axis_tie() -> Result<()> {
         wake(&vault, "tradeoff-redelivery", 20),
         901,
     )?;
+    assert_eq!(again.id, first.id);
     assert_eq!(again.disposition, SkillEditDisposition::DeferredTradeoffAsk);
     assert_eq!(*scorer.calls.borrow(), 1);
+    assert_eq!(*scorer.phases.borrow(), phases);
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &proposal)?,
+        history
+    );
+    let receipts_after = vault
+        .receipts(crate::receipt::ReceiptQuery::default())?
+        .into_iter()
+        .filter(|receipt| {
+            is_skill_edit_verdict_receipt(receipt)
+                && receipt.fields.get("skill_edit_proposal") == Some(&proposal.to_hex())
+        })
+        .count();
+    assert_eq!(receipts_after, receipt_count);
     assert_eq!(skill_tradeoff_ask(&vault, &proposal)?.unwrap(), ask);
-    settle_skill_tradeoff_ask(&vault, &owner, &proposal, TradeoffChoice::Candidate)?;
+    settle_skill_tradeoff_ask(
+        &vault,
+        &owner,
+        &proposal,
+        &ask_digest,
+        TradeoffChoice::Candidate,
+    )?;
     assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
     let next = optimizer_proposal_citing(&vault, &skill, Value::Array(vec![]));
     drop(vault);
@@ -5278,13 +5343,9 @@ fn newer_goal_replaces_an_unanswered_ab_question() -> Result<()> {
         900,
     )?;
     assert_eq!(old.disposition, SkillEditDisposition::DeferredTradeoffAsk);
-    assert_eq!(
-        skill_tradeoff_ask(&vault, &proposal)?
-            .unwrap()
-            .question
-            .goal_version,
-        1
-    );
+    let question_one = skill_tradeoff_ask(&vault, &proposal)?.unwrap();
+    assert_eq!(question_one.question.goal_version, 1);
+    let digest_one = question_one.question.digest()?;
     goal.version = 2;
     set_skill_tradeoff_goal(&vault, &owner, &skill, goal)?;
     assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
@@ -5296,12 +5357,215 @@ fn newer_goal_replaces_an_unanswered_ab_question() -> Result<()> {
         901,
     )?;
     assert_eq!(new.disposition, SkillEditDisposition::DeferredTradeoffAsk);
+    let question_two = skill_tradeoff_ask(&vault, &proposal)?.unwrap();
+    assert_eq!(question_two.question.goal_version, 2);
+    let digest_two = question_two.question.digest()?;
+    assert_ne!(digest_one, digest_two);
+    assert!(
+        settle_skill_tradeoff_ask(
+            &vault,
+            &owner,
+            &proposal,
+            &digest_one,
+            TradeoffChoice::Candidate
+        )
+        .is_err()
+    );
     assert_eq!(
-        skill_tradeoff_ask(&vault, &proposal)?
-            .unwrap()
-            .question
-            .goal_version,
-        2
+        skill_tradeoff_ask(&vault, &proposal)?.unwrap(),
+        question_two
+    );
+    settle_skill_tradeoff_ask(
+        &vault,
+        &owner,
+        &proposal,
+        &digest_two,
+        TradeoffChoice::Candidate,
+    )?;
+    assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
+    let accepted = score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &scorer,
+        wake(&vault, "settled-goal", 30),
+        902,
+    )?;
+    assert_eq!(accepted.disposition, SkillEditDisposition::Accepted);
+    Ok(())
+}
+
+#[test]
+fn learned_goal_follows_admitted_successor_and_still_enforces_floors() -> Result<()> {
+    const THIRD_DESC: &str = "A third skill revision after the learned pick.";
+    let (tmp, vault) = temp_vault();
+    let (old, admitted) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.lineage");
+    let owner = tradeoff_owner(&vault);
+    let goal = tradeoff_goal(&owner);
+    set_skill_tradeoff_goal(&vault, &owner, &old, goal)?;
+    let scorer = TradeoffScorer::new(Some((0.5, false)));
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &admitted,
+            &scorer,
+            wake(&vault, "lineage-ask", 10),
+            900
+        )?
+        .disposition,
+        SkillEditDisposition::DeferredTradeoffAsk
+    );
+    let ask = skill_tradeoff_ask(&vault, &admitted)?.unwrap();
+    settle_skill_tradeoff_ask(
+        &vault,
+        &owner,
+        &admitted,
+        &ask.question.digest()?,
+        TradeoffChoice::Candidate,
+    )?;
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &admitted,
+            &scorer,
+            wake(&vault, "lineage-pick", 20),
+            901
+        )?
+        .disposition,
+        SkillEditDisposition::Accepted
+    );
+    admit_optimized_skill_revision(&vault, &admitted, t(902), 902)?;
+    vault.supersede_skill_record(&old, &admitted, t(903), 903)?;
+    assert_eq!(
+        stored(&vault, &admitted).lifecycle_status,
+        SkillLifecycle::Active
+    );
+    drop(vault);
+    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    // The successor owns a fresh receipt partition. Stamp *its* exact
+    // revision in each attempt manifest rather than crediting old evidence.
+    let successor_version = stored(&reopened, &admitted).version;
+    for index in 0..60 {
+        let at = 1000 + index * 10;
+        let receipt = stamped_receipt_version(
+            &reopened,
+            "oneiron.skill.tradeoff.lineage",
+            &successor_version,
+            at,
+        );
+        record_skill_contributing_win(&reopened, &admitted, &receipt, at + 5)?;
+        if !held_out_receipts(&reopened, &admitted)?.is_empty() {
+            break;
+        }
+    }
+    assert!(!held_out_receipts(&reopened, &admitted)?.is_empty());
+    let third = EntityId::now();
+    let mut next = optimizer_proposal_record_citing(
+        &reopened,
+        &admitted,
+        Value::Array(vec![]),
+        HAND_CRAFTED_CYCLE,
+    );
+    next.version = "opt-next".into();
+    next.desc = THIRD_DESC.into();
+    reopened.put_skill_record(&third, &next, t(904), 904)?;
+    let next_scorer = TradeoffScorer::new(Some((0.5, false))).against(DRAFTED_DESC);
+    let passed = score_gate_skill_edit_in_cycle(
+        &reopened,
+        &third,
+        &next_scorer,
+        wake(&reopened, "lineage-next", 30),
+        905,
+    )?;
+    assert_eq!(passed.disposition, SkillEditDisposition::Accepted);
+    assert_eq!(
+        *next_scorer.calls.borrow(),
+        0,
+        "carried learned rule silences Jev"
+    );
+    assert_eq!(passed.goal_binding.unwrap().learned_count, 1);
+    // A stricter owner goal on the active successor must still bar a floor loss.
+    let mut floor_goal = tradeoff_goal(&owner);
+    floor_goal.version = 2;
+    floor_goal
+        .axes
+        .insert("human_minutes".into(), TradeoffAxis::FloorLower);
+    set_skill_tradeoff_goal(&reopened, &owner, &admitted, floor_goal)?;
+    let refused = score_gate_skill_edit_in_cycle(
+        &reopened,
+        &third,
+        &next_scorer,
+        wake(&reopened, "lineage-floor", 40),
+        906,
+    )?;
+    assert_eq!(refused.disposition, SkillEditDisposition::Rejected);
+    Ok(())
+}
+
+#[test]
+fn jev_choice_confidence_uses_high_threshold_for_both_choices() -> Result<()> {
+    for choice in [TradeoffChoice::Candidate, TradeoffChoice::Incumbent] {
+        for (probability, settles) in [
+            (0.1, false),
+            (0.35, false),
+            (0.5, false),
+            (0.65, true),
+            (0.95, true),
+        ] {
+            let (_tmp, vault) = temp_vault();
+            let (skill, proposal) =
+                losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.confidence");
+            let owner = tradeoff_owner(&vault);
+            set_skill_tradeoff_goal(&vault, &owner, &skill, tradeoff_goal(&owner))?;
+            let scorer = TradeoffScorer::new(Some((probability, false))).choosing(choice);
+            let verdict = score_gate_skill_edit_in_cycle(
+                &vault,
+                &proposal,
+                &scorer,
+                wake(&vault, "confidence", 10),
+                900,
+            )?;
+            let expected = if settles {
+                if choice == TradeoffChoice::Candidate {
+                    SkillEditDisposition::Accepted
+                } else {
+                    SkillEditDisposition::Rejected
+                }
+            } else {
+                SkillEditDisposition::DeferredTradeoffAsk
+            };
+            assert_eq!(verdict.disposition, expected, "{choice:?} p={probability}");
+            assert_eq!(skill_tradeoff_ask(&vault, &proposal)?.is_some(), !settles);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn floor_conflicting_candidate_rule_rejects_without_retrying() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.floor");
+    let owner = tradeoff_owner(&vault);
+    let mut goal = tradeoff_goal(&owner);
+    goal.axes
+        .insert("human_minutes".into(), TradeoffAxis::FloorLower);
+    goal.rules.push(TradeoffRule {
+        gains: ["quality".into()].into(),
+        losses: ["human_minutes".into()].into(),
+        choice: TradeoffChoice::Candidate,
+    });
+    set_skill_tradeoff_goal(&vault, &owner, &skill, goal)?;
+    let scorer = TradeoffScorer::new(Some((0.95, false)));
+    let verdict =
+        score_gate_skill_edit_in_cycle(&vault, &proposal, &scorer, wake(&vault, "floor", 10), 900)?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+    assert_eq!(*scorer.calls.borrow(), 0);
+    assert_eq!(
+        stored(&vault, &proposal).approval_status,
+        ClaimApprovalStatus::Rejected
+    );
+    assert_eq!(
+        skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+        1
     );
     Ok(())
 }

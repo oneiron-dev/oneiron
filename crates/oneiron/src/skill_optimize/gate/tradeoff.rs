@@ -212,6 +212,55 @@ pub(super) fn goal_in_txn(
     Ok(goal)
 }
 
+/// Carry the exact goal (including learned picks) into an admitted successor.
+/// This is part of the admission transaction, not a later best-effort copy:
+/// the next Active revision must never fall back to scalar-only admission.
+pub(super) fn carry_goal_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    incumbent: &EntityId,
+    successor: &EntityId,
+) -> Result<()> {
+    if let Some(goal) = goal_in_txn(vault, txn, incumbent)? {
+        let destination = key(GOAL_PREFIX, successor);
+        if let Some(existing) = load::<SkillTradeoffGoal>(vault, txn, &destination)? {
+            if existing != goal {
+                return Err(invalid("successor has a different tradeoff goal"));
+            }
+        } else {
+            save(vault, txn, &destination, &goal)?;
+        }
+    }
+    Ok(())
+}
+
+/// A pending ask is reusable only while its exact scored question is still
+/// present. Called with the gate's snapshot; do not open a nested read txn.
+pub(super) fn ask_matches_verdict_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    verdict: &HeldOutVerdict,
+) -> Result<bool> {
+    let Some(ask): Option<SkillTradeoffAsk> =
+        load(vault, txn, &key(ASK_PREFIX, &verdict.proposal))?
+    else {
+        return Ok(false);
+    };
+    let question = &ask.question;
+    Ok(question.proposal == verdict.proposal
+        && question.proposal_digest == verdict.proposal_digest
+        && question.target_digest == verdict.target_digest
+        && question.evidence_digest == verdict.held_out_digest
+        && verdict
+            .measurements
+            .as_ref()
+            .is_some_and(|m| question.world_digest == m.world_labels_digest)
+        && verdict.goal_binding.is_some_and(|binding| {
+            binding.goal_ref == question.goal_ref && binding.version == question.goal_version
+        })
+        && ask.jev == verdict.tradeoff_jev)
+}
+
 /// Bind a skill's goal to an authenticated responsible human. Config changes
 /// require a new version; preferences from an older goal do not cross over.
 pub fn set_skill_tradeoff_goal(
@@ -263,11 +312,14 @@ pub fn skill_tradeoff_ask(vault: &Vault, proposal: &EntityId) -> Result<Option<S
 }
 
 /// The pick is a durable preference on the exact goal version and axis
-/// signature. No model callback can write this row or impersonate the person.
+/// signature. The expected question digest must name what the person saw;
+/// an older response cannot answer a replacement question at the same key.
+/// No model callback can write this row or impersonate the person.
 pub fn settle_skill_tradeoff_ask(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     proposal: &EntityId,
+    expected_question_digest: &str,
     choice: TradeoffChoice,
 ) -> Result<()> {
     vault.with_write_txn(|txn| {
@@ -275,6 +327,9 @@ pub fn settle_skill_tradeoff_ask(
         let ask: SkillTradeoffAsk = load(vault, txn, &key(ASK_PREFIX, proposal))?
             .ok_or(invalid("no pending skill tradeoff ask"))?;
         let question = &ask.question;
+        if question.digest()? != expected_question_digest {
+            return Err(invalid("tradeoff reply does not bind the pending question"));
+        }
         if question.responsible != owner.actor() {
             return Err(invalid("tradeoff pick must come from responsible person"));
         }
@@ -323,6 +378,8 @@ pub fn settle_skill_tradeoff_ask(
 
 pub(super) enum TradeoffPlan {
     None,
+    /// Mandatory rejection independent of (possibly contradictory) preferences.
+    Floor(SkillTradeoffQuestion),
     Decided(
         SkillTradeoffQuestion,
         TradeoffChoice,
@@ -332,7 +389,8 @@ pub(super) enum TradeoffPlan {
 }
 
 /// Called OUTSIDE write transactions. A rule hit never calls Jev. A Jev
-/// verdict is usable only with the exact question binding and outside its band.
+/// choice is usable only with the exact question binding and confidence at
+/// or above the high threshold; lower confidence asks the person.
 pub(super) fn plan(
     vault: &Vault,
     skill: &EntityId,
@@ -397,7 +455,10 @@ pub(super) fn plan(
         gains,
         losses,
     };
-    if floor_loss || question.gains.is_empty() {
+    if floor_loss {
+        return Ok(TradeoffPlan::Floor(question));
+    }
+    if question.gains.is_empty() {
         return Ok(TradeoffPlan::Decided(
             question,
             TradeoffChoice::Incumbent,
@@ -434,7 +495,9 @@ pub(super) fn plan(
                 "Jev verdict does not bind the goal tradeoff question",
             ));
         }
-        if !goal.jev_band.contains(verdict.probability) {
+        // Choice probability is confidence in the chosen option, not P(yes).
+        // The lower tail is uncertainty, never a confident negative.
+        if verdict.probability >= goal.jev_band.high {
             return Ok(TradeoffPlan::Decided(question, verdict.choice, advice));
         }
     }
@@ -457,7 +520,7 @@ pub(super) fn apply(
             }
             return Ok(None);
         }
-        TradeoffPlan::Decided(question, _, _) => question,
+        TradeoffPlan::Decided(question, _, _) | TradeoffPlan::Floor(question) => question,
         TradeoffPlan::Ask(ask) => &ask.question,
     };
     let goal = goal_in_txn(vault, txn, skill)?.ok_or(retry("tradeoff goal moved while scoring"))?;
@@ -470,6 +533,13 @@ pub(super) fn apply(
     }
     match plan {
         TradeoffPlan::None => unreachable!(),
+        TradeoffPlan::Floor(_) => {
+            vault
+                .store
+                .vault_meta
+                .delete(txn, &key(ASK_PREFIX, &question.proposal))?;
+            Ok(Some(SkillEditDisposition::Rejected))
+        }
         TradeoffPlan::Decided(_, choice, _) => {
             if goal
                 .preference(&question.gains, &question.losses)
@@ -513,7 +583,7 @@ pub(super) fn apply(
 
 pub(super) fn jev_of(plan: &TradeoffPlan) -> Option<JevTradeoffVerdict> {
     match plan {
-        TradeoffPlan::None => None,
+        TradeoffPlan::None | TradeoffPlan::Floor(_) => None,
         TradeoffPlan::Decided(_, _, jev) => jev.clone(),
         TradeoffPlan::Ask(ask) => ask.jev.clone(),
     }
