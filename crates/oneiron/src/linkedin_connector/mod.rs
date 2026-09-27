@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
 
@@ -342,12 +342,18 @@ impl LinkedInMcpConnectorAdapter {
         let payload = serde_json::to_vec(&config).map_err(|err| {
             Error::InvalidConfig(format!("LinkedIn inbox sync config did not encode: {err}"))
         })?;
-        AttemptQueue::new(vault).enqueue(EnqueueAttempt {
-            kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
-            run_id: None,
-            now,
+        vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                vault,
+                txn,
+                EnqueueAttempt {
+                    kind: LINKEDIN_INBOX_SYNC_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(linkedin_inbox_sync_dedupe_key(&config)),
+                    run_id: None,
+                    now,
+                },
+            )
         })
     }
 
