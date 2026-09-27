@@ -27,6 +27,7 @@ pub(crate) fn repair_criticality(
         proposal.operation,
         RepairOperation::NarrowPolicy { .. }
             | RepairOperation::SkillEdit { .. }
+            | RepairOperation::FixAgent { .. }
             | RepairOperation::DevPatch { .. }
             | RepairOperation::SchemaPatch { .. }
     );

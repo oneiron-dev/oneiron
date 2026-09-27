@@ -11,7 +11,7 @@ impl PipelineBuilder<'_> {
     }
 
     pub(crate) fn captures_replay(&self) -> bool {
-        self.capture_retrieval_trace
+        self.capture_retrieval_trace && self.vault.store.retrieval_telemetry_capture_enabled()
     }
 
     pub(crate) fn context_pack_budget(mut self, budget: ContextPackRetrievalBudget) -> Self {

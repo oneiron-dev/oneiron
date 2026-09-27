@@ -118,6 +118,7 @@ impl PipelineBuilder<'_> {
         let mut diagnostics = self.retrieval_diagnostics();
         let mut ppr_expand_executed = false;
         let capture_retrieval_trace = self.capture_retrieval_trace;
+        let capture_replay_enabled = self.captures_replay();
         let trace_candidate_limit = self.result_limit;
         let mut telemetry_signals = self.telemetry_signals();
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
@@ -379,7 +380,7 @@ impl PipelineBuilder<'_> {
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
                     retrieval_trace: None,
-                    replay_inputs: capture_retrieval_trace.then(|| {
+                    replay_inputs: capture_replay_enabled.then(|| {
                         capture_replay_inputs(
                             self,
                             bm25_config,
@@ -396,7 +397,7 @@ impl PipelineBuilder<'_> {
                         )
                     }),
                     ppr_expand_executed: false,
-                    early_empty_no_telemetry: !capture_retrieval_trace,
+                    early_empty_no_telemetry: !capture_replay_enabled,
                 });
             }
 
@@ -635,7 +636,7 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
-            let replay_inputs = capture_retrieval_trace.then(|| {
+            let replay_inputs = capture_replay_enabled.then(|| {
                 capture_replay_inputs(
                     self,
                     bm25_config,
