@@ -41,11 +41,23 @@ impl Vault {
     /// Live off-record overlay rows, deleted shells, archive tombstones, and
     /// credential custody rows are excluded. No caller can disable nulling.
     pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
+        self.export_whole_vault_with_admission(format, |_| Ok(()))
+    }
+
+    /// The actor facade supplies an owner admission evaluated in the SAME
+    /// snapshot as the rows. The host-level Vault export retains its existing
+    /// direct door; transport callers must use the admitted memory facade.
+    pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
+        &self,
+        format: PackFormat,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
-        let rtxn = self.store.env.read_txn()?;
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+        admit(&rtxn)?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
         let mut skill_packages = BTreeMap::new();
@@ -91,7 +103,7 @@ impl Vault {
             {
                 let record = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 if record.content_hash != Some(package.content_hash()?) {
-                    return Err(Error::CorruptedIndex("stored skill package identity drift"));
+                    return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
                 skill_packages.insert(id, package);
             }
@@ -214,5 +226,6 @@ impl Vault {
             },
             format,
         )
+        .map_err(E::from)
     }
 }

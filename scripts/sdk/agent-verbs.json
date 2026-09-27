@@ -302,7 +302,8 @@
       "call": "memory.export(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "unrestricted_record_scope": true,
+        "owner_grade": true
       },
       "mcp": "none",
       "section": false,

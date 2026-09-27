@@ -81,6 +81,24 @@ impl Fixture {
     fn owner_link(&self) -> String {
         self.link(READ_WRITE, &self.person, Some("human")).0
     }
+
+    fn full_vault_link(&self) -> String {
+        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let link = self
+            .vault
+            .issue_pairing_link_for_principal(
+                &issuer,
+                Scope::top(),
+                3600,
+                PairingPrincipal {
+                    holder_ref: Some(self.person.clone()),
+                    actor_class: Some("human".into()),
+                    org_ref: None,
+                },
+            )
+            .unwrap();
+        format_pairing_link(&self.origin, &link.code, &self.person)
+    }
 }
 
 /// The SDK client is blocking; it runs off the runtime that serves it.
@@ -152,7 +170,7 @@ async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
 async fn paired_client_exports_full_vault_in_five_formats() {
     let fixture = Fixture::serve().await;
     let person = fixture.person.clone();
-    let link = fixture.owner_link();
+    let link = fixture.full_vault_link();
     blocking(move || {
         let client = paired(&link);
         for format in ["toon", "md", "json", "yaml", "txt"] {
@@ -182,6 +200,53 @@ async fn paired_client_exports_full_vault_in_five_formats() {
         assert_eq!(code(client.export(Some("gemini"))), "BAD_REQUEST");
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn read_only_paired_client_cannot_export_another_actors_private_note() {
+    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let fixture = Fixture::serve().await;
+    let owner = EntityId::from_hex(&fixture.person).unwrap();
+    let other = EntityId::now();
+    fixture
+        .vault
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"another person",
+        )
+        .unwrap();
+    let note = fixture
+        .vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: owner },
+            source_revision_ref: [0x77; 16],
+            markdown: "private export pairing fixture".into(),
+            mask: None,
+        })
+        .unwrap();
+    let (link, _) = fixture.link(&["core:read"], &other.to_hex(), Some("human"));
+    let (generic, typed) = blocking(move || {
+        let client = paired(&link);
+        (
+            client.agent_verb("export", serde_json::json!({"format":"json"})),
+            client.export(Some("json")),
+        )
+    })
+    .await;
+    for result in [
+        generic.map(|value| value.to_string()),
+        typed.map(|value| value.rendered),
+    ] {
+        let error = result.unwrap_err();
+        assert_eq!(error.code, "FORBIDDEN");
+        assert!(!error.message.contains("private export pairing fixture"));
+        assert!(!error.message.contains(&note.entity_ref));
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

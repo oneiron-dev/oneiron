@@ -1,10 +1,16 @@
 //! The public export verb renders the full vault and hydratable short refs.
 use super::*;
 
+fn owner_vault() -> (tempfile::TempDir, crate::Vault, EntityId) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = crate::Vault::open_owned(dir.path(), VaultConfig::default()).unwrap();
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    (dir, vault, owner)
+}
+
 #[test]
 fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 31);
+    let (_dir, vault, actor) = owner_vault();
     let other = put_person(&vault, 32);
     let memory = facade_for(&vault, actor);
     let actor_ref = memory
@@ -88,8 +94,7 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
 
 #[test]
 fn export_uses_current_note_document_in_all_formats_without_rewriting_birth() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 33);
+    let (_dir, vault, actor) = owner_vault();
     let memory = facade_for(&vault, actor);
     let receipt = memory
         .author_take(TakeTarget::Subject(actor), "old-only-string")
@@ -162,8 +167,7 @@ fn export_uses_current_note_document_in_all_formats_without_rewriting_birth() {
 #[cfg(feature = "sync")]
 #[test]
 fn export_streamed_message_uses_committed_document_not_pointer_or_partial() {
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 34);
+    let (_dir, vault, actor) = owner_vault();
     let memory = facade_for(&vault, actor);
     let message = EntityId::now();
     let turn = WitnessTurn {
@@ -269,8 +273,7 @@ fn export_migrated_note_and_asset_text_uses_committed_document() {
             .unwrap();
     }
 
-    let (_dir, vault) = open_vault();
-    let actor = put_person(&vault, 35);
+    let (_dir, vault, actor) = owner_vault();
     let memory = facade_for(&vault, actor);
     let writer = WriteActor::new(actor, EdgeActorClass::Human);
     let owner = vault
@@ -367,4 +370,109 @@ fn export_migrated_note_and_asset_text_uses_committed_document() {
     }
     assert_eq!(vault.get_raw(&asset).unwrap().unwrap(), asset_pointer);
     assert_eq!(vault.get_raw(&note).unwrap().unwrap(), note_pointer);
+}
+
+#[test]
+fn export_refuses_other_people_and_unleased_owner_handles() {
+    let (_dir, vault, owner) = owner_vault();
+    let other = put_person(&vault, 36);
+    assert_eq!(
+        facade_for(&vault, other)
+            .export(&ExportOptions::default())
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+    assert!(
+        facade_for(&vault, owner)
+            .export(&ExportOptions::default())
+            .is_ok()
+    );
+    let (_unleased_dir, unleased) = open_vault();
+    let owner = unleased.ensure_embedded_owner_actor().unwrap();
+    assert_eq!(
+        facade_for(&unleased, owner)
+            .export(&ExportOptions::default())
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+}
+
+#[test]
+fn verified_owner_export_rechecks_read_only_and_revoked_slips() {
+    use crate::authority::HostSlipIssuer;
+    use crate::federation::ScopeAxis;
+    let (_dir, vault, actor) = owner_vault();
+    let issuer = HostSlipIssuer::from_secret(b"fixture-export-owner-root").unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(b"full-vault-export-identified-owner").as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = actor.to_hex();
+    claims.actor_class = Some("human".into());
+    let slip = vault.mint_capability_slip(&issuer, claims.clone()).unwrap();
+    let proof = vault
+        .verify_capability_slip(
+            &issuer,
+            &slip,
+            b"export-owner-test",
+            &issuer.binding_proof(&slip, b"export-owner-test").unwrap(),
+        )
+        .unwrap();
+    let memory = facade_for(&vault, actor);
+    assert!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .is_ok()
+    );
+
+    claims.slip_id = *blake3::hash(b"full-vault-export-read-only").as_bytes();
+    claims.scope.verbs = ScopeAxis::Some(std::collections::BTreeSet::from(["read".into()]));
+    let read_only = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let narrow = vault
+        .verify_capability_slip(
+            &issuer,
+            &read_only,
+            b"export-read-only-test",
+            &issuer
+                .binding_proof(&read_only, b"export-read-only-test")
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &narrow)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+    vault
+        .revoke_capability_slip(&issuer, slip.claims.slip_id)
+        .unwrap();
+    assert_eq!(
+        memory
+            .export_with_verified_owner(&ExportOptions::default(), &proof)
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_FORBIDDEN
+    );
+}
+
+#[test]
+fn conflicting_authority_roots_suspend_embedded_export() {
+    let (_dir, vault, actor) = owner_vault();
+    let (a, _) = authority_root(0x76);
+    let (b, _) = authority_root(0x77);
+    vault
+        .put_authority_log_entries(&[(a, test_time(1), 1), (b, test_time(2), 2)])
+        .unwrap();
+    assert!(vault.authority_fold().unwrap().vault_root_is_conflicted());
+    assert_eq!(
+        facade_for(&vault, actor)
+            .export(&ExportOptions::default())
+            .unwrap_err()
+            .code,
+        MEMORY_CODE_INVALID_STATE
+    );
 }

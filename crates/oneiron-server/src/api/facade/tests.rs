@@ -772,13 +772,41 @@ async fn http_tasks_update_writes_nothing_on_a_task_outside_the_callers_read_flo
 }
 
 #[tokio::test]
-async fn export_projects_five_formats_and_refuses_scoped_slips() {
+async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
     use oneiron::authority::SlipCaveat;
     use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
     let dir = tempfile::tempdir().unwrap();
     let vault =
         Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
     let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let other = EntityId::now();
+    vault
+        .put_entity(
+            &other,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"another human",
+        )
+        .unwrap();
+    let note = vault
+        .memory(actor, EdgeActorClass::Human)
+        .author_note(&NoteWriteEnvelope {
+            kind: NoteKind::Diary,
+            scope: NoteScope::ActorPrivate { owner_ref: actor },
+            source_revision_ref: [0x69; 16],
+            markdown: "private export owner diary".into(),
+            mask: None,
+        })
+        .unwrap();
+    assert!(
+        vault
+            .memory(other, EdgeActorClass::Human)
+            .get_entity(&note.id_hex)
+            .unwrap()
+            .is_none()
+    );
     let server = Arc::new(
         SyncServer::new(
             vault,
@@ -789,12 +817,14 @@ async fn export_projects_five_formats_and_refuses_scoped_slips() {
         )
         .unwrap(),
     );
-    let recipe = format!(
+    let owner_recipe = format!("principal_ref={};actor_class=human", actor.to_hex());
+    let reader_recipe = format!(
         "scope=core:read;principal_ref={};actor_class=human",
-        actor.to_hex()
+        other.to_hex()
     );
-    let (slip, holder) = crate::test_credentials::credential(&server, &recipe);
-    let mut narrow = slip.clone();
+    let (owner, owner_key) = crate::test_credentials::credential(&server, &owner_recipe);
+    let (reader, reader_key) = crate::test_credentials::credential(&server, &reader_recipe);
+    let mut narrow = owner.clone();
     let mut scope = Scope::top();
     scope.worlds = ScopeAxis::Some(std::collections::BTreeSet::from([ScopeId(actor)]));
     narrow
@@ -814,7 +844,7 @@ async fn export_projects_five_formats_and_refuses_scoped_slips() {
         let response = app
             .clone()
             .oneshot(crate::test_credentials::bind_slip_request(
-                &server, &slip, &holder, request,
+                &server, &owner, &owner_key, request,
             ))
             .await
             .unwrap();
@@ -824,6 +854,7 @@ async fn export_projects_five_formats_and_refuses_scoped_slips() {
         assert_eq!(body["format"], format);
         let rendered = body["rendered"].as_str().unwrap();
         assert!(rendered.contains("evidence_ledger"));
+        assert!(rendered.contains("private export owner diary"));
         if format == "json" {
             let document: Value = serde_json::from_str(rendered).unwrap();
             assert!(
@@ -835,9 +866,34 @@ async fn export_projects_five_formats_and_refuses_scoped_slips() {
             );
         }
     }
-    for (credential, format, status) in [
-        (&narrow, "json", StatusCode::FORBIDDEN),
-        (&slip, "gemini", StatusCode::BAD_REQUEST),
+    // The host's logged root has no actor binding; its verified full-vault
+    // instrument is still an owner, not a read-only scoped slip.
+    let host = Request::builder()
+        .method("POST")
+        .uri("/v1/core/facade/export")
+        .header("Authorization", "Bearer facade-export")
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({"format":"json"}).to_string()))
+        .unwrap();
+    let response = app.clone().oneshot(host).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains("private export owner diary"));
+
+    assert_eq!(
+        oneiron::task_verb::sdk::invoke(
+            &server.vault.memory(other, EdgeActorClass::Human),
+            "export",
+            json!({"format":"json"}),
+        )
+        .unwrap_err()
+        .code,
+        MEMORY_CODE_FORBIDDEN,
+    );
+    for (credential, holder, format, status) in [
+        (&reader, &reader_key, "json", StatusCode::FORBIDDEN),
+        (&narrow, &owner_key, "json", StatusCode::FORBIDDEN),
+        (&owner, &owner_key, "gemini", StatusCode::BAD_REQUEST),
     ] {
         let request = Request::builder()
             .method("POST")
@@ -848,10 +904,28 @@ async fn export_projects_five_formats_and_refuses_scoped_slips() {
         let response = app
             .clone()
             .oneshot(crate::test_credentials::bind_slip_request(
-                &server, credential, &holder, request,
+                &server, credential, holder, request,
             ))
             .await
             .unwrap();
         assert_eq!(response.status(), status, "{format}");
+        let body = to_bytes(response.into_body(), 8192).await.unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert!(!body.to_string().contains("private export owner diary"));
+        assert!(!body.to_string().contains(&note.entity_ref));
     }
+    crate::test_credentials::revoke(&server, &owner_recipe);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/core/facade/export")
+        .header("Content-Type", "application/json")
+        .body(Body::from("{\"format\":\"json\"}"))
+        .unwrap();
+    let response = app
+        .oneshot(crate::test_credentials::bind_slip_request(
+            &server, &owner, &owner_key, request,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

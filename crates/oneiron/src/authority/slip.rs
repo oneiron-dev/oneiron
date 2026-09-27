@@ -148,6 +148,8 @@ impl SlipClaims {
 pub struct VerifiedSlip {
     claims: SlipClaims,
     pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    // Only the verifier can prove that no offline narrowing caveat was present.
+    unattenuated: bool,
 }
 impl VerifiedSlip {
     #[must_use]
@@ -187,6 +189,16 @@ impl VerifiedSlip {
     #[must_use]
     pub fn claims(&self) -> &SlipClaims {
         &self.claims
+    }
+    /// A verified, unattenuated full-vault instrument, not merely `core:read`.
+    #[must_use]
+    pub fn is_full_vault_owner_grade(&self) -> bool {
+        self.unattenuated
+            && self.claims.scope == Scope::top()
+            && self.claims.org_ref.is_none()
+            && self.claims.records.is_empty()
+            && self.claims.channels.is_empty()
+            && !self.claims.single_use
     }
     #[must_use]
     pub fn scope(&self) -> &Scope {
@@ -287,7 +299,11 @@ impl CapabilitySlip {
         self.verify_host_signature(host_key, fold, &self.mac)?;
         let mut claims = self.claims.clone();
         claims.ttl_secs = claims.ttl_secs.min(claims.expires_at - now);
-        let verified = VerifiedSlip { claims, pact: None };
+        let verified = VerifiedSlip {
+            claims,
+            pact: None,
+            unattenuated: true,
+        };
         self.verify_holder(challenge, holder_signature)?;
         Ok(verified)
     }
@@ -435,6 +451,7 @@ impl CapabilitySlip {
         let verified = VerifiedSlip {
             claims: effective,
             pact,
+            unattenuated: self.caveats.is_empty(),
         };
         verified.witness_pact(fold)?;
         Ok(verified)

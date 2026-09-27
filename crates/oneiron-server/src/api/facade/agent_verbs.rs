@@ -150,13 +150,40 @@ async fn export(
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
+    if !auth.is_owner_grade() {
+        return Err(FacadeApiError::forbidden(
+            "full-vault export requires owner authority",
+            ["Present a verified, unattenuated owner credential."],
+        ));
+    }
     let value = facade_json(payload)?;
-    let (actor, class) = facade_actor(&auth)?;
-    Ok(Json(oneiron::task_verb::sdk::invoke(
-        &server.vault.memory(actor, class),
-        "export",
-        value,
-    )?))
+    oneiron::task_verb::sdk::validate_input("export", &value)?;
+    let input: oneiron::memory::ExportOptions = facade_input(value)?;
+    let proof = auth.verified_slip().ok_or_else(|| {
+        FacadeApiError::forbidden(
+            "full-vault export requires verified owner authority",
+            ["Present a verified owner credential."],
+        )
+    })?;
+    let output = if proof.claims().holder_ref == "host" {
+        server
+            .vault
+            .export_with_verified_host_owner(&input, proof)?
+    } else {
+        let (actor, class) = facade_actor(&auth)?;
+        server
+            .vault
+            .memory(actor, class)
+            .export_with_verified_owner(&input, proof)?
+    };
+    Ok(Json(serde_json::to_value(output).map_err(|_| {
+        FacadeApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            MEMORY_CODE_INTERNAL,
+            "export result encoding failed",
+            ["Report this SDK response mismatch."],
+        )
+    })?))
 }
 async fn receipts(
     auth: CoreAuth,
