@@ -2,8 +2,10 @@
 
 use sha2::{Digest, Sha256};
 
-use crate::entity_id::EntityId;
+use crate::EntityId;
+
 use crate::error::Result;
+use crate::gate::hosted_tts_policy::HostedTtsLimits;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 use oneiron_docedit::ArchiveLimits;
 
@@ -96,6 +98,16 @@ impl PolicyManifestResolution {
             limits = limits.narrow(policy.for_holder(holder));
         }
         Some(limits)
+    }
+    pub(crate) fn hosted_tts_limits(
+        &self,
+        provider: &str,
+        holder: EntityId,
+    ) -> Option<HostedTtsLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.hosted_tts.limits(provider, holder)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed

@@ -69,6 +69,25 @@ pub(super) fn hash_policy_frontier_v0(
             }
         }
     }
+    // An absent/empty hosted policy changes no decision and keeps the
+    // established frontier bytes for manifests that never named this knob.
+    if !resolution.hosted_tts.rows.is_empty() {
+        hash_str(hasher, "hosted_tts");
+        hash_str(hasher, resolution.hosted_tts.precedence.as_str());
+        hash_len(hasher, resolution.hosted_tts.rows.len());
+        for row in &resolution.hosted_tts.rows {
+            hash_str(hasher, &row.provider);
+            match row.scope {
+                crate::gate::hosted_tts_policy::HostedTtsScope::Vault => hash_str(hasher, "vault"),
+                crate::gate::hosted_tts_policy::HostedTtsScope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.limits.max_text_bytes as u64);
+            hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
