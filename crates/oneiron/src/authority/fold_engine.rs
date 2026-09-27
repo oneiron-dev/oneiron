@@ -513,6 +513,15 @@ fn fold_authority_log_once(
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
     }
 
+    // Keep the proof that a revoke fully passed the ordinary transition before
+    // retroactive ancestry pruning. A conflicting confirmation can later remove
+    // the enrollment of its signer or cosigner; a re-check against the surviving
+    // roster would then erase an already verified restrictive floor.
+    let ready_revokes: BTreeMap<_, _> = states
+        .iter()
+        .filter(|(hash, _)| matches!(by_hash[*hash].op, AuthorityOp::RevokeActor { .. }))
+        .map(|(hash, state)| (*hash, state.vault_id))
+        .collect();
     reject_below_concurrent_tier_floors(&mut states, &by_hash, &entry_ancestors, &mut issues);
     // Confirmations are consumable across branches, not only in ancestry.
     // Only entries already proven against their live roster can contend.
@@ -609,6 +618,7 @@ fn fold_authority_log_once(
             &states,
             &by_hash,
             &issues,
+            &ready_revokes,
             FoldContext {
                 authority_forks: &authority_forks_for_revoke,
                 authority_fork_vault_ids: &authority_fork_vault_ids,

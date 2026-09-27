@@ -5,15 +5,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 
 /// Only an ancestry-rejected RevokeActor may contribute outside the set of
-/// fully folded entries. Re-run its ordinary authorization checks against the
-/// nearest surviving ancestors: signatures alone cannot turn an outsider into
-/// a revocation signer, and an invalid grant must not carry permissive state.
-/// The result is derived afresh from this entry set on every fold.
+/// fully folded entries. A revoke that was Ready before retroactive pruning
+/// keeps its already verified proof, even if pruning also removes the signer or
+/// cosigner enrollment. One that never became Ready must pass its ordinary
+/// authorization checks against the nearest surviving ancestors. In either
+/// case, invalid permissive entries contribute no state. Every proof and floor
+/// is derived afresh from this entry set on every fold.
 pub(super) fn retain_invalid_ancestry_revoke_floors(
     merged: &mut FoldState,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     issues: &[AuthorityFoldIssue],
+    ready_revokes: &BTreeMap<AuthorityEntryHash, AuthorityVaultId>,
     context: FoldContext<'_>,
 ) {
     for issue in issues {
@@ -30,39 +33,49 @@ pub(super) fn retain_invalid_ancestry_revoke_floors(
         else {
             continue;
         };
-        // `entries` already passed origin and co-signature verification, but
-        // shape (including a nonzero epoch) is checked by fold_entry_state.
-        let mut parent_states = BTreeMap::new();
-        let mut complete = true;
-        for parent in &entry.parent_hashes {
-            match nearest_surviving_ancestors(*parent, entries, states, context.entry_ancestors) {
-                Some(state) => {
-                    parent_states.insert(*parent, state);
-                }
-                None => {
-                    complete = false;
-                    break;
-                }
-            }
-        }
-        if !complete {
-            continue;
-        }
-        if let EntryFold::Ready(proof) = fold_entry_state(entry, *hash, &parent_states, context) {
-            if proof.vault_id != merged.vault_id {
+        if let Some(vault_id) = ready_revokes.get(hash) {
+            // This entry already passed shape, signature, vault, consent, quorum
+            // and seq checks. Do not re-check it against a roster from which a
+            // later collision removed its signer's enrollment.
+            if *vault_id != merged.vault_id {
                 continue;
             }
-            merged
-                .actor_binding_revocations
-                .entry(authority_key.clone())
-                .and_modify(|floor| *floor = (*floor).max(*epoch))
-                .or_insert(*epoch);
-            merged
-                .actor_revocation_hashes
-                .entry(authority_key.clone())
-                .or_default()
-                .insert(*hash);
+        } else {
+            // `entries` passed origin and co-signature verification, but a
+            // never-Ready revoke still needs shape and authority validation.
+            let mut parent_states = BTreeMap::new();
+            let mut complete = true;
+            for parent in &entry.parent_hashes {
+                match nearest_surviving_ancestors(*parent, entries, states, context.entry_ancestors)
+                {
+                    Some(state) => {
+                        parent_states.insert(*parent, state);
+                    }
+                    None => {
+                        complete = false;
+                        break;
+                    }
+                }
+            }
+            if !complete
+                || !matches!(
+                    fold_entry_state(entry, *hash, &parent_states, context),
+                    EntryFold::Ready(proof) if proof.vault_id == merged.vault_id
+                )
+            {
+                continue;
+            }
         }
+        merged
+            .actor_binding_revocations
+            .entry(authority_key.clone())
+            .and_modify(|floor| *floor = (*floor).max(*epoch))
+            .or_insert(*epoch);
+        merged
+            .actor_revocation_hashes
+            .entry(authority_key.clone())
+            .or_default()
+            .insert(*hash);
     }
 }
 
