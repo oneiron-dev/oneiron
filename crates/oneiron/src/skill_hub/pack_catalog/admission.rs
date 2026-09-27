@@ -328,6 +328,11 @@ fn validate_script_snapshot(source: &PackSource) -> Result<()> {
                 "script pack source exceeds sandbox directory depth",
             ));
         }
+        // The guest and the reference host both cap a single filename at
+        // 255 BYTES, not Unicode scalar values or total path length.
+        if parts.iter().any(|part| part.len() > 255) {
+            return Err(invalid("script pack source exceeds sandbox filename limit"));
+        }
         for part in &parts[..parts.len() - 1] {
             if !parent.is_empty() {
                 parent.push('/');

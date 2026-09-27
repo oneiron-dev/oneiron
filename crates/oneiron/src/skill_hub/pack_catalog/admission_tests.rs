@@ -375,3 +375,41 @@ fn script_snapshot_reserves_space_for_injected_grants_at_exact_source_limit() ->
     assert_eq!(script.content.len(), 1024 * 1024);
     assert_unrunnable_script_refused(files)
 }
+
+#[test]
+fn script_snapshot_accepts_255_byte_filename_components() -> Result<()> {
+    // Multibyte characters count by encoded bytes, not by `chars().count()`.
+    for component in ["x".repeat(255), format!("{}a", "é".repeat(127))] {
+        assert_eq!(component.len(), 255);
+        let mut files = echo_script_files();
+        files.push(HubFile::new(
+            format!("knowledge/{component}"),
+            b"portable knowledge".to_vec(),
+        ));
+        let source = PackSource::from_files(files)?;
+        let (_dir, vault, owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, &source)?;
+        let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+        let ask = vault.prepare_pack_install(id, &hub, &publisher, &QualifiedScript)?;
+        vault.approve_pack_install(&ask, &owner)?;
+        assert!(matches!(
+            vault.install_pack(&ask)?,
+            PackInstallDisposition::Installed(_)
+        ));
+        assert!(vault.installed_pack("fixture.echo")?.is_some());
+    }
+    Ok(())
+}
+
+#[test]
+fn script_snapshot_refuses_256_byte_filename_components() -> Result<()> {
+    for component in ["x".repeat(256), "é".repeat(128)] {
+        assert_eq!(component.len(), 256);
+        let mut files = echo_script_files();
+        files.push(HubFile::new(
+            format!("knowledge/{component}"),
+            b"portable knowledge".to_vec(),
+        ));
+        assert_unrunnable_script_refused(files)?;
+    }
+    Ok(())
+}
