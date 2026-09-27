@@ -677,7 +677,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             results
                 .iter()
                 .any(|entity| entity["id"].as_str() == Some(party_id.as_str())),
-            "stored scope admits the party memory",
+            "TURN-band scope admits the party memory",
         );
         assert!(
             results
@@ -788,7 +788,7 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
     let identity_ref = seeded_test_entity_id(0x1517_0041);
     let wider_contact = seeded_test_entity_id(0x1517_0042);
     seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
-    seed_text_turn(&server, "party event needle23");
+    let party = seed_text_turn(&server, "party event needle23");
     seed_disclosure_scope(&server, wider_contact, disclosure_base_world_clearance());
     // Principal X has no contact row: it contributes the deny-all scope.
     let principal_ref = seeded_test_entity_id(0x1517_0043).to_hex();
@@ -799,6 +799,27 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
             "third_parties": [{ "contact_ref": wider_contact.to_hex() }]
         }
     });
+    let (wide_status, wide_body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-pack",
+            "core:read",
+            &wider_contact.to_hex(),
+            Some(&request),
+        ),
+    )
+    .await;
+    assert_eq!(wide_status, StatusCode::OK);
+    assert!(
+        wide_body["results"]
+            .as_array()
+            .expect("wider results")
+            .iter()
+            .any(|row| row["id"] == party.to_hex()),
+        "contact clearance alone must admit the party, so X ∩ Y is asymmetric: {wide_body:?}"
+    );
+
     let (status, body) = route_json(
         server,
         core_request_with_principal_ref(
