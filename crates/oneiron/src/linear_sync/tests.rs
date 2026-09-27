@@ -27,6 +27,7 @@ struct FakeStore {
     snapshots: BTreeMap<EntityId, TaskMirrorSnapshot>,
     links: BTreeMap<EntityId, TaskIssueLink>,
     create_intents: BTreeMap<EntityId, LinearCreateIntent>,
+    inbound_refusals: BTreeMap<String, String>,
     applies: usize,
     issue_link_lookups: Cell<usize>,
     /// A concurrent link write to commit from INSIDE the store, in the window
@@ -67,6 +68,19 @@ impl FakeStore {
 }
 
 impl LinearTaskStore for FakeStore {
+    fn refuse_inbound_issue(
+        &mut self,
+        issue: &LinearIssueRef,
+        event_id: &str,
+    ) -> LinearSyncResult<()> {
+        self.inbound_refusals
+            .insert(issue.issue_id.clone(), event_id.to_owned());
+        Ok(())
+    }
+    fn clear_inbound_refusal(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<()> {
+        self.inbound_refusals.remove(&issue.issue_id);
+        Ok(())
+    }
     fn create_intent(
         &mut self,
         draft: &LinearCreateIntent,

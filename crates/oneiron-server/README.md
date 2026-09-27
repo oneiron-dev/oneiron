@@ -87,8 +87,8 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 
 ## Optional Linear TASK mirror
 
-The **bare** `oneiron-server serve` host can run a vault's Linear mirror every
-60 seconds. It is off by default. Supply these five required variables in the host's
+The **bare** `oneiron-server serve` host can run a vault's Linear mirror. It
+is off by default. Supply these five required variables in the host's
 secret-bearing environment, not in a repository, checkout, or vault row:
 
 - `ONEIRON_LINEAR_SYNC_ENABLED=true`
@@ -98,21 +98,33 @@ secret-bearing environment, not in a repository, checkout, or vault row:
   active owner-consented outbound grant for the team and both Linear issue verbs;
   the owner policy must separately give this Machine/System actor an Auto ceiling
 - `ONEIRON_LINEAR_STATUS_NAMES` — a JSON map from TASK status tokens to exact
-  Linear workflow state names for that team, e.g. `{"queued":"Backlog", "completed":"Done"}`.
+  Linear workflow state names for that team, e.g.
+  `{"queued":"Backlog", "working":"In Progress", "interrupted":"Blocked", "completed":"Done"}`.
   Names must be unique. Unmapped inbound or outbound states fail closed.
 
 Optional `ONEIRON_LINEAR_ASSIGNEE_IDS` is a JSON map of local actor/agent
 entity IDs (32 lowercase hex) to Linear user UUIDs. Mapping must be one-to-one.
-Unmapped assignees remain dirty with a typed refusal, not a provider call. The
-scheduler AND the attributed TASK writer each need a live grant for the exact
+Unmapped outbound assignees remain dirty with a typed refusal, not a
+provider call. A linked inbound issue with an unmapped provider assignee stays
+unapplied at its saved cursor; unrelated issues and outbound TASKs still run.
+The scheduler AND the attributed TASK writer each need a live grant for the exact
 `linear_issue_create` and `linear_issue_update` verbs. An owner can narrow each
 grant with a `BriefVerbClass` scope bound to the team ID. A raw or replicated
 TASK write has no verified writer stamp and is never sent. No Linear worker
 starts when unauthenticated core writes are enabled or no auth secret exists.
 
-A partial configuration refuses server startup. The adapter uses only
-`https://api.linear.app/graphql` with a 15-second timeout, no redirects or
-ambient proxy, and bounded responses. The key stays in the host process; no
+A partial configuration refuses server startup. The trusted vault policy
+manifest supplies the `linear_host_policy` row with these shipped defaults:
+`precedence=nested_narrowing`, `interval_secs=60`, `missed_tick=skip`,
+`page_size=50`, `timeout_secs=15`, `max_response_bytes=4194304`,
+`permission=conditional`, and `risk=normal`. A full TOML row in host variable
+`ONEIRON_LINEAR_POLICY_MANIFEST` may narrow but never widen the current vault
+row (a longer interval, smaller limits, denied permission, or held risk). The
+preference mode is itself pinned to `nested_narrowing`. The server resolves this
+trusted row before it starts the worker; the engine rechecks permission and
+risk at each external-effect Gate decision. The adapter uses only
+`https://api.linear.app/graphql`, no redirects or ambient proxy, and bounds
+requests/responses by the resolved policy. The key stays in the host process; no
 credential is persisted in the engine. A pass pulls one change page first.
 Only after the page stream catches up does it push dirty TASK rows. Failed
 passes retain their cursor and dirty revisions for the next tick. Conflicts

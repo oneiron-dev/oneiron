@@ -511,6 +511,17 @@ pub struct LinearCreateIntent {
 
 /// Engine-side storage the mirror reads and writes.
 pub trait LinearTaskStore {
+    /// Retains an unmapped linked issue as durable pending evidence before
+    /// skipping its event. Never acknowledges its inbound event identity.
+    fn refuse_inbound_issue(
+        &mut self,
+        issue: &LinearIssueRef,
+        event_id: &str,
+    ) -> LinearSyncResult<()>;
+    /// Clears pending mapping evidence only after a mapped event was applied
+    /// or adjudicated through the ordinary TASK/link doors.
+    fn clear_inbound_refusal(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<()>;
+
     /// Store this first-create intent atomically if absent; otherwise return
     /// the previously frozen intent. `put_link` consumes it in the link CAS.
     ///

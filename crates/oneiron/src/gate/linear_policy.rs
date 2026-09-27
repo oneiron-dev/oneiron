@@ -228,7 +228,7 @@ mod tests {
         let mut widened = stricter.clone();
         widened.risk = LinearPolicyRisk::Normal;
         assert!(resolved.narrow(&widened).is_err());
-        let mut widened = stricter.clone();
+        let mut widened = stricter;
         widened.missed_tick = LinearMissedTick::Delay;
         assert!(resolved.narrow(&widened).is_err());
     }

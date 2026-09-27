@@ -108,10 +108,13 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
                 // A linked issue needs an operator mapping; do not acknowledge
                 // or apply this event. The source page may advance because the
                 // worker redrives these unresolved links on later ticks.
+                self.tasks
+                    .refuse_inbound_issue(&change.issue, &change.event_id)?;
                 refused_inbound.push(change.issue);
                 continue;
             }
             let receipt = self.apply_issue_change(change, now)?;
+            self.tasks.clear_inbound_refusal(&receipt.issue)?;
             match receipt.status {
                 LinearMirrorStatus::Applied => applied += 1,
                 LinearMirrorStatus::Conflict => conflicts.push(receipt),

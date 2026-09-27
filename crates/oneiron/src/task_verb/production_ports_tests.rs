@@ -679,11 +679,8 @@ fn interrupted_live_task_projects_tracker_status_without_forging_terminal() -> L
         updates: Rc::new(RefCell::new(0)),
         more: Rc::new(std::cell::Cell::new(false)),
     };
-    let mut adapter = LinearSyncAdapter::new(
-        VaultLinearTaskStore::new(&vault),
-        tracker.clone(),
-        tracker.clone(),
-    );
+    let mut adapter =
+        LinearSyncAdapter::new(VaultLinearTaskStore::new(&vault), tracker.clone(), tracker);
     assert_eq!(adapter.synchronize(100)?.0.len(), 1);
     // An interrupted standard-task row can also be produced by the ladder.
     // Seed through the normal TASK batch door, then assert the production
@@ -818,7 +815,11 @@ fn linked_unmapped_inbound_issue_is_replayed_without_blocking_outbound() -> Line
         },
     });
     let (pushed, pulled) = adapter.synchronize(101)?;
-    assert_eq!(pulled.refused_inbound, vec![issue.clone()]);
+    assert_eq!(pulled.refused_inbound, vec![issue]);
+    assert_eq!(
+        adapter.tasks().inbound_refusals()?,
+        vec![link_before.issue.clone()]
+    );
     assert_eq!(
         pulled.new_cursor, None,
         "the rejected page must replay after mapping"

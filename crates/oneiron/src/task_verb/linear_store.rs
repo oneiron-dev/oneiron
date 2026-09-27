@@ -12,6 +12,7 @@ const DIRTY: &[u8] = b"linear.task_dirty.v1/";
 const WRITER: &[u8] = b"linear.task_writer.v1/";
 const ISSUE: &[u8] = b"linear.issue.v1/";
 const CREATE_INTENT: &[u8] = b"linear.create_intent.v1/";
+const INBOUND_REFUSAL: &[u8] = b"linear.inbound_refusal.v1/";
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
@@ -106,6 +107,9 @@ pub(crate) fn note_task_write(
     store.vault_meta.delete(txn, &key(WRITER, id))?;
     Ok(())
 }
+fn inbound_refusal_key(issue: &LinearIssueRef) -> Vec<u8> {
+    [INBOUND_REFUSAL, issue.issue_id.as_bytes()].concat()
+}
 fn issue_key(issue: &LinearIssueRef) -> Vec<u8> {
     // issue ids are globally scoped; identifiers and teams may change.
     [ISSUE, issue.issue_id.as_bytes()].concat()
@@ -178,6 +182,23 @@ impl<'v> VaultLinearTaskStore<'v> {
     pub fn dirty_writer(&self, task: EntityId) -> LinearSyncResult<Option<LinearWriteActor>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         Ok(writer_in_txn(&self.vault.store, &txn, task)?)
+    }
+
+    /// Operator-visible pending tracker issues whose assignees cannot yet be
+    /// mapped. Cursor retention guarantees replay; these rows name the cause.
+    pub fn inbound_refusals(&self) -> Result<Vec<LinearIssueRef>> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.vault
+            .store
+            .vault_meta
+            .prefix_iter(&txn, INBOUND_REFUSAL)?
+            .map(|row| {
+                let (_, raw) = row?;
+                let (issue, _event): (LinearIssueRef, String) = serde_json::from_slice(&raw)
+                    .map_err(|_| Error::CorruptedIndex("linear inbound refusal"))?;
+                Ok(issue)
+            })
+            .collect()
     }
 
     /// Frozen first-create intent, retained through lost responses and removed
@@ -285,6 +306,35 @@ impl<'v> VaultLinearTaskStore<'v> {
     }
 }
 impl LinearTaskStore for VaultLinearTaskStore<'_> {
+    fn refuse_inbound_issue(
+        &mut self,
+        issue: &LinearIssueRef,
+        event_id: &str,
+    ) -> LinearSyncResult<()> {
+        if event_id.trim().is_empty() {
+            return Err(Error::InvalidConfig("unidentifiable Linear issue".into()).into());
+        }
+        let raw = serde_json::to_vec(&(issue, event_id))
+            .map_err(|_| Error::InvariantViolation("linear inbound refusal encoding"))?;
+        self.vault.with_write_txn(|txn| {
+            self.vault
+                .store
+                .vault_meta
+                .put(txn, &inbound_refusal_key(issue), &raw)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+    fn clear_inbound_refusal(&mut self, issue: &LinearIssueRef) -> LinearSyncResult<()> {
+        self.vault.with_write_txn(|txn| {
+            self.vault
+                .store
+                .vault_meta
+                .delete(txn, &inbound_refusal_key(issue))?;
+            Ok(())
+        })?;
+        Ok(())
+    }
     fn create_intent(
         &mut self,
         draft: &LinearCreateIntent,
@@ -549,6 +599,9 @@ pub(crate) fn forget_task_mirror(
         let link: TaskIssueLink =
             serde_json::from_slice(&raw).map_err(|_| Error::CorruptedIndex("linear link"))?;
         store.vault_meta.delete(txn, &issue_key(&link.issue))?;
+        store
+            .vault_meta
+            .delete(txn, &inbound_refusal_key(&link.issue))?;
         store.vault_meta.delete(txn, &link_key)?;
     }
     Ok(())
