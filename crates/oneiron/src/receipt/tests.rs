@@ -193,9 +193,10 @@ fn provenance(actor: EntityId) -> CompanionProvenance {
 }
 
 fn companion_record(actor: EntityId) -> CompanionRecord {
-    CompanionRecord::persona(
+    CompanionRecord::relationship(
         CompanionScope::neutral(),
         entity(0x51),
+        EntityId::from_bytes_unchecked([0xFE; 16]),
         rmpv::Value::from("persona"),
         provenance(actor),
         crate::federation::Sensitivity::Public,
@@ -1146,6 +1147,7 @@ fn test_prompt_stamp() -> PromptRecompileStamp {
         compiled_at_secs: 1_700_000_000,
         source_fingerprint: "feedbead".to_owned(),
         resolved_fingerprint: "deadbeef".to_owned(),
+        assembled_fingerprint: None,
         source_paths: vec!["eiri/v3.md".to_owned()],
     }
 }
