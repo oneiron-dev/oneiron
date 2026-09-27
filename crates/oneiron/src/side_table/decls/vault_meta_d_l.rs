@@ -235,6 +235,12 @@ side_tables! {
     /// Binding proof tying a restored foreign expression-preference claim to the exact local row it
     /// reconstructed. Key: id16.
     EXPRESSION_ARCHIVE_BINDING: VaultMeta b"expression/archive-binding/v1\0" Raw;
+    /// Private tier-2 censored sample and source proofs. Key: hex-week ":" hex-turn.
+    FAILURE_SIGNALS_TIER2_SAMPLE: VaultMeta b"failure_signals:tier2:sample:" Raw;
+    /// Reverse source-to-sample pointer. Key: hex-source ":" full sample key.
+    FAILURE_SIGNALS_TIER2_SOURCE: VaultMeta b"failure_signals:tier2:source:" Raw;
+    /// Per-week tier-2 quota count. Key: hex-week.
+    FAILURE_SIGNALS_TIER2_WEEK: VaultMeta b"failure_signals:tier2:week:" Raw;
     /// Open feedback-review-item queue row awaiting triage. Key: id16.
     FEEDBACK_QUEUE: VaultMeta b"feedback:queue:v1:" Named;
     /// Dedup index from a feedback bundle's content digest to the review item id that first recorded
