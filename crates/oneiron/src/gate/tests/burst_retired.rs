@@ -146,3 +146,102 @@ fn repeated_claim_id_pending_writes_bind_the_last_operation_receipt() -> Result<
     assert_eq!(vault.store.gate_decisions(256)?.len(), 2);
     Ok(())
 }
+
+#[test]
+fn delete_then_pending_write_keeps_the_later_preflight_binding() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &auto_manifest(actor))?;
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.predicate = "health.allergy".to_owned();
+    body.subject = ClaimSubject::Entity(test_id(0x50));
+    body.approval = ClaimApprovalStatus::Proposed;
+    body.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    let (_, envelope) = dreamer_claim_candidate_write_parts(&vault, &body, actor, "erase-order")?;
+    let id = test_id(0x30);
+    vault
+        .batch()
+        .delete(&id)
+        .claim_candidate(
+            &id,
+            claim_candidate_from_body(&body),
+            &envelope,
+            test_time(3),
+            3,
+        )
+        .commit()?;
+    let landed = stored_claim_body(&vault, &id)?;
+    assert_eq!(landed.approval, ClaimApprovalStatus::Proposed);
+    let txn = vault.store.env.read_txn()?;
+    let pending = vault
+        .store
+        .pending_gate_consent_in_txn(&txn, &id)?
+        .expect("later write has pending consent");
+    let decision = vault
+        .store
+        .gate_decision_in_txn(&txn, pending.decision_id)?
+        .expect("later preflight decision survives earlier delete");
+    let (diff, frontier) = claim_consent_binding_parts(&vault.store, &txn, &landed)?;
+    assert_eq!(decision.redacted_at, None);
+    assert_eq!(decision.diff_handle, diff);
+    assert_eq!(decision.read_frontier_hash, frontier);
+    Ok(())
+}
+
+#[test]
+fn delete_then_allowed_write_keeps_receipt_but_put_then_delete_redacts_it() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = test_id(0x40);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &auto_manifest(actor))?;
+    let mut body = public_stamped(source_trust_claim(ClaimSource::Generated));
+    body.subject = ClaimSubject::Entity(test_id(0x50));
+    body.evidence = Some(precommit_evidence(vec![test_id(0x50)]));
+    let (_, envelope) =
+        dreamer_claim_candidate_write_parts(&vault, &body, actor, "erase-order-auto")?;
+    let first_id = test_id(0x31);
+    vault
+        .batch()
+        .delete(&first_id)
+        .claim_candidate(
+            &first_id,
+            claim_candidate_from_body(&body),
+            &envelope,
+            test_time(3),
+            3,
+        )
+        .commit()?;
+    let landed = stored_claim_body(&vault, &first_id)?;
+    assert_eq!(landed.approval, ClaimApprovalStatus::Auto);
+    let txn = vault.store.env.read_txn()?;
+    let receipts = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, first_id.as_bytes())?;
+    assert_eq!(receipts.len(), 1);
+    let (diff, frontier) = claim_consent_binding_parts(&vault.store, &txn, &landed)?;
+    assert_eq!(receipts[0].redacted_at, None);
+    assert_eq!(receipts[0].diff_handle, diff);
+    assert_eq!(receipts[0].read_frontier_hash, frontier);
+    drop(txn);
+
+    let later_delete = test_id(0x32);
+    vault
+        .batch()
+        .claim_candidate(
+            &later_delete,
+            claim_candidate_from_body(&body),
+            &envelope,
+            test_time(4),
+            4,
+        )
+        .delete(&later_delete)
+        .commit()?;
+    assert!(vault.get_claim(&later_delete)?.is_none());
+    let txn = vault.store.env.read_txn()?;
+    let receipts = vault
+        .store
+        .gate_decisions_for_claim_in_txn(&txn, later_delete.as_bytes())?;
+    assert_eq!(receipts.len(), 1);
+    assert!(receipts[0].redacted_at.is_some());
+    assert!(receipts[0].diff_handle.is_empty());
+    Ok(())
+}
