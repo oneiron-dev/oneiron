@@ -54,6 +54,7 @@ impl PreparedConsolidationAttempt {
 }
 
 #[derive(Debug, Clone)]
+#[expect(clippy::large_enum_variant, reason = "one plan per admitted attempt, held once per wake")]
 pub(crate) enum AttemptPreparation {
     Ready(PreparedConsolidationAttempt),
     Refused {

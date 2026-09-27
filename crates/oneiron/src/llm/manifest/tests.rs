@@ -269,7 +269,7 @@ fn teacher_policy_holder_cannot_loosen_parent_and_old_receipts_cannot_silently_r
 
 #[test]
 fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
-    let (dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig::device());
+    let (dir, vault) = policy_vault();
     let fixture = fixture();
     let path = dir.path().join("models.json");
     std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();

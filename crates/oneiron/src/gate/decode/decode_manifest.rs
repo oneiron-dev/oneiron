@@ -401,7 +401,7 @@ fn parse_teacher_probe_row(value: &Value) -> Option<TeacherProbeRow> {
                     let floor =
                         u32::try_from(required_value(fields, "min_f1_millionths")?.as_u64()?)
                             .ok()?;
-                    if fields.len() != 2 || !parsed.insert(holder, floor).is_none() {
+                    if fields.len() != 2 || parsed.insert(holder, floor).is_some() {
                         return None;
                     }
                 }
