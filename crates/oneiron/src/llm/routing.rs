@@ -275,6 +275,7 @@ fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result
                     | "tools"
                     | "provider_options"
                     | "output_config"
+                    | "system"
                     | "cachedContent"
                     | "thinkingConfig"
                     | "thinking_config"
@@ -283,6 +284,20 @@ fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result
         return Err(invalid("invalid routed inference override"));
     }
     Ok(())
+}
+
+/// The Gemini adapter spells these five public params differently on the
+/// wire. Seat overrides compare and write the effective wire field, not the
+/// caller's spelling, so a later alias cannot win during adapter iteration.
+fn gemini_wire_field(key: &str) -> &str {
+    match key {
+        "max_tokens" => "maxOutputTokens",
+        "top_p" => "topP",
+        "top_k" => "topK",
+        "presence_penalty" => "presencePenalty",
+        "frequency_penalty" => "frequencyPenalty",
+        other => other,
+    }
 }
 
 /// Reject fields that would win after the adapter merges provider options.
@@ -295,22 +310,39 @@ fn apply_controls(
     overrides: &BTreeMap<String, serde_json::Value>,
 ) -> Result<()> {
     validate_overrides(overrides)?;
+    let mut resolved_overrides = BTreeMap::new();
+    for (key, value) in overrides {
+        let wire_key = if wire == ModelWireFormat::Gemini {
+            gemini_wire_field(key)
+        } else {
+            key
+        };
+        if resolved_overrides
+            .insert(wire_key.to_owned(), value.clone())
+            .is_some()
+        {
+            return Err(invalid("duplicate routed provider parameter"));
+        }
+    }
     for options in request.provider_options.values() {
         let fields = options
             .as_object()
             .ok_or_else(|| invalid("invalid provider options"))?;
         if fields.keys().any(|key| {
-            overrides.contains_key(key)
-                || matches!(
-                    key.as_str(),
-                    "reasoning_effort"
-                        | "reasoning"
-                        | "thinking"
-                        | "thinkingConfig"
-                        | "thinking_config"
-                        | "output_config"
-                        | "model"
-                )
+            resolved_overrides.contains_key(if wire == ModelWireFormat::Gemini {
+                gemini_wire_field(key)
+            } else {
+                key
+            }) || matches!(
+                key.as_str(),
+                "reasoning_effort"
+                    | "reasoning"
+                    | "thinking"
+                    | "thinkingConfig"
+                    | "thinking_config"
+                    | "output_config"
+                    | "model"
+            )
         }) {
             return Err(invalid("provider options shadow routed inference controls"));
         }
@@ -331,9 +363,15 @@ fn apply_controls(
             "Gemini effort requires an explicit provider policy",
         ));
     }
-    for (key, value) in overrides {
-        request.params.insert(key.clone(), value.clone());
-    }
+    request.params.retain(|key, _| {
+        let wire_key = if wire == ModelWireFormat::Gemini {
+            gemini_wire_field(key)
+        } else {
+            key
+        };
+        !resolved_overrides.contains_key(wire_key)
+    });
+    request.params.extend(resolved_overrides);
     request.params.remove("reasoning");
     request.params.remove("thinking");
     request.params.remove("thinkingConfig");
@@ -685,15 +723,17 @@ impl Vault {
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;
         request.envelope.tier.per_seat = None;
-        // A Gemini cachedContent ref carries a prior seat's prefix even when
-        // the visible messages are fresh. Remove it before any backend call or
-        // durable step hash. Keep unrelated current-call provider options.
+        // Provider cache refs and raw system fields can carry an old seat's
+        // prefix even with fresh messages. Only VerdictPayload may supply this
+        // call's instructions. Strip these before the durable step hash.
         request.params.remove("cachedContent");
+        request.params.remove("system");
         for options in request.provider_options.values_mut() {
             let fields = options
                 .as_object_mut()
                 .ok_or_else(|| invalid("invalid provider options"))?;
             fields.remove("cachedContent");
+            fields.remove("system");
         }
         apply_controls(
             &mut request,

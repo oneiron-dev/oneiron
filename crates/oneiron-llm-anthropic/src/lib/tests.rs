@@ -566,3 +566,106 @@ fn routed_anthropic_verdict_projects_native_effort_and_retains_schema() {
     drop(vault);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn verdict_without_instructions_clears_both_anthropic_raw_system_fields() {
+    use oneiron::llm::routing::{
+        DescriptionJudge, DescriptionJudgment, DescriptionPolicy, ModelDescription, OwnerModelLine,
+        SeatSettings, VerdictPayload,
+    };
+    struct Judge;
+    impl DescriptionJudge for Judge {
+        fn judge(
+            &self,
+            _: &str,
+            _: &ModelId,
+            _: &str,
+            _: oneiron::llm::ReasoningEffort,
+        ) -> DescriptionJudgment {
+            DescriptionJudgment {
+                fitness: 1,
+                reason: "fixture".into(),
+            }
+        }
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "oneiron-2621-anthropic-system-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let vault = oneiron::Vault::open(&dir, oneiron::VaultConfig::device()).unwrap();
+    let model = ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap();
+    vault
+        .set_description_policy(&DescriptionPolicy {
+            models: vec![ModelDescription {
+                model: model.clone(),
+                wire: oneiron::llm::registry::ModelWireFormat::AnthropicMessages,
+                locality: ModelLocality::ThirdParty,
+                owner: Some(OwnerModelLine {
+                    model,
+                    text: "fixture".into(),
+                    expected_quality: 500_000,
+                }),
+                public_benchmark: None,
+                vendor: None,
+                effort_ladder: vec![oneiron::llm::ReasoningEffort::None],
+            }],
+            contradiction_margin_millionths: 100_000,
+            vault_effort: None,
+            purpose_effort: BTreeMap::new(),
+            global_effort: None,
+        })
+        .unwrap();
+    let config = AnthropicMessagesConfig::new(catalog_with([LlmCapability::JsonResponse]));
+    for namespaced in [false, true] {
+        let mut request = sample_request();
+        request.messages.insert(
+            0,
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text {
+                    text: "old message prefix".into(),
+                }],
+            },
+        );
+        if namespaced {
+            request
+                .provider_options
+                .insert("anthropic".into(), json!({"system":"old provider prefix"}));
+        } else {
+            request
+                .params
+                .insert("system".into(), json!("old param prefix"));
+        }
+        let routed = vault
+            .routed_verdict_request(
+                "schema check",
+                &Judge,
+                &SeatSettings::default(),
+                request,
+                VerdictPayload {
+                    instructions: None,
+                    input: vec![ContentPart::Text {
+                        text: "current question".into(),
+                    }],
+                },
+            )
+            .unwrap();
+        let wire = build_anthropic_messages_request(&config, &routed, false).unwrap();
+        assert!(wire.body.get("system").is_none());
+        assert_eq!(
+            wire.body["messages"][0]["content"][0]["text"],
+            json!("current question")
+        );
+        assert_eq!(
+            wire.body["output_config"]["format"]["type"],
+            json!("json_schema")
+        );
+        assert!(!wire.body.to_string().contains("old"));
+    }
+    drop(vault);
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -551,3 +551,149 @@ fn routed_gemini_verdict_omits_cached_prefix_in_final_wire() {
     assert!(!wire.body.to_string().contains("old user turn"));
     assert!(!wire.body.to_string().contains("cachedContents/seat-prefix"));
 }
+
+#[test]
+fn gemini_native_seat_pins_win_normalized_caller_aliases_on_both_verbs() {
+    use oneiron::llm::routing::{
+        DescriptionJudge, DescriptionJudgment, DescriptionPolicy, ModelDescription, OwnerModelLine,
+        SeatBirth, SeatSettings, VerdictPayload,
+    };
+    struct Judge;
+    impl DescriptionJudge for Judge {
+        fn judge(
+            &self,
+            _: &str,
+            _: &ModelId,
+            _: &str,
+            _: oneiron::llm::ReasoningEffort,
+        ) -> DescriptionJudgment {
+            DescriptionJudgment {
+                fitness: 1,
+                reason: "fixture".into(),
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let model = ModelId::new("google/gemini-model@r1").unwrap();
+    let catalog = LlmCatalogEntry {
+        model: model.clone(),
+        display_name: "Gemini".into(),
+        locality: ModelLocality::ThirdParty,
+        context_window_tokens: 8192,
+        max_output_tokens: None,
+        cost: None,
+        capabilities: vec![LlmCapability::JsonResponse],
+        metadata: Default::default(),
+    };
+    vault
+        .set_description_policy(&DescriptionPolicy {
+            models: vec![ModelDescription {
+                model: model.clone(),
+                wire: ModelWireFormat::Gemini,
+                locality: ModelLocality::ThirdParty,
+                owner: Some(OwnerModelLine {
+                    model,
+                    text: "fixture".into(),
+                    expected_quality: 500_000,
+                }),
+                public_benchmark: None,
+                vendor: None,
+                effort_ladder: vec![oneiron::llm::ReasoningEffort::None],
+            }],
+            contradiction_margin_millionths: 100_000,
+            vault_effort: None,
+            purpose_effort: Default::default(),
+            global_effort: None,
+        })
+        .unwrap();
+    let settings = SeatSettings {
+        allowed_models: None,
+        effort: None,
+        inference_overrides: std::collections::BTreeMap::from([
+            ("maxOutputTokens".into(), json!(16)),
+            ("topP".into(), json!(0.2)),
+        ]),
+    };
+    let tier = TierPrecedence::for_purpose(&CallPurpose::AnswerGen, ModelTierRef("default".into()));
+    let seat = vault
+        .route_seat(
+            SeatBirth {
+                id: "gemini-pin",
+                role: "writer",
+                task: "write",
+                purpose: &CallPurpose::AnswerGen,
+                settings: &settings,
+                tier: &tier,
+            },
+            &Judge,
+        )
+        .unwrap();
+    let base = LlmRequest {
+        model: ModelId::new("google/old-model@r1").unwrap(),
+        envelope: CallEnvelope {
+            scope: Default::default(),
+            purpose: CallPurpose::AnswerGen,
+            class: CallClass::BestEffort,
+            tier,
+            response_format: ResponseFormat::Text,
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: "old user text".into(),
+            }],
+        }],
+        tools: vec![],
+        params: std::collections::BTreeMap::from([
+            ("max_tokens".into(), json!(4096)),
+            ("top_p".into(), json!(0.9)),
+            ("maxOutputTokens".into(), json!(8192)),
+            ("topP".into(), json!(0.95)),
+        ]),
+        provider_options: Default::default(),
+    };
+    let mut generate = base.clone();
+    seat.bind(&mut generate).unwrap();
+    let wire = super::wire::build_request(&catalog, &generate, false).unwrap();
+    assert_eq!(wire.body["generationConfig"]["maxOutputTokens"], json!(16));
+    assert_eq!(wire.body["generationConfig"]["topP"], json!(0.2));
+    assert!(!generate.params.contains_key("max_tokens"));
+    assert!(!generate.params.contains_key("top_p"));
+
+    let mut verdict = base;
+    verdict.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    let routed = vault
+        .routed_verdict_request(
+            "schema check",
+            &Judge,
+            &settings,
+            verdict,
+            VerdictPayload {
+                instructions: Some("current instruction".into()),
+                input: vec![ContentPart::Text {
+                    text: "current input".into(),
+                }],
+            },
+        )
+        .unwrap();
+    let wire = super::wire::build_request(&catalog, &routed, false).unwrap();
+    assert_eq!(wire.body["generationConfig"]["maxOutputTokens"], json!(16));
+    assert_eq!(wire.body["generationConfig"]["topP"], json!(0.2));
+    assert_eq!(
+        wire.body["systemInstruction"]["parts"][0]["text"],
+        json!("current instruction")
+    );
+    assert_eq!(
+        wire.body["contents"][0]["parts"][0]["text"],
+        json!("current input")
+    );
+    assert_eq!(
+        wire.body["generationConfig"]["responseMimeType"],
+        json!("application/json")
+    );
+    assert!(vault.routed_seat("gemini-pin").unwrap().is_some());
+}
