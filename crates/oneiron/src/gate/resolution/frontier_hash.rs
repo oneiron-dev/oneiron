@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicySelector, BudgetPolicyTable};
 
 use super::manifest_types::{PolicyManifestDiagnostics, PolicyManifestResolution};
+use crate::gate::ask_policy::AskPolicySurface;
 use crate::gate::ceiling::{
     DelegationGrantRecord, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality,
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
@@ -104,7 +105,7 @@ pub(super) fn hash_policy_frontier_v0(
                 hasher,
                 u64::from(override_row.retry_page_limit.unwrap_or(0)),
             );
-            hash_opt_str(hasher, override_row.surface.map(|s| s.token()));
+            hash_opt_str(hasher, override_row.surface.map(AskPolicySurface::token));
         }
     }
 

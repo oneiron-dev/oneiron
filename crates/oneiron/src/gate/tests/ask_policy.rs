@@ -59,7 +59,7 @@ fn ask_manifest_refuses_unknown_duplicate_and_holder_widen() {
                 f,
                 "holder_overrides",
                 Value::Array(vec![holder_row(holder, 17, "card")]),
-            )
+            );
         }),
         changed(|f| field(f, "retry_page_limit", 0.into())),
     ] {
