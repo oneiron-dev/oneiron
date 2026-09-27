@@ -502,6 +502,7 @@ async fn discover_requires_auth_and_returns_bootstrap_contract() {
     let expected_counts = [
         (oneiron::registry::ENTITY_TYPE_AGENT_DEF, 7u64),
         (oneiron::registry::ENTITY_TYPE_SKILL, 4),
+        (oneiron::registry::ENTITY_TYPE_SKILL_HUB, 1),
         (oneiron::registry::ENTITY_TYPE_CLAIM, 8),
         (oneiron::registry::ENTITY_TYPE_SKILL_CONTENT_ANCHOR, 4),
         (oneiron::registry::ENTITY_TYPE_ASSET, 4),
