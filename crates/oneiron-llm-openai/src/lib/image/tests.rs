@@ -41,7 +41,11 @@ fn fixture() -> (
         instruction: "Keep the reference layout".into(),
         width: 1024,
         height: 1024,
-        params: BTreeMap::from([("output_format".into(), serde_json::json!("webp"))]),
+        params: BTreeMap::from([
+            ("output_format".into(), serde_json::json!("webp")),
+            ("output_compression".into(), serde_json::json!(80)),
+            ("stream".into(), serde_json::json!(false)),
+        ]),
     };
     let calls = Arc::new(Mutex::new(Vec::new()));
     let adapter = DirectOpenAiImageBackend::new(FixtureTransport {
@@ -118,6 +122,8 @@ fn direct_edit_maps_all_eight_ordered_references_and_returns_bytes_with_metadata
         assert_eq!(fields["size"], "1024x1024");
         assert_eq!(fields["n"], "1");
         assert_eq!(fields["output_format"], "webp");
+        assert_eq!(fields["output_compression"], "80");
+        assert_eq!(fields["stream"], "false");
         assert_eq!(images.len(), count);
         for (i, (image, original)) in images.iter().zip(refs.iter()).enumerate() {
             assert_eq!(image.name, "image[]");
@@ -147,6 +153,8 @@ fn direct_generate_maps_json_request_and_decodes_response() {
     assert_eq!(body["n"], 1);
     assert_eq!(body["prompt"], intent.instruction);
     assert_eq!(body["output_format"], "webp");
+    assert_eq!(body["output_compression"], 80);
+    assert_eq!(body["stream"], false);
 }
 
 #[test]

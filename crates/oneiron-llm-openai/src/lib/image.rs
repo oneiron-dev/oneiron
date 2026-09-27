@@ -55,9 +55,7 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
     fn generate<'a>(&'a self, intent: ImageIntent, lease: &'a BudgetLease) -> ImageFuture<'a> {
         Box::pin(async move {
             let (model, fields) = fields(&intent)?;
-            let mut body =
-                serde_json::to_value(&fields).map_err(|_| FatalLlmError::InvalidRequest)?;
-            body["n"] = serde_json::json!(1);
+            let body = serde_json::to_value(&fields).map_err(|_| FatalLlmError::InvalidRequest)?;
             let request = OpenAiImageHttpRequest {
                 path: "/v1/images/generations",
                 body: OpenAiImageBody::Json(body),
@@ -103,7 +101,7 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
             let request = OpenAiImageHttpRequest {
                 path: "/v1/images/edits",
                 body: OpenAiImageBody::Multipart {
-                    fields: fields.clone(),
+                    fields: form_fields(&fields),
                     images,
                 },
             };
@@ -113,43 +111,55 @@ impl<T: OpenAiImageTransport> ImageBackend for DirectOpenAiImageBackend<T> {
     }
 }
 
-fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, String>)> {
+fn fields(intent: &ImageIntent) -> LlmResult<(ModelId, BTreeMap<String, Value>)> {
     if intent.instruction.trim().is_empty() || intent.width == 0 || intent.height == 0 {
         return Err(FatalLlmError::InvalidRequest.into());
     }
     let mut fields = BTreeMap::from([
-        ("model".into(), intent.model.name().into()),
-        ("prompt".into(), intent.instruction.clone()),
-        ("size".into(), format!("{}x{}", intent.width, intent.height)),
-        ("n".into(), "1".into()),
+        ("model".into(), serde_json::json!(intent.model.name())),
+        ("prompt".into(), serde_json::json!(intent.instruction)),
+        (
+            "size".into(),
+            serde_json::json!(format!("{}x{}", intent.width, intent.height)),
+        ),
+        ("n".into(), serde_json::json!(1)),
     ]);
-    // Provider-specific knobs are data, never allowed to replace the model, prompt,
-    // dimensions, or single-output contract. Complex values do not fit form fields.
+    // Shared admission preserves scalar JSON types. Multipart encoding stringifies
+    // them only at the edit transport boundary.
     for (key, value) in &intent.params {
         if fields.contains_key(key)
             || key.is_empty()
             || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            || !(value.is_string() || value.is_number() || value.is_boolean())
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        let value = match value {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            _ => return Err(FatalLlmError::InvalidRequest.into()),
-        };
-        if key == "output_format" && !matches!(value.as_str(), "png" | "jpeg" | "webp") {
+        if key == "output_format" && !matches!(value.as_str(), Some("png" | "jpeg" | "webp")) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        fields.insert(key.clone(), value);
+        fields.insert(key.clone(), value.clone());
     }
     Ok((intent.model.clone(), fields))
+}
+
+fn form_fields(fields: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+    fields
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.clone(),
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned),
+            )
+        })
+        .collect()
 }
 
 fn decode_response(
     response: OpenAiImageHttpResponse,
     model: ModelId,
-    fields: &BTreeMap<String, String>,
+    fields: &BTreeMap<String, Value>,
 ) -> LlmResult<ImageResponse> {
     if !(200..300).contains(&response.status) {
         return Err(super::classify_openai_status(
@@ -186,7 +196,11 @@ fn decode_response(
         return Err(FatalLlmError::EmptyResponse.into());
     }
     // The direct image endpoint defaults to PNG; output_format is an explicit adapter option.
-    let media_type = match fields.get("output_format").map_or("png", String::as_str) {
+    let media_type = match fields
+        .get("output_format")
+        .and_then(Value::as_str)
+        .unwrap_or("png")
+    {
         "png" => "image/png",
         "jpeg" => "image/jpeg",
         "webp" => "image/webp",
