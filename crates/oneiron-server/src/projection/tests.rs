@@ -178,9 +178,12 @@ fn skill_full_projection_elides_an_absent_governance_tier() {
 fn companion_register_api_projection_redacts_private_values() {
     let id = EntityId::from_bytes([0x51; 16]).unwrap();
     let actor = EntityId::from_bytes([0x52; 16]).unwrap();
-    let record = CompanionRecord::persona(
+    let relationship_source = EntityId::from_bytes([0x54; 16]).unwrap();
+    let relationship_target = EntityId::from_bytes([0x55; 16]).unwrap();
+    let record = CompanionRecord::relationship(
         CompanionScope::neutral(),
-        id,
+        relationship_source,
+        relationship_target,
         companion_value_from_json(&json!({
             "note": "private companion projection note",
         }))
