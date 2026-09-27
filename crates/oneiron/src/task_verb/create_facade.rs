@@ -4,7 +4,7 @@ use rmpv::Value;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, DispatchAgent,
 };
-use crate::attempt_queue::{AttemptId, AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, EnqueueAttempt, EnqueueOutcome};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Error;
@@ -443,7 +443,8 @@ impl Memory<'_> {
         spec: &Value,
         now: u64,
     ) -> MemoryResult<AttemptId> {
-        let outcome = AttemptQueue::new(self.vault()).enqueue_with_task_ref_in_txn(
+        let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
+            self.vault(),
             wtxn,
             EnqueueAttempt {
                 kind: TASK_REALIZE_ATTEMPT_KIND.to_owned(),
@@ -452,7 +453,10 @@ impl Memory<'_> {
                 run_id: None,
                 now,
             },
-            Some(task_ref.to_hex()),
+            crate::ports::JobScope {
+                task_ref: Some(task_ref.to_hex()),
+                dedupe_actor_ref: None,
+            },
         )?;
         let (EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record)) = outcome;
         Ok(record.id)

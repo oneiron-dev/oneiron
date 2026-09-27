@@ -500,9 +500,9 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
-    /// Scheduled host entry: pull one source page before draining TASK writes.
-    /// A pending page defers outbound writes, so the remote conflict barrier
-    /// is caught up before a dirty TASK can overwrite tracker fields.
+    /// Pull one source page, then preflight each dirty linked issue against
+    /// its current remote snapshot before pushing. A cursor page alone cannot
+    /// prove an issue on a later page unchanged. Pending pages defer outbound.
     /// Errors retain dirty revisions/cursor for retry. The injected egress is
     /// still the authenticated OF-327 rail, never a credential in core.
     pub fn synchronize(
@@ -553,6 +553,26 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         }
         let mut pushed = Vec::new();
         for (task, revision) in self.tasks().dirty_tasks()? {
+            if let Some(link) = self.tasks().link(task)? {
+                let current = match self.inbound_mut().current_issue(&link.issue) {
+                    Ok(current) => current,
+                    Err(LinearSyncError::AssigneeUnmapped) => {
+                        self.tasks_mut()
+                            .refuse_inbound_issue(&link.issue, "current_issue")?;
+                        pulled.refused_inbound.push(link.issue);
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                if current.unmapped_assignee {
+                    self.tasks_mut()
+                        .refuse_inbound_issue(&link.issue, &current.event_id)?;
+                    pulled.refused_inbound.push(link.issue);
+                    continue;
+                }
+                self.apply_issue_change(current, now)?;
+                self.tasks_mut().clear_inbound_refusal(&link.issue)?;
+            }
             match self.push_task(task, now) {
                 Ok(receipt) => {
                     let created_snapshot_matches = if receipt.status == LinearMirrorStatus::Linked {
