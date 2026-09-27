@@ -72,10 +72,11 @@ pub(in crate::batch) fn apply_put(
     guard_storage_owned_body(store, wtxn, &id, entity_type, occurred, data, replicated)?;
     super::put_staging::validate_domain_carriers(store, wtxn, id, entity_type, data, replicated)?;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
-    crate::skill_hub::pack_catalog::validate_pack_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::skill_hub::validate_hub_source_carrier_put(store, wtxn, &id, entity_type, data)?;
-    crate::agent_def::validate_birth_source_put(store, wtxn, &id, entity_type, data)?;
-    crate::receipt::validate_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    super::put_staging::validate_source_carriers(
+        store,
+        wtxn,
+        (id, entity_type, data, occurred, learned_at),
+    )?;
     let mut portable_agent_source = None;
     store.guard_pack_map_carrier_put_in_txn(wtxn, &id, entity_type, data)?;
     store.guard_pack_instance_identity_in_txn(wtxn, &id, entity_type, data)?;
@@ -670,6 +671,7 @@ pub(in crate::batch) fn apply_put(
             replicated,
             mutation_recorded_at,
         )?;
+        crate::authority::advance_authority_cache_generation(store, wtxn)?;
     }
 
     stage_entity_index_rows(store, wtxn, &id, entity_type, occurred, learned_at)?;
@@ -681,6 +683,7 @@ pub(in crate::batch) fn apply_put(
     }
     crate::agent_def::stage_birth_custody_put(store, wtxn, &id, entity_type, data)?;
     crate::receipt::stage_receipt_archive_put(store, wtxn, &id, entity_type, data)?;
+    crate::receipt::stage_receipt_record_index(store, wtxn, &id, entity_type, data)?;
 
     if let Some(plan) = short_id_plan {
         apply_short_id_plan(store, wtxn, &id, plan)?;

@@ -1,5 +1,5 @@
-//! Structural puts (habit checkins, companion records, imported-claim
-//! admission, blob artifacts) and `author_take`.
+//! Structural puts (habit checkins, imported-claim admission, blob artifacts)
+//! and `author_take`.
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
 mod affiliated;

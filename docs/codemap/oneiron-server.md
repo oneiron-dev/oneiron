@@ -71,10 +71,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/discover.rs` | src | m | 25 crate-vis | — | — |
 | `src/api/entity.rs` | src | m | 3 crate-vis | — | — |
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
-| `src/api/esign.rs` | src | m | 1 crate-vis | — | Public session-less signing lens |
+| `src/api/esign.rs` | src | m | 2 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/editor_budget.rs` | src | s | 3 crate-vis | — | Router-owned admission for public, capability-free editor computation |
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
-| `src/api/facade.rs` | src | m | 1 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | m | 2 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/tests.rs` | test | m | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
@@ -98,21 +98,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch.rs` | src | m | 9 crate-vis | — | Tool execution dispatch across actors |
 | `src/api/mcp_gateway/admission.rs` | src | s | 5 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | s | 3 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
-| `src/api/mcp_gateway/board_setup.rs` | src | m | 15 crate-vis | — | Board state, setup grammar, and page preflight |
+| `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/facade_verbs.rs` | src | L | 23 crate-vis | — | Facade-backed MCP verb executors |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/mcp_gateway/tasks_response.rs` | src | m | 8 crate-vis | — | Tasks verb and response shaping |
-| `src/api/memory.rs` | src | m | 15 crate-vis | — | — |
+| `src/api/memory.rs` | src | L | 20 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | m | 19 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/deep_admission/tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/quality_tests.rs` | test | s | — | — | — |
 | `src/api/memory_reason/render.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/memory_reason/render_tests.rs` | test | s | — | — | — |
-| `src/api/mod.rs` | src | m | 26 crate-vis | — | HTTP query routes for web dashboard access |
+| `src/api/mod.rs` | src | m | 27 crate-vis | — | HTTP query routes for web dashboard access |
 | `src/api/openapi/booking_schemas.rs` | src | s | 5 crate-vis | — | Booking schema blocks for the OpenAPI doc |
 | `src/api/openapi/descriptions.rs` | src | m | 1 crate-vis | — | Schema description-gap filler |
 | `src/api/openapi/endpoints_merge.rs` | src | s | 13 crate-vis | — | OpenAPI endpoint wiring and component merges |
@@ -132,7 +132,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/surface_events.rs` | src | m | 14 crate-vis | — | Inbound SurfaceEvent handoff over `/v1/core` (OF-247 CID-6) |
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
 | `src/api/tests/billing_usage.rs` | test | m | — | — | Provider money facts, runtime metering boundaries, and removed wallet routes |
-| `src/api/tests/board_host_events.rs` | test | m | — | — | Router proofs for session observations and turn-local capability riders |
+| `src/api/tests/board_host_events.rs` | test | L | — | — | Router proofs for session observations and turn-local capability riders |
 | `src/api/tests/companion.rs` | test | L | — | — | Companion profile access grants, tiers/missing/stale/refresh reads, register CRUD/retire/end-relationship |
 | `src/api/tests/context_board_standing.rs` | test | s | — | — | The real session endpoint cannot fill context before a registered standing floor |
 | `src/api/tests/context_pack_disclosure.rs` | test | L | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
@@ -245,7 +245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/routing.rs` | src | s | 3 crate-vis | — | Private routing header for the EXISTING server broadcast channel |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
 | `src/livequery/source.rs` | src | m | 3 crate-vis | — | Authority-bound coarse projection |
-| `src/livequery/subscriptions.rs` | src | m | 19 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
+| `src/livequery/subscriptions.rs` | src | L | 20 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
 | `src/livequery/test_wire.rs` | src | s | 4 crate-vis | — | Socket fixture codec |
 | `src/livequery/tests.rs` | test | m | — | — | — |
 | `src/livequery/wire.rs` | src | s | 11 crate-vis | — | Version-8 app envelopes |
@@ -256,7 +256,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/isolation.rs` | src | s | 4 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/ledger.rs` | src | m | 1 struct · 7 fn · 1 const · 1 crate-vis | WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 1 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
-| `src/managed/mod.rs` | src | s | 5 re-export | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/mod.rs` | src | s | 5 re-export · 1 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/peer.rs` | src | s | 2 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | m | 3 struct · 20 fn · 1 type · 1 const | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | s | 3 fn · 3 const · 1 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -306,7 +307,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/windows.rs` | src | s | 7 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |
 | `src/skills_pack.rs` | src | s | 5 crate-vis | — | — |
-| `src/test_credentials.rs` | src | s | 8 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
+| `src/test_credentials.rs` | src | s | 9 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
 | `src/usage/ledger.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
@@ -332,6 +333,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/remote_pairing.rs` | test | s | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
+| `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
 | `tests/managed_mode.rs` | test | XL | — | — | Managed serve mode: the engine as a supervised child process (ONE-1595) |
 | `tests/managed_privacy.rs` | test | s | — | — | Privacy inputs must not be accepted and dropped by managed contract v1 |
 | `tests/ws_app_tier.rs` | test | m | — | — | New app-tier socket tests |

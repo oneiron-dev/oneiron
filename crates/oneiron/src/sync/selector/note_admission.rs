@@ -37,7 +37,7 @@ pub(crate) fn admit_note_in_txn(
         return Err(denied());
     }
     admit_selected_in_txn(vault, txn, id, selector, &admission)?;
-    Ok(admission.position)
+    Ok(admission.position.into_scope())
 }
 
 fn denied() -> crate::Error {

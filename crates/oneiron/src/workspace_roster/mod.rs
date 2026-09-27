@@ -6,8 +6,8 @@
 //! sharing one presence. Every part of that already exists as a generic rail:
 //! the house mind is a seeded `AGENT_DEF` row ([`crate::agent_def`]) anchored
 //! to the workspace `ORG` through [`crate::subject_model`], a companion is a
-//! model-substrate `PERSON` with an identity baseline and its own actor
-//! anchor, membership is a [`crate::federation::FederationGrant`], and a
+//! model-substrate `PERSON` with its own actor anchor and PERSON persona baseline,
+//! membership is a [`crate::federation::FederationGrant`], and a
 //! delegated mailbox is a [`crate::channel_identity::ChannelIdentity`]. This
 //! module is the assembly order and the crash-safe journal around it. It adds
 //! no entity kind, no compiled persona, and no product name.

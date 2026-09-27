@@ -7,7 +7,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
-    store::Store,
+    store::{ManifestDbs, Store},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -67,12 +67,12 @@ fn carries_birth_stamp(kind: u8) -> bool {
 /// The facet a NOTE or ASSET was born under: the target of its one stored
 /// `FacetOf` edge.
 pub(crate) fn birth_facet(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> Result<Option<EntityId>> {
     let prefix = crate::vault::edge_kind_prefix(&id, crate::edge::EdgeKind::FacetOf);
-    let Some(row) = store.edges_out.prefix_iter(txn, &prefix)?.next() else {
+    let Some(row) = store.edges_out().prefix_iter(txn, &prefix)?.next() else {
         return Ok(None);
     };
     let (key, value) = row?;
@@ -149,13 +149,13 @@ pub(crate) fn stamp_put(
     Ok(())
 }
 fn stored_scope(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     kind: u8,
     data: &[u8],
 ) -> Result<Option<Scope>> {
-    let Some(bytes) = store.vault_meta.get(txn, &key(id))? else {
+    let Some(bytes) = store.vault_meta().get(txn, &key(id))? else {
         return Ok(None);
     };
     let stamp: Stamp =
@@ -191,7 +191,7 @@ pub(crate) fn restamp_document_pointer(
 /// Derive only an intrinsic current stamp or a digest-matched persisted stamp.
 /// This is the sync-export seam; arbitrary remote opaque rows remain unstamped.
 pub(crate) fn scope_for_blob(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],

@@ -94,6 +94,90 @@ impl L2BaseCache {
     }
 }
 
+/// Select vault-owned user and configured persona identities. A generic PERSON
+/// row is not proof that it is this context's user. Evidence from these
+/// identities still passes every retrieval, disclosure, and scoped-read gate.
+pub(super) fn default_l2_subjects(
+    vault: &Vault,
+    reader: Option<&ScopedRead<'_>>,
+) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let person_id = match reader {
+        Some(read) => read.actor_key().authenticated_person(),
+        None => Some(owner),
+    };
+    let principal = if let Some(id) = person_id {
+        vault
+            .store
+            .entities
+            .get(&txn, id.as_bytes())?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+            .map(|_| id)
+    } else {
+        None
+    };
+    let mut subjects = BTreeSet::new();
+    if vault.store.entities.get(&txn, owner.as_bytes())?.is_some() {
+        subjects.insert(owner);
+    }
+    if let Some(person) = principal {
+        subjects.insert(person);
+    }
+    // A persona is its own PERSON. Discover only live, explicitly granted
+    // companion profiles bound to this principal, never a retired register
+    // FACET or an unrelated PERSON. All evidence still passes scoped reads.
+    if let Some(person) = principal {
+        let now = crate::ports::authorization_floor_in_txn(&vault.store, &txn)?;
+        for row in vault
+            .store
+            .type_index
+            .prefix_iter(&txn, &[crate::registry::ENTITY_TYPE_ACCESS_GRANT])?
+        {
+            let (key, _) = row?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let raw = vault
+                .store
+                .entities
+                .get(&txn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("companion profile grant row"))?;
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("companion profile grant header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+                return Err(Error::CorruptedIndex("companion profile grant type"));
+            }
+            let grant = crate::access_grant::decode_access_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            let Some((bound_person, persona)) = grant.scope.companion_profile_refs() else {
+                continue;
+            };
+            if bound_person == person
+                && grant.allows_companion_profile_read(&person, &person, &persona, now)
+                && vault
+                    .store
+                    .entities
+                    .get(&txn, persona.as_bytes())?
+                    .as_deref()
+                    .and_then(crate::batch::EntityMetadataHeader::parse)
+                    .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_PERSON)
+            {
+                subjects.insert(persona);
+            }
+        }
+    }
+    drop(txn);
+    if subjects.len() > 8 {
+        // An automatically discovered optional prefix must not turn an
+        // otherwise valid context pack into a failed read. Explicit selections
+        // retain the producer's strict eight-subject error.
+        return Ok(Vec::new());
+    }
+    Ok(subjects.into_iter().collect())
+}
+
 pub(super) fn produce_l2_base(
     vault: &Vault,
     pipeline: &PipelineBuilder<'_>,
@@ -114,6 +198,9 @@ pub(super) fn produce_l2_base(
         return Err(Error::InvalidConfig(
             "L2 reader belongs to another vault".into(),
         ));
+    }
+    if let Some(reader) = reader {
+        reader.persist_grant_clock()?;
     }
     // Capture before opening the snapshot. A later erasure invalidates any
     // producer with this revision, even if it finishes after that write.
@@ -141,9 +228,17 @@ pub(super) fn produce_l2_base(
             let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
                 return Err(Error::InvariantViolation("L2 non-entity subject"));
             };
+            let mut value = crate::serialize::null_credentials(
+                "val",
+                &super::hydration::rmpv_to_json(&body.value),
+            );
+            // Provider codecs apply a second, stricter credential scrub to
+            // ranked rows. Apply it before caching so every L2 format shares
+            // one stable safe prefix, including keys such as `ssh_key`.
+            crate::serialize::scrub_provider_credential("val", &mut value);
             Ok(serde_json::json!({
                 "id": id.to_hex(), "subj": subject.to_hex(),
-                "pred": body.predicate, "val": super::hydration::rmpv_to_json(&body.value),
+                "pred": body.predicate, "val": value,
                 "world": body.world.map(|world| world.to_hex()),
             }))
         })

@@ -11,7 +11,7 @@ use crate::error::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionRecordKind {
-    /// A persona record for neutral @Oneiron or a scoped companion.
+    /// PERSON-targeted expression/task key; not a companion record body.
     Persona,
     /// A relationship record between two entities in a companion scope.
     Relationship,
@@ -87,11 +87,12 @@ impl CompanionScope {
     }
 }
 
-/// Persona or relationship subject addressed by a companion record.
+/// PERSON or relationship subject addressed by an expression or task key.
+/// Companion record bodies admit relationship subjects only.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum CompanionSubject {
-    /// Persona record subject.
+    /// PERSON identity target for expression and task keys.
     Persona { persona_ref: EntityId },
     /// Relationship record subject.
     Relationship {
@@ -173,12 +174,12 @@ impl CompanionExpression {
 pub struct CompanionRecordKey {
     /// Scope boundary.
     pub scope: CompanionScope,
-    /// Persona or relationship subject.
+    /// Relationship or PERSON target.
     pub subject: CompanionSubject,
 }
 
 impl CompanionRecordKey {
-    /// Constructs a persona lookup key.
+    /// Constructs a PERSON-targeted expression or task key.
     #[must_use]
     pub const fn persona(scope: CompanionScope, persona_ref: EntityId) -> Self {
         Self {

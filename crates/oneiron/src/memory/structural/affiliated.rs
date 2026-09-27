@@ -1,8 +1,7 @@
-//! Attributed takes, companion records, and imported-claim admission verbs.
-
-use crate::edge::EdgeKind;
+//! Attributed takes and imported-claim admission verbs.
 
 use crate::claim::ClaimApprovalStatus;
+use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,

@@ -158,6 +158,14 @@ pub enum RecordError {
     /// through the untrusted-detail leaf. Nothing was written.
     #[error("invalid diagnostic body: {0}")]
     InvalidDiagnosticBody(&'static str),
+    /// An incoming suppression ASSET claims the reserved domain but does not
+    /// decode or bind to its deterministic entity ID.
+    #[error("invalid outbound suppression receipt body: {0}")]
+    InvalidSuppressionReceiptBody(&'static str),
+    /// An incoming write tries to change an already committed suppression
+    /// ASSET. Its stored bytes remain authoritative.
+    #[error("outbound suppression receipt is immutable")]
+    SuppressionReceiptDivergence,
     /// A TASK record failed pinned role-field validation. Nothing was written.
     #[error("invalid TASK body: {0}")]
     InvalidTaskBody(&'static str),
@@ -235,6 +243,8 @@ impl RecordError {
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,
+            Self::InvalidSuppressionReceiptBody(_) => ErrorKind::InvalidSuppressionReceiptBody,
+            Self::SuppressionReceiptDivergence => ErrorKind::SuppressionReceiptDivergence,
             Self::InvalidTaskBody(_) => ErrorKind::InvalidTaskBody,
             Self::ContextPackValidation { .. } => ErrorKind::ContextPackValidation,
             // Deliberately the SAME coarse kind a companion body fault has

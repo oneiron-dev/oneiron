@@ -869,12 +869,15 @@ fn public_body_cannot_export_relationship_hidden_from_audience() -> Result<()> {
     let mut slip = vault.ensure_host_root_slip(&issuer)?;
     let mut ceiling = Scope::top();
     ceiling.bands = ScopeAxis::Some([ENTITY_TYPE_PERSON].into());
-    slip.attenuate(SlipCaveat {
-        scope: Some(ceiling),
-        ..Default::default()
-    })?;
+    issuer.attenuate(
+        &mut slip,
+        SlipCaveat {
+            scope: Some(ceiling),
+            ..Default::default()
+        },
+    )?;
     let proof = vault.verify_capability_slip(
-        &issuer,
+        &issuer.public_key(),
         &slip,
         b"snapshot-read",
         &issuer.binding_proof(&slip, b"snapshot-read")?,
