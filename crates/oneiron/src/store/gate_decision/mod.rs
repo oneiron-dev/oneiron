@@ -23,6 +23,8 @@ pub(in crate::store) use self::keys::{
 };
 #[cfg(test)]
 pub(in crate::store) use self::ledger::decode_gate_decision;
+pub(crate) use self::orcb::preflight_checkpoint_rows;
+pub(in crate::store) use self::orcb::{CUSTODY_ROOT_KEY, decode_custody_root};
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{
     GATE_DECISION_LEDGER_VERSION, GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN,

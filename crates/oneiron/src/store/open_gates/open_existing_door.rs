@@ -132,9 +132,17 @@ impl Store {
                 clock.observe_floor(floor)?;
             }
         }
+        let gate_custody_root = {
+            let txn = env.read_txn()?;
+            vault_meta_view
+                .get(&txn, crate::store::CUSTODY_ROOT_KEY)?
+                .map(|raw| crate::store::decode_custody_root(&raw))
+                .transpose()?
+                .unwrap_or_else(|| registered_path.path.clone())
+        };
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
-            vault_root: registered_path.path.clone(),
+            gate_custody_root,
             env: shared_env,
             raw,
             kind_registry,

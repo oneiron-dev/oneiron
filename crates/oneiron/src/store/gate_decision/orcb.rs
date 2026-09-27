@@ -37,8 +37,59 @@ fn corrupt() -> Error {
 /// Exterior to the restorable vault directory. Custody is intentionally NOT a
 /// child of the LMDB root: restoring its data.mdb cannot restore shredded keys.
 fn key_directory(root: &Path) -> Result<PathBuf> {
-    let name = root.file_name().ok_or_else(corrupt)?.to_string_lossy();
-    Ok(root.with_file_name(format!(".{name}.gate-decision-keys")))
+    #[cfg(unix)]
+    {
+        use std::ffi::OsString;
+        let mut name = OsString::from(".");
+        name.push(root.file_name().ok_or_else(corrupt)?);
+        name.push(".gate-decision-keys");
+        Ok(root.with_file_name(name))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        Err(Error::InvalidConfig(
+            "claim-key custody requires a supported Unix filesystem".into(),
+        ))
+    }
+}
+
+/// This marker is checkpointed; it contains a native absolute PATH, never key
+/// material. A restore binds to the current exterior custody at that path, so
+/// replacing an LMDB image cannot bring back a key already destroyed there.
+pub(in crate::store) const CUSTODY_ROOT_KEY: &[u8] = b"gate_decision:custody_root:v1";
+
+pub(in crate::store) fn encode_custody_root(root: &Path) -> Result<Vec<u8>> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        if !root.is_absolute() {
+            return Err(corrupt());
+        }
+        Ok(root.as_os_str().as_bytes().to_vec())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = root;
+        Err(corrupt())
+    }
+}
+
+pub(in crate::store) fn decode_custody_root(raw: &[u8]) -> Result<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(std::ffi::OsStr::from_bytes(raw));
+        if raw.is_empty() || raw.len() > 4096 || !path.is_absolute() {
+            return Err(corrupt());
+        }
+        Ok(path.to_path_buf())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = raw;
+        Err(corrupt())
+    }
 }
 
 fn claim_key_path(root: &Path, claim_id: &[u8; 16]) -> Result<PathBuf> {
@@ -101,37 +152,76 @@ fn read_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
-/// First claim-bound append creates and syncs the key before LMDB commits the
-/// ciphertext. An aborted transaction may leave an unused key, never a row
-/// without its key. Existing keys must not be silently replaced after erasure.
+/// Remove interrupted, unpublished temporary keys for this claim. A crash
+/// after hard-link publication but before unlink leaves a complete final key
+/// with link count two; removing its pending sibling makes it readable again.
+fn clean_pending(dir: &Path, claim_id: &[u8; 16]) -> Result<()> {
+    let prefix = format!(".{}-", crate::entity_id::bytes_to_hex_lower(claim_id));
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .is_some_and(|name| name.starts_with(&prefix) && name.ends_with(".pending"))
+        {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// First claim-bound append syncs the exterior directory entry before LMDB
+/// may commit ciphertext. A short/zero final key is NEVER treated as absent.
+/// Only an unpublished temporary file may be discarded on retry.
 fn first_append_key(root: &Path, claim_id: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
     let dir = key_directory(root)?;
-    match fs::create_dir(&dir) {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&dir) {
         Ok(()) => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
-            }
+            // Without this parent fsync, a synced key in a new directory can
+            // still disappear after power loss while LMDB keeps its ciphertext.
+            File::open(dir.parent().ok_or_else(corrupt)?)?.sync_all()?;
         }
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(err) => return Err(err.into()),
     }
     let directory = safe_open(&dir, false, true)?;
+    clean_pending(&dir, claim_id)?;
+    directory.sync_all()?;
     let path = claim_key_path(root, claim_id)?;
+    if path.exists() {
+        return read_key(root, claim_id);
+    }
     let mut key = Zeroizing::new([0; 32]);
     rand::rngs::OsRng.fill_bytes(&mut *key);
-    match safe_open(&path, true, false) {
-        Ok(mut file) => {
-            file.write_all(&*key)?;
-            file.sync_all()?;
-            directory.sync_all()?;
-            Ok(key)
+    let suffix = rand::rngs::OsRng.next_u64();
+    let temp = dir.join(format!(
+        ".{}-{suffix:016x}.pending",
+        crate::entity_id::bytes_to_hex_lower(claim_id)
+    ));
+    let published = (|| -> Result<bool> {
+        let mut file = safe_open(&temp, true, false)?;
+        file.write_all(&*key)?;
+        file.sync_all()?;
+        match fs::hard_link(&temp, &path) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(err) => Err(err.into()),
         }
-        Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-            read_key(root, claim_id)
-        }
-        Err(err) => Err(err),
+    })();
+    // Cleanup is unconditional, including I/O failure before publication.
+    fs::remove_file(&temp)?;
+    let published = published?;
+    directory.sync_all()?;
+    if published {
+        Ok(key)
+    } else {
+        read_key(root, claim_id)
     }
 }
 
@@ -203,6 +293,25 @@ pub(super) fn decode_hot(
         return Err(corrupt());
     }
     Ok(record)
+}
+
+/// Authenticate encrypted canonical rows against CURRENT exterior keys before
+/// restore creates its destination. The image supplies a pointer, not a key;
+/// deleted keys remain absent when an old checkpoint is replayed.
+pub(crate) fn preflight_checkpoint_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+    use super::keys::{GATE_DECISION_KEY_PREFIX, gate_decision_id_from_key};
+    let bound = rows
+        .iter()
+        .find(|(key, _)| key == CUSTODY_ROOT_KEY)
+        .map(|(_, value)| decode_custody_root(value))
+        .transpose()?;
+    for (key, value) in rows {
+        if key.starts_with(GATE_DECISION_KEY_PREFIX) && is_orcb(value) {
+            let root = bound.as_deref().ok_or_else(corrupt)?;
+            decode_hot(root, gate_decision_id_from_key(key)?, value)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn is_orcb(raw: &[u8]) -> bool {

@@ -29120,18 +29120,18 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "re-export": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary, per-claim hot-value AEAD and exterior key custody",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {

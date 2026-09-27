@@ -27,7 +27,7 @@ impl Store {
         raw: &[u8],
     ) -> Result<GateDecisionRecord> {
         if orcb::is_orcb(raw) {
-            orcb::decode_hot(&self.core.vault_root, decision_id, raw)
+            orcb::decode_hot(&self.core.gate_custody_root, decision_id, raw)
         } else {
             decode_gate_decision(raw)
         }
@@ -130,6 +130,21 @@ impl Store {
         record: &GateDecisionRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
+        if record.claim_id.is_some() {
+            // The first claim-bound append pins a path to LIVE exterior custody
+            // in the same LMDB transaction as the value. Restoring the image
+            // elsewhere reuses that path, never a backed-up key copy.
+            let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
+            match self.vault_meta.get(&*wtxn, orcb::CUSTODY_ROOT_KEY)? {
+                Some(bound) if bound.as_ref() != expected.as_slice() => {
+                    return Err(Error::CorruptedIndex("gate decision custody binding"));
+                }
+                Some(_) => {}
+                None => self
+                    .vault_meta
+                    .put(wtxn, orcb::CUSTODY_ROOT_KEY, &expected)?,
+            }
+        }
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
