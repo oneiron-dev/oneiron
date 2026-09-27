@@ -35,6 +35,8 @@ pub(super) struct FoldContext<'a> {
     /// [`folded_peer_device_is_consent_root`] only inside
     /// [`fold_peer_authority_log`].
     pub(super) consent_arm: fn(&FoldedDevice) -> bool,
+    /// Managed roots issue slips; legacy device-key widens are not a door.
+    pub(super) hosted_root: bool,
 }
 
 impl FoldContext<'_> {
@@ -47,6 +49,7 @@ impl FoldContext<'_> {
 struct FoldLocalInputs<'a> {
     observations: Option<&'a AuthorityLocalObservations>,
     deadline_observer: Option<&'a Cell<Option<u64>>>,
+    hosted_root: bool,
 }
 
 /// Folds a set of authority entries into a deterministic roster.
@@ -147,7 +150,10 @@ pub fn fold_authority_log_for_posture(
         true,
         peer_consent_roots,
         consent,
-        FoldLocalInputs::default(),
+        FoldLocalInputs {
+            hosted_root: posture == crate::HostingPrivacyPosture::Hosted,
+            ..FoldLocalInputs::default()
+        },
     )
 }
 
@@ -204,6 +210,7 @@ pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadli
         FoldLocalInputs {
             observations: Some(observations),
             deadline_observer: Some(&deadline),
+            hosted_root: posture == crate::HostingPrivacyPosture::Hosted,
         },
     );
     (fold, deadline.get())
@@ -239,6 +246,7 @@ fn fold_authority_log_inner(
             entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
+            hosted_root: local.hosted_root,
         },
     );
     for _ in 0..=entries.len() {
@@ -258,6 +266,7 @@ fn fold_authority_log_inner(
                 entry_ancestors: None,
                 peer_consent_roots,
                 consent_arm,
+                hosted_root: local.hosted_root,
             },
         );
     }

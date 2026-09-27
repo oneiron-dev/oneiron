@@ -40,6 +40,15 @@ fn quorum_checkpoint_roundtrip_matches_replay_and_rejects_tampering() {
     vault
         .put_authority_log_entry(&enroll, TimeRange { start: 2, end: 2 }, 2)
         .unwrap();
+    // A Hardware root does not instantly authorize the second signer.
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .pending_widens
+            .contains_key(&authority_entry_hash(&enroll).unwrap())
+    );
+    mature_observed_widen(&vault, &enroll);
     assert!(
         vault
             .write_authority_checkpoint(vec![root_key.clone()], |_, bytes| Ok(root

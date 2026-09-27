@@ -42,46 +42,67 @@ fn software_tier_widen_waits_for_local_seen_time_window() {
 }
 
 #[test]
-fn hardware_tier_widen_is_instant() {
+fn hardware_tier_and_attestation_do_not_authorize_instant_widen() {
     let owner = ed_key(62);
     let owner_key = authority_key_from_ed(&owner);
-    let op = AuthorityOp::Genesis {
-        device: device(
-            owner_key.clone(),
-            ROLE_OWNER | ROLE_ADMIN,
-            AuthorityTier::Hardware,
-        ),
-        genesis_nonce: [72; 32],
-        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        tier_floor: AuthorityTier::Software,
-        pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
-    };
-    let genesis = sign_ed(
-        unsigned_entry(None, 0, Vec::new(), op, owner_key, 1),
-        &owner,
-    );
-    let vault_id = genesis_vault_id(&genesis).unwrap();
-    let enroll = enroll_device_entry(
-        vault_id,
-        &genesis,
-        &owner,
-        EnrollSpec {
-            seed: 63,
-            roles: ROLE_ADMIN,
-            tier: AuthorityTier::Software,
-            seq: 1,
-            ts: 2,
-        },
-    );
-    let enroll_hash = authority_entry_hash(&enroll).unwrap();
-    let first_seen = BTreeMap::from([(enroll_hash, 1)]);
-    let fold = fold_authority_log_with_seen_times(&[genesis, enroll], &first_seen, 1);
-
-    assert!(
-        fold.roster
-            .contains_key(&authority_key_from_ed(&ed_key(63)))
-    );
-    assert!(fold.pending_widens.is_empty());
+    for (tier, kind) in [
+        (AuthorityTier::Software, "SoftwareArgon2id"),
+        (AuthorityTier::Hardware, "Hardware"),
+    ] {
+        let mut root = device(owner_key.clone(), ROLE_OWNER | ROLE_ADMIN, tier);
+        root.attestation.kind = kind.into();
+        let genesis = sign_ed(
+            unsigned_entry(
+                None,
+                0,
+                Vec::new(),
+                AuthorityOp::Genesis {
+                    device: root,
+                    genesis_nonce: [72; 32],
+                    recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+                    tier_floor: AuthorityTier::Software,
+                    pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
+                },
+                owner_key.clone(),
+                1,
+            ),
+            &owner,
+        );
+        let vault_id = genesis_vault_id(&genesis).unwrap();
+        let enroll = enroll_device_entry(
+            vault_id,
+            &genesis,
+            &owner,
+            EnrollSpec {
+                seed: 63,
+                roles: ROLE_ADMIN,
+                tier: AuthorityTier::Software,
+                seq: 1,
+                ts: 2,
+            },
+        );
+        let enroll_hash = authority_entry_hash(&enroll).unwrap();
+        let first_seen = BTreeMap::from([(enroll_hash, 1)]);
+        let entries = [genesis, enroll];
+        let before = fold_authority_log_with_seen_times(&entries, &first_seen, 1);
+        assert!(
+            !before
+                .roster
+                .contains_key(&authority_key_from_ed(&ed_key(63)))
+        );
+        assert!(before.pending_widens.contains_key(&enroll_hash));
+        let after = fold_authority_log_with_seen_times(
+            &entries,
+            &first_seen,
+            1 + DEFAULT_PENDING_WIDEN_DELAY_SECS,
+        );
+        assert!(
+            after
+                .roster
+                .contains_key(&authority_key_from_ed(&ed_key(63)))
+        );
+        assert!(after.pending_widens.is_empty());
+    }
 }
 
 #[test]

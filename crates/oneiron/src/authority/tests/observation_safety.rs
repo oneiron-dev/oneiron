@@ -239,7 +239,17 @@ fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
     };
     vault.set_authority_observation_policy(policy).unwrap();
     let (entries, revoked_key, actor) = stale_approval_fixture();
-    for entry in &entries {
+    for entry in &entries[..2] {
+        vault
+            .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
+            .unwrap();
+    }
+    mature_observed_widen(&vault, &entries[1]);
+    vault
+        .put_authority_log_entry(&entries[2], TimeRange { start: 1, end: 1 }, 0)
+        .unwrap();
+    let now = mature_observed_widen(&vault, &entries[2]);
+    for entry in &entries[3..] {
         vault
             .put_authority_log_entry(entry, TimeRange { start: 1, end: 1 }, 0)
             .unwrap();
@@ -250,7 +260,17 @@ fn duration_v1_is_stored_and_changes_the_live_authority_fold() {
         &actor,
         "human"
     ));
-    authority_observation_secs(&vault.store, 1_020, 0);
+    let advanced = now + 20;
+    vault
+        .with_write_txn(|txn| {
+            vault.store.sync_state.put(
+                txn,
+                authority_first_seen_clock_sync_key(),
+                &encode_authority_first_seen_secs(advanced),
+            )?;
+            Ok(())
+        })
+        .unwrap();
     let outside = vault.authority_fold().unwrap();
     assert!(
         outside
