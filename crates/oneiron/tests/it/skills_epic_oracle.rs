@@ -50,6 +50,8 @@ use oneiron::{
     skill_reliability::project_skill_reliability,
     skill_reliability::rebuild_skill_confidence_cache,
     skill_reliability::skill_reliability_posterior,
+    skill_reliability::skill_reliability_posterior_for_executor,
+    skill_reliability::skill_reliability_prior,
 };
 use rmpv::Value;
 
@@ -65,6 +67,9 @@ const PRED_SKILL_RELIABILITY: &str = "skill.reliability";
 /// a lower-bound crossing mints, so quarantine is always a question a human
 /// answers rather than a lifecycle flip the engine performs.
 const PRED_SKILL_QUARANTINE_PROPOSAL: &str = "skill.quarantine_proposal";
+/// The `model@revision` every oracle attempt stamps under its live lease
+/// (ONE-2014): a skill-bearing terminal receipt without one is refused.
+const ORACLE_EXECUTOR: &str = "fixture/model@1";
 
 fn temp_vault() -> (tempfile::TempDir, Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
@@ -163,6 +168,12 @@ fn stamped_pack_receipt(vault: &Vault, skill_id: &str, actor: EntityId) -> Resul
     else {
         panic!("the enqueued attempt is claimable");
     };
+    queue.set_executor_model(
+        attempt.id,
+        "oracle-worker",
+        leased.attempt_count,
+        ORACLE_EXECUTOR,
+    )?;
     queue.complete(CompleteAttempt {
         id: attempt.id,
         lease_owner: "oracle-worker".to_owned(),
@@ -936,6 +947,16 @@ fn sk04_attempt_manifest_grows_mid_run_and_stays_append_only() {
     else {
         panic!("the enqueued attempt is claimable");
     };
+    // The executor is bound under the live lease before any mid-run pull
+    // (ONE-2014): the terminal receipt refuses a skill pack with no model.
+    queue
+        .set_executor_model(
+            attempt.id,
+            "oracle-worker",
+            leased.attempt_count,
+            ORACLE_EXECUTOR,
+        )
+        .expect("stamp the executor under the live lease");
     let at_mid = queue
         .append_manifest_entry(
             attempt.id,
@@ -1256,14 +1277,15 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
     }
     // Posterior KEY SET is pinned, not just the map length (review C15):
     // {x, y} must not pass. (The header rename clause covers a
-    // ticket-pinned wire rename at arming.)
+    // ticket-pinned wire rename at arming.) ONE-2014 keys the claim to the
+    // (skill, executor model@revision) arm its stamped receipts ran on.
     let posterior = row.value.as_map().expect("the posterior is a map");
     assert_eq!(
         posterior.len(),
-        2,
-        "the value is the Beta posterior: {{alpha, beta}}"
+        3,
+        "the value is the executor arm's Beta posterior: {{alpha, beta, executor}}"
     );
-    for key in ["alpha", "beta"] {
+    for key in ["alpha", "beta", "executor"] {
         assert_eq!(
             posterior
                 .iter()
@@ -1273,6 +1295,14 @@ fn sk05_reliability_is_a_superseding_claim_citing_receipts() -> Result<()> {
             "posterior carries {key} exactly once"
         );
     }
+    assert_eq!(
+        posterior
+            .iter()
+            .find(|(k, _)| k.as_str() == Some("executor"))
+            .and_then(|(_, v)| v.as_str()),
+        Some(ORACLE_EXECUTOR),
+        "the arm is the executor the receipts stamped"
+    );
     Ok(())
 }
 
@@ -1300,9 +1330,18 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
     )?;
     let judgments = run_attribution_projector(&vault, read_attribution_cursor(&vault)?)?;
     project_skill_reliability(&vault, &judgments)?;
-    let claim_posterior_mean: f32 = skill_reliability_posterior(&vault, &skill_entity)?
-        .expect("the projected claim carries the posterior")
-        .mean();
+    let pair_claim =
+        skill_reliability_posterior_for_executor(&vault, &skill_entity, ORACLE_EXECUTOR)?
+            .expect("the projected claim carries the posterior");
+    // ONE-2014: the stamped outcome lands on its (skill, executor) arm. The
+    // scalar cache holds only the unknown-executor arm, which no stamped
+    // receipt feeds, so that arm's truth is still the provenance prior.
+    assert_eq!(
+        skill_reliability_posterior(&vault, &skill_entity)?,
+        None,
+        "a stamped outcome never lands on the unknown-executor arm"
+    );
+    let arm_truth_mean: f32 = skill_reliability_prior(&vault, &skill_entity)?.mean();
 
     // The cache is WRITABLE and non-authoritative: clobbering it is a lawful
     // record edit that mints no revision — and, crucially, changes no claim.
@@ -1323,11 +1362,16 @@ fn sk05_record_score_is_a_rebuildable_cache_claims_are_truth() -> Result<()> {
         "the rebuild landed on the stored record, not just in the return value"
     );
 
-    let mean = claim_posterior_mean;
+    let mean = arm_truth_mean;
     let rebuilt = rebuilt_cache_value;
     assert!(
         (rebuilt - mean).abs() < 1e-6,
-        "cache rebuilds to the claim's posterior mean: {rebuilt} vs {mean}"
+        "cache rebuilds to its arm's truth, never the pair claim: {rebuilt} vs {mean}"
+    );
+    assert_eq!(
+        skill_reliability_posterior_for_executor(&vault, &skill_entity, ORACLE_EXECUTOR)?,
+        Some(pair_claim),
+        "clobbering + rebuilding the cache never moved the claim's posterior"
     );
     let (active, _) = claim_rows(&vault, &skill_entity, PRED_SKILL_RELIABILITY)?;
     assert_eq!(
