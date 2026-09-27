@@ -2,9 +2,9 @@
 
 use super::record::REPLAY_METADATA_SCHEMA_VERSION;
 use super::types::{EngineExecutorResult, JsCodeModeStepOutcome};
-use crate::Error;
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ExecutorStorage};
 use crate::entity_id::EntityId;
+use crate::{Error, Result};
 use serde_json::json;
 use std::collections::BTreeSet;
 
@@ -75,16 +75,18 @@ fn text_output_bytes(path: &str, text: &str) -> Vec<u8> {
     raw
 }
 
-fn decode_text_output(path: &str, raw: Vec<u8>) -> EngineExecutorResult<String> {
+pub(super) fn decode_text_output(path: &str, raw: Vec<u8>) -> Result<String> {
     let Some(rest) = raw.strip_prefix(TEXT_OUTPUT_PREFIX) else {
-        return Err(Error::CorruptedIndex("executor replay text output envelope").into());
+        return Err(Error::CorruptedIndex(
+            "executor replay text output envelope",
+        ));
     };
     let path_header = format!("{path}\n");
     let Some(text) = rest.strip_prefix(path_header.as_bytes()) else {
-        return Err(Error::CorruptedIndex("executor replay text output path").into());
+        return Err(Error::CorruptedIndex("executor replay text output path"));
     };
     String::from_utf8(text.to_vec())
-        .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8").into())
+        .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
 }
 
 pub(super) fn load_utf8_output(
@@ -100,7 +102,7 @@ pub(super) fn load_utf8_output(
     let raw = storage
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
-    decode_text_output(path, raw)
+    Ok(decode_text_output(path, raw)?)
 }
 
 /// The durable "this step already spoke its last word" marker (ONE-1686).
@@ -130,6 +132,32 @@ pub(super) fn fallback_speech_marker(
 
 fn fallback_speech_marker_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}{FALLBACK_SPEECH_MARKER_SUFFIX}")
+}
+
+/// Maximum raw bytes handed to one guest read. Worst-case JSON byte-array
+/// encoding is under 262 KiB before the bridge applies its exact wire cap.
+pub(super) const RECOVERABLE_OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
+
+/// A model-facing, typed read-file affordance in the guest's existing output
+/// mount. Neither the path nor its digest grants access without a matching
+/// committed observation in the current run's routed replay store.
+pub(super) fn recoverable_output_path(
+    seq: u64,
+    source: crate::compaction::output::OutputRef,
+) -> String {
+    format!(
+        "/mnt/outputs/.oneiron-context-ref/{seq}/{}:{}",
+        crate::entity_id::bytes_to_hex_lower(&source.hash),
+        source.byte_len,
+    )
+}
+
+pub(super) fn recoverable_chunk_path(
+    seq: u64,
+    source: crate::compaction::output::OutputRef,
+    offset: u64,
+) -> String {
+    format!("{}/chunk/{offset}", recoverable_output_path(seq, source))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {
