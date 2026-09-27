@@ -209,6 +209,20 @@ pub(super) fn stage_claim_projection_indexes(
     crate::llm::index_dreamer_step_claim_for_put(store, wtxn, id, body, learned_at)
 }
 
+/// Validate producer-owned source carriers before any body or index is
+/// staged. Preserve their existing write-door order on the same snapshot.
+pub(super) fn validate_source_carriers(
+    store: &Store,
+    txn: &RwTxn<'_>,
+    row: (EntityId, u8, &[u8], TimeRange, u64),
+) -> Result<()> {
+    let (id, entity_type, data, occurred, learned_at) = row;
+    crate::skill_hub::pack_catalog::validate_pack_source_put(store, txn, &id, entity_type, data)?;
+    crate::skill_hub::validate_hub_source_carrier_put(store, txn, &id, entity_type, data)?;
+    crate::agent_def::validate_birth_source_put(store, txn, &id, entity_type, data)?;
+    crate::receipt::validate_put(store, txn, (&id, entity_type, data), (occurred, learned_at))
+}
+
 /// Validate typed storage carriers before any put effect is staged.
 pub(super) fn validate_domain_carriers(
     store: &Store,
