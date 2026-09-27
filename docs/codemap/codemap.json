@@ -28303,7 +28303,8 @@
      "path": "src/skill_hub/bootstrap.rs",
      "purpose": "Build-embedded bootstrap skills; import and activation commit together on first open",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8,
+      "fn": 1
      }
     },
     {
@@ -28322,7 +28323,7 @@
      "purpose": "First-party library source: offline seeding, immutable Git ref, explicit import",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -28344,7 +28345,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 8
      }

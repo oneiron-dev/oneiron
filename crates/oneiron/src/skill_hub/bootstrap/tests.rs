@@ -400,3 +400,59 @@ fn different_content_at_seed_id_does_not_prevent_open_or_rewrite_holder() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn delete_then_restore_defaults_mints_candidate_with_pinned_hash() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let name = "judge";
+    let old = stable_id(name)?;
+    let hash = package(name, FILES[1].1)?.content_hash()?;
+    assert!(vault.delete_entity(&old)?);
+    drop(vault);
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    assert!(vault.get_skill_record(&old)?.is_none());
+    let restored = vault.restore_default_skills(TimeRange { start: 2, end: 2 }, 2)?;
+    assert_eq!(restored.len(), 1);
+    let id = restored[0];
+    assert_ne!(id, old);
+    let record = vault.get_skill_record(&id)?.expect("restored candidate");
+    assert_eq!(record.content_hash, Some(hash));
+    assert_eq!(record.lifecycle_status, SkillLifecycle::Candidate);
+    let source = HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
+    assert_eq!(
+        vault
+            .hub_import_receipt(&id, &source)?
+            .unwrap()
+            .content_hash,
+        hash.to_hex()
+    );
+    assert_eq!(
+        vault.restore_default_skills(TimeRange { start: 3, end: 3 }, 3)?,
+        Vec::<EntityId>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn restore_does_not_reactivate_retired_default_or_overwrite_foreign_holder() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let old = stable_id("judge")?;
+    let mut retired = vault.get_skill_record(&old)?.unwrap();
+    retired.lifecycle_status = SkillLifecycle::Stale;
+    vault.update_skill_record(&old, &retired, TimeRange { start: 1, end: 1 }, 1)?;
+    let before = vault.get_raw(&old)?;
+    let restored = vault.restore_default_skills(TimeRange { start: 2, end: 2 }, 2)?;
+    assert_eq!(restored.len(), 1);
+    assert_ne!(restored[0], old);
+    assert_eq!(vault.get_raw(&old)?, before);
+    assert_eq!(
+        vault
+            .get_skill_record(&restored[0])?
+            .unwrap()
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}

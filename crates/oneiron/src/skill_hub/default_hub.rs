@@ -107,6 +107,79 @@ impl Vault {
         let reference = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
         self.import_skill_from_adapter(&adapter, &reference, occurred, learned_at)
     }
+
+    /// Re-imports a deleted or locally retired library skill from the pinned
+    /// first-party commit. Unchanged imports are left alone; a restore births
+    /// a new Candidate rather than reviving the old entity or its authority.
+    pub fn restore_default_hub_skill(
+        &self,
+        subtree: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        self.restore_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
+    }
+
+    fn restore_default_hub_skill_at_commit(
+        &self,
+        subtree: &str,
+        commit: &str,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        use super::SkillHubAdapter;
+        let id = default_skill_hub_id()?;
+        let row = self.skill_hub_record(&id)?;
+        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
+            return Err(crate::error::Error::InvalidConfig(
+                "default skill hub requires pinned Git configuration".to_owned(),
+            ));
+        }
+        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?;
+        let source = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
+        let package = adapter.fetch_package(&source)?;
+        let hash = package.content_hash()?;
+        let coordinates = super::osv::dependency_inventory(&package)?;
+        let (_, _, scans) =
+            self.dependency_advisories(hash, &coordinates, &super::osv::OsvDevClient, learned_at)?;
+        let mut txn = self.store.env.write_txn()?;
+        if self.hub_record_in_txn(&txn, &id)? != row {
+            return Err(crate::error::Error::InvalidConfig(
+                "default skill hub configuration changed during fetch".to_owned(),
+            ));
+        }
+        if self.default_skill_present_in_txn(&txn, &source, hash, &package.record.skill_id)? {
+            // The exact default already exists; unlike restore, ordinary
+            // import may attach an alias, so resolve it by source claim.
+            for (entity, record) in self.structured_skills_for_content_hash_in_txn(&txn, hash)? {
+                if record.skill_id == package.record.skill_id
+                    && matches!(
+                        record.lifecycle_status,
+                        crate::skill::SkillLifecycle::Candidate
+                            | crate::skill::SkillLifecycle::Active
+                    )
+                    && self.default_skill_present_for_entity_in_txn(&txn, &entity, &source)?
+                {
+                    return Ok(entity);
+                }
+            }
+        }
+        let entity = self.restore_skill_from_hub_in_txn(
+            &mut txn,
+            &source,
+            &package,
+            self.store.clock.entity_id()?,
+            occurred,
+            learned_at,
+        )?;
+        for scan in &scans {
+            self.ingest_skill_scan_verdict_in_txn(
+                &mut txn, &entity, hash, scan, occurred, learned_at,
+            )?;
+        }
+        txn.commit()?;
+        Ok(entity)
+    }
 }
 
 #[cfg(test)]

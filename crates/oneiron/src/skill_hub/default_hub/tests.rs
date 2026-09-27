@@ -174,5 +174,32 @@ fn agent_authored_v1_library_skill_imports_through_hub_one_at_pinned_ref() -> Re
             .kind(),
         ErrorKind::InvalidSkillBody
     );
+    assert_eq!(
+        vault.restore_default_hub_skill_at_commit("skills/review-evidence", &commit, at, 2)?,
+        id,
+    );
+    assert!(vault.delete_entity(&id)?);
+    let restored = vault.restore_default_hub_skill_at_commit(
+        "skills/review-evidence",
+        &commit,
+        TimeRange { start: 3, end: 3 },
+        3,
+    )?;
+    assert_ne!(restored, id);
+    assert_eq!(
+        vault.get_skill_record(&restored)?.unwrap().content_hash,
+        Some(hash)
+    );
+    assert_eq!(
+        vault.get_skill_record(&restored)?.unwrap().lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    assert_eq!(
+        vault
+            .hub_import_receipt(&restored, &reference)?
+            .unwrap()
+            .content_hash,
+        hash.to_hex()
+    );
     Ok(())
 }
