@@ -1168,7 +1168,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactExportRef",
@@ -1181,14 +1181,24 @@
       "ArtifactSnapshotRef",
       "ArtifactSnapshotSelector"
      ],
-     "path": "src/artifact_hosting.rs",
+     "path": "src/artifact_hosting/mod.rs",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 16,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/artifact_hosting/pointer_rows.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -9505,10 +9515,20 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/codebase/store.rs",
+     "path": "src/codebase/store/index_rows.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
       "crate-vis": 9,
@@ -13825,10 +13845,10 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/dreamer_runner/admission.rs",
+     "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
@@ -13843,6 +13863,16 @@
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/admission/validation.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -33899,10 +33929,20 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/vault/open.rs",
+     "path": "src/vault/open/config_validation.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/open/mod.rs",
      "purpose": "Vault open and bootstrap: open doors, privacy posture and live-window attachment",
      "surface": {
       "crate-vis": 10,
@@ -35724,10 +35764,10 @@
      "purpose": "ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief…"
     },
     "artifact_hosting": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
-     "largest_src_bucket": "L",
-     "layout": "file+dir",
+     "largest_src_bucket": "m",
+     "layout": "dir",
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
@@ -35934,9 +35974,9 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -36165,9 +36205,9 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Private Dreamer runner store plus atomic admission"
     },
@@ -36921,9 +36961,9 @@
      "purpose": "—"
     },
     "vault": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
@@ -36984,9 +37024,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 5,
+   "over_bar": 1,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2201,
+   "source_files": 2205,
    "test_files": 740
   },
   "oneiron-android": {

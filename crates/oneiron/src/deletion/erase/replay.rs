@@ -136,7 +136,7 @@ impl Vault {
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
-                HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value)?;
+                HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
             if let Some((request_id, tombstone_reason)) =
                 decoded.request_id.zip(raw_value.first().copied())
@@ -170,7 +170,7 @@ impl Vault {
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.
-        HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value)?;
+        HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
         // ARCH-0038 DELETE: "The derived edge flag follows the Claim" — the
         // subject edge is refreshed in the SAME transaction as the purge.
         if let Some(captured) = &captured {

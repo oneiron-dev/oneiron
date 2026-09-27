@@ -92,17 +92,6 @@ pub(crate) trait EntityStoreMaintenance: Transactions {
     ) -> Result<()>;
 }
 pub(crate) trait EdgeStoreMaintenance: Transactions {
-    /// Plants one outgoing edge row as given, with no incoming twin, for fixtures that build a
-    /// graph shape no write door builds at their scale.
-    #[cfg(test)]
-    fn port_raw_outgoing_edge_seed(
-        &self,
-        txn: &mut Self::Write<'_>,
-        source: &EntityId,
-        kind: crate::EdgeKind,
-        target: &EntityId,
-        value: &[u8],
-    ) -> Result<()>;
     /// Revision writer has already proved endpoint, session, ancestry and cardinality laws.
     /// Return whether the caller's graph-version batch must advance.
     fn port_revision_link(

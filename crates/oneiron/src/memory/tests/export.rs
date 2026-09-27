@@ -16,12 +16,14 @@ fn export_five_formats_and_rehydrate_each_emitted_short_ref() {
     let actor_ref = memory
         .get_entity(&actor.to_hex())
         .unwrap()
+        .value
         .unwrap()
         .short_ref
         .unwrap();
     let other_ref = memory
         .get_entity(&other.to_hex())
         .unwrap()
+        .value
         .unwrap()
         .short_ref
         .unwrap();

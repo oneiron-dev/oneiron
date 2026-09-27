@@ -96,6 +96,9 @@ impl ScopedRead<'_> {
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)
+        } else if self.actor_key.vault_owner_ref().is_some() {
+            // The owner's ceiling is all of the owner's vault, stamped or not.
+            Ok(true)
         } else {
             let scope = match self.session_view {
                 Some(view) => {

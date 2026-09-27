@@ -1,8 +1,8 @@
 //! Facade-backed MCP verb executors.
 
 use super::{
-    McpGatewayError, mcp_actor_result, mcp_api_error, mcp_engine_error, mcp_memory, mcp_scoped_read,
-    mcp_text_content,
+    McpGatewayError, mcp_actor_result, mcp_api_error, mcp_engine_error, mcp_memory,
+    mcp_scoped_read, mcp_text_content,
 };
 use crate::api::CORE_MAX_LIST_LIMIT;
 use crate::api::hydrate_short_id_response_with_mode;

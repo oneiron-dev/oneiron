@@ -74,7 +74,14 @@ fn navigation_projection_uses_indexed_body_while_live_edit_is_pending() {
     let (items, _receipt) = project_nav_results(&reader, hits).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["label"], "navanchor.original");
-    let live = reader.get(&id).unwrap().value.unwrap();
+    let live = reader
+        .read(&[oneiron::claim::PointRead::id(id)], None)
+        .unwrap()
+        .single()
+        .value
+        .unwrap()
+        .body
+        .unwrap();
     let live: rmpv::Value = rmp_serde::from_slice(&live).unwrap();
     assert_eq!(live["pred"].as_str(), Some("unmatched.replacement"));
 }
