@@ -293,7 +293,7 @@ const PINNED_BATCH_DIGESTS: &[(&str, &str)] = &[
     ),
     (
         "delete",
-        "b80dac17f8ae9c800030698b90b167750b410d71b672f3a4c2024c22de818383",
+        "21e3ab16a0ba87a8f3c78bdaeef2dc0c36f77a241bde3d60e5c80a7970d452ad",
     ),
     ("claim_candidate", CLAIM_CANDIDATE_DIGEST),
     (
