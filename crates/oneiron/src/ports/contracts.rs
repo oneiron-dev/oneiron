@@ -345,6 +345,13 @@ pub trait JobQueue: Transactions {
         kind: Option<&str>,
         input: ClaimAttempt,
     ) -> Result<ClaimOutcome>;
+    /// Claim exactly one known ready job without taking a sibling's work.
+    fn port_job_claim_id(
+        &self,
+        txn: &mut Self::Write<'_>,
+        id: crate::attempt_queue::AttemptId,
+        input: ClaimAttempt,
+    ) -> Result<ClaimOutcome>;
     fn port_job_complete(
         &self,
         txn: &mut Self::Write<'_>,
