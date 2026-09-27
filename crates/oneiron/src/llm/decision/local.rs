@@ -169,6 +169,7 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 principal: input.principal,
                 providers,
                 band: dial.band,
+                band_version: 0,
             },
         })
     }
