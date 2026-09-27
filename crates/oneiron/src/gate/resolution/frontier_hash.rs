@@ -143,6 +143,9 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
+    // Include the resolved composition row even when there are no owner rows.
+    hash_str(hasher, "owner_policy_precedence");
+    hash_str(hasher, resolution.owner_policy_precedence.as_str());
     hash_bool(hasher, resolution.owner_policy_rows_dropped);
     hash_len(hasher, resolution.owner_policy_rows.len());
     for row in &resolution.owner_policy_rows {
@@ -235,6 +238,8 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     }
     hash_str(hasher, row.action.as_str());
     hash_opt_str(hasher, row.human.as_deref());
+    hash_opt_str(hasher, row.why.as_deref());
+    hash_opt_str(hasher, row.why_source.as_deref());
 }
 
 fn hash_axes(hasher: &mut Sha256, axes: PolicyAxes) {

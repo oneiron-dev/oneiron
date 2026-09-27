@@ -39,6 +39,37 @@ fn task_error(error: MemoryError) -> Error {
     Error::InvalidConfig(format!("human follow-up TASK refused: {}", error.message))
 }
 
+/// One recipient-owned digest TASK binds every receipt in the batch. The
+/// sorted receipt set is part of both the idempotency index and the TASK spec.
+pub(crate) fn enqueue_policy_change_digest_followup_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    sender: EntityId,
+    recipient: EntityId,
+    receipts: &[String],
+    now: u64,
+) -> Result<EntityId> {
+    if receipts.is_empty() || receipts.iter().any(String::is_empty) {
+        return Err(Error::InvalidConfig("empty policy digest".into()));
+    }
+    let mut sorted = receipts.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"policy:recipient-digest:v1");
+    hash.update(recipient.as_bytes());
+    for receipt in &sorted {
+        hash.update(&(receipt.len() as u64).to_be_bytes());
+        hash.update(receipt.as_bytes());
+    }
+    let id = format!("digest:{}", hash.finalize().to_hex());
+    let spec = Value::Map(vec![(
+        Value::from("source_receipt_refs"),
+        Value::Array(sorted.into_iter().map(Value::from).collect()),
+    )]);
+    enqueue_followup_in_txn(vault, txn, sender, recipient, &id, spec, now)
+}
+
 /// Mints a standard, human-assigned TASK and its local follow-up cursor inside
 /// the caller's policy-write transaction. No decision ASK, realization job or
 /// outbound send is created here. A repeated `(receipt_id, recipient)` returns
@@ -56,6 +87,29 @@ pub(crate) fn enqueue_policy_change_followup_in_txn(
     author: EntityId,
     recipient: EntityId,
     receipt_id: &str,
+    now: u64,
+) -> Result<EntityId> {
+    enqueue_followup_in_txn(
+        vault,
+        txn,
+        author,
+        recipient,
+        receipt_id,
+        Value::Map(vec![(
+            Value::from("source_receipt_ref"),
+            Value::from(receipt_id),
+        )]),
+        now,
+    )
+}
+
+fn enqueue_followup_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    author: EntityId,
+    recipient: EntityId,
+    receipt_id: &str,
+    task_spec: Value,
     now: u64,
 ) -> Result<EntityId> {
     if receipt_id.is_empty()
@@ -89,11 +143,7 @@ pub(crate) fn enqueue_policy_change_followup_in_txn(
                 != Some(TaskAssignee::Human {
                     actor_ref: recipient,
                 })
-            || body.spec
-                != Value::Map(vec![(
-                    Value::from("source_receipt_ref"),
-                    Value::from(receipt_id),
-                )])
+            || body.spec != task_spec
         {
             return Err(Error::CorruptedIndex(
                 "policy change follow-up TASK mismatch",
@@ -115,19 +165,11 @@ pub(crate) fn enqueue_policy_change_followup_in_txn(
             "follow-up author lacks Auto task-create ceiling".into(),
         ));
     }
-    let spec = TaskCreateSpec::new(
-        Value::Map(vec![(
-            Value::from("source_receipt_ref"),
-            Value::from(receipt_id),
-        )]),
-        None,
-        Some(author),
-        Some(now),
-    )
-    .with_kind(TaskKind::Standard)
-    .with_assignee(TaskAssignee::Human {
-        actor_ref: recipient,
-    });
+    let spec = TaskCreateSpec::new(task_spec, None, Some(author), Some(now))
+        .with_kind(TaskKind::Standard)
+        .with_assignee(TaskAssignee::Human {
+            actor_ref: recipient,
+        });
     let validated = validate_task_create_in(vault, &*txn, &spec, now).map_err(task_error)?;
     // The normal human TASK route checks an existing PERSON, active contact and
     // channel, including opt-out vetoes. Never degrade to Dreamer or a proposal.

@@ -99,7 +99,9 @@ pub(crate) use self::input::{
     GateProvenanceHandles, consent_gate_reason_codes,
 };
 pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
-pub use self::owner_policy_mutation::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
+pub use self::owner_policy_mutation::{
+    PolicyRowAction, PolicyRowChange, PolicyRowScope, PolicyWhySource,
+};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
 pub use self::retrieval_filter::RetrievalFilter;

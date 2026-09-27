@@ -4,7 +4,10 @@ mod ledger;
 mod notifications;
 
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
-pub use notifications::{PolicyNotificationMode, PolicyNotificationRule};
+pub use notifications::{
+    PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
+    PolicyNotificationTarget,
+};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -16,11 +19,34 @@ fn denied() -> Error {
     Error::InvalidConfig("a live policy-power holder is required".to_owned())
 }
 
+/// Exact action-grant target for one owner-policy row key and scope.
+/// An Owner can pass this value to `ActionEnvelope::with_target` when minting
+/// a named `policy.change` standing grant for an Admin or Delegate.
+#[must_use]
+pub fn policy_row_grant_target(scope: &crate::gate::PolicyRowScope, row_ref: &str) -> String {
+    authority::row_target(scope, row_ref)
+}
+
 /// Result of one row verb: holders land, everyone else proposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyRowSubmission {
     Landed(PolicyRowReceipt),
     Proposed(PolicyRowProposal),
+}
+
+pub(super) fn holders_for_change_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    change: &PolicyRowChange,
+    now: u64,
+) -> Result<Vec<EntityId>> {
+    authority::holders_for_in_txn(
+        vault,
+        txn,
+        now,
+        change.scope(),
+        &policy_row_grant_target(change.scope(), change.row_ref()),
+    )
 }
 
 fn propose_in_txn(
@@ -32,13 +58,15 @@ fn propose_in_txn(
 ) -> Result<PolicyRowProposal> {
     if change.row_ref().trim().is_empty()
         || matches!(change.scope(), crate::gate::PolicyRowScope::World(s) | crate::gate::PolicyRowScope::Project(s) if s.trim().is_empty())
-        || matches!(&change, PolicyRowChange::Add { text, .. } | PolicyRowChange::Edit { text, .. } if text.trim().is_empty())
+        || matches!(change.scope(), crate::gate::PolicyRowScope::WorldProject { world, project } if world.trim().is_empty() || project.trim().is_empty())
+        || matches!(&change, PolicyRowChange::Add { text, .. } | PolicyRowChange::Edit { text, .. } | PolicyRowChange::AddWithWhy { text, .. } | PolicyRowChange::EditWithWhy { text, .. } if text.trim().is_empty())
+        || matches!(&change, PolicyRowChange::AddWithWhy { why, .. } | PolicyRowChange::EditWithWhy { why, .. } | PolicyRowChange::DraftWhy { why, .. } if why.trim().is_empty())
     {
         return Err(Error::InvalidConfig(
             "invalid owner policy row proposal".to_owned(),
         ));
     }
-    let holders = authority::holders_in_txn(vault, txn, now)?;
+    let holders = holders_for_change_in_txn(vault, txn, &change, now)?;
     if holders.is_empty() {
         return Err(denied());
     }
@@ -62,7 +90,7 @@ fn land_in_txn(
     now: u64,
 ) -> Result<PolicyRowReceipt> {
     holder.revalidate_in_txn(vault, txn)?;
-    let holders = authority::holders_in_txn(vault, txn, now)?;
+    let holders = holders_for_change_in_txn(vault, txn, &change, now)?;
     if !holders.contains(&holder.actor()) {
         return Err(denied());
     }
@@ -83,17 +111,18 @@ impl Vault {
     ) -> Result<PolicyRowSubmission> {
         let mut txn = self.store.env.write_txn()?;
         actor.revalidate_in_txn(self, &txn)?;
-        let result = if authority::holders_in_txn(self, &txn, now)?.contains(&actor.actor()) {
-            PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
-        } else {
-            PolicyRowSubmission::Proposed(propose_in_txn(
-                self,
-                &mut txn,
-                actor.actor(),
-                change,
-                now,
-            )?)
-        };
+        let result =
+            if holders_for_change_in_txn(self, &txn, &change, now)?.contains(&actor.actor()) {
+                PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
+            } else {
+                PolicyRowSubmission::Proposed(propose_in_txn(
+                    self,
+                    &mut txn,
+                    actor.actor(),
+                    change,
+                    now,
+                )?)
+            };
         txn.commit()?;
         Ok(result)
     }
@@ -124,11 +153,12 @@ impl Vault {
     ) -> Result<Option<PolicyRowReceipt>> {
         let mut txn = self.store.env.write_txn()?;
         holder.revalidate_in_txn(self, &txn)?;
-        if !authority::holders_in_txn(self, &txn, now)?.contains(&holder.actor()) {
-            return Err(denied());
-        }
         let mut proposal =
             ledger::read_proposal_in(self, &txn, proposal_id)?.ok_or(Error::EntityNotFound)?;
+        if !holders_for_change_in_txn(self, &txn, &proposal.change, now)?.contains(&holder.actor())
+        {
+            return Err(denied());
+        }
         if !matches!(proposal.status, PolicyProposalStatus::Pending) {
             return Err(Error::InvalidConfig("proposal already answered".to_owned()));
         }
@@ -175,5 +205,7 @@ impl Memory<'_> {
     }
 }
 
+#[cfg(test)]
+mod notify_tests;
 #[cfg(test)]
 mod tests;

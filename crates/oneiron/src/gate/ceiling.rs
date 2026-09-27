@@ -259,6 +259,35 @@ pub(crate) struct PolicyOwnerPatternRow {
     pub(crate) role: Option<String>,
 }
 
+/// Owner-authored policy for composing rows with the same reference under
+/// overlapping scopes. The vault row always caps every narrower row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum PolicyOwnerPrecedence {
+    /// Every matching scope contributes its text and restrictive action.
+    #[default]
+    NestedNarrowing,
+    /// The narrowest matching row wins, but a vault row remains in force.
+    MostSpecificVaultCapped,
+}
+
+impl PolicyOwnerPrecedence {
+    pub(crate) fn restrict(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::MostSpecificVaultCapped, Self::MostSpecificVaultCapped) => {
+                Self::MostSpecificVaultCapped
+            }
+            _ => Self::NestedNarrowing,
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::NestedNarrowing => "nested_narrowing",
+            Self::MostSpecificVaultCapped => "most_specific_vault_capped",
+        }
+    }
+}
+
 /// One row of the vault owner's own policy. The owner plane is the ONLY plane
 /// a local/sovereign vault classifies against, and it is opt-in: see
 /// [`PolicyManifestResolution::owner_policy_enabled`].
@@ -270,6 +299,8 @@ pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) world_ref: Option<String>,
     pub(crate) project_ref: Option<String>,
     pub(crate) human: Option<String>,
+    pub(crate) why: Option<String>,
+    pub(crate) why_source: Option<String>,
     pub(crate) action: OwnerRowAction,
 }
 

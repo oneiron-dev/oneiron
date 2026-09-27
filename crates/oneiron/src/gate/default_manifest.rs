@@ -10,11 +10,12 @@ use super::constants::{
     ACTOR_CEILING_KEY, ACTOR_CLASS_KEY, ACTOR_REF_KEY, AXIS_CRITICALITY_KEY, AXIS_SENSITIVITY_KEY,
     LOCAL_WRITE_ACTOR_CLASS, POLICY_ACTOR_CEILINGS_KEY, POLICY_DEFAULTS_KEY, POLICY_HOSTED_TTS_KEY,
     POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
-    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SIGNATURES_KEY,
-    POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY, RULE_AXES_KEY, RULE_EXACT_KEY,
-    RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY, SIGNATURE_SIG_KEY,
-    SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
+    POLICY_OWNER_POLICY_PRECEDENCE_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
+    POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
+    POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    RULE_AXES_KEY, RULE_EXACT_KEY, RULE_PREFIX_KEY, SIGNATURE_ALG_KEY, SIGNATURE_KEY_ID_KEY,
+    SIGNATURE_SIG_KEY, SOURCE_TRUST_MAX_AUTO_SENSITIVITY_KEY, SOURCE_TRUST_RECEIPTED_KEY,
+    SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
 
@@ -24,6 +25,52 @@ pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
 pub(crate) fn default_policy_manifest_id() -> Result<EntityId> {
     EntityId::from_bytes(DEFAULT_POLICY_MANIFEST_ID)
         .map_err(|_| Error::InvariantViolation("invalid default policy manifest id"))
+}
+
+/// The shipped notification rules are manifest data, also used to complete
+/// owner-authenticated manifests that omit this optional rule table.
+pub(super) fn default_owner_policy_change_notifications() -> Value {
+    Value::Array(vec![
+        Value::Map(vec![
+            (Value::from("scope"), Value::from("vault")),
+            (Value::from("delivery"), Value::from("push_other_holders")),
+            (Value::from("digest_interval_seconds"), Value::from(86_400)),
+        ]),
+        Value::Map(vec![
+            (Value::from("scope"), Value::from("override")),
+            (Value::from("delivery"), Value::from("log_only")),
+            (Value::from("digest_interval_seconds"), Value::from(86_400)),
+        ]),
+    ])
+}
+
+/// Complete the owner-authenticated manifest before storage. The raw decoder
+/// still accepts older custom manifests without notification rules.
+pub(super) fn with_default_owner_policy_notifications(data: Vec<u8>) -> Result<Vec<u8>> {
+    use std::io::Cursor;
+    let mut cursor = Cursor::new(&data);
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::InvalidConfig("malformed policy manifest".into()))?;
+    if cursor.position() != data.len() as u64 {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    }
+    let Value::Map(mut fields) = value else {
+        return Err(Error::InvalidConfig("malformed policy manifest".into()));
+    };
+    if fields
+        .iter()
+        .any(|(key, _)| key.as_str() == Some(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY))
+    {
+        return Ok(data);
+    }
+    fields.push((
+        Value::from(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY),
+        default_owner_policy_change_notifications(),
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(fields))
+        .map_err(|_| Error::InvariantViolation("policy manifest notification encode"))?;
+    Ok(encoded)
 }
 
 pub(crate) fn default_policy_manifest() -> Vec<u8> {
@@ -411,20 +458,17 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
             Value::from(POLICY_OWNER_POLICY_ROWS_KEY),
             Value::Array(Vec::new()),
         ),
-        // Delivery is policy DATA, not a baked-in routing rule. Owners may
-        // replace either row without changing the engine.
+        (
+            Value::from(POLICY_OWNER_POLICY_PRECEDENCE_KEY),
+            Value::Map(vec![
+                (Value::from("composition"), Value::from("nested_narrowing")),
+                (Value::from("vault_cap"), Value::Boolean(true)),
+            ]),
+        ),
+        // Delivery is policy DATA, not a baked-in routing rule.
         (
             Value::from(super::constants::POLICY_OWNER_POLICY_NOTIFY_KEY),
-            Value::Array(vec![
-                Value::Map(vec![
-                    (Value::from("scope"), Value::from("vault")),
-                    (Value::from("delivery"), Value::from("push_other_holders")),
-                ]),
-                Value::Map(vec![
-                    (Value::from("scope"), Value::from("override")),
-                    (Value::from("delivery"), Value::from("log_only")),
-                ]),
-            ]),
+            default_owner_policy_change_notifications(),
         ),
         (
             Value::from(POLICY_SIGNATURES_KEY),

@@ -96,7 +96,7 @@ fn owner_lands_add_tighten_loosen_and_revert_with_four_events() -> TestResult {
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     assert!(policy.owner_policy_enabled());
     assert_eq!(
-        policy.active_owner_policy_rows(None)[0].action,
+        policy.active_owner_policy_rows_for_scope(None, None)[0].action,
         crate::gate::OwnerRowAction::Block
     );
     drop(txn);
@@ -104,7 +104,7 @@ fn owner_lands_add_tighten_loosen_and_revert_with_four_events() -> TestResult {
     let events = vault.policy_changed_events()?;
     assert_eq!(events.len(), 4);
     assert!(events.iter().all(|event| event.kind == "policy.changed"
-        && event.scope == PolicyRowScope::Vault
+        && event.scope == Some(PolicyRowScope::Vault)
         && event.author == owner.actor().to_hex()));
     assert!(vault.policy_queued_notifications()?.is_empty());
     Ok(())
@@ -196,7 +196,7 @@ fn admin_without_power_and_agent_both_propose_in_either_direction_first_holder_r
     let txn = vault.store.env.read_txn()?;
     let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     assert_eq!(
-        resolved.active_owner_policy_rows(Some("w1"))[0].action,
+        resolved.active_owner_policy_rows_for_scope(Some("w1"), None)[0].action,
         crate::gate::OwnerRowAction::Warn,
         "a later holder ruling wins; neither agent proposal edits the row"
     );
@@ -264,23 +264,21 @@ fn notification_rule_is_data_default_and_override_dials_win() -> TestResult {
     assert!(
         events
             .iter()
-            .any(|e| e.scope == PolicyRowScope::Vault && e.author == owner.actor().to_hex())
+            .any(|e| e.scope == Some(PolicyRowScope::Vault) && e.author == owner.actor().to_hex())
     );
     assert!(
         events
             .iter()
-            .any(|e| e.scope == PolicyRowScope::World("world-1".into())
+            .any(|e| e.scope == Some(PolicyRowScope::World("world-1".into()))
                 && e.author == owner.actor().to_hex())
     );
-    assert!(
-        events
-            .iter()
-            .any(|e| e.scope == PolicyRowScope::Project("project-1".into())
-                && e.author == owner.actor().to_hex())
-    );
+    assert!(events.iter().any(
+        |e| e.scope == Some(PolicyRowScope::Project("project-1".into()))
+            && e.author == owner.actor().to_hex()
+    ));
     vault.change_policy_notification_rule(
         &owner,
-        PolicyRowScope::Vault,
+        super::notifications::PolicyNotificationTarget::VaultDefault,
         PolicyNotificationRule::LogOnly,
         13,
     )?;

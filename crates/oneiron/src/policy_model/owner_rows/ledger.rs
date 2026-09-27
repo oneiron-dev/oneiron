@@ -1,6 +1,7 @@
 //! Append-only row change history and proposal inbox. All rows are local vault metadata.
 use serde::{Deserialize, Serialize};
 
+use super::notifications::PolicyNotificationTarget;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowChange, PolicyRowScope};
 use crate::{EntityId, Vault};
@@ -28,7 +29,11 @@ pub struct PolicyChangedEvent {
     pub kind: String,
     pub receipt_id: String,
     pub author: String,
-    pub scope: PolicyRowScope,
+    pub scope: Option<PolicyRowScope>,
+    /// Notification-rule events name a rule target instead of pretending to
+    /// name one world or project row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<PolicyNotificationTarget>,
     pub at: u64,
 }
 
@@ -98,7 +103,8 @@ pub(super) fn append_change_in_txn(
         kind: "policy.changed".to_owned(),
         receipt_id: id.clone(),
         author: receipt.author.clone(),
-        scope: receipt.change.scope().clone(),
+        scope: Some(receipt.change.scope().clone()),
+        target: None,
         at: now,
     };
     vault
@@ -178,15 +184,14 @@ impl Vault {
     ) -> Result<Vec<PolicyRowProposal>> {
         let txn = self.store.env.read_txn()?;
         holder.revalidate_in_txn(self, &txn)?;
-        if !super::authority::holders_in_txn(self, &txn, now)?.contains(&holder.actor()) {
-            return Err(Error::InvalidConfig("policy power required".to_owned()));
-        }
         let mut rows = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, PROPOSAL)? {
             let (_, value) = entry?;
             let proposal: PolicyRowProposal = decode(&value)?;
             if matches!(proposal.status, PolicyProposalStatus::Pending)
                 && proposal.holders.contains(&holder.actor().to_hex())
+                && super::holders_for_change_in_txn(self, &txn, &proposal.change, now)?
+                    .contains(&holder.actor())
             {
                 rows.push(proposal);
             }

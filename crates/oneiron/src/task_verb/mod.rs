@@ -84,7 +84,9 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 
 pub(crate) use owner_index::index_owner_fact;
-pub(crate) use policy_change_followup::enqueue_policy_change_followup_in_txn;
+pub(crate) use policy_change_followup::{
+    enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
+};
 
 #[cfg(test)]
 mod owner_index_tests;

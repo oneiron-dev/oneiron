@@ -291,7 +291,7 @@ pub(super) fn owner_rubric_rows(
             } else {
                 owner_row_decision(row.action)
             },
-            text: row.text.clone(),
+            text: row.text,
         })
         .collect()
 }
