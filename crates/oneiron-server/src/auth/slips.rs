@@ -49,12 +49,11 @@ impl CoreAuth {
         config: &SyncServerConfig,
         vault: &dyn RevokedTokenJtis,
     ) -> Result<Self, ApiError> {
-        let secret = config
-            .auth_secret
-            .as_deref()
-            .filter(|s| !s.is_empty())
-            .ok_or_else(ApiError::unauthorized)?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
+        let secret = config.auth_secret.as_deref().unwrap_or_default();
+        if !slip.caveats.is_empty() && secret.is_empty() {
+            return Err(ApiError::unauthorized());
+        }
         let verified = vault
             .verify_slip(
                 secret,
@@ -83,22 +82,35 @@ impl CoreAuth {
     ) -> Result<Self, ApiError> {
         // This also refuses one-shot instruments before a consuming operation.
         let auth = Self::from_slip_token(token, proof, config, vault)?;
-        let secret = config
-            .auth_secret
-            .as_deref()
-            .ok_or_else(ApiError::unauthorized)?;
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
-            .map_err(|_| ApiError::unauthorized())?;
         let slip = CapabilitySlip::from_token(token).map_err(|_| ApiError::unauthorized())?;
-        vault
-            .authenticate_capability_slip(
-                &issuer,
-                &slip,
-                proof.timestamp,
-                &proof.signature()?,
-                proof.nonce.as_bytes(),
-            )
-            .map_err(|_| ApiError::unauthorized())?;
+        if slip.caveats.is_empty() {
+            vault
+                .authenticate_capability_slip_public(
+                    None,
+                    &slip,
+                    proof.timestamp,
+                    &proof.signature()?,
+                    proof.nonce.as_bytes(),
+                )
+                .map_err(|_| ApiError::unauthorized())?;
+        } else {
+            let secret = config
+                .auth_secret
+                .as_deref()
+                .filter(|secret| !secret.is_empty())
+                .ok_or_else(ApiError::unauthorized)?;
+            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
+                .map_err(|_| ApiError::unauthorized())?;
+            vault
+                .authenticate_capability_slip(
+                    &issuer,
+                    &slip,
+                    proof.timestamp,
+                    &proof.signature()?,
+                    proof.nonce.as_bytes(),
+                )
+                .map_err(|_| ApiError::unauthorized())?;
+        }
         Ok(auth)
     }
     pub(super) fn from_verified(

@@ -2089,7 +2089,7 @@
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 8,
-      "fn": 17,
+      "fn": 19,
       "struct": 1
      }
     },

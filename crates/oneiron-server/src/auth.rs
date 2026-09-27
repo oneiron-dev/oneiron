@@ -91,6 +91,11 @@ impl RevokedTokenJtis for oneiron::Vault {
         nonce: &[u8],
         signature: &[u8],
     ) -> Result<oneiron::authority::VerifiedSlip, ()> {
+        if slip.caveats.is_empty() {
+            return self
+                .verify_capability_slip_public_request(slip, timestamp, signature, nonce)
+                .map_err(drop);
+        }
         let issuer =
             oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()).map_err(drop)?;
         self.verify_capability_slip_request(&issuer, slip, timestamp, signature, nonce)

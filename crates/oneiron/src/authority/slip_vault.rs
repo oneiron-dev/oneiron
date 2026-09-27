@@ -291,6 +291,61 @@ impl Vault {
         slip.verify(issuer.secret(), &fold, now, &challenge, signature)
     }
 
+    /// Resolve the minting host from the log-derived key directory, then
+    /// verify the signed v0 token and holder proof in one read snapshot.
+    /// A directory lookup alone grants nothing: the verifier checks the
+    /// mint entry, signer, live ancestry and token signature together.
+    pub fn verify_capability_slip_public_request(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge = super::slip_replay::request_challenge(timestamp, nonce, now)?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let key = minting_host_key(&fold, &slip.claims.slip_id)?;
+        slip.verify_with_host_key(key, &fold, now, &challenge, signature)
+    }
+    /// Atomically admit a transport binding and consume its nonce. Only a
+    /// one-shot needs the local host key to append a signed consume operation.
+    pub fn authenticate_capability_slip_public(
+        &self,
+        issuer: Option<&HostSlipIssuer>,
+        slip: &CapabilitySlip,
+        request_timestamp: u64,
+        signature: &[u8],
+        request_nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let mut txn = self.store.env.write_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let challenge =
+            super::slip_replay::request_challenge(request_timestamp, request_nonce, now)?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let key = minting_host_key(&fold, &slip.claims.slip_id)?;
+        let verified = slip.verify_with_host_key(key, &fold, now, &challenge, signature)?;
+        super::slip_replay::record_nonce(
+            self,
+            &mut txn,
+            &slip.claims.binding_key,
+            request_nonce,
+            request_timestamp,
+            now,
+        )?;
+        if verified.claims().single_use {
+            self.append_slip_op_in_txn(
+                &mut txn,
+                issuer.ok_or_else(invalid_authority)?,
+                AuthorityOp::SlipConsume {
+                    slip_id: slip.claims.slip_id,
+                },
+            )?;
+        }
+        txn.commit()?;
+        Ok(verified)
+    }
     /// Appends a signed mint in the same transaction that checks its ancestry.
     pub fn mint_capability_slip(
         &self,
@@ -429,6 +484,16 @@ impl Vault {
         Ok(())
     }
 }
+/// A phone-book lookup by slip id, never an independent source of authority.
+/// `verify_with_host_key` witnesses this key against the signed mint and roster.
+fn minting_host_key<'a>(fold: &'a AuthorityFold, id: &[u8; 32]) -> Result<&'a AuthorityKey> {
+    fold.slips
+        .mints
+        .get(id)
+        .map(|mint| &mint.signer)
+        .ok_or_else(invalid_authority)
+}
+
 fn next_entry(
     issuer: &HostSlipIssuer,
     fold: &AuthorityFold,

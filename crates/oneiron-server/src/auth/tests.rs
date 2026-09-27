@@ -116,6 +116,34 @@ fn assert_unauthorized(result: Result<CoreAuth, ApiError>) {
 }
 
 #[test]
+fn logged_slip_v0_authenticates_without_configured_host_secret() {
+    let fixture = Fixture::new();
+    let slip = fixture.mint(|claims| {
+        claims.scope.verbs = verbs(&["read"]);
+    });
+    let headers = fixture.headers(&slip);
+    let mut config = fixture.config.clone();
+    config.auth_secret = None;
+    let auth = CoreAuth::from_headers(&headers, &config, fixture.vault.as_ref()).unwrap();
+    assert!(auth.require(CoreScope::Read).is_ok());
+    assert!(auth.require(CoreScope::Write).is_err());
+    let proof = BindingProof::from_headers(&headers).unwrap();
+    CoreAuth::bind_transport_once(
+        &slip.to_token().unwrap(),
+        &proof,
+        &config,
+        fixture.vault.as_ref(),
+    )
+    .unwrap();
+    assert_unauthorized(CoreAuth::bind_transport_once(
+        &slip.to_token().unwrap(),
+        &proof,
+        &config,
+        fixture.vault.as_ref(),
+    ));
+}
+
+#[test]
 fn legacy_headers_and_unlogged_v1_v2_tokens_never_authenticate() {
     let fixture = Fixture::new();
     let mut old_header = HeaderMap::new();
@@ -379,15 +407,18 @@ fn org_slips_are_closed_identified_and_never_owner_grade() {
     assert_unauthorized(fixture.auth(&missing_org));
     let missing_admin = fixture.mint(|claims| {
         claims.scope.verbs = verbs(&["org:add-member"]);
-        claims.org_ref = Some(org);
+        claims.org_ref = Some(org.clone());
         claims.holder_ref = "host".into();
     });
     assert_unauthorized(fixture.auth(&missing_admin));
-    assert_unauthorized(CoreAuth::from_headers(
+    let public_auth = CoreAuth::from_headers(
         &fixture.headers(&slip),
         &config_with_secret("independent-member-root"),
         fixture.vault.as_ref(),
-    ));
+    )
+    .unwrap();
+    assert_eq!(public_auth.org_ref(), Some(org.as_str()));
+    assert!(!public_auth.is_owner_grade());
 }
 
 #[test]
@@ -452,16 +483,26 @@ fn v2_shaped_secrets_are_still_verified_through_the_logged_root() {
 }
 
 #[test]
-fn wrong_or_empty_secret_and_absent_credentials_fail_closed() {
+fn wrong_or_empty_secret_cannot_authenticate_bare_bearers_but_signed_slips_work() {
     let fixture = Fixture::new();
     let slip = fixture.mint(|_| {});
     for secret in ["unrecognized-host", ""] {
         let config = config_with_secret(secret);
-        assert_unauthorized(CoreAuth::from_headers(
-            &fixture.headers(&slip),
-            &config,
-            fixture.vault.as_ref(),
-        ));
+        assert!(
+            CoreAuth::from_headers(&fixture.headers(&slip), &config, fixture.vault.as_ref(),)
+                .is_ok()
+        );
+        let headers = fixture.headers(&slip);
+        let proof = BindingProof::from_headers(&headers).unwrap();
+        assert!(
+            CoreAuth::bind_transport_once(
+                &slip.to_token().unwrap(),
+                &proof,
+                &config,
+                fixture.vault.as_ref(),
+            )
+            .is_ok()
+        );
         assert_unauthorized(CoreAuth::from_headers(
             &bearer(secret),
             &config,
