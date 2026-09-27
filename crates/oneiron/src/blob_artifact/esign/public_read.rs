@@ -37,7 +37,7 @@ impl Vault {
         Ok((page, bytes))
     }
     fn esign_pdf_after_admission(&self, token: &EsignCapability, item: usize) -> Result<Vec<u8>> {
-        let now = crate::unix_seconds_now();
+        let now = self.now_recorded_at();
         let txn = self.store.env.read_txn()?;
         let cap = binding(self, &txn, token)?;
         let id = EntityId::from_hex(&cap.document)?;

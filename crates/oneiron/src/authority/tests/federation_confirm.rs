@@ -110,3 +110,108 @@ fn federation_confirm_codec_all_kinds_and_zero_rejection() {
         }
     }
 }
+
+/// A later nonce collision can invalidate the ENROLLMENT that authorized a
+/// previously verified revoke. Only the enrollment drops; its verified revoke
+/// floor cannot resurrect an independently valid owner binding.
+#[test]
+fn verified_revoke_survives_rejection_of_its_signers_enrollment() {
+    let owner_seed = 81;
+    let owner = ed_key(owner_seed);
+    let owner_key = authority_key_from_ed(&owner);
+    let actor = scope_entity(0x71);
+    let genesis = genesis_entry(owner_seed, DEFAULT_PENDING_WIDEN_DELAY_SECS, 1);
+    let vault_id = genesis_vault_id(&genesis).unwrap();
+    let bind = sign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![authority_entry_hash(&genesis).unwrap()],
+            bind_op(&owner_key, actor, "human", 1),
+            owner_key.clone(),
+            2,
+        ),
+        &owner,
+    );
+    let first = confirm(&bind, &genesis, owner_seed, 2, 55, 77);
+    let first_hash = authority_entry_hash(&first).unwrap();
+    let signer_seed = 82;
+    let signer = ed_key(signer_seed);
+    let signer_key = authority_key_from_ed(&signer);
+    let enroll = enroll_device_entry(
+        vault_id,
+        &first,
+        &owner,
+        EnrollSpec {
+            seed: signer_seed,
+            roles: ROLE_AGENT,
+            tier: AuthorityTier::Software,
+            seq: 3,
+            ts: 4,
+        },
+    );
+    let enroll_hash = authority_entry_hash(&enroll).unwrap();
+    let revoke = cosign_ed(
+        unsigned_entry(
+            Some(vault_id),
+            1,
+            vec![enroll_hash],
+            revoke_actor_op(&owner_key, 2),
+            signer_key.clone(),
+            5,
+        ),
+        &signer,
+        &owner,
+    );
+    let revoke_hash = authority_entry_hash(&revoke).unwrap();
+    let mut entries = vec![genesis.clone(), bind.clone(), first, enroll, revoke];
+    let before = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(
+        before.issues.is_empty(),
+        "valid revoke fixture: {:?}",
+        before.issues
+    );
+    assert!(before.valid_entries.contains(&revoke_hash));
+    assert_eq!(
+        folded_status(&before, &owner_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+
+    // A signed sibling confirm has a different id and a different signer seq,
+    // but reuses the nonce. Pick a lower hash so the collision rejects `first`.
+    let replacement = (1..=u8::MAX)
+        .map(|id| confirm(&bind, &genesis, owner_seed, 4, id, 77))
+        .find(|entry| authority_entry_hash(entry).unwrap() < first_hash)
+        .expect("at least one distinct confirmation hashes below the first");
+    let replacement_hash = authority_entry_hash(&replacement).unwrap();
+    entries.push(replacement);
+    let after = fold_authority_log_without_seen_time_delay(&entries);
+    assert!(after.valid_entries.contains(&replacement_hash));
+    assert!(!after.valid_entries.contains(&first_hash));
+    assert!(!after.valid_entries.contains(&enroll_hash));
+    assert!(!after.valid_entries.contains(&revoke_hash));
+    assert_eq!(
+        after.roster.get(&signer_key),
+        None,
+        "invalid enrollment must not survive"
+    );
+    assert!(
+        after
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidAncestry(revoke_hash))
+    );
+    assert_eq!(
+        folded_status(&after, &owner_key),
+        Some(ActorBindingStatus::Revoked)
+    );
+    assert!(!actor_binding_is_active(&after, &actor, "human"));
+    let mut bad_entries = entries.clone();
+    bad_entries[4].cosigns[0].signature[0] ^= 1;
+    let bad = fold_authority_log_without_seen_time_delay(&bad_entries);
+    assert_eq!(
+        folded_status(&bad, &owner_key),
+        Some(ActorBindingStatus::Active)
+    );
+    entries.reverse();
+    assert_eq!(fold_authority_log_without_seen_time_delay(&entries), after);
+}
