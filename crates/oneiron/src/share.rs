@@ -228,10 +228,6 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-fn admission_key(id: &EntityId) -> Vec<u8> {
-    [b"share:brief:admission:v1:".as_slice(), id.as_bytes()].concat()
-}
-
 // A one-way admission fence for a deleted brief identity. It is staged in the
 // same writer that rechecks direct shares, before the CRDT tombstone can publish.
 // A failed delete may leave the fence, but cannot leave an unshared new grant

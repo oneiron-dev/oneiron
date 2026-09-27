@@ -9390,7 +9390,7 @@
      "path": "src/codebase/residue.rs",
      "purpose": "Reclaim excluded historical codebase assets without deleting retained shared blobs",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {

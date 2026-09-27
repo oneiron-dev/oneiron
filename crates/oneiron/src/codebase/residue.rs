@@ -11,8 +11,6 @@ use crate::error::Result;
 use crate::secret_snapshot::{SnapshotCustodyReport, SnapshotExclusionSet, snapshot_root};
 use crate::side_table::{self, Raw, SideTable};
 
-pub(super) const CODEBASE_SNAPSHOT_KEY_PREFIX: &[u8] = b"codebase:snapshot:v1:";
-
 type ContentHash = [u8; CODEBASE_CONTENT_HASH_LEN];
 
 const SNAPSHOTS: SideTable<EntityId, CodebaseSnapshot, Raw> =

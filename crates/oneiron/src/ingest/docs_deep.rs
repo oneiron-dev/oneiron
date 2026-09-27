@@ -442,7 +442,7 @@ impl Vault {
             .ok_or_else(|| invalid("docs deep source chunk missing"))?;
         let id = EntityId::from_bytes(
             raw_id
-                .as_ref()
+                .as_slice()
                 .try_into()
                 .map_err(|_| invalid("corrupt docs deep chunk reference"))?,
         )?;

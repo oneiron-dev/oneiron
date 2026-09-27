@@ -13,13 +13,13 @@ side_tables! {
     DISCLOSURE_TIER_A: VaultMeta b"disclosure.tier_a.v1:" Raw;
     /// Passive outbound dispatch audit observation for one attempt/try. Key: id16 + u32be.
     DISPATCH_OBSERVATION: VaultMeta b"dispatch_observation:v1/" Raw;
+    /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
+    /// page/asset. Key: hex32 ":" hex32.
+    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson;
     /// Approved docs source ceiling (source hash, owner, approval), keyed by the asset's hex32 id.
     INGEST_DOCS_DEEP_CEILING: VaultMeta b"docs-deep-ceiling:v1:" LegacyJson;
     /// Last deep-ingest receipt for one docs asset, keyed by its hex32 id.
     INGEST_DOCS_DEEP_RECEIPT: VaultMeta b"docs-deep-receipt:v1:" LegacyJson;
-    /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
-    /// page/asset. Key: hex32 ":" hex32.
-    INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson;
     /// Stable-ref index from a deterministic docs-extraction id (corpus/page/segment) to the minted
     /// entity id. Key: string.
     INGEST_DOCS_EXTRACTION: VaultMeta b"docs-extraction:v1:" Raw;
