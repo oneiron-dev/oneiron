@@ -26,6 +26,7 @@ use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
 
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
+use crate::voice_identity::ref_limits::VoiceRefLimitPolicy;
 
 use super::decode_map_util::{
     MapValue, parse_signature_value, parse_signatures, required_string, required_value,
@@ -66,6 +67,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) voice_ref_limits: Option<VoiceRefLimitPolicy>,
     pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) retry_source_policy:
         Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
@@ -117,6 +119,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
 
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | "voice_ref_limits"
                 | POLICY_WEAVE_CORRECTION_POLICY_KEY
                 | "retry_source_policy"
         ) {
@@ -264,6 +267,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let voice_ref_limits = match single_map_value(&entries, "voice_ref_limits") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(VoiceRefLimitPolicy::decode(value)?),
+    };
     let weave_correction_policy =
         match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
             MapValue::Missing => None,
@@ -313,6 +321,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
 
         diagnostic_bounds,
         proposal_check_threshold,
+        voice_ref_limits,
         weave_correction_policy,
         retry_source_policy,
         unsupported_schema,

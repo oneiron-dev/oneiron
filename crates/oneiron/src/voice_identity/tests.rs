@@ -9,6 +9,13 @@ fn temp_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(crate::config::VaultConfig::default())
 }
 
+fn temp_ref_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("ref vault directory");
+    let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())
+        .expect("open seeded ref vault");
+    (dir, vault)
+}
+
 const DIMENSION: usize = 4;
 
 fn space() -> VoiceEmbeddingSpaceV1 {
@@ -957,6 +964,307 @@ fn model_revision_or_preprocessing_change_creates_a_new_space() -> Result<()> {
     assert!(matches!(
         evidence_of(&roster, "seg-1"),
         VoiceAttributionEvidence::ResidualCluster { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn print_enrollment_and_pruning_preserve_render_refs_until_withdrawal() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let subject = test_id(0xA9);
+    let relationship = test_id(0xAA);
+    seed_relationship(&vault, relationship)?;
+    let clip = VoiceRegisterClip {
+        register: "neutral".into(),
+        media_type: "audio/wav".into(),
+        audio: vec![1, 2, 3],
+        transcript: "reference".into(),
+    };
+    for (id, origin) in [
+        (
+            "designed",
+            VoiceRefOrigin::Designed {
+                vendor: "design-tool".into(),
+            },
+        ),
+        ("generated", VoiceRefOrigin::Generated),
+    ] {
+        vault.store_voice_ref_pack(&VoiceRefPack {
+            version: 1,
+            id: id.into(),
+            voice_id: "stable-voice".into(),
+            owner: subject,
+            origin,
+            clips: vec![clip.clone()],
+        })?;
+    }
+    let request = vault.prepare_voice_clone("stable-voice", "render", true)?;
+    let target = vault.record_voice_target_clone(&request, "vendor-pointer", 123)?;
+    let assert_refs = || -> Result<()> {
+        assert_eq!(
+            vault
+                .voice_identity("stable-voice")?
+                .expect("vault identity")
+                .pack_ids,
+            vec!["designed", "generated"],
+        );
+        assert_eq!(
+            vault
+                .voice_ref_pack("designed")?
+                .expect("designed pack")
+                .clips,
+            vec![clip.clone()]
+        );
+        assert_eq!(
+            vault
+                .voice_ref_pack("generated")?
+                .expect("generated pack")
+                .clips,
+            vec![clip.clone()]
+        );
+        assert_eq!(
+            vault.voice_target_clone("stable-voice", "render", true)?,
+            Some(target.clone())
+        );
+        Ok(())
+    };
+    vault.record_voice_consent(&granted_event(
+        "consent-1",
+        subject,
+        test_id(0xAB),
+        100,
+        notice_basis(),
+    ))?;
+    let enrolled = enrollment(
+        subject,
+        "consent-1",
+        vec![solo_sample("s-1", "en", [1.0, 0.0, 0.0, 0.0])],
+        200,
+    );
+    vault.enroll_voice_print(&VoiceEnrollmentRequest {
+        relationship_ref: Some(relationship),
+        ..enrolled.clone()
+    })?;
+    assert_refs()?;
+    vault.enroll_voice_print(&VoiceEnrollmentRequest {
+        relationship_ref: Some(relationship),
+        space: space_with("rev-2", "mono/16k/vad-v1"),
+        requested_at: 400,
+        ..enrolled
+    })?;
+    assert_refs()?;
+    vault.end_voice_relationship(subject, relationship, 1_000, 100)?;
+    assert_eq!(vault.prune_expired_voice_prints(1_100)?, vec![subject]);
+    assert_refs()?;
+    vault.withdraw_voice_consent(&VoiceWithdrawalRequest {
+        event_id: "withdraw-all".into(),
+        subject_ref: subject,
+        recorded_by_ref: subject,
+        occurred_at: 1_200,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: notice_basis(),
+    })?;
+    assert!(vault.voice_identity("stable-voice")?.is_none());
+    assert!(vault.voice_ref_pack("designed")?.is_none());
+    assert!(
+        vault
+            .voice_target_clone("stable-voice", "render", true)?
+            .is_none()
+    );
+    Ok(())
+}
+
+fn install_voice_ref_policy(vault: &Vault, id: EntityId, row: Value) -> Result<()> {
+    let raw = crate::gate::default_policy_manifest();
+    let Value::Map(mut entries) = rmpv::decode::read_value(&mut std::io::Cursor::new(&raw))
+        .expect("shipped manifest decodes")
+    else {
+        unreachable!("manifest map")
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("voice_ref_limits"));
+    for (key, value) in &mut entries {
+        if key.as_str() == Some("pack_id") {
+            *value = format!("voice-limits-{}", id.to_hex()).into();
+        }
+    }
+    entries.push(("voice_ref_limits".into(), row));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &Value::Map(entries)).expect("encode manifest");
+    crate::test_util::put_policy_manifest_bytes(vault, id, &encoded)
+}
+
+#[test]
+fn manifest_limits_narrow_provider_values_with_holder_capped_at_vault() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xB9);
+    let other = test_id(0xBA);
+    install_voice_ref_policy(
+        &vault,
+        test_id(0xBB),
+        Value::Map(vec![
+            (
+                "vault".into(),
+                Value::Map(vec![
+                    ("max_design_vendor_bytes".into(), 260u64.into()),
+                    ("max_vendor_voice_id_bytes".into(), 260u64.into()),
+                    ("max_clips_per_pack".into(), 1u64.into()),
+                ]),
+            ),
+            (
+                "holders".into(),
+                Value::Array(vec![
+                    Value::Map(vec![
+                        ("holder_ref".into(), holder.to_hex().into()),
+                        (
+                            "limits".into(),
+                            Value::Map(vec![("max_vendor_voice_id_bytes".into(), 200u64.into())]),
+                        ),
+                    ]),
+                    Value::Map(vec![
+                        ("holder_ref".into(), other.to_hex().into()),
+                        (
+                            "limits".into(),
+                            Value::Map(vec![("max_vendor_voice_id_bytes".into(), 500u64.into())]),
+                        ),
+                    ]),
+                ]),
+            ),
+        ]),
+    )?;
+    let clip = VoiceRegisterClip {
+        register: "neutral".into(),
+        media_type: "audio/wav".into(),
+        audio: vec![1],
+        transcript: String::new(),
+    };
+    let designed = VoiceRefPack {
+        version: 1,
+        id: "holder-pack".into(),
+        voice_id: "holder-voice".into(),
+        owner: holder,
+        origin: VoiceRefOrigin::Designed {
+            vendor: "d".repeat(180),
+        },
+        clips: vec![clip.clone()],
+    };
+    vault.store_voice_ref_pack(&designed)?; // > old fixed 128-byte provider limit.
+    let mut too_many_clips = designed;
+    too_many_clips.id = "excess-clips".into();
+    too_many_clips.clips.push(VoiceRegisterClip {
+        register: "soft".into(),
+        ..clip.clone()
+    });
+    assert!(vault.store_voice_ref_pack(&too_many_clips).is_err());
+    let request = vault.prepare_voice_clone("holder-voice", "host", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(201), 1)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(180), 1)?;
+    assert_eq!(
+        vault.voice_target_clone("holder-voice", "host", false)?,
+        Some(saved)
+    );
+
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "other-pack".into(),
+        voice_id: "other-voice".into(),
+        owner: other,
+        origin: VoiceRefOrigin::Captured,
+        clips: vec![clip],
+    })?;
+    let other_request = vault.prepare_voice_clone("other-voice", "host", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&other_request, &"v".repeat(261), 2)
+            .is_err()
+    );
+    vault.record_voice_target_clone(&other_request, &"v".repeat(250), 2)?;
+    Ok(())
+}
+
+#[test]
+fn manifest_rows_replace_shipped_ceiling_and_choose_precedence() -> Result<()> {
+    use super::ref_bank::{VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip};
+    let (_tmp, vault) = temp_ref_vault();
+    let holder = test_id(0xBC);
+    let manifest_id = test_id(0xBD);
+    let limits_row = |precedence: &str| {
+        Value::Map(vec![
+            ("precedence".into(), precedence.into()),
+            (
+                "vault".into(),
+                Value::Map(vec![("max_vendor_voice_id_bytes".into(), 8_192u64.into())]),
+            ),
+            (
+                "holders".into(),
+                Value::Array(vec![Value::Map(vec![
+                    ("holder_ref".into(), holder.to_hex().into()),
+                    (
+                        "limits".into(),
+                        Value::Map(vec![("max_vendor_voice_id_bytes".into(), 5_000u64.into())]),
+                    ),
+                ])]),
+            ),
+        ])
+    };
+    vault.store_voice_ref_pack(&VoiceRefPack {
+        version: 1,
+        id: "source".into(),
+        voice_id: "voice".into(),
+        owner: holder,
+        origin: VoiceRefOrigin::Captured,
+        clips: vec![VoiceRegisterClip {
+            register: "neutral".into(),
+            media_type: "audio/wav".into(),
+            audio: vec![1],
+            transcript: String::new(),
+        }],
+    })?;
+    let request = vault.prepare_voice_clone("voice", "first-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(4_097), 1)
+            .is_err()
+    );
+
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(
+        vault
+            .record_voice_target_clone(&request, &"v".repeat(5_001), 1)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&request, &"v".repeat(4_097), 1)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "first-target", false)?,
+        Some(saved)
+    );
+
+    // This authored row changes the precedence decision at the production
+    // manifest door. Vault-only ignores a holder's narrower row, but still
+    // observes the author-selected 8192-byte vault cap.
+    install_voice_ref_policy(&vault, manifest_id, limits_row("vault_only"))?;
+    let second = vault.prepare_voice_clone("voice", "second-target", false)?;
+    assert!(
+        vault
+            .record_voice_target_clone(&second, &"v".repeat(8_193), 2)
+            .is_err()
+    );
+    let saved = vault.record_voice_target_clone(&second, &"v".repeat(7_000), 2)?;
+    assert_eq!(
+        vault.voice_target_clone("voice", "second-target", false)?,
+        Some(saved)
+    );
+    install_voice_ref_policy(&vault, manifest_id, limits_row("nested_narrowing"))?;
+    assert!(matches!(
+        vault.voice_target_clone("voice", "second-target", false),
+        Err(Error::InvalidConfig(_))
     ));
     Ok(())
 }

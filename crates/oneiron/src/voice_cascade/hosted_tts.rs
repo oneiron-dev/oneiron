@@ -1,6 +1,7 @@
-//! Hosted TTS request adapters. A vault ref pack is the identity; provider voice IDs
-//! are disposable, pre-provisioned render targets. No provisioning, credentials,
-//! network I/O, PCM buffering or provider selection runs under the cascade lock.
+//! Hosted TTS request adapters. A vault voice identity is the identity; provider
+//! voice IDs are disposable render targets read from its bank target records. No
+//! provisioning, credentials, network I/O, PCM buffering or provider selection
+//! runs under the cascade lock.
 //! The host owns HTTP, response streaming and cancellation. It must frame raw
 //! PCM16 across arbitrary HTTP chunk boundaries and recheck the epoch at playback.
 
@@ -28,14 +29,16 @@ impl HostedProvider {
     }
 }
 
-/// Provisioning happens from `Vault::clone_voice_refs_into` OUTSIDE this adapter.
-/// A voice ID is a provider-scoped, disposable locator, never the identity.
+/// Provisioning (`Vault::prepare_voice_clone`, the vendor clone call, then
+/// `Vault::record_voice_target_clone`) happens OUTSIDE this adapter. The vendor
+/// voice ID is a provider-scoped, disposable locator, never the identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedBinding {
-    pub provider: HostedProvider,
-    pub source_pack: String,
-    pub owner: EntityId,
     pub voice_id: String,
+    pub owner: EntityId,
+    pub provider: HostedProvider,
+    pub vendor_voice_id: String,
+    pub revision: [u8; 16],
 }
 
 /// A single complete HTTP request; host adds its own secret auth header and
@@ -69,12 +72,12 @@ fn invalid(message: &str) -> Error {
     Error::InvalidConfig(format!("hosted TTS: {message}"))
 }
 
-/// Bind a banked identity to ONE pre-provisioned voice on ONE hosted target.
-/// `vault` remains the authority: an unknown or withdrawn pack cannot bind.
-/// This adapter does not retain the cloned reference audio.
+/// Bind a banked identity to its recorded voice on ONE hosted target.
+/// `vault` remains the authority: an unprovisioned, evicted, stale or withdrawn
+/// target cannot bind. This adapter does not retain the cloned reference audio.
 pub struct HostedTtsAdapter<'v, T> {
     vault: &'v Vault,
-    source_revision: [u8; 16],
+    include_generated: bool,
     transport: T,
     binding: HostedBinding,
     generation: Option<GenerationEpoch>,
@@ -99,39 +102,40 @@ enum Phase {
 impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
     pub fn bind(
         vault: &'v Vault,
-        pack_id: &str,
-        provider: HostedProvider,
         voice_id: &str,
+        provider: HostedProvider,
+        include_generated: bool,
         transport: T,
     ) -> Result<Self> {
-        // Restrict path interpolation and do not accept URLs, whitespace or credentials.
-        if voice_id.is_empty()
-            || voice_id.len() > 128
-            || !voice_id
+        let record = vault
+            .voice_target_clone(voice_id, provider.target(), include_generated)?
+            .ok_or_else(|| invalid("voice target not provisioned, evicted or stale"))?;
+        // The ID is interpolated into a URL path: no separators, whitespace or
+        // credentials. The bank's policy limit already bounds its length.
+        if record.vendor_voice_id.is_empty()
+            || !record
+                .vendor_voice_id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         {
-            return Err(invalid("invalid pre-provisioned voice id"));
+            return Err(invalid("vendor voice id is not URL-safe"));
         }
-        let before = vault
-            .owner_voice_ref_revision(pack_id)?
-            .ok_or_else(|| invalid("source pack has no live revision"))?;
-        let target = vault.clone_voice_refs_into(pack_id, provider.target())?;
-        // Read twice around the clone: withdrawal/recreation cannot pair the
-        // old banked audio with a new incarnation's provider locator.
-        let after = vault.owner_voice_ref_revision(pack_id)?;
-        if after != Some(before) {
-            return Err(invalid("source pack changed during binding"));
-        }
+        // A withdrawal and recreation between these reads deletes the record,
+        // so the revision fence refuses the first render of a mixed binding.
+        let owner = vault
+            .voice_identity(voice_id)?
+            .ok_or_else(|| invalid("unknown voice identity"))?
+            .owner;
         Ok(Self {
             vault,
-            source_revision: before,
+            include_generated,
             transport,
             binding: HostedBinding {
+                voice_id: record.voice_id,
+                owner,
                 provider,
-                source_pack: target.source_pack,
-                owner: target.owner,
-                voice_id: voice_id.into(),
+                vendor_voice_id: record.vendor_voice_id,
+                revision: record.revision,
             },
             generation: None,
             phase: Phase::Fresh,
@@ -151,13 +155,13 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
                 "https://api.cartesia.ai/tts/bytes".into(),
                 Some("2026-08-14"),
                 serde_json::json!({"model_id":"sonic-3.5","transcript":self.buffer,
-                    "voice":{"id":self.binding.voice_id},
+                    "voice":{"id":self.binding.vendor_voice_id},
                     "output_format":{"container":"raw","encoding":"pcm_s16le","sample_rate":PCM_RATE}}),
             ),
             HostedProvider::ElevenLabsFlash => (
                 format!(
                     "https://api.elevenlabs.io/v1/text-to-speech/{}/stream?output_format=pcm_24000",
-                    self.binding.voice_id
+                    self.binding.vendor_voice_id
                 ),
                 None,
                 serde_json::json!({"model_id":"eleven_flash_v2_5","text":self.buffer}),
@@ -189,18 +193,26 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
     }
 
     fn ensure_live(&mut self, generation: GenerationEpoch) -> Result<crate::gate::HostedTtsLimits> {
-        let live = self
-            .vault
-            .owner_voice_ref_revision(&self.binding.source_pack);
-        if !matches!(live, Ok(Some(revision)) if revision == self.source_revision) {
-            self.revoke(generation);
-            return Err(invalid("source pack withdrawn, replaced or unreadable"));
-        }
-        match self
-            .vault
-            .hosted_tts_limits(self.binding.provider.target(), self.binding.owner)
-        {
-            Ok(limits) => Ok(limits),
+        let live = self.vault.with_live_voice_target(
+            &self.binding.voice_id,
+            self.binding.provider.target(),
+            self.include_generated,
+            self.binding.revision,
+            |txn| {
+                crate::gate::resolve_hosted_tts_limits(
+                    self.vault,
+                    txn,
+                    self.binding.provider.target(),
+                    self.binding.owner,
+                )
+            },
+        );
+        match live {
+            Ok(Some(limits)) => Ok(limits),
+            Ok(None) => {
+                self.revoke(generation);
+                Err(invalid("voice target withdrawn, evicted or stale"))
+            }
             Err(error) => {
                 self.revoke(generation);
                 Err(error)
@@ -219,9 +231,11 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         let request = self.request(generation, self.next_submission);
         // Serialize against the vault withdrawal writer through FIFO queue
         // admission; an LMDB read snapshot alone cannot do this.
-        let admitted = self.vault.with_live_voice_ref(
-            &self.binding.source_pack,
-            self.source_revision,
+        let admitted = self.vault.with_live_voice_target(
+            &self.binding.voice_id,
+            self.binding.provider.target(),
+            self.include_generated,
+            self.binding.revision,
             |txn| {
                 let limits = crate::gate::resolve_hosted_tts_limits(
                     self.vault,
@@ -253,7 +267,7 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         };
         if admitted.is_none() {
             self.revoke(generation);
-            return Err(invalid("source pack withdrawn or replaced"));
+            return Err(invalid("voice target withdrawn, evicted or stale"));
         }
         self.pending.push_back(PendingResponse {
             submission: self.next_submission,
