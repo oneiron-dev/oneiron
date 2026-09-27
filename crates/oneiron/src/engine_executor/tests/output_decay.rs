@@ -578,7 +578,7 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
         run_id,
         EngineExecutorLimits {
             soft_steps: 1,
-            hard_steps: 4,
+            hard_steps: 6,
         },
     );
     let policy = OutputDecayPolicy {
@@ -617,7 +617,17 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
     assert!(console(&requests[1], 0).contains("fresh result"));
     drop(requests);
     drop(executor);
-    let restarted_backend = FixtureBackend::new(["console.log('third result');"]);
+    let restore_path = super::super::store::recoverable_chunk_path(
+        0,
+        crate::compaction::output::OutputRef::from_bytes(b"fresh result"),
+        0,
+    );
+    let restore_script = format!(
+        "const raw = await sandbox.fs.read_file({}); console.log(String.fromCharCode(...raw));",
+        serde_json::to_string(&restore_path).unwrap(),
+    );
+    let restarted_backend =
+        FixtureBackend::new(["console.log('third result');".to_owned(), restore_script]);
     let mut restarted_runtime = factory.runtime().expect("restart guest runtime");
     let mut restarted = EngineNativeExecutor::new(
         &vault,
@@ -642,4 +652,98 @@ fn guest_output_with_old_marker_bytes_cannot_create_compaction_coverage() {
             .unwrap()
             .is_empty()
     );
+    drop(restarted_requests);
+
+    // Now the accepted SUMMARY, not the guest's identical old marker bytes,
+    // creates the sole run-bound coverage decision for step zero.
+    let session = match vault.mint_session(10).expect("session") {
+        SessionMintOutcome::Minted(id) => id,
+        other => panic!("unexpected session: {other:?}"),
+    };
+    let turn = entity(0xC7);
+    vault
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            range(10),
+            10,
+            b"covered source turn",
+        )
+        .expect("covered turn");
+    let mut registry = CompactionBackendRegistry::new();
+    registry.register(Arc::new(Cheap)).expect("cheap backend");
+    let profile = MemoryProfile::new(
+        1000,
+        ModelTierRef("executor-output-test".into()),
+        CompactionOwnership::Engine,
+    );
+    let mut driver = CompactionDriver::for_profile(&profile, &registry)
+        .unwrap()
+        .unwrap();
+    driver
+        .evaluate_now(&vault, u64::MAX)
+        .expect("cross threshold");
+    let request = driver
+        .request_for(
+            &vault,
+            &session,
+            vec![CompactionWindowMessage {
+                message_id: entity(0xC8),
+                turn_id: turn,
+                content: "fresh result".into(),
+                turn: 0,
+                tokens: 2,
+            }],
+        )
+        .expect("sealed window");
+    let product = driver.backend().compact(&request).expect("product");
+    let plan = restarted
+        .integrate_compaction(
+            &mut driver,
+            WriteActor::new(entity(0xA0), EdgeActorClass::Agent),
+            &request,
+            product,
+            &[],
+        )
+        .expect("summary and typed run coverage committed together");
+    let rows = vault.code_run_compaction_coverage(run_id).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].summary_id(), plan.summary_id);
+    assert!(rows[0].covers(run_id, 0));
+    assert!(!rows[0].covers(run_id, 1));
+    assert_eq!(
+        vault.entities_by_type(ENTITY_TYPE_SUMMARY).unwrap().len(),
+        1
+    );
+
+    let resumed = block_on_ready(restarted.run(&config)).expect("same-instance covered request");
+    let requests = restarted_backend.requests.lock().unwrap();
+    assert!(!console(&requests[1], 0).contains("fresh result"));
+    reexpand_action(&requests[1], b"fresh result");
+    assert!(
+        console(&requests[1], 1).contains("next result"),
+        "uncovered tail remains full"
+    );
+    assert_eq!(
+        load_utf8_output(
+            &ExecutorStorage::Canonical(&vault),
+            &resumed.replay_record,
+            &observation_output_path(3),
+        )
+        .expect("guest restored original through linked read"),
+        "fresh result",
+    );
+    drop(requests);
+    drop(restarted);
+
+    let next_backend = FixtureBackend::new(["console.log('after restart');"]);
+    let mut next_runtime = factory.runtime().expect("new guest runtime");
+    let mut next =
+        EngineNativeExecutor::new(&vault, &next_backend, &lease, &mut next_runtime, &gated)
+            .with_output_decay(policy);
+    block_on_ready(next.run(&config)).expect("restart reads typed coverage");
+    let next_requests = next_backend.requests.lock().unwrap();
+    assert!(!console(&next_requests[0], 0).contains("fresh result"));
+    reexpand_action(&next_requests[0], b"fresh result");
+    assert!(console(&next_requests[0], 1).contains("next result"));
 }

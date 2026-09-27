@@ -8403,7 +8403,7 @@
      "path": "src/code_run/storage/compaction.rs",
      "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {

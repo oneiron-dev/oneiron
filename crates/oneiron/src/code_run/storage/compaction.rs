@@ -58,6 +58,12 @@ impl ExecutorOutputSpan {
     }
 
     #[cfg(test)]
+    pub(crate) fn wrong_range_for_test(mut self) -> Self {
+        self.last = self.last.saturating_add(1);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn fail_after_write_for_test(mut self) -> Self {
         self.fail_after_write = true;
         self

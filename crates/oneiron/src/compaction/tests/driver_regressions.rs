@@ -792,6 +792,19 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
         vec![OutputTier::Full, OutputTier::Full]
     );
 
+    driver
+        .integrate_with_coverage(
+            &vault,
+            actor,
+            &request,
+            product.clone(),
+            &[],
+            &span.wrong_range_for_test(),
+        )
+        .expect_err("a mismatched run-step range cannot bind this SUMMARY");
+    assert_eq!(summary_row_count(&vault), before);
+    assert!(vault.code_run_compaction_coverage(run)?.is_empty());
+
     let different_run = CodeRunReplayRecord::new(entity(0xB9), replay.determinism);
     let wrong = ExecutorOutputSpan::from_replay(
         &CodeRunReplayRecord {
