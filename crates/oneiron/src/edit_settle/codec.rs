@@ -53,6 +53,7 @@ pub(super) fn settlement_key_artifact_id(key: &[u8]) -> Result<EntityId> {
 // ---------------------------------------------------------------------------
 
 pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<u8>> {
+    crate::edit_roundtrip::slides_review::validate_judgment_rows(&record.pptx_judgments)?;
     let anchors: Vec<Value> = record.anchors.iter().map(encode_settled_anchor).collect();
     let value = Value::Map(vec![
         (
@@ -221,10 +222,10 @@ fn decode_judgments(
     let Value::Array(items) = value else {
         return Err(corrupt());
     };
-    if items.len() > 4096 {
+    if items.len() > crate::edit_roundtrip::slides_review::MAX_JUDGMENTS {
         return Err(corrupt());
     }
-    items
+    let rows: Vec<_> = items
         .iter()
         .map(|item| {
             let Value::Binary(bytes) = item else {
@@ -232,7 +233,9 @@ fn decode_judgments(
             };
             rmp_serde::from_slice(bytes).map_err(|_| corrupt())
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    crate::edit_roundtrip::slides_review::validate_judgment_rows(&rows).map_err(|_| corrupt())?;
+    Ok(rows)
 }
 
 fn decode_mints(value: &Value) -> Result<Vec<(u64, u32)>> {

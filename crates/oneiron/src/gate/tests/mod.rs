@@ -63,6 +63,7 @@ mod manifest_auto;
 mod policy_inputs;
 mod posture_override;
 mod scoped_read;
+mod slide_review_policy;
 mod special_doors;
 mod support;
 mod trust_boundary;

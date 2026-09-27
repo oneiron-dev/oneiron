@@ -67,6 +67,16 @@ pub(super) fn hash_policy_frontier_v0(
             hash_u64(hasher, row.limits.max_pcm_fragment_bytes as u64);
         }
     }
+    // The shipped row and an absent legacy row resolve identically. Only a
+    // behavior change contributes a new domain tag, preserving existing
+    // no-review-policy consent bindings.
+    if resolution.slide_review_policy != crate::llm::decision::SlideReviewPolicy::default() {
+        let mut slide_policy = Vec::new();
+        rmpv::encode::write_value(&mut slide_policy, &resolution.slide_review_policy.rows())
+            .map_err(|_| Error::InvariantViolation("slide review policy frontier encoding"))?;
+        hash_str(hasher, "slide_review_policy");
+        hash_bytes(hasher, &slide_policy);
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);
