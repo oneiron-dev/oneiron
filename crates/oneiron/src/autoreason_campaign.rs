@@ -23,6 +23,7 @@ use crate::extraction_eval::Of360EvalError;
 
 pub mod beam_promotion;
 mod config;
+pub mod general;
 mod judge;
 mod report;
 mod verdict;
