@@ -1,14 +1,12 @@
-//! Companion control-plane surface: access grants, psych-mirror profiles, and the
-//! companion register record lifecycle. Reads are gated by AccessGrant scopes; the
-//! child modules own one domain each and this module only re-exports the seam.
+//! Companion control-plane surface: access grants and psych-mirror profiles.
+//! Reads are gated by AccessGrant scopes; child modules own one domain each and
+//! this module only re-exports the seam.
 
 mod access_grants;
 mod auth;
 mod errors;
 mod lists;
 mod profiles;
-mod register;
-mod register_wire;
 
 pub(crate) use self::access_grants::{
     CompanionAccessGrantResponse, CompanionAccessGrantScopePayload,
@@ -27,24 +25,6 @@ pub(crate) use self::profiles::{
     CompanionProfileNextAction, CompanionProfilePayload, CompanionProfileRefreshRequest,
     CompanionProfileResponse, CompanionProfileStaleReasonPayload, get_companion_profile,
     refresh_companion_profile,
-};
-pub(crate) use self::register::{
-    __path_create_companion_register_record, __path_end_companion_register_relationship,
-    __path_get_companion_register_record, __path_retire_companion_register_record,
-    __path_update_companion_register_record,
-};
-pub(crate) use self::register::{
-    CompanionEndRelationshipRequest, CompanionRegisterCreateRecordRequest,
-    CompanionRegisterProvenancePayload, CompanionRegisterRecordPayload,
-    CompanionRegisterRelationshipRefPayload, CompanionRegisterRetireRecordRequest,
-    CompanionRegisterScopePayload, CompanionRegisterSubjectPayload,
-    CompanionRegisterUpdateRecordRequest, create_companion_register_record,
-    end_companion_register_relationship, get_companion_register_record,
-    retire_companion_register_record, update_companion_register_record,
-};
-pub(crate) use self::register_wire::{
-    CompanionEndRelationshipResponse, CompanionGoodbyeArtifactHookPayload,
-    CompanionRegisterRecordResponse,
 };
 
 pub(crate) use self::lists::{

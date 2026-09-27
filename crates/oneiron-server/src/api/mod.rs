@@ -304,19 +304,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     // clients keep the plain REST verb/batch surface and bring their own runner.
     let companion_mutation_routes = Router::new()
         .route("/access-grants", post(create_companion_access_grant))
-        .route("/register/records", post(create_companion_register_record))
-        .route(
-            "/register/records/{record_id}",
-            post(update_companion_register_record),
-        )
-        .route(
-            "/register/records/{record_id}/retire",
-            post(retire_companion_register_record),
-        )
-        .route(
-            "/register/records/{record_id}/end-relationship",
-            post(end_companion_register_relationship),
-        )
         .route(
             "/access-grants/{grant_id}/revoke",
             post(revoke_companion_access_grant),
@@ -331,10 +318,6 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),
-        )
-        .route(
-            "/register/records/{record_id}",
-            get(get_companion_register_record),
         )
         // ONE-207: the depth-dialed reasoning read. A POST that WRITES
         // NOTHING, so it stays off `companion_mutation_routes` and out of the
