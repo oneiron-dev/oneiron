@@ -81,7 +81,7 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
         .expect("high-salience result is present");
 
     let run_id = RetrievalRunId::now();
-    let record = RetrievalRunRecord::new(
+    let mut record = RetrievalRunRecord::new(
         run_id,
         RetrievalAction::Pipeline,
         200,
@@ -115,12 +115,21 @@ fn tuned_weight_table_changes_retrieval_scoring_without_recompile() -> Result<()
         0,
         None,
     );
+    record.turn = Some(crate::store::RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&record)?;
-    vault.record_retrieval_outcome(crate::store::RetrievalOutcome {
+    vault.record_retrieval_end_outcome(crate::store::RetrievalEndOutcome {
         run_id,
         key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
+        turn_id: [7; 16],
+        activated_memory_id: *high.as_bytes(),
+        gate_score: 1.0,
+        confirmed_fact_hit: true,
+        latency_scale_us: 1,
+        cost_weight: 0.0,
         metadata: BTreeMap::new(),
     })?;
 
