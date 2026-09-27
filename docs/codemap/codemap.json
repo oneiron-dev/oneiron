@@ -18123,7 +18123,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/docs_tests.rs",
@@ -18551,13 +18551,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DocsExpansion",
+      "DocsExpansionLevel",
       "DocsSummaryHit"
      ],
      "path": "src/ingest/summary_ladder.rs",
-     "purpose": "Summary-first rank fusion",
+     "purpose": "Read-only knowledge ladder",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {

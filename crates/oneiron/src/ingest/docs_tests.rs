@@ -8,7 +8,15 @@ impl DocsSummaryModel for Summary {
         "fixture.summary.v1"
     }
     fn summarize(&self, segment: &DocsSegment) -> Result<String> {
-        Ok(segment.text.lines().next().unwrap_or_default().to_owned())
+        Ok(segment
+            .text
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .split(" describes")
+            .next()
+            .unwrap_or_default()
+            .to_owned())
     }
 }
 struct Classifier;
@@ -136,6 +144,10 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
     let annotation = vault.docs_annotation(&receipt.annotation_refs[0])?.unwrap();
     assert_eq!(annotation["derivation"]["source"], "imported");
     assert_eq!(annotation["annotation"]["label"], "suspected_injection");
+    let summary_id = EntityId::from_hex(&receipt.summary_refs[0])?;
+    let chunk_id = EntityId::from_hex(&receipt.chunk_refs[0])?;
+    vault.put_vector(&summary_id, &[1.0, 0.0, 0.0, 0.0])?;
+    vault.put_vector(&chunk_id, &[1.0, 0.0, 0.0, 0.0])?;
     grant_core_read(&vault, "owner")?;
     let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
     let source = reader
@@ -143,13 +155,47 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
         .value
         .unwrap();
     assert_eq!(source["text"], document.pages[0].text);
+    let exact_hits = reader.search_docs_summaries("attraction", 4)?;
+    assert_eq!(
+        exact_hits.value[0].entity_type,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT
+    );
+    assert!(exact_hits.value[0].summary.is_none());
     let hits = reader.search_docs_summaries("Gravity", 4)?;
     assert_eq!(
         hits.value[0].entity_type,
         crate::registry::ENTITY_TYPE_SUMMARY
     );
+    let conceptual =
+        reader.search_docs_summaries_with_vector("Gravity", Some(&[1.0, 0.0, 0.0, 0.0]), 4)?;
+    assert_eq!(
+        conceptual.value[0].entity_type,
+        crate::registry::ENTITY_TYPE_SUMMARY
+    );
+    assert!(conceptual.value[0].summary.is_some());
+    assert!(
+        hits.value
+            .iter()
+            .any(|hit| hit.entity_type == crate::registry::ENTITY_TYPE_SUMMARY)
+    );
+    assert!(
+        hits.receipt
+            .applied
+            .entity_types
+            .as_ref()
+            .unwrap()
+            .contains(&crate::registry::ENTITY_TYPE_ASSET_TEXT)
+    );
     let wire = serde_json::to_value(&hits.value).unwrap();
     assert!(wire[0].get("text").is_none());
+    assert!(
+        hits.value
+            .iter()
+            .any(|hit| hit.summary.as_deref() == Some("# Gravity"))
+    );
+    assert!(hits.value.iter().any(|hit| hit.entity_type
+        == crate::registry::ENTITY_TYPE_ASSET_TEXT
+        && hit.summary.is_none()));
     assert!(
         reader
             .expand_doc_ref(&hits.value[0].reference)?
@@ -157,6 +203,36 @@ fn one_bulk_consent_lands_refs_derived_labels_and_summary_first_expansion() -> R
             .unwrap()["text"]
             .is_string()
     );
+    let summary_ref = &hits
+        .value
+        .iter()
+        .find(|hit| hit.summary.as_deref() == Some("# Gravity"))
+        .unwrap()
+        .reference;
+    let mut next = summary_ref.clone();
+    for (level, expected) in [
+        (DocsExpansionLevel::Summary, "# Gravity"),
+        (DocsExpansionLevel::Span, "# Gravity"),
+        (
+            DocsExpansionLevel::Section,
+            "# Gravity\n\nGravity describes attraction.",
+        ),
+        (
+            DocsExpansionLevel::FullText,
+            document.pages[0].text.as_str(),
+        ),
+        (
+            DocsExpansionLevel::RawAsset,
+            document.pages[0].text.as_str(),
+        ),
+    ] {
+        let step = reader.expand_doc_ladder_ref(&next)?.value.unwrap();
+        assert_eq!(step.level, level);
+        assert_eq!(step.text, expected);
+        assert_eq!(step.asset.is_some(), level == DocsExpansionLevel::RawAsset);
+        next = step.next_ref.unwrap_or_default();
+    }
+    assert!(reader.expand_doc_ladder_ref(&person.to_hex()).is_err());
     let previous: Vec<_> = receipt
         .summary_refs
         .iter()
