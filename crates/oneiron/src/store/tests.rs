@@ -5098,3 +5098,156 @@ fn retrieval_quality_named_telemetry_round_trip_keeps_version_zero() -> Result<(
     assert_eq!(wire["confidence_adjustment"], -0.15);
     Ok(())
 }
+
+#[test]
+fn delete_redacts_claim_bound_decisions_in_every_reason_and_index_state() -> Result<()> {
+    use crate::deletion::DeleteReason;
+    for (ordinal, reason) in [
+        DeleteReason::UserDelete,
+        DeleteReason::UserHardDelete,
+        DeleteReason::GdprDelete,
+        DeleteReason::PolicyDelete,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (_dir, vault) = open_test_vault();
+        let id = EntityId::now();
+        let other = EntityId::now();
+        vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"secret")?;
+        let mut bound = claim_bound_gate_decision(
+            synthetic_gate_decision_id(0xA1, ordinal as u64 + 1),
+            1,
+            id.as_bytes(),
+        );
+        bound.actor_ref = Some("sensitive actor".to_owned());
+        bound.grant_ref = Some("sensitive grant".to_owned());
+        let unrelated = claim_bound_gate_decision(
+            synthetic_gate_decision_id(0xB1, ordinal as u64 + 1),
+            1,
+            other.as_bytes(),
+        );
+        append_gate_decisions(&vault, &[bound.clone(), unrelated.clone()])?;
+        if ordinal % 2 == 0 {
+            vault.store.backfill_gate_decision_claim_index()?;
+        } else {
+            strip_claim_index_and_flag(&vault)?;
+        }
+
+        assert!(vault.delete_entity_with_reason(&id, reason)?.existed);
+        let rtxn = vault.store.env.read_txn()?;
+        let row = vault
+            .store
+            .gate_decision_in_txn(&rtxn, bound.decision_id)?
+            .expect("retention skeleton remains readable");
+        assert_eq!(row.version, GATE_DECISION_LEDGER_VERSION_REDACTED);
+        assert_eq!(row.claim_id, Some(*id.as_bytes()));
+        assert!(row.redacted_at.is_some());
+        assert!(row.diff_handle.is_empty());
+        assert!(row.reason_codes.is_empty());
+        assert!(row.actor_ref.is_none());
+        assert!(row.grant_ref.is_none());
+        assert!(
+            vault
+                .store
+                .verify_claim_erasure_by_scan_in_txn(&rtxn, id.as_bytes())?
+                .is_empty()
+        );
+        assert_eq!(
+            vault
+                .store
+                .gate_decision_in_txn(&rtxn, unrelated.decision_id)?,
+            Some(unrelated)
+        );
+        drop(rtxn);
+        assert!(
+            vault
+                .store
+                .gate_decisions_for_grant_ref("sensitive grant")?
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn corrupt_claim_index_aborts_delete_without_scrubbing_entity_or_decision() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    vault.put_entity(&id, 1, TimeRange { start: 1, end: 1 }, 1, b"secret")?;
+    let row = claim_bound_gate_decision(synthetic_gate_decision_id(0xD5, 1), 1, id.as_bytes());
+    append_gate_decisions(&vault, std::slice::from_ref(&row))?;
+    vault.store.backfill_gate_decision_claim_index()?;
+    let phantom = synthetic_gate_decision_id(0xD6, 2);
+    vault.with_write_txn(|wtxn| {
+        vault.store.vault_meta.put(
+            wtxn,
+            &gate_decision_claim_index_key(id.as_bytes(), phantom),
+            b"",
+        )?;
+        Ok(())
+    })?;
+    assert!(matches!(
+        vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserDelete),
+        Err(Error::CorruptedIndex("gate decision claim index"))
+    ));
+    assert_eq!(vault.get(&id)?.as_deref(), Some(b"secret".as_slice()));
+    assert_eq!(vault.store.gate_decisions(10)?, vec![row]);
+    Ok(())
+}
+
+#[test]
+fn headerless_gate_decision_residue_still_has_an_erase_scope() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let row = claim_bound_gate_decision(synthetic_gate_decision_id(0xD7, 1), 1, id.as_bytes());
+    append_gate_decisions(&vault, std::slice::from_ref(&row))?;
+    assert!(vault.get(&id)?.is_none());
+    vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserHardDelete)?;
+    let rtxn = vault.store.env.read_txn()?;
+    let retained = vault
+        .store
+        .gate_decision_in_txn(&rtxn, row.decision_id)?
+        .expect("headerless residue leaves an accountability skeleton");
+    assert!(retained.redacted_at.is_some());
+    assert!(retained.diff_handle.is_empty());
+    assert!(
+        vault
+            .store
+            .verify_claim_erasure_by_scan_in_txn(&rtxn, id.as_bytes())?
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn replayed_soft_tombstone_reports_ledger_only_erasure_once() -> Result<()> {
+    use crate::deletion::{ReplayedTombstoneOutcome, TombstoneReason, TombstoneValueV2};
+    let (_dir, vault) = open_test_vault();
+    let id = EntityId::now();
+    let record = claim_bound_gate_decision(synthetic_gate_decision_id(0xD8, 1), 1, id.as_bytes());
+    append_gate_decisions(&vault, std::slice::from_ref(&record))?;
+    let tombstone = TombstoneValueV2 {
+        reason: TombstoneReason::UserDelete,
+        deleted_at: 42,
+        request_id: [0xD8; 16],
+    }
+    .encode();
+    assert_eq!(
+        vault.apply_replayed_tombstone(&id, &tombstone)?,
+        ReplayedTombstoneOutcome::SoftErased { changed: true },
+    );
+    let rtxn = vault.store.env.read_txn()?;
+    let skeleton = vault
+        .store
+        .gate_decision_in_txn(&rtxn, record.decision_id)?
+        .expect("ledger-only soft replay leaves a skeleton");
+    assert!(skeleton.redacted_at.is_some());
+    assert!(skeleton.diff_handle.is_empty());
+    drop(rtxn);
+    assert_eq!(
+        vault.apply_replayed_tombstone(&id, &tombstone)?,
+        ReplayedTombstoneOutcome::SoftErased { changed: false },
+    );
+    Ok(())
+}
