@@ -1,5 +1,6 @@
 //! Bounded room-local history and transactional auxiliary-row cleanup.
 use super::*;
+use crate::federation::Scope;
 use crate::store::Store;
 use std::ops::Bound;
 
@@ -7,6 +8,24 @@ const HISTORY: &[u8] = b"rooms.history.v1/";
 const HEADS: &[u8] = b"rooms.heads.v1/";
 const RESPONSE: &[u8] = b"rooms.response.v1/";
 const PAGE_LIMIT: usize = 256;
+
+/// TURN records carry their ordinary stored six-axis scope. Scope admission
+/// augments, rather than replaces, the existing room membership checks.
+pub(super) fn turn_admitted(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    scope: &Scope,
+) -> Result<bool> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, turn.as_bytes())?
+        .ok_or(Error::CorruptedIndex("room turn missing"))?;
+    let record = crate::federation::record_scope::scope_for_blob(&vault.store, txn, turn, &raw)?
+        .ok_or(Error::CorruptedIndex("room turn scope stamp"))?;
+    Ok(scope.admits("read", &record, &Scope::top()))
+}
 
 fn ordered_key(prefix: &[u8], room: EntityId, at: u64, turn: EntityId) -> Vec<u8> {
     [
@@ -93,6 +112,7 @@ impl Memory<'_> {
         if limit == 0 || limit > PAGE_LIMIT {
             return Err(MemoryError::from(invalid()));
         }
+        let applied_scope = self.room_turn_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
         let start = if let Some(after) = after {
@@ -105,6 +125,19 @@ impl Memory<'_> {
             key(HISTORY, room)
         };
         let end = [key(HISTORY, room).as_slice(), &[u8::MAX; 24]].concat();
+        // A room TURN is an ordinary base-world record. Bottom and world-only
+        // scopes cannot see its history, even though membership still holds.
+        if applied_scope.as_ref().is_some_and(|scope| {
+            !scope
+                .worlds
+                .contains(&crate::federation::ScopeId(crate::claim::base_world_id()))
+        }) {
+            return Ok(RoomPage {
+                rows: Vec::new(),
+                next_after: None,
+                applied_scope,
+            });
+        }
         let mut rows = self
             .vault()
             .store
@@ -119,7 +152,15 @@ impl Memory<'_> {
             .take(limit + 1)
             .map(|row| {
                 let (_, raw) = row?;
-                Ok(turn_in(self.vault(), &txn, stored_id(&raw)?)?)
+                let id = stored_id(&raw)?;
+                if let Some(scope) = &applied_scope
+                    && !turn_admitted(self.vault(), &txn, id, scope)?
+                {
+                    return Err(MemoryError::from(Error::InvalidConfig(
+                        "room turn is outside the bound scope".into(),
+                    )));
+                }
+                Ok(turn_in(self.vault(), &txn, id)?)
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         let has_more = rows.len() > limit;
@@ -129,12 +170,24 @@ impl Memory<'_> {
         } else {
             None
         };
-        Ok(RoomPage { rows, next_after })
+        Ok(RoomPage {
+            rows,
+            next_after,
+            applied_scope,
+        })
     }
     /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
+        let scope = self.room_turn_read_scope(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_member(self.vault(), &txn, room, self.actor())?;
+        if scope.as_ref().is_some_and(|scope| {
+            !scope
+                .worlds
+                .contains(&crate::federation::ScopeId(crate::claim::base_world_id()))
+        }) {
+            return Ok(None);
+        }
         let start = key(HEADS, room);
         let end = [start.as_slice(), &[u8::MAX; 24]].concat();
         self.vault()
@@ -150,7 +203,15 @@ impl Memory<'_> {
             .next()
             .map(|row| {
                 let (_, raw) = row?;
-                Ok(turn_in(self.vault(), &txn, stored_id(&raw)?)?)
+                let id = stored_id(&raw)?;
+                if let Some(scope) = &scope
+                    && !turn_admitted(self.vault(), &txn, id, scope)?
+                {
+                    return Err(MemoryError::from(Error::InvalidConfig(
+                        "room head is outside the bound scope".into(),
+                    )));
+                }
+                Ok(turn_in(self.vault(), &txn, id)?)
             })
             .transpose()
     }

@@ -5,13 +5,13 @@ use crate::EntityId;
 use crate::memory::{ClaimListFilter, EntityView, Memory, MemoryError, MemoryResult};
 
 impl Memory<'_> {
-    /// Presence is host state, while membership, authority and rules are fresh
-    /// vault reads. No copy of the board or of posture is stored anywhere.
-    pub fn rooms_render(
+    /// Resolve and validate host presence against current membership and grants.
+    /// Both the renderer and a bound room-turn read use this same door.
+    pub(crate) fn checked_room_scope(
         &self,
         room: EntityId,
         presence: &[RoomPresence],
-    ) -> MemoryResult<RoomSection> {
+    ) -> MemoryResult<(Vec<EntityId>, crate::federation::Scope)> {
         let members = require_member(self, room)?;
         let present: std::collections::BTreeSet<_> =
             presence.iter().map(|entry| entry.actor).collect();
@@ -61,8 +61,32 @@ impl Memory<'_> {
                 now,
             )?;
         }
-        drop(txn);
-        let scope = room_scope(presence)?;
+        Ok((members, room_scope(presence)?))
+    }
+
+    /// Presence is host state, while membership, authority and rules are fresh
+    /// vault reads. No copy of the board or of posture is stored anywhere.
+    pub fn rooms_render(
+        &self,
+        room: EntityId,
+        presence: &[RoomPresence],
+    ) -> MemoryResult<RoomSection> {
+        let (members, resolved) = self.checked_room_scope(room, presence)?;
+        let scope = match self.room_turn_presence() {
+            Some((bound_room, bound_presence))
+                if bound_room == room && bound_presence == presence =>
+            {
+                self.room_turn_read_scope(room)?.expect("bound room turn")
+            }
+            Some(_) => {
+                return Err(MemoryError::bad_request(
+                    "render differs from bound room turn",
+                ));
+            }
+            None => resolved,
+        };
+        let present: std::collections::BTreeSet<_> =
+            presence.iter().map(|entry| entry.actor).collect();
         let mut roster = presence.to_vec();
         for member in members {
             if !present.contains(&member) {
@@ -117,12 +141,16 @@ impl Memory<'_> {
         })? {
             let id = EntityId::from_hex(&claim.claim_ref)?;
             if read.get(&id)?.is_none()
-                || claim
-                    .world_ref
-                    .as_deref()
-                    .map_or(!scope.include_base(), |id| {
-                        EntityId::from_hex(id).map_or(true, |id| !scope.worlds().contains(&id))
-                    })
+                || claim.world_ref.as_deref().map_or(
+                    !scope
+                        .worlds
+                        .contains(&crate::federation::ScopeId(crate::claim::base_world_id())),
+                    |id| {
+                        EntityId::from_hex(id).map_or(true, |id| {
+                            !scope.worlds.contains(&crate::federation::ScopeId(id))
+                        })
+                    },
+                )
             {
                 continue;
             }
