@@ -280,6 +280,7 @@ pub(super) fn publication_input(
             placeholder: "Fixture constraint".to_owned(),
         },
         theme: ThemeTokens(json!({"unknown-owner-bag": {"nested": [null, "</script>", 7]}})),
+        landing: oneiron::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
             event_type: EventTypeKey("intro".to_owned()),
             start_after_secs: 86_400,
