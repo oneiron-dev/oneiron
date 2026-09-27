@@ -972,9 +972,9 @@ fn raw_parent_removal_cannot_truncate_adopted_main_line() {
     );
     // Soft deletion retains ancestry as a shell; the validated hard purge
     // retires the TURN and its incident edge, without a raw CRDT edge delete.
-    peer.delete_entity_with_reason(&second, crate::DeleteReason::UserDelete)
+    peer.delete_room_record(room, second, actor, crate::DeleteReason::UserDelete)
         .unwrap();
-    peer.delete_entity_with_reason(&second, crate::DeleteReason::GdprDelete)
+    peer.delete_room_record(room, second, actor, crate::DeleteReason::UserHardDelete)
         .unwrap();
     assert!(!peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
 }
@@ -1145,7 +1145,7 @@ fn soft_deleted_turn_retains_parent_against_raw_removal() {
     crate::sync::window::forward_rematerialize(&peer, &doc, &materializer, &key).unwrap();
     peer.main_line(&room, super::DagPageRequest::default())
         .unwrap();
-    peer.delete_entity_with_reason(&second, crate::DeleteReason::UserDelete)
+    peer.delete_room_record(room, second, actor, crate::DeleteReason::UserDelete)
         .unwrap();
     assert!(peer.edge_exists(&second, EdgeKind::Parent, &first).unwrap());
     let _observer =

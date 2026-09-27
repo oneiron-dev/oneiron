@@ -104,7 +104,42 @@ pub(crate) fn migrate_in_txn(
         turns.push((metadata.occurred_start, id));
     }
     turns.sort_unstable();
-    // Check every live TURN before writing the migration marker. Thread and
+    // A tombstone can arrive before this replica's first DAG adoption. The
+    // deleted ancestor is no longer in the room's ChildOf index, but its
+    // previously verified content-free pin preserves the Parent chain. Add
+    // only such pinned ghosts to the structural walk; never infer an absent
+    // root from a live child's unpaired Parent edge.
+    let mut pending: VecDeque<_> = all_parents.keys().copied().collect();
+    while let Some(id) = pending.pop_front() {
+        let Some(parent) = all_parents[&id] else {
+            continue;
+        };
+        if all_parents.contains_key(&parent) {
+            continue;
+        }
+        match live_entity_row_in_txn(&vault.store, txn, &parent)? {
+            LiveEntityRow::Absent | LiveEntityRow::DeletedShell
+                if super::redacted::read(&vault.store, txn, &parent)?.is_some() => {}
+            _ => {
+                return Err(graph::invalid(
+                    "received Parent is outside the live conversation",
+                ));
+            }
+        }
+        graph::require_member(&vault.store, txn, conversation, &parent)?;
+        if all_parents.len() >= MAX_ANCESTOR_DEPTH {
+            return Err(Error::IndexOverflow("conversation_dag_walk"));
+        }
+        if graph::is_thread_record(&vault.store, txn, &parent)?
+            || graph::is_sub_session_record(&vault.store, txn, &parent)?
+        {
+            non_trunk.insert(parent);
+        }
+        all_parents.insert(parent, graph::parent(&vault.store, txn, &parent)?);
+        pending.push_back(parent);
+    }
+    // Check every live TURN plus pinned erased ancestors before writing the
+    // migration marker. Thread and
     // sub-session records stay outside HEAD selection, not outside the DAG:
     // a cycle confined to either class must not be silently adopted. This
     // Kahn pass examines each record and Parent once, not every ancestor path.
