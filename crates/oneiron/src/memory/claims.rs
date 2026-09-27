@@ -1,4 +1,4 @@
-//! Claim lifecycle verbs: commit/upsert/retract, safe delete, and the
+//! Claim lifecycle verbs: commit/upsert/retract and the
 //! internal commit-decision plumbing (gate request/resubmit, supersession).
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
@@ -27,7 +27,7 @@ use crate::write_envelope::{
 /// Predicates with declared multi-cardinality supersession keys (B1c,
 /// RATIFY-20260710 R0): the prior-claim match extends
 /// `subject+scope+predicate` with `value.question_id`.
-pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["eiri.onboarding.answer"];
+pub const MULTI_CARDINALITY_PREDICATES: [&str; 1] = ["companion.onboarding.answer"];
 
 const MULTI_CARDINALITY_VALUE_KEY: &str = "question_id";
 
@@ -125,7 +125,7 @@ impl SafeDeleteReason {
         }
     }
 
-    const fn delete_reason(self) -> DeleteReason {
+    pub(super) const fn delete_reason(self) -> DeleteReason {
         match self {
             Self::UserDelete => DeleteReason::UserDelete,
             Self::UserHardDelete => DeleteReason::UserHardDelete,
@@ -193,7 +193,7 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 }
 
 impl Memory<'_> {
-    fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
+    pub(super) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
         verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
@@ -368,76 +368,6 @@ impl Memory<'_> {
         self.commit_one_with_before_txn(input, true, None, before_txn)
     }
 
-    /// Deletes an entity under a NAMED reason (S7). `user_delete` is the
-    /// tombstone path; the other three run the redaction-audit machinery.
-    ///
-    /// Authority (fail-closed): deletion is an OWNER verb — the named
-    /// reasons are `user_*`/compliance erasures. Only a VERIFIED
-    /// `human`-class actor may delete (`Self::verified_actor_class`:
-    /// the asserted actor must exist and be a PERSON — asserted class
-    /// strings are never trusted); `agent`/`system` actors get a typed
-    /// denial (agents withdraw their own claims via
-    /// [`Self::claim_retract`]).
-    ///
-    /// The owner gate is evaluated before deletion TXN1. Sync-enabled deletes
-    /// durably stage an authority-required marker + request-keyed recovery
-    /// sidecar before the tombstone can commit; TXN3 consumes that sidecar
-    /// with `append_gate_decision_in_txn` alongside the purge and distinct
-    /// REDACTION_AUDIT execution receipt. Sync-disabled builds append directly
-    /// on their first local scrub/purge.
-    pub fn safe_delete(
-        &self,
-        entity_ref: &str,
-        reason: SafeDeleteReason,
-    ) -> MemoryResult<DeleteReceipt> {
-        self.safe_delete_checked(entity_ref, reason, |_| Ok(()))
-    }
-
-    pub(super) fn safe_delete_checked(
-        &self,
-        entity_ref: &str,
-        reason: SafeDeleteReason,
-        check: impl Fn(&heed::RoTxn<'_>) -> MemoryResult<()>,
-    ) -> MemoryResult<DeleteReceipt> {
-        let gate = self.evaluate_deletion_gate()?;
-        let id = self.resolve_ref(entity_ref)?;
-        // The re-check the destructive transactions re-run against their OWN
-        // views (fix-leg 5 item 1). `MemoryError` is a binding-layer type the
-        // engine's `Result` cannot carry, so the refusal is PARKED here and the
-        // engine is handed the accurate typed stand-in: a concurrent write
-        // invalidated the snapshot the gate decided on. `safe_delete` then swaps
-        // the parked error back, so a caller sees the EXACT code and message the
-        // pre-transaction gate would have produced (FORBIDDEN for a revoked
-        // binding, INVALID_STATE for a broken authority log) rather than a
-        // second, weaker vocabulary for the same refusal.
-        let refusal: std::cell::RefCell<Option<MemoryError>> = std::cell::RefCell::new(None);
-        let reverify = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)
-                .and_then(|()| check(txn))
-                .map_err(|err| {
-                    *refusal.borrow_mut() = Some(err);
-                    Error::ConcurrentWrite(
-                        "deletion authority changed before the destructive commit",
-                    )
-                })
-        };
-        let outcome = self
-            .vault
-            .delete_entity_with_reason_gated(
-                &id,
-                reason.delete_reason(),
-                crate::deletion::GatedDeletion::new(gate, &reverify),
-            )
-            .map_err(|err| refusal.take().unwrap_or_else(|| MemoryError::from(err)))?;
-        Ok(DeleteReceipt {
-            existed: outcome.existed,
-            reason: reason.as_str().to_owned(),
-            receipt_ref: outcome
-                .receipt_id
-                .map(|receipt| format!("redaction:{}", receipt.to_hex())),
-        })
-    }
-
     // ── internals ───────────────────────────────────────────────────────
 
     pub(super) fn commit_all(
@@ -564,8 +494,8 @@ impl Memory<'_> {
         let mut approval =
             forced_approval.unwrap_or_else(|| requested_approval(source, input.scope.as_ref()));
         // Every commit is ONE engine transaction: gate decision, claim
-        // write, and (with a prior revision) the supersession commit or
-        // roll back together. No phantom receipts (a decision can never
+        // write, and (with a prior revision) the deferred closure binding
+        // commit or roll back together. No phantom receipts (a decision can never
         // outlive a write that failed later validation) and no orphan
         // revisions behind a rejected receipt. The fail-closed trade: a
         // rolled-back write also drops its gate decision.
@@ -657,30 +587,16 @@ impl Memory<'_> {
                         )?;
                     }
                 }
-                if let Some(old_id) = prior {
-                    let policy = crate::gate::resolve_policy_manifest(&self.vault.store, wtxn)?;
-                    let old = self
-                        .vault
-                        .require_named_claim_target_active_in(wtxn, &old_id)?;
-                    let probe = candidate
-                        .clone()
-                        .into_claim_body(&envelope, self.vault.default_facet_in_txn(wtxn)?);
-                    if !policy.is_single_valued_predicate(&input.predicate)
-                        || crate::claim::claim_source_widens_beyond(
-                            old.source.unwrap_or(ClaimSource::UserStated),
-                            source,
-                        )
-                        || self
-                            .vault
-                            .supersession_requires_confirmation_in_txn(wtxn, &old_id, &probe)?
-                    {
-                        envelope = WriteEnvelope::new(
-                            envelope.actor(),
-                            source,
-                            envelope.provenance().clone(),
-                            ClaimApprovalStatus::Proposed,
-                        );
-                    }
+                // A replacement is a create-versus-closure proposal even when its
+                // source and actor would qualify for Auto. The later grant is
+                // the only door allowed to close the prior head.
+                if prior.is_some() {
+                    envelope = WriteEnvelope::new(
+                        envelope.actor(),
+                        source,
+                        envelope.provenance().clone(),
+                        ClaimApprovalStatus::Proposed,
+                    );
                 }
                 let closure_envelope = envelope.clone();
                 apply_ops_with_gate_mode(

@@ -6,8 +6,7 @@ use napi_derive::napi;
 use oneiron::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
     CalendarInviteSurfaceMethod, CalendarRangeDto, CalendarReadRequest, CalendarSearchRequest,
-    CompanionRecordInput, ConsolidationAttemptInput, Effort, HabitCheckinInput, NeighborOpts,
-    OutboundDraftInput,
+    ConsolidationAttemptInput, Effort, HabitCheckinInput, NeighborOpts, OutboundDraftInput,
 };
 
 use super::boundary::{
@@ -24,10 +23,9 @@ use super::dtos::{
     NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventView,
     NapiCalendarFreebusyInterval, NapiCalendarInviteInput, NapiCalendarRange,
     NapiCalendarSearchRequest, NapiCalendarSel, NapiClaimInput, NapiCommitReceipt,
-    NapiCompanionRecordInput, NapiConsolidationJobInput, NapiDreamerJobRef, NapiDreamerJobView,
-    NapiEntityRefReceipt, NapiHabitCheckinInput, NapiLexicalHit, NapiMemoryPack, NapiNeighborHit,
-    NapiNeighborOpts, NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope,
-    NapiStructuralPutInput,
+    NapiConsolidationJobInput, NapiDreamerJobRef, NapiDreamerJobView, NapiEntityRefReceipt,
+    NapiHabitCheckinInput, NapiLexicalHit, NapiMemoryPack, NapiNeighborHit, NapiNeighborOpts,
+    NapiOutboundDraftInput, NapiOutboundIntentReceipt, NapiRecallScope, NapiStructuralPutInput,
 };
 use super::numeric::claim_input_to_engine;
 
@@ -70,29 +68,6 @@ impl ActorScopedVault {
         let receipt = self
             .facade()?
             .put_habit_checkin(&engine_input)
-            .map_err(facade_error)?;
-        Ok(entity_ref_receipt_from_engine(receipt))
-    }
-
-    /// Registers a companion persona record (personal scope), optionally
-    /// retiring it (migration of inactive companions).
-    #[napi]
-    pub fn put_companion_record(
-        &self,
-        input: NapiCompanionRecordInput,
-    ) -> napi::Result<NapiEntityRefReceipt> {
-        let engine_input = CompanionRecordInput {
-            id: input.id,
-            owner_ref: input.owner_ref,
-            persona_ref: input.persona_ref,
-            value: input.value,
-            source: input.source,
-            retired_at: ts_opt_to_engine(input.retired_at, "retired_at").map_err(boundary_error)?,
-            learned_at: ts_to_engine(input.learned_at, "learned_at").map_err(boundary_error)?,
-        };
-        let receipt = self
-            .facade()?
-            .put_companion_record(&engine_input)
             .map_err(facade_error)?;
         Ok(entity_ref_receipt_from_engine(receipt))
     }

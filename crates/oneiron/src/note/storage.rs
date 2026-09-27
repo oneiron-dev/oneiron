@@ -107,3 +107,35 @@ pub(crate) fn state_copy(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::StateOnly(None))
         .map_err(|_| invalid("canonical document state"))
 }
+
+/// Current NOTE text-plane identity for an impact preview. Read the canonical
+/// head and its complete Loro frontier in the SAME owner-authorized snapshot
+/// (and again in the committing writer); the entity envelope does not move
+/// when someone edits NOTE prose or citations.
+pub(crate) fn delete_preview_fingerprint(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<[u8; 32]>> {
+    let header = crate::batch::EntityMetadataHeader::parse(raw)
+        .ok_or(crate::Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_NOTE {
+        return Ok(None);
+    }
+    // UserDelete intentionally retains the 25-byte envelope shell while
+    // erasing its entire text plane. A fresh preview of that valid shell is
+    // the entry to explicit purge or a retry after failed publication; it
+    // has no NOTE document to fingerprint. Nonempty NOTE bodies still load
+    // the canonical document and fail closed if that live state is invalid.
+    if raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN {
+        return Ok(None);
+    }
+    let head = super::documents::head_in(&vault.store, txn, id)?.0;
+    let doc = load_for_erasure(vault, txn, id)?;
+    let mut hash = blake3::Hasher::new_derive_key("oneiron/delete-preview-note/v1");
+    hash.update(head.as_bytes());
+    hash.update(&doc.oplog_vv().encode());
+    hash.update(&doc.state_frontiers().encode());
+    Ok(Some(*hash.finalize().as_bytes()))
+}
