@@ -142,7 +142,10 @@ fn deleting_project_removes_derived_room_and_member_access() -> Result<()> {
         } else if door == 1 {
             vault.delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)?;
         } else {
-            assert!(vault.delete_entity(&id)?);
+            assert!(vault.delete_entity_with_options(
+                &id,
+                crate::deletion::DeleteEntityOptions { purge: true }
+            )?);
         }
         if door != 1 {
             assert!(vault.project(id)?.is_none());
@@ -197,7 +200,12 @@ fn root_and_parent_projects_cannot_be_deleted_at_any_door() -> Result<()> {
                 1 => vault
                     .delete_entity_with_reason(&id, crate::DeleteReason::UserDelete)
                     .unwrap_err(),
-                _ => vault.delete_entity(&id).unwrap_err(),
+                _ => vault
+                    .delete_entity_with_options(
+                        &id,
+                        crate::deletion::DeleteEntityOptions { purge: true },
+                    )
+                    .unwrap_err(),
             };
             assert_eq!(error.kind(), crate::error::ErrorKind::InvalidProjectBody);
             assert_eq!(vault.project(id)?, Some(before.clone()));
@@ -229,7 +237,10 @@ fn erased_parent_is_invalid_not_a_pending_dependency() -> Result<()> {
             1,
         )?;
         if hard {
-            vault.delete_entity(&parent)?;
+            vault.delete_entity_with_options(
+                &parent,
+                crate::deletion::DeleteEntityOptions { purge: true },
+            )?;
         } else {
             vault.delete_entity_with_reason(&parent, crate::DeleteReason::UserDelete)?;
         }

@@ -310,7 +310,7 @@ pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffe
         "self.memory.put_claim" => Ok(SelfEffect::MemoryPutClaim),
         "self.memory.supersede_claim" => Ok(SelfEffect::MemorySupersedeClaim),
         "self.memory.put_edge" => Ok(SelfEffect::MemoryPutEdge),
-        "self.ask_human" => Ok(SelfEffect::AskHuman),
+        "ask" => Ok(SelfEffect::Ask),
         "self.fixture.destructive" => Ok(SelfEffect::DestructiveFixture),
         "self.fixture.outbound" => Ok(SelfEffect::OutboundFixture),
         "agents.spawn" => Ok(SelfEffect::AgentsSpawn),
