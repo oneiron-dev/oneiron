@@ -13,12 +13,26 @@ use super::keys::{
     gate_decision_grant_ref_index_prefix, gate_decision_id_from_key, gate_decision_key,
     gate_decision_upper_bound, logical_uuid_v7_successor,
 };
+use super::orcb;
 use super::types::{
     GATE_DECISION_LEDGER_VERSION, GateClaimIndexBackfill, GateDecisionId, GateDecisionRecord,
 };
 use super::vet::vet_gate_decision_record;
 
 impl Store {
+    /// Decode one row against its key, decrypting only claim-bound ORCB values.
+    pub(in crate::store) fn decode_gate_decision_value(
+        &self,
+        decision_id: GateDecisionId,
+        raw: &[u8],
+    ) -> Result<GateDecisionRecord> {
+        if orcb::is_orcb(raw) {
+            orcb::decode_hot(&self.core.gate_custody_root, decision_id, raw)
+        } else {
+            decode_gate_decision(raw)
+        }
+    }
+
     /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
     /// claim-bound ledger row and sets the durable completeness flag in ONE
     /// write txn, so a crash leaves either nothing or everything (RCPT-1
@@ -116,6 +130,21 @@ impl Store {
         record: &GateDecisionRecord,
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
+        if record.claim_id.is_some() {
+            // The first claim-bound append pins a path to LIVE exterior custody
+            // in the same LMDB transaction as the value. Restoring the image
+            // elsewhere reuses that path, never a backed-up key copy.
+            let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
+            match self.vault_meta.get(&*wtxn, orcb::CUSTODY_ROOT_KEY)? {
+                Some(bound) if bound.as_ref() != expected.as_slice() => {
+                    return Err(Error::CorruptedIndex("gate decision custody binding"));
+                }
+                Some(_) => {}
+                None => self
+                    .vault_meta
+                    .put(wtxn, orcb::CUSTODY_ROOT_KEY, &expected)?,
+            }
+        }
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
 
@@ -316,7 +345,7 @@ impl Store {
         )? {
             let (key, value) = row?;
             let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+            let record = self.decode_gate_decision_value(decision_id, &value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -351,7 +380,7 @@ impl Store {
         let Some(value) = self.vault_meta.get(txn, &gate_decision_key(decision_id))? else {
             return Ok(None);
         };
-        let record = decode_gate_decision(&value)?;
+        let record = self.decode_gate_decision_value(decision_id, &value)?;
         if record.decision_id != decision_id {
             return Err(Error::CorruptedIndex("gate decision ledger"));
         }
@@ -442,7 +471,7 @@ impl Store {
                 break;
             }
             let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+            let record = self.decode_gate_decision_value(decision_id, &value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
@@ -483,7 +512,11 @@ fn append_gate_decision_row_in_txn(
     if store.vault_meta().get(wtxn, &key)?.is_some() {
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
-    let value = encode_gate_decision(record)?;
+    let value = if record.claim_id.is_some() {
+        orcb::encode_hot(store.gate_key_root(), record)?
+    } else {
+        encode_gate_decision(record)?
+    };
     store.vault_meta().put(wtxn, &key, &value)?;
     if let Some(grant_ref) = record.grant_ref.as_deref() {
         store.vault_meta().put(
