@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Archive<'a> {
     bytes: &'a [u8],
-    pub parts: BTreeMap<String, Vec<u8>>,
+    pub(super) parts: BTreeMap<String, Vec<u8>>,
     entries: Vec<(String, Vec<u8>, std::ops::Range<usize>)>,
     comment: Vec<u8>,
 }
