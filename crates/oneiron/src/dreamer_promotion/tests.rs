@@ -1357,6 +1357,7 @@ fn auto_checker_manifest(checker_ref: &str) -> Vec<u8> {
         panic!("the promotion test manifest is a map");
     };
     entries.push((Mp::from("auto_checker"), Mp::from(checker_ref)));
+    crate::test_util::add_default_teacher_probe_policy(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &manifest).expect("encode the policy manifest");
     out
@@ -1537,7 +1538,11 @@ fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> R
             }),
         };
         assert!(vault.set_model_manifest(&manifest).is_err());
-        let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+        let approval = TeacherProbeApproval::for_scored_checkpoint(
+            &manifest,
+            &vault.teacher_probe_policy(None)?,
+            1_000_000,
+        )?;
         vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let fx = fixture(&vault)?;
         let allow = CountingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict {

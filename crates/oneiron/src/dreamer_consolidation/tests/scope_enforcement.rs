@@ -172,7 +172,11 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
             .collect(),
         verdict: None,
     };
-    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None)?,
+        1_000_000,
+    )?;
     vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
     // Other served roles may narrow, but the teacher has no approved local checkpoint.
     vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;

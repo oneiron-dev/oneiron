@@ -11,7 +11,8 @@ const MANIFEST_KEY: &[u8] = b"llm:manifest:v2";
 const ROUTES_KEY: &[u8] = b"llm:resident_routes:v1";
 const TEACHER_APPROVAL_KEY: &[u8] = b"llm:extraction_teacher_probe:v1";
 mod teacher_probe;
-pub use teacher_probe::{TEACHER_PROBE_ID, TEACHER_PROBE_MIN_F1, TeacherProbeApproval};
+pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
+pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
@@ -270,7 +271,8 @@ impl Vault {
         let approval = new_approval
             .or(saved_approval.as_ref())
             .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
-        approval.verify(manifest)?;
+        let policy = self.teacher_probe_policy_in_txn(&txn, approval.holder_ref.as_deref())?;
+        approval.verify(manifest, &policy)?;
         if let Some(approval) = new_approval {
             let bytes = serde_json::to_vec(approval)
                 .map_err(|e| invalid(&format!("teacher approval serialization failed: {e}")))?;

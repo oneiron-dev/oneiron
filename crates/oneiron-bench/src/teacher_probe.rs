@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use oneiron::llm::manifest::{
-    ModelManifest, ModelRole, TEACHER_PROBE_ID, TEACHER_PROBE_MIN_F1, TeacherProbeApproval,
+    ModelManifest, ModelRole, TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy,
 };
 use serde::Deserialize;
 
@@ -108,6 +108,7 @@ fn gate(
     checkpoint: &Path,
     runner: &Path,
     manifest_path: &Path,
+    policy_path: &Path,
     out: &Path,
 ) -> Result<String, String> {
     let receipt_path = approval_path(out);
@@ -119,6 +120,7 @@ fn gate(
     let gold: Probe = serde_json::from_str(GOLD).map_err(|e| e.to_string())?;
     let manifest_bytes = std::fs::read(manifest_path).map_err(|e| e.to_string())?;
     let manifest = ModelManifest::from_json(&manifest_bytes).map_err(|e| e.to_string())?;
+    let policy = TeacherProbePolicy::load(policy_path).map_err(|e| e.to_string())?;
     let teacher = manifest
         .binding(ModelRole::ExtractionTeacher)
         .map_err(|e| e.to_string())?;
@@ -164,12 +166,12 @@ fn gate(
     let report = format!(
         "teacher probe: model={model} exact_span_micro_f1={:.6} correct={correct} predicted={predicted} gold={expected} bar={:.6}",
         f1 as f64 / 1_000_000.0,
-        f64::from(TEACHER_PROBE_MIN_F1) / 1_000_000.0
+        f64::from(policy.min_f1_millionths) / 1_000_000.0
     );
-    if f1 < u64::from(TEACHER_PROBE_MIN_F1) {
+    if f1 < u64::from(policy.min_f1_millionths) {
         return Err(format!("{report}: FAIL (manifest not released)"));
     }
-    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, f1 as u32)
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, &policy, f1 as u32)
         .map_err(|e| e.to_string())?;
     let approval_bytes = serde_json::to_vec(&approval).map_err(|e| e.to_string())?;
     // Nothing is published before a passing score. The vault requires BOTH
@@ -226,30 +228,34 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         runner,
         manifest_flag,
         manifest,
+        policy_flag,
+        policy,
         out_flag,
         out,
     ] = args
     else {
         error_line(
-            "usage: oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest CANDIDATE.json --out APPROVED.json",
+            "usage: oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest CANDIDATE.json --policy RESOLVED.json --out APPROVED.json",
         );
         return ExitCode::FAILURE;
     };
     if checkpoint_flag != "--checkpoint"
         || runner_flag != "--runner"
         || manifest_flag != "--manifest"
+        || policy_flag != "--policy"
         || out_flag != "--out"
     {
         error_line("teacher-probe: invalid options");
         return ExitCode::FAILURE;
     }
-    let (checkpoint, runner, manifest, out) = (
+    let (checkpoint, runner, manifest, policy, out) = (
         PathBuf::from(checkpoint),
         PathBuf::from(runner),
         PathBuf::from(manifest),
+        PathBuf::from(policy),
         PathBuf::from(out),
     );
-    match gate(&checkpoint, &runner, &manifest, &out) {
+    match gate(&checkpoint, &runner, &manifest, &policy, &out) {
         Ok(report) => {
             let _ = writeln!(io::stdout(), "{report}");
             ExitCode::SUCCESS

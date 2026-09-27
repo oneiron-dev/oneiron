@@ -1,13 +1,14 @@
 # Extraction teacher checkpoint gate (ONE-2312)
 
 `oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest
-CANDIDATE.json --out APPROVED.json` gates a candidate `extraction_teacher`
+CANDIDATE.json --policy RESOLVED.json --out APPROVED.json` gates a candidate `extraction_teacher`
 manifest. It creates **two** new artifacts on pass: `APPROVED.json` and
 `APPROVED.json.approval.json`. Publish both, then load the manifest and approval
 and call `Vault::set_model_manifest_with_teacher_approval(&manifest, &approval)`.
 `Vault::set_model_manifest` rejects an initial teacher pin and any teacher
 change without a saved matching approval. The vault validates the pinned probe
-identity, exact teacher-binding hash, model ID, and F1 bar, then stores the
+identity, exact teacher-binding hash, model ID, and resolved vault policy identity,
+then stores the
 approval and manifest together. Subsequent writes can change other role rows
 without re-running the teacher. A failing probe emits no new approval and
 cannot pin the candidate at this public write door. A teacher route override
@@ -23,8 +24,16 @@ The bench pins `fixtures/teacher_probe/conll_bio.v1.json` (10 English CoNLL
 BIO-format sentences, PER/ORG/LOC/MISC, 24 gold spans). These are a deliberately
 small **protocol/quality probe**, not the official CoNLL-2003 test set or a
 claim of leaderboard quality. Its data are versioned here, not supplied at
-runtime. The bar is exact typed entity-span micro-F1 >= 0.800000: span start,
-end and type must all agree; `2*TP/(predicted+gold)` across the whole probe.
+runtime. The metric is exact typed entity-span micro-F1: span start, end and type must
+all agree; `2*TP/(predicted+gold)` across the whole probe. The shipped
+`POLICY_MANIFEST.teacher_probe` row sets the **default** minimum at 0.800000.
+Trusted nested manifests may raise that minimum. Holder-specific rows may only
+narrow the vault floor; attempted widening is refused. Export the applicable
+snapshot through `vault.teacher_probe_policy(None)` (or `Some(holder_ref)` for a
+stored holder row), serialize it as `RESOLVED.json`, and give that file to the
+bench. No numeric per-run tuning flag exists. The vault re-resolves the policy
+in the write transaction; an approval from an older or different policy is
+refused even when its recorded F1 exceeds the new bar.
 Malformed BIO, missing or extra sentences/tokens, runner failure, wrong model
 identity and below-bar results fail closed. No tuning flags exist.
 

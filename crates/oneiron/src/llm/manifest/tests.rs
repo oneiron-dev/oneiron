@@ -1,5 +1,11 @@
 use super::*;
 use crate::llm::{CallClass, CallEnvelope, CallPurpose, ResponseFormat, TierPrecedence};
+fn policy_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    (dir, vault)
+}
+
 fn fixture() -> ModelManifest {
     ModelManifest {
         version: 2,
@@ -33,15 +39,27 @@ fn fixture() -> ModelManifest {
 }
 #[test]
 fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     let original = fixture();
     assert!(matches!(
         vault.set_model_manifest(&original),
         Err(Error::InvalidConfig(_))
     ));
     assert!(vault.model_manifest().unwrap().is_none());
-    assert!(TeacherProbeApproval::for_scored_checkpoint(&original, 799_999).is_err());
-    let approval = TeacherProbeApproval::for_scored_checkpoint(&original, 800_000).unwrap();
+    assert!(
+        TeacherProbeApproval::for_scored_checkpoint(
+            &original,
+            &vault.teacher_probe_policy(None).unwrap(),
+            799_999
+        )
+        .is_err()
+    );
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &original,
+        &vault.teacher_probe_policy(None).unwrap(),
+        800_000,
+    )
+    .unwrap();
     vault
         .set_model_manifest_with_teacher_approval(&original, &approval)
         .unwrap();
@@ -68,7 +86,12 @@ fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
             .set_model_manifest_with_teacher_approval(&changed, &bad_score)
             .is_err()
     );
-    let next = TeacherProbeApproval::for_scored_checkpoint(&changed, 900_000).unwrap();
+    let next = TeacherProbeApproval::for_scored_checkpoint(
+        &changed,
+        &vault.teacher_probe_policy(None).unwrap(),
+        900_000,
+    )
+    .unwrap();
     vault
         .set_model_manifest_with_teacher_approval(&changed, &next)
         .unwrap();
@@ -98,6 +121,152 @@ fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
 }
 
 #[test]
+fn teacher_policy_stricter_vault_bar_refuses_old_eighty_five_percent_approval() {
+    let (_dir, vault) = policy_vault();
+    let manifest = fixture();
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        850_000,
+    )
+    .unwrap();
+    let bytes = crate::gate::default_policy_manifest();
+    let mut cursor = std::io::Cursor::new(bytes.as_slice());
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut cursor).unwrap() else {
+        panic!("default policy must be a map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("teacher_probe"));
+    entries.push((
+        rmpv::Value::from("teacher_probe"),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("probe_id"),
+                rmpv::Value::from(TEACHER_PROBE_ID),
+            ),
+            (
+                rmpv::Value::from("min_f1_millionths"),
+                rmpv::Value::from(900_000_u64),
+            ),
+        ]),
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &encoded,
+    )
+    .unwrap();
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&manifest, &approval)
+            .is_err()
+    );
+    assert!(vault.model_manifest().unwrap().is_none());
+    let stricter = vault.teacher_probe_policy(None).unwrap();
+    assert_eq!(stricter.min_f1_millionths, 900_000);
+    assert!(TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 850_000).is_err());
+    let accepted =
+        TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 950_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &accepted)
+        .unwrap();
+    assert_eq!(vault.model_manifest().unwrap(), Some(manifest));
+}
+
+fn set_teacher_probe_policy_row(vault: &Vault, minimum: u64, holder: Option<(&str, u64)>) {
+    let bytes = crate::gate::default_policy_manifest();
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut bytes.as_slice()).unwrap()
+    else {
+        panic!("seeded manifest is a map");
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("teacher_probe"));
+    let holders = holder
+        .map(|(id, floor)| {
+            vec![rmpv::Value::Map(vec![
+                (rmpv::Value::from("holder_ref"), rmpv::Value::from(id)),
+                (
+                    rmpv::Value::from("min_f1_millionths"),
+                    rmpv::Value::from(floor),
+                ),
+            ])]
+        })
+        .unwrap_or_default();
+    entries.push((
+        rmpv::Value::from("teacher_probe"),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("probe_id"),
+                rmpv::Value::from(TEACHER_PROBE_ID),
+            ),
+            (
+                rmpv::Value::from("min_f1_millionths"),
+                rmpv::Value::from(minimum),
+            ),
+            (rmpv::Value::from("holders"), rmpv::Value::Array(holders)),
+        ]),
+    ));
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &rmpv::Value::Map(entries)).unwrap();
+    crate::test_util::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id().unwrap(),
+        &encoded,
+    )
+    .unwrap();
+}
+
+#[test]
+fn teacher_policy_holder_cannot_loosen_parent_and_old_receipts_cannot_silently_reuse() {
+    let (_dir, vault) = policy_vault();
+    let holder = "77777777777777777777777777777777";
+    let manifest = fixture();
+    let initial = vault.teacher_probe_policy(None).unwrap();
+    assert_eq!(initial.vault_min_f1_millionths, 800_000);
+    let previous =
+        TeacherProbeApproval::for_scored_checkpoint(&manifest, &initial, 950_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &previous)
+        .unwrap();
+    set_teacher_probe_policy_row(&vault, 900_000, Some((holder, 800_000)));
+    assert!(vault.teacher_probe_policy(Some(holder)).is_err());
+    assert!(vault.set_model_manifest(&manifest).is_err());
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&manifest, &previous)
+            .is_err()
+    );
+
+    set_teacher_probe_policy_row(&vault, 900_000, Some((holder, 950_000)));
+    let changed = vault.teacher_probe_policy(Some(holder)).unwrap();
+    assert_eq!(changed.vault_min_f1_millionths, 900_000);
+    assert_eq!(changed.min_f1_millionths, 950_000);
+    // 0.95 was enough for either policy's numeric bar; the old receipt is
+    // still stale because its resolved policy identity changed.
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&manifest, &previous)
+            .is_err()
+    );
+    let current =
+        TeacherProbeApproval::for_scored_checkpoint(&manifest, &changed, 950_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &current)
+        .unwrap();
+    assert!(vault.set_model_manifest(&manifest).is_ok());
+
+    set_teacher_probe_policy_row(&vault, 920_000, Some((holder, 960_000)));
+    assert!(vault.set_model_manifest(&manifest).is_err());
+    let stricter = vault.teacher_probe_policy(Some(holder)).unwrap();
+    assert!(TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 950_000).is_err());
+    let refreshed =
+        TeacherProbeApproval::for_scored_checkpoint(&manifest, &stricter, 970_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &refreshed)
+        .unwrap();
+}
+
+#[test]
 fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig::device());
     let fixture = fixture();
@@ -106,7 +275,12 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
     let loaded = ModelManifest::load(&path).unwrap();
     assert_eq!(loaded, fixture);
     assert!(vault.set_model_manifest(&loaded).is_err());
-    let approval = TeacherProbeApproval::for_scored_checkpoint(&loaded, 1_000_000).unwrap();
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &loaded,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
     vault
         .set_model_manifest_with_teacher_approval(&loaded, &approval)
         .unwrap();
@@ -230,7 +404,7 @@ fn verdict_modes_preserve_legacy_refusals_and_reasons() {
 
 #[test]
 fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) = policy_vault();
     let mut manifest = fixture();
     manifest
         .roles
@@ -238,7 +412,12 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .unwrap()
         .route_models
         .clear();
-    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000).unwrap();
+    let approval = TeacherProbeApproval::for_scored_checkpoint(
+        &manifest,
+        &vault.teacher_probe_policy(None).unwrap(),
+        1_000_000,
+    )
+    .unwrap();
     vault
         .set_model_manifest_with_teacher_approval(&manifest, &approval)
         .unwrap();

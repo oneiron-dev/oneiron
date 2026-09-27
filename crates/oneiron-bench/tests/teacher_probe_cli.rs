@@ -5,7 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/teacher_probe");
-fn invoke(checkpoint: &Path, manifest: &Path, approved: &Path) -> std::process::Output {
+fn invoke(
+    checkpoint: &Path,
+    manifest: &Path,
+    policy: &Path,
+    approved: &Path,
+) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_oneiron-bench"))
         .args(["teacher-probe", "--checkpoint"])
         .arg(checkpoint)
@@ -15,6 +20,8 @@ fn invoke(checkpoint: &Path, manifest: &Path, approved: &Path) -> std::process::
             "--manifest",
         ])
         .arg(manifest)
+        .arg("--policy")
+        .arg(policy)
         .arg("--out")
         .arg(approved)
         .output()
@@ -25,8 +32,17 @@ fn checkpoint_gate_cli_releases_only_the_passing_candidate() {
     let fixtures = PathBuf::from(FIXTURES);
     let temp = tempfile::tempdir().expect("teacher probe CLI fixture");
     let manifest = fixtures.join("candidate.fixture.json");
+    let vault = Vault::open(temp.path().join("accepted-vault"), VaultConfig::device())
+        .expect("accepted vault opens");
+    let policy = temp.path().join("resolved-policy.json");
+    std::fs::write(
+        &policy,
+        serde_json::to_vec(&vault.teacher_probe_policy(None).expect("vault policy"))
+            .expect("policy serialization"),
+    )
+    .expect("policy export");
     let good = temp.path().join("good-approved.json");
-    let result = invoke(&fixtures.join("checkpoint"), &manifest, &good);
+    let result = invoke(&fixtures.join("checkpoint"), &manifest, &policy, &good);
     assert!(
         result.status.success(),
         "{}",
@@ -39,8 +55,6 @@ fn checkpoint_gate_cli_releases_only_the_passing_candidate() {
     let approval_path = PathBuf::from(format!("{}.approval.json", good.display()));
     let selected = ModelManifest::load(&good).expect("approved manifest");
     let approval = TeacherProbeApproval::load(&approval_path).expect("probe approval");
-    let vault = Vault::open(temp.path().join("accepted-vault"), VaultConfig::device())
-        .expect("accepted vault opens");
     assert!(vault.set_model_manifest(&selected).is_err());
     vault
         .set_model_manifest_with_teacher_approval(&selected, &approval)
@@ -50,7 +64,12 @@ fn checkpoint_gate_cli_releases_only_the_passing_candidate() {
         Some(selected)
     );
     let bad = temp.path().join("bad-approved.json");
-    let result = invoke(&fixtures.join("below_bar_checkpoint"), &manifest, &bad);
+    let result = invoke(
+        &fixtures.join("below_bar_checkpoint"),
+        &manifest,
+        &policy,
+        &bad,
+    );
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("FAIL"));
     assert!(!bad.exists());

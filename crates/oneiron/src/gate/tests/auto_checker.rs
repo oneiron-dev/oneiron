@@ -118,6 +118,7 @@ fn checker_manifest(extra: Vec<(Value, Value)>) -> Vec<u8> {
         signatures_entry(),
     ];
     entries.extend(extra);
+    crate::test_util::add_default_teacher_probe_policy(&mut entries);
     let mut data = encode_policy_manifest(entries);
     append_actor_ceiling(
         &mut data,
@@ -1314,7 +1315,11 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
                 mode,
             }),
         };
-        let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+        let approval = TeacherProbeApproval::for_scored_checkpoint(
+            &manifest,
+            &vault.teacher_probe_policy(None)?,
+            1_000_000,
+        )?;
         vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(
             CalibratedVerdict {
