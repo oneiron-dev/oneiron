@@ -228,6 +228,7 @@ pub(super) fn apply_delete_edge(
     if kind == EdgeKind::Blocks {
         return Err(Error::Registry(RegistryError::ReservedEdgeKind("blocks")));
     }
+    crate::conversation_dag::guard_room_membership_delete(store, wtxn, &src, kind, &tgt)?;
     let key_out = Store::encode_edge_key(&src, kind, &tgt);
     let key_in = Store::encode_edge_key(&tgt, kind, &src);
     let deleted_out = store.edges_out.delete(wtxn, &key_out)?;

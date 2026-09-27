@@ -71,6 +71,7 @@ fn witness_writes_turn_messages_edges_and_text() {
     // readback; additive body fields remain legal.
     let turn_body = turn.body.clone().expect("turn body decodes");
     assert_eq!(turn_body["speaker"], serde_json::json!("user"));
+    assert_eq!(turn_body["actor"], serde_json::json!(actor.to_hex()));
     let turn_id = EntityId::from_hex(&turn.id_hex).expect("turn hex id");
     let conversation_id = EntityId::from_hex(&conversation_hex).expect("conversation hex id");
     let has_child_of_conversation = vault
@@ -896,4 +897,71 @@ fn witness_without_an_open_session_stays_valid() {
         })
         .expect("witness sessionless turn");
     assert_eq!(vault.open_session().expect("open session read"), None);
+}
+
+#[test]
+fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_others() {
+    let (_dir, vault) = open_vault();
+    let alice = put_person(&vault, 0x52);
+    let bob = put_person(&vault, 0x53);
+    let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
+    crate::conversation_dag::fixtures::grant(&vault, owner, true);
+    let room = EntityId::now();
+    vault
+        .create_conversation(
+            room,
+            &crate::conversation::ConversationBody::default(),
+            owner,
+            1,
+        )
+        .expect("create room");
+    vault
+        .join_member(
+            room,
+            bob,
+            owner,
+            2,
+            crate::conversation::HistoryChoice::Share,
+        )
+        .expect("join second person");
+    let witness = |actor, content: &str| {
+        vault
+            .memory(actor, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: None,
+                messages: vec![witness_message(0, WitnessAuthor::User, content)],
+                occurred_at: 10,
+            })
+    };
+    let first = witness(alice, "owner room turn").expect("owner witness");
+    let first_id = vault
+        .memory(alice, EdgeActorClass::Human)
+        .get_entity(&first.turn_short_id)
+        .unwrap()
+        .map(|view| EntityId::from_hex(&view.id_hex).unwrap())
+        .unwrap();
+    assert!(
+        vault
+            .delete_room_record(room, first_id, owner, crate::DeleteReason::PolicyDelete)
+            .expect("owner policy delete")
+            .existed
+    );
+    let second = witness(alice, "owner erasure target").expect("second owner witness");
+    let second_id = vault
+        .memory(alice, EdgeActorClass::Human)
+        .get_entity(&second.turn_short_id)
+        .unwrap()
+        .map(|view| EntityId::from_hex(&view.id_hex).unwrap())
+        .unwrap();
+    assert!(
+        vault
+            .erase_room_person(room, alice, owner)
+            .expect("erase owner")
+            .iter()
+            .any(|result| result.existed)
+    );
+    assert!(!vault.entity_exists(&second_id).unwrap());
+    assert!(witness(alice, "forbidden return").is_err());
+    assert!(witness(bob, "second person still permitted").is_ok());
 }

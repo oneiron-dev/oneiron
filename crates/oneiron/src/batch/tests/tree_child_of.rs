@@ -414,3 +414,84 @@ fn non_task_child_of_keeps_tree_guarantees_without_role_rules() -> Result<()> {
     assert!(vault.edge_exists(&plain_child, EdgeKind::ChildOf, &task_parent)?);
     Ok(())
 }
+
+#[test]
+fn room_turn_generic_delete_and_membership_removal_are_refused_after_edge_loss() -> Result<()> {
+    let (_dir, vault) = open_raw_test_vault();
+    let room = EntityId::now();
+    let turn = EntityId::now();
+    let bystander = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({"speaker": "user"})).expect("TURN body");
+    vault
+        .batch()
+        .put(
+            &room,
+            crate::registry::ENTITY_TYPE_CONVERSATION,
+            test_time_range(1, 1),
+            1,
+            b"room",
+        )
+        .put(&turn, ENTITY_TYPE_TURN, test_time_range(1, 1), 1, &body)
+        .edge(&turn, EdgeKind::ChildOf, &room, 1.0)
+        .commit()?;
+    assert_eq!(
+        vault
+            .batch()
+            .put(
+                &bystander,
+                ENTITY_TYPE_PERSON,
+                test_time_range(2, 2),
+                2,
+                b"bystander"
+            )
+            .delete(&turn)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(!vault.entity_exists(&bystander)?);
+    assert_eq!(
+        vault
+            .batch()
+            .delete_edge(&turn, EdgeKind::ChildOf, &room)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert!(vault.edge_exists(&turn, EdgeKind::ChildOf, &room)?);
+
+    // Simulate an already-missing edge. The persistent owner pin, not a live
+    // traversal, still blocks both bypasses.
+    vault.with_write_txn(|txn| {
+        let out = Store::encode_edge_key(&turn, EdgeKind::ChildOf, &room);
+        let incoming = Store::encode_edge_key(&room, EdgeKind::ChildOf, &turn);
+        vault.store.edges_out.delete(txn, &out)?;
+        vault.store.edges_in.delete(txn, &incoming)?;
+        Ok(())
+    })?;
+    assert!(!vault.edge_exists(&turn, EdgeKind::ChildOf, &room)?);
+    assert_eq!(
+        vault.batch().delete(&turn).commit().unwrap_err().kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(
+        vault
+            .batch()
+            .delete_edge(&turn, EdgeKind::ChildOf, &room)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidConversationDag
+    );
+    assert_eq!(
+        vault
+            .delete_entity_with_reason(&turn, DeleteReason::UserHardDelete)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::ConversationDenied
+    );
+    assert!(vault.entity_exists(&turn)?);
+    Ok(())
+}

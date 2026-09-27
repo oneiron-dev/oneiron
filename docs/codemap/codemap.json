@@ -11849,13 +11849,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_dag/admission.rs",
      "purpose": "Close the legacy ChildOf-only append door after DAG adoption",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -21418,7 +21418,7 @@
      "path": "src/memory/witness/codec.rs",
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {

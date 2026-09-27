@@ -82,8 +82,19 @@ impl Vault {
         if allow_replay_test {
             return Ok(());
         }
+        // The owner pin survives removal of the ChildOf row and body scrub.
+        let room = crate::conversation_dag::room_turn_owner(&self.store, txn, id)?;
         let Some(raw) = self.store.entities.get(txn, id.as_bytes())? else {
-            return Ok(());
+            if room.is_none()
+                || (room.is_some()
+                    && gate
+                        .and_then(GatedDeletion::room_authority)
+                        .map(|(id, _)| id)
+                        == room)
+            {
+                return Ok(());
+            }
+            return Err(Error::Record(crate::error::RecordError::ConversationDenied));
         };
         if raw.first() != Some(&crate::registry::ENTITY_TYPE_TURN) {
             return Ok(());
@@ -91,28 +102,6 @@ impl Vault {
         let body = raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("room deletion header"))?;
-        let owners = crate::conversation_dag::edge_ids(
-            &self.store,
-            txn,
-            id,
-            crate::edge::EdgeKind::ChildOf,
-            false,
-            2,
-        )?;
-        let mut room = None;
-        for owner in owners {
-            if self
-                .store
-                .entities
-                .get(txn, owner.as_bytes())?
-                .is_some_and(|bytes| {
-                    bytes.first() == Some(&crate::registry::ENTITY_TYPE_CONVERSATION)
-                })
-            {
-                room = Some(owner);
-                break;
-            }
-        }
         if room.is_none() && crate::conversation_dag::record_kind(body)?.is_none() {
             return Ok(());
         }
@@ -203,6 +192,7 @@ impl Vault {
             // side): a soft delete with NO cross-device record would leave
             // the deleted body live on every other device.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // TOCTOU close: `user_delete` scrubs the body in THIS txn, so the
             // owner authority is re-proven against THIS txn's view. A
             // RevokeActor committed since the gate ran is visible here and
@@ -338,6 +328,7 @@ impl Vault {
             // bodiless shell ⇒ `None`). The purge txn below re-runs the
             // refresh as an idempotent second pass.
             let mut wtxn = self.store.env.write_txn()?;
+            self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
             // Conditional re-fold (fix-leg 7's ruling, refined by fix-leg 8).
             // WHEN THE PUBLISH COMMITTED: no re-fold. That commit is this
             // delete's linearization point; a `RevokeActor` ordered after it did
@@ -425,6 +416,7 @@ impl Vault {
         let receipt_id = self.store.clock.entity_id()?;
         let mut scope = RedactionScope::entity(id);
         let mut wtxn = self.store.env.write_txn()?;
+        self.require_room_delete_gate(&wtxn, id, gate.as_ref(), allow_replay_test)?;
         // The purge txn: the one that actually tears. It re-checks authority
         // ONLY if nothing has settled this delete yet — i.e. no publish commit
         // AND no earlier destructive commit of this call (fix-leg 8). On

@@ -1,6 +1,7 @@
 //! Idempotency validators: turn/message existence, parent/actor binding, order collision axes.
 
 use super::super::*;
+use super::codec::decode_witness_turn_person;
 use super::decode_witness_turn_speaker;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
@@ -52,6 +53,7 @@ pub(super) fn validate_existing_witness_turn(
     turn_id: &EntityId,
     conversation_id: &EntityId,
     incoming_speaker: Option<&str>,
+    incoming_person: Option<EntityId>,
 ) -> MemoryResult<bool> {
     let Some(raw) = dbs.port_entity_record(txn, turn_id)? else {
         return Ok(false);
@@ -60,6 +62,11 @@ pub(super) fn validate_existing_witness_turn(
     if raw.entity_type != ENTITY_TYPE_TURN {
         return Err(MemoryError::bad_request(
             "the witnessed turn ref resolves to a non-TURN entity",
+        ));
+    }
+    if decode_witness_turn_person(&raw.body)? != incoming_person {
+        return Err(MemoryError::bad_request(
+            "the witnessed turn already belongs to another author",
         ));
     }
     let stored_speaker = decode_witness_turn_speaker(&raw.body)?;
