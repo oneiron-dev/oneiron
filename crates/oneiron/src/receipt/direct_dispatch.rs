@@ -33,19 +33,7 @@ fn evidence(receipt: &ReceiptRecord) -> String {
     }
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron:direct-outbound-result:v2");
-    for value in [
-        Some(receipt.outcome.as_str()),
-        receipt
-            .fields
-            .get("delivery_may_have_occurred")
-            .map(String::as_str),
-        receipt.fields.get("retry_state").map(String::as_str),
-        receipt.fields.get("intent_state").map(String::as_str),
-        receipt.fields.get("gate_outcome").map(String::as_str),
-        receipt.fields.get("hold_reason").map(String::as_str),
-        receipt.fields.get("suppression_reason").map(String::as_str),
-        receipt.fields.get("provider_ref").map(String::as_str),
-    ] {
+    for value in evidence_fields(receipt) {
         match value {
             Some(value) => {
                 hasher.update(&[1]);
@@ -58,6 +46,52 @@ fn evidence(receipt: &ReceiptRecord) -> String {
         }
     }
     format!("{}:{}", receipt.outcome, hasher.finalize().to_hex())
+}
+
+fn evidence_fields(receipt: &ReceiptRecord) -> [Option<&str>; 8] {
+    [
+        Some(receipt.outcome.as_str()),
+        receipt
+            .fields
+            .get("delivery_may_have_occurred")
+            .map(String::as_str),
+        receipt.fields.get("retry_state").map(String::as_str),
+        receipt.fields.get("intent_state").map(String::as_str),
+        receipt.fields.get("gate_outcome").map(String::as_str),
+        receipt.fields.get("hold_reason").map(String::as_str),
+        receipt.fields.get("suppression_reason").map(String::as_str),
+        receipt.fields.get("provider_ref").map(String::as_str),
+    ]
+}
+
+/// A dispatch that never reached the sink (a restart replay of an intent the
+/// ledger already abandoned, say) has no execution evidence. It is a thinner
+/// duplicate when an earlier row of the same logical dispatch already states
+/// every result field it states.
+fn thinner_duplicate(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    logical_ref: &str,
+    receipt: &ReceiptRecord,
+) -> Result<bool> {
+    if receipt.fields.contains_key("delivery_may_have_occurred") {
+        return Ok(false);
+    }
+    let fields = evidence_fields(receipt);
+    for row in vault.store.vault_meta.prefix_iter(txn, PREFIX)? {
+        let (_, raw) = row?;
+        let row: DirectReceipt = rmp_serde::from_slice(&raw)
+            .map_err(|_| Error::CorruptedIndex("direct dispatch receipt"))?;
+        if row.logical_ref == logical_ref
+            && fields
+                .iter()
+                .zip(evidence_fields(&row.receipt))
+                .all(|(new, old)| new.is_none() || *new == old)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn key(logical_ref: &str, receipt: &ReceiptRecord) -> Vec<u8> {
@@ -73,8 +107,10 @@ fn key(logical_ref: &str, receipt: &ReceiptRecord) -> Vec<u8> {
 
 /// Stores the first receipt for each material result of a logical dispatch.
 /// A later uncertain result does not hide behind an earlier definite failure;
-/// a delivered replay still has one logical outcome and cannot mint a new row. The pipeline result, not a host-authored
-/// imitation, supplies the receipt body.
+/// a delivered replay still has one logical outcome and cannot mint a new row,
+/// and neither can a replay that only restates a stored result with less
+/// evidence. The pipeline result, not a host-authored imitation, supplies the
+/// receipt body.
 pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
     if receipt.receipt_kind != ReceiptKind::Outbound {
         return Err(Error::InvariantViolation("direct dispatch receipt kind"));
@@ -90,7 +126,9 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
     let bytes = rmp_serde::to_vec_named(&row)
         .map_err(|_| Error::InvariantViolation("direct dispatch receipt encoding"))?;
     vault.with_write_txn(|txn| {
-        if vault.store.vault_meta.get(txn, &key)?.is_none() {
+        if vault.store.vault_meta.get(txn, &key)?.is_none()
+            && !thinner_duplicate(vault, txn, &row.logical_ref, &row.receipt)?
+        {
             vault.store.vault_meta.put(txn, &key, &bytes)?;
         }
         Ok(())
