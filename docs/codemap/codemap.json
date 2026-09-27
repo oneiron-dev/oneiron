@@ -1635,6 +1635,26 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestor_index.rs",
+     "purpose": "Claimed authority-entry ancestry index for deterministic fold scheduling",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/ancestry_bypass.rs",
+     "purpose": "Stalled-revocation bypass with freeze classifier and chain probe",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CausalWriteDisposition"
      ],
@@ -1698,7 +1718,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 15,
+      "const": 14,
       "crate-vis": 72,
       "type": 2
      }
@@ -1742,7 +1762,7 @@
      "path": "src/authority/entry_transition.rs",
      "purpose": "Per-entry state transition and the consent / quorum / widen-delay predicates",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -1796,9 +1816,6 @@
       "ActorBindingStatus",
       "AuthorityFold",
       "AuthorityFoldIssue",
-      "AuthorityFork",
-      "AuthorityForkAlarm",
-      "AuthorityForkStatus",
       "AuthorityPendingWiden",
       "FoldedActorBinding",
       "FoldedDevice"
@@ -1806,61 +1823,10 @@
      "path": "src/authority/fold_state.rs",
      "purpose": "Folded-state data model and the two-state merge",
      "surface": {
-      "const": 1,
       "crate-vis": 6,
-      "enum": 4,
+      "enum": 3,
       "fn": 3,
-      "struct": 7
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/ancestry_bypass.rs",
-     "purpose": "Scheduling gates, stalled-revocation bypass with freeze classifier, and chain probe",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/equivocation_core.rs",
-     "purpose": "Equivocation group resolution driver, resolution types, and fork record/report helpers",
-     "surface": {
-      "crate-vis": 5
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/mod.rs",
-     "purpose": "Equivocation and fork detection, ranking, quarantine, and restore markers",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/quarantine_gate.rs",
-     "purpose": "Post-quarantine winner re-checks, roster/consent predicates, and global fork resolution",
-     "surface": {
-      "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/authority/fork_resolution/restore_rank.rs",
-     "purpose": "Ancestor index, restore-marker divergence checks, and deterministic fork ranking",
-     "surface": {
-      "crate-vis": 5
+      "struct": 5
      }
     },
     {
@@ -2127,7 +2093,7 @@
      "kind": "test",
      "notable": [],
      "path": "src/authority/tests/basic_fold.rs",
-     "purpose": "Fold validation for enroll, rotate, recovery, revoke and equivocation",
+     "purpose": "Fold validation for enroll, rotate, recovery, revoke and divergent ancestry",
      "surface": {}
     },
     {
@@ -2184,38 +2150,6 @@
      "notable": [],
      "path": "src/authority/tests/federation_merge.rs",
      "purpose": "Federation DAG merges, grant divergence healing and tiebreaks",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_ancestry.rs",
-     "purpose": "Restore markers and fork-candidate ancestry exemption rules",
-     "surface": {}
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_quarantine.rs",
-     "purpose": "Fork quarantine limits, quorum-revoke resolution and vault attribution",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_resolution.rs",
-     "purpose": "Late fork rechecks, waiting, rank tiebreaks and seq-zero roots",
-     "surface": {}
-    },
-    {
-     "bucket": "L",
-     "kind": "test",
-     "notable": [],
-     "path": "src/authority/tests/fork_scoping.rs",
-     "purpose": "Fork scoping across vaults, recovery winners and missing parents",
      "surface": {}
     },
     {
@@ -2307,7 +2241,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 62
+      "crate-vis": 58
      }
     },
     {
@@ -34667,7 +34601,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 68,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35908,8 +35842,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2118,
-   "test_files": 725
+   "source_files": 2115,
+   "test_files": 721
   },
   "oneiron-android": {
    "files": [
