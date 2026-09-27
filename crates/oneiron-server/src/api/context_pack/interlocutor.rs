@@ -57,8 +57,38 @@ pub(crate) fn resolve_core_interlocutor_set(
     // remove a room participant from the disclosure meet. A person maps to a
     // contact dial only through a unique About link; ambiguous/missing links
     // remain unknown and therefore grant no absent-owner clearance.
+    let mut bound_room_owner = None;
     if let Some(members) = room_members {
+        // A bare host credential authenticates the caller but identifies no
+        // PERSON in the room. Only an identified, owner-grade human slip with
+        // a live owner-capable actor binding can exclude its exact holder from
+        // the non-owner meet. The presence flag and PROJECT leader are not
+        // identity evidence.
+        let bound_owner = if auth.is_owner_grade() && auth.actor_class() == Some("human") {
+            auth.principal_ref()
+                .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+                .filter(|id| members.contains(id))
+                .and_then(|id| {
+                    (vault.get_entity_type(&id).ok()
+                        == Some(Some(oneiron::registry::ENTITY_TYPE_PERSON)))
+                    .then_some(id)
+                })
+        } else {
+            None
+        };
+        let bound_owner = if let Some(id) = bound_owner {
+            let fold = vault
+                .authority_fold()
+                .map_err(|error| core_engine_error("room owner binding failed", error))?;
+            oneiron::authority::actor_binding_is_active(&fold, &id, "human").then_some(id)
+        } else {
+            None
+        };
+        bound_room_owner = bound_owner;
         for member in members {
+            if bound_owner == Some(*member) {
+                continue;
+            }
             let contacts = vault
                 .sources(
                     member,
@@ -66,43 +96,56 @@ pub(crate) fn resolve_core_interlocutor_set(
                     Some(oneiron::registry::ENTITY_TYPE_COUNTERPARTY_CONTACT),
                 )
                 .map_err(|error| core_engine_error("room contact resolution failed", error))?;
-            parties.push(if contacts.len() == 1 {
-                oneiron::InterlocutorPartyInput::ContactRef(contacts[0])
+            let contact = if let [contact] = contacts.as_slice() {
+                let people = vault
+                    .targets(
+                        contact,
+                        oneiron::EdgeKind::About,
+                        Some(oneiron::registry::ENTITY_TYPE_PERSON),
+                    )
+                    .map_err(|error| core_engine_error("room contact resolution failed", error))?;
+                (people.as_slice() == [*member]).then_some(*contact)
             } else {
-                oneiron::InterlocutorPartyInput::UnknownLabel {
+                None
+            };
+            parties.push(match contact {
+                Some(contact) => oneiron::InterlocutorPartyInput::ContactRef(contact),
+                None => oneiron::InterlocutorPartyInput::UnknownLabel {
                     label: member.to_hex(),
                     claimed_owner: false,
-                }
+                },
             });
         }
     }
 
-    // Merge-always (RATIFY-20260710 R8): on principal_ref auth the implicit
-    // principal-derived party ALWAYS enters the resolved set, regardless of
-    // block presence, so DEC-0005 scope intersection can only narrow.
+    // Scoped principal identity always narrows. The sole exception is the
+    // already-proved room owner: re-adding its exact PERSON id as an Unknown
+    // would turn the owner back into a third party after roster resolution.
     if let Some(principal_ref) = auth.principal_ref() {
         let principal_id = parse_entity_id_param(principal_ref, "principal_ref")?;
-        let party = match vault.get_counterparty_contact(&principal_id) {
-            Ok(Some(_)) => oneiron::InterlocutorPartyInput::ContactRef(principal_id),
-            // Companion principals are person/persona ids, not contact rows.
-            Ok(None) | Err(oneiron::Error::InvalidEntityType(_)) => {
-                oneiron::InterlocutorPartyInput::UnknownLabel {
-                    label: principal_id.to_hex(),
-                    claimed_owner: false,
+        if bound_room_owner != Some(principal_id) {
+            let party = match vault.get_counterparty_contact(&principal_id) {
+                Ok(Some(_)) => oneiron::InterlocutorPartyInput::ContactRef(principal_id),
+                // Companion principals are person/persona ids, not contact rows.
+                Ok(None) | Err(oneiron::Error::InvalidEntityType(_)) => {
+                    oneiron::InterlocutorPartyInput::UnknownLabel {
+                        label: principal_id.to_hex(),
+                        claimed_owner: false,
+                    }
                 }
-            }
-            Err(error) => {
-                tracing::error!(
-                    error = %error,
-                    "core context-pack interlocutor principal lookup failed"
-                );
-                return Err(core_engine_error(
-                    "core context-pack interlocutor principal lookup failed",
-                    error,
-                ));
-            }
-        };
-        parties.push(party);
+                Err(error) => {
+                    tracing::error!(
+                        error = %error,
+                        "core context-pack interlocutor principal lookup failed"
+                    );
+                    return Err(core_engine_error(
+                        "core context-pack interlocutor principal lookup failed",
+                        error,
+                    ));
+                }
+            };
+            parties.push(party);
+        }
     }
 
     // Owner presence is a conjunction, never a request assertion: the

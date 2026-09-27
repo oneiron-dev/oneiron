@@ -12611,7 +12611,7 @@
      "purpose": "vault_meta scope/tier-A rows, Vault impl, and agent-visible assembly block",
      "surface": {
       "crate-vis": 7,
-      "fn": 11,
+      "fn": 12,
       "struct": 2
      }
     },
@@ -40109,7 +40109,7 @@
      "path": "src/api/tests/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {

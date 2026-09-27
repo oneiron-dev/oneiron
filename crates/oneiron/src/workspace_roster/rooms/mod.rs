@@ -106,14 +106,31 @@ impl Vault {
     /// before using it; other Conversations keep their ledger-based audience.
     pub fn room_audience_members(&self, room: EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
-        if self
+        // A PROJECT and its exact room may arrive in the same batch. The
+        // projector's equality path can then leave no marker behind; the
+        // stored body, not that auxiliary row, identifies the substrate.
+        let raw = self
             .store
-            .vault_meta
-            .get(
-                &txn,
-                &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
-            )?
-            .is_some()
+            .entities
+            .get(&txn, room.as_bytes())?
+            .ok_or(Error::EntityNotFound)?;
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CONVERSATION {
+            return Err(invalid());
+        }
+        let body = crate::conversation::ConversationBody::from_bytes(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let derived = body.extra.contains_key("project_id") || body.extra.contains_key("memberIds");
+        if derived
+            || self
+                .store
+                .vault_meta
+                .get(
+                    &txn,
+                    &[super::project::ROOM_PROJECT, room.as_bytes()].concat(),
+                )?
+                .is_some()
         {
             return room_in(self, &txn, room)?
                 .member_ids

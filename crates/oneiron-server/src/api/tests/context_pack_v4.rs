@@ -4,10 +4,18 @@ use super::*;
 
 #[tokio::test]
 async fn context_board_memories_enforces_slots_and_carries_cursor() {
-    let (_dir, server) = test_server_with_config(SyncServerConfig {
-        auth_secret: Some("secret".to_owned()),
-        ..Default::default()
-    });
+    // This cursor test asserts a retrieval-run id, so capture must be opted in.
+    let (_dir, server) = test_server_with_vault_config(
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+        {
+            let mut config = oneiron::VaultConfig::device();
+            config.retrieval_telemetry_capture = true;
+            config
+        },
+    );
     let principal_id = seeded_test_entity_id(0x1741_0001);
     let principal_ref = principal_id.to_hex();
     let turn_a = seeded_test_entity_id(0x0012_6301);

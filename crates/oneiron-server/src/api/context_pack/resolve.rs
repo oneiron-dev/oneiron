@@ -162,7 +162,13 @@ pub(crate) async fn run_context_pack(
     // the one applied (design §11 rule 6).
     let disclosure = interlocutors
         .as_ref()
-        .map(|set| oneiron::DisclosureContext::resolve(&server.vault, set.clone()))
+        .map(|set| {
+            if room_members.is_some() {
+                oneiron::DisclosureContext::resolve_room(&server.vault, set.clone())
+            } else {
+                oneiron::DisclosureContext::resolve(&server.vault, set.clone())
+            }
+        })
         .transpose()
         .map_err(|error| {
             tracing::error!(error = %error, "core context-pack disclosure resolution failed");
