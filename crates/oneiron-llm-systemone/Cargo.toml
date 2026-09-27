@@ -1,0 +1,20 @@
+[package]
+name = "oneiron-llm-systemone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Remote System One typed-decision seat for Oneiron"
+
+[dependencies]
+oneiron = { path = "../oneiron" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+oneiron = { path = "../oneiron", features = ["test-hooks"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[lints]
+workspace = true

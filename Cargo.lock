@@ -7392,6 +7392,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-llm-systemone"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oneiron-macos"
 version = "0.1.0"
 dependencies = [

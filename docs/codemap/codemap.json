@@ -20001,7 +20001,7 @@
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
       "mod": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -20095,6 +20095,33 @@
      "surface": {
       "crate-vis": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DecisionSeat",
+      "SeatAnswer",
+      "SeatPhase",
+      "SeatRequest"
+     ],
+     "path": "src/llm/decision/seat.rs",
+     "purpose": "Opt-in, non-light typed-decision seat and its receipt boundary",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/llm/decision/seat/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -34981,7 +35008,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 69,
+     "files": 71,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35536,8 +35563,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2098,
-   "test_files": 718
+   "source_files": 2099,
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [
@@ -37944,6 +37971,44 @@
    "purpose": "Own-server LlmBackend",
    "source_files": 1,
    "test_files": 2
+  },
+  "oneiron-llm-systemone": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SystemOneSeat"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "tests": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "—",
+     "layout": "file",
+     "purpose": "—"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`",
+   "source_files": 1,
+   "test_files": 1
   },
   "oneiron-mesh-transport": {
    "files": [
