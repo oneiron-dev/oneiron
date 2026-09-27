@@ -947,3 +947,212 @@ fn invalid_bundled_skill_rolls_back_install() -> Result<()> {
     assert_eq!(vault.get_pack_source(&id)?, Some(source));
     Ok(())
 }
+
+fn installed_active_lens() -> Result<(
+    tempfile::TempDir,
+    Vault,
+    crate::lens::LensMount,
+    EntityId,
+    crate::lens::LensMount,
+)> {
+    installed_active_lens_for(None, "format")
+}
+
+fn installed_active_lens_for(
+    reference_text: Option<&str>,
+    folder: &str,
+) -> Result<(
+    tempfile::TempDir,
+    Vault,
+    crate::lens::LensMount,
+    EntityId,
+    crate::lens::LensMount,
+)> {
+    use crate::lens::LensMount;
+    let mut files = source(false)?.files().to_vec();
+    files.push(HubFile::new(
+        "skills/z-extra/SKILL.md",
+        b"---\nname: alice.extra\ndescription: extra\nversion: 1\n---\nAnother skill.\n".to_vec(),
+    ));
+    files
+        .iter_mut()
+        .find(|file| file.path == "skills/format/SKILL.md")
+        .unwrap()
+        .path = format!("skills/{folder}/SKILL.md");
+    let source = PackSource::from_files(files)?;
+    let (dir, vault, _owner, mut reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    if let Some(text) = reference_text {
+        reference = HubRef::new(
+            reference.hub_id,
+            text,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+    }
+    let source_id = fetched_fixture(&vault, &source, &reference, &publisher, 3)?;
+    let absent = LensMount::Pack {
+        pack_name: "alice.tools".into(),
+        skill_id: EntityId::now(),
+    };
+    assert_eq!(
+        vault.mounted_lenses(std::slice::from_ref(&absent))?,
+        vec![LensMount::Vault, LensMount::Admin]
+    );
+    assert_eq!(vault.render_mounted_lens(&absent, || Ok(1))?, None);
+    let pending = vault.prepare_pack_install(
+        source_id,
+        &reference,
+        &publisher,
+        &Policy {
+            rules_hit: true,
+            code_auto_install: true,
+            fits: true,
+        },
+    )?;
+    let PackInstallDisposition::Candidate(candidate) = vault.install_pack(&pending)? else {
+        panic!("rules-hit candidate")
+    };
+    let inert = LensMount::Pack {
+        pack_name: "alice.tools".into(),
+        skill_id: EntityId::from_hex(&candidate.skills[0])?,
+    };
+    assert_eq!(vault.render_mounted_lens(&inert, || Ok(1))?, None);
+    let ask = vault.prepare_pack_install(source_id, &reference, &publisher, &policy())?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("post-fit active install")
+    };
+    assert_eq!(receipt.skills.len(), 2);
+    let lens = LensMount::Pack {
+        pack_name: receipt.pack_name,
+        skill_id: EntityId::from_hex(&receipt.skills[0])?,
+    };
+    assert_eq!(vault.render_mounted_lens(&lens, || Ok(1))?, Some(1));
+    let healthy = install_healthy_pack(&vault, &reference, &publisher)?;
+    Ok((dir, vault, lens, source_id, healthy))
+}
+
+fn install_healthy_pack(
+    vault: &Vault,
+    reference: &HubRef,
+    publisher: &ForeignSkillPublisher,
+) -> Result<crate::lens::LensMount> {
+    let source = PackSource::from_files(vec![
+        HubFile::new("PACK.md", b"---\nname: alice.other\ndescription: fixture\nversion: 1\nkind: capability\n---\nOther pack.\n"),
+        HubFile::new("skills/healthy/SKILL.md", b"---\nname: alice.healthy\ndescription: healthy\nversion: 1\n---\nKeep facts exact.\n"),
+    ])?;
+    let other_ref = HubRef::new(
+        reference.hub_id,
+        "other-pack",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let id = fetched_fixture(vault, &source, &other_ref, publisher, 6)?;
+    let ask = vault.prepare_pack_install(id, &other_ref, publisher, &policy())?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("post-fit second install")
+    };
+    Ok(crate::lens::LensMount::Pack {
+        pack_name: receipt.pack_name,
+        skill_id: EntityId::from_hex(&receipt.skills[0])?,
+    })
+}
+
+#[test]
+fn pack_lens_mounts_only_while_its_installed_skill_loads_as_canon() -> Result<()> {
+    use crate::lens::LensMount;
+    use crate::skill::SkillLifecycle;
+    for state in [
+        Some(SkillLifecycle::Stale),
+        Some(SkillLifecycle::Quarantined),
+        None,
+    ] {
+        let (_dir, vault, lens, _, _healthy) = installed_active_lens()?;
+        let LensMount::Pack { skill_id, .. } = &lens else {
+            panic!("pack binding");
+        };
+        let core = vec![LensMount::Vault, LensMount::Admin];
+        let wrong_pack = LensMount::Pack {
+            pack_name: "alice.other".into(),
+            skill_id: *skill_id,
+        };
+        assert_eq!(
+            vault.mounted_lenses(&[lens.clone(), wrong_pack])?,
+            vec![LensMount::Vault, LensMount::Admin, lens.clone()]
+        );
+        assert_eq!(vault.render_mounted_lens(&lens, || Ok(7))?, Some(7));
+        if let Some(state) = state {
+            let mut skill = vault.get_skill_record(skill_id)?.unwrap();
+            skill.lifecycle_status = state;
+            if state == SkillLifecycle::Quarantined {
+                skill.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+            }
+            vault.update_skill_record(skill_id, &skill, TimeRange { start: 30, end: 30 }, 31)?;
+        } else {
+            assert!(vault.delete_entity(skill_id)?);
+        }
+        assert_eq!(vault.mounted_lenses(std::slice::from_ref(&lens))?, core);
+        assert_eq!(
+            vault.render_mounted_lens(&lens, || panic!("hidden renderer ran"))?,
+            None::<()>
+        );
+        // A removed host binding cannot leave an orphaned mount either.
+        assert_eq!(vault.mounted_lenses(&[])?, core);
+        assert_eq!(
+            vault.render_mounted_lens(&LensMount::Admin, || Ok(9))?,
+            Some(9)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deleted_pack_source_or_soft_erased_skill_hides_only_affected_lens() -> Result<()> {
+    use crate::lens::LensMount;
+    for remove_source in [false, true] {
+        let (_dir, vault, lens, source_id, healthy) = installed_active_lens()?;
+        let LensMount::Pack { skill_id, .. } = &lens else {
+            panic!("pack binding");
+        };
+        let bindings = [lens.clone(), healthy.clone()];
+        assert_eq!(
+            vault.mounted_lenses(&bindings)?,
+            vec![
+                LensMount::Vault,
+                LensMount::Admin,
+                lens.clone(),
+                healthy.clone()
+            ]
+        );
+        if remove_source {
+            assert!(vault.delete_entity(&source_id)?);
+        } else {
+            vault.delete_entity_with_reason(skill_id, crate::DeleteReason::UserDelete)?;
+        }
+        assert_eq!(
+            vault.mounted_lenses(&bindings)?,
+            vec![LensMount::Vault, LensMount::Admin, healthy.clone()]
+        );
+        assert_eq!(
+            vault.render_mounted_lens(&lens, || panic!("removed renderer ran"))?,
+            None::<()>
+        );
+        assert_eq!(vault.render_mounted_lens(&healthy, || Ok(7))?, Some(7));
+    }
+    Ok(())
+}
+
+#[test]
+fn longest_valid_pack_ref_and_long_skill_folder_install_active() -> Result<()> {
+    for (reference, folder) in [
+        ("r".repeat(4096), "format".to_owned()),
+        ("pack".to_owned(), "f".repeat(900)),
+    ] {
+        let (_dir, vault, lens, _source_id, healthy) =
+            installed_active_lens_for(Some(&reference), &folder)?;
+        assert_eq!(
+            vault.mounted_lenses(&[lens.clone(), healthy])?.get(2),
+            Some(&lens)
+        );
+        assert_eq!(vault.render_mounted_lens(&lens, || Ok(1))?, Some(1));
+    }
+    Ok(())
+}

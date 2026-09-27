@@ -218,6 +218,7 @@ pub enum ConsentActionKind {
     Decline,
     Escalate(ConsentScopeEscalator),
     BundleApprove(BundleApprovalScope),
+    ProjectMint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +375,7 @@ fn action_command(action: &ConsentActionKind) -> &'static str {
         ConsentActionKind::Decline => "consent_decline",
         ConsentActionKind::Escalate(_) => "consent_grant_mint",
         ConsentActionKind::BundleApprove(_) => "bundle_grant_mint",
+        ConsentActionKind::ProjectMint => "project_mint_intent",
     }
 }
 

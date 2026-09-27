@@ -29,6 +29,8 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+#[cfg(test)]
+pub(in crate::skill_hub) use bundled_skills::pack_skill_hub_ref;
 mod schema;
 pub use admission_types::{
     BundledSkillPermissions, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,

@@ -560,10 +560,10 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         skill_record.lifecycle_status,
         crate::skill::SkillLifecycle::Active
     );
-    let skill_source = HubRef::new(
-        hub_id,
-        "skills/example/skills/compose",
-        HubPin::ContentHash(skill_record.content_hash.expect("hashed skill").to_hex()),
+    let skill_source = super::pack_catalog::pack_skill_hub_ref(
+        &reference,
+        "compose",
+        skill_record.content_hash.expect("hashed skill"),
     )?;
     let skill_receipt = vault
         .hub_import_receipt(&skill, &skill_source)?

@@ -36,11 +36,7 @@ impl Vault {
         for (folder, files) in groups {
             let package = super::super::folder::package_from_files(files)?;
             let hash = package.content_hash()?;
-            let skill_ref = HubRef::new(
-                hub.hub_id,
-                format!("{}/skills/{folder}", hub.ref_string.trim_end_matches('/')),
-                HubPin::ContentHash(hash.to_hex()),
-            )?;
+            let skill_ref = pack_skill_hub_ref(hub, &folder, hash)?;
             let preferred_id = crate::codebase::entity_id_from_hash_material(
                 b"oneiron.pack-skill.v1",
                 &[hash.as_bytes()],
@@ -179,4 +175,29 @@ fn pack_skill_alias_key(id: &EntityId, source: &HubRef) -> Result<Vec<u8>> {
         .map_err(|_| invalid("pack skill alias encoding failed"))?;
     key.extend_from_slice(blake3::hash(&encoded).as_bytes());
     Ok(key)
+}
+
+/// Distinct skill provenance: the pack source ref itself may contain many
+/// skills, while a hub provenance alias names exactly one skill entity.
+pub(in crate::skill_hub) fn pack_skill_hub_ref(
+    pack_ref: &HubRef,
+    folder: &str,
+    hash: crate::skill::SkillContentHash,
+) -> Result<HubRef> {
+    // Hash the structured, validated source ref and length-frame the folder:
+    // both are independently bounded, but concatenating them could exceed
+    // HubRef's 4096-byte ref_string limit after the owner approved the pack.
+    let mut source = Vec::new();
+    rmpv::encode::write_value(&mut source, &pack_ref.to_value()?)
+        .map_err(|_| invalid("pack skill source ref encoding"))?;
+    let mut alias = blake3::Hasher::new_derive_key("oneiron.pack-skill.provenance.v1");
+    for part in [source.as_slice(), folder.as_bytes()] {
+        alias.update(&(part.len() as u64).to_be_bytes());
+        alias.update(part);
+    }
+    HubRef::new(
+        pack_ref.hub_id,
+        format!("pack-skill:{}", alias.finalize().to_hex()),
+        HubPin::ContentHash(hash.to_hex()),
+    )
 }
