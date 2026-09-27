@@ -25,6 +25,7 @@ pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
 mod signature_image;
 
 mod rate;
+pub use rate::{EsignRateCheck, EsignRateReceipt};
 
 pub mod render;
 mod seal;

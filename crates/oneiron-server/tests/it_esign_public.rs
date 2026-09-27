@@ -524,3 +524,184 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         .expect("join Unix signing server task")
         .expect("finish Unix signing server");
 }
+
+#[tokio::test]
+async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
+    use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
+
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let observer = WireTelemetry::new(vault.clone());
+    let window_secs = 604_800;
+    observer
+        .set_thresholds(&WireThresholds {
+            window_secs,
+            per_verb: 1,
+            per_actor: u64::MAX,
+        })
+        .unwrap();
+    drop(observer);
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            SyncServerConfig {
+                lease_vault_id: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let app = build_app(server.clone());
+    let token = "ab".repeat(32);
+    for _ in 0..2 {
+        let page = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/sign/{token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        let action = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/sign/action")
+                    .extension(axum::extract::ConnectInfo(
+                        "127.0.0.1:12345".parse::<std::net::SocketAddr>().unwrap(),
+                    ))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"token":token,"action":{"action":"load"}}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(action.status(), StatusCode::FORBIDDEN);
+    }
+    let denied = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/entity/00112233445566778899aabbccddeeff")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    drop(app);
+    drop(server); // flush the active receipt through the real owner of that counter
+
+    let observer = WireTelemetry::new(vault);
+    let now = oneiron_vault_contract::now_ts();
+    let start = now / window_secs * window_secs;
+    let receipt = observer
+        .receipt(start, start + window_secs)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.by_verb["GET /sign/{token}"], 2);
+    assert_eq!(receipt.by_verb["POST /sign/action"], 2);
+    assert_eq!(receipt.by_verb["GET /api/entity/{id}"], 1);
+    assert_eq!(receipt.by_actor["unauthenticated"], 5);
+    assert!(receipt.by_verb.keys().all(|key| !key.contains(&token)));
+    let question = observer
+        .question(start, start + window_secs)
+        .unwrap()
+        .unwrap();
+    assert_eq!(question.evidence.by_verb["GET /sign/{token}"], 2);
+}
+
+#[tokio::test]
+async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() {
+    let (_dir, server, token, field, id) = sent_request();
+    let app = build_app(Arc::clone(&server));
+    let page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/sign/{token}"))
+                .body(Body::empty())
+                .expect("page request"),
+        )
+        .await
+        .expect("page response");
+    assert_eq!(page.status(), StatusCode::OK);
+
+    let post = |action: serde_json::Value| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/sign/action")
+                        .extension(axum::extract::ConnectInfo(
+                            "127.0.0.1:12345"
+                                .parse::<std::net::SocketAddr>()
+                                .expect("loopback peer"),
+                        ))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"token":token,"action":action}).to_string(),
+                        ))
+                        .expect("signing action request"),
+                )
+                .await
+                .expect("signing action response");
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 16 * 1024)
+                .await
+                .expect("signing action body");
+            let body: serde_json::Value =
+                serde_json::from_slice(&body).expect("typed signing outcome");
+            (status, body)
+        }
+    };
+    // More than two full former 120/minute windows, so even a minute boundary
+    // cannot hide the crossing. None of these legitimate refreshes may drop.
+    for _ in 0..300 {
+        let (status, body) = post(serde_json::json!({"action":"load"})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["outcome"], "page");
+    }
+    let (status, saved) = post(serde_json::json!({
+        "action":"save_field", "field":field,
+        "value":{"kind":"text", "value":"approved"}
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["outcome"], "page");
+    assert_eq!(
+        saved["data"]["values"][&field]["value"]["value"],
+        "approved"
+    );
+    let (status, completed) = post(serde_json::json!({
+        "action":"complete", "consent":true, "next":null
+    }))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(completed["outcome"], "awaiting_seal");
+    let recipient = &server
+        .vault()
+        .esign_document(id)
+        .expect("signing state")
+        .document
+        .recipients[0]
+        .id;
+    let checks = server
+        .vault()
+        .esign_rate_checks(id)
+        .expect("local typed checks");
+    assert!(checks.iter().any(|check| {
+        check.receipt.recipient.as_deref() == Some(recipient.as_str())
+            && check.receipt.count == 121
+            && check.threshold == 120
+    }));
+}
