@@ -199,12 +199,17 @@ pub(super) fn produce_l2_base(
             let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
                 return Err(Error::InvariantViolation("L2 non-entity subject"));
             };
+            let mut value = crate::serialize::null_credentials(
+                "val",
+                &super::hydration::rmpv_to_json(&body.value),
+            );
+            // Provider codecs apply a second, stricter credential scrub to
+            // ranked rows. Apply it before caching so every L2 format shares
+            // one stable safe prefix, including keys such as `ssh_key`.
+            crate::serialize::scrub_provider_credential("val", &mut value);
             Ok(serde_json::json!({
                 "id": id.to_hex(), "subj": subject.to_hex(),
-                "pred": body.predicate,
-                "val": crate::serialize::null_credentials(
-                    "val", &super::hydration::rmpv_to_json(&body.value),
-                ),
+                "pred": body.predicate, "val": value,
                 "world": body.world.map(|world| world.to_hex()),
             }))
         })

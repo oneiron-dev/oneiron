@@ -25,6 +25,7 @@ mod yaml_format;
 mod tests;
 // The L2 producer must render the same safe value projection as ranked rows.
 pub(crate) use credential_nulling::null_credentials;
+pub(crate) use provider_codecs::scrub as scrub_provider_credential;
 
 pub use pack_entry::{
     CODE_RUN_OUTPUT_PREVIEW_CODEC, CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS, SerializeConfig,

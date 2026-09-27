@@ -681,6 +681,10 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
                 rmpv::Value::from("l2-private-material"),
             ),
             (
+                rmpv::Value::from("ssh_key"),
+                rmpv::Value::from("provider-private-material"),
+            ),
+            (
                 rmpv::Value::from("ordinary"),
                 rmpv::Value::from("safe-value"),
             ),
@@ -695,8 +699,10 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
     let first = builder().run()?.l2_base.expect("implicit prefix");
     let rows: serde_json::Value = serde_json::from_str(&first.body).unwrap();
     assert!(rows[0]["val"]["accessToken"].is_null());
+    assert!(rows[0]["val"]["ssh_key"].is_null());
     assert_eq!(rows[0]["val"]["ordinary"], "safe-value");
     assert!(!first.body.contains("l2-private-material"));
+    assert!(!first.body.contains("provider-private-material"));
     let again = builder().run()?.l2_base.unwrap();
     assert!(Arc::ptr_eq(&first.body, &again.body));
 
@@ -744,6 +750,7 @@ fn implicit_l2_nulls_credentials_before_caching_and_in_every_output() -> Result<
         let output = builder().format(format).token_budget(0).run_serialized()?;
         let text = String::from_utf8(output).unwrap();
         assert!(!text.contains("l2-private-material"), "{format:?}");
+        assert!(!text.contains("provider-private-material"), "{format:?}");
         assert!(text.contains("safe-value"), "{format:?}");
     }
     Ok(())
