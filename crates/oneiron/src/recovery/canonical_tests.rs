@@ -251,6 +251,155 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn canonical_writer_refuses_pointer_only_entity_before_creating_artifact() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let entity = EntityId::now();
+    vault.put_entity(
+        &entity,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 7, end: 7 },
+        9,
+        b"seed",
+    )?;
+    let mut blob = vault.get_raw(&entity)?.unwrap();
+    blob.truncate(crate::batch::ENTITY_METADATA_HEADER_LEN);
+    rmpv::encode::write_value(
+        &mut blob,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("entity_doc_ref"),
+            rmpv::Value::from(entity.to_hex()),
+        )]),
+    )
+    .unwrap();
+    let window = LoroDoc::new();
+    canonical::insert(&window, "entities", &entity.to_hex(), &blob)?;
+    let path = dir.path().join("incomplete.canonical");
+    assert!(write_canonical_window_snapshot(&vault, "2026-09", &window, &path).is_err());
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[cfg(all(unix, feature = "sync"))]
+#[test]
+fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
+    use crate::consent::AuthenticatedOwner;
+    use crate::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+    use crate::store::GateDecisionId;
+
+    let source_dir = tempfile::tempdir()?;
+    let source = Vault::open(source_dir.path(), VaultConfig::default())?;
+    let author = EntityId::now();
+    source.put_entity(
+        &author,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"author",
+    )?;
+    let actor = WriteActor::new(author, EdgeActorClass::Human);
+    let owner: AuthenticatedOwner = source.authenticate_owner(
+        author,
+        "principal:canonical-entity-doc",
+        true,
+        GateDecisionId::now(),
+    )?;
+    let asset = EntityId::now();
+    source.put_entity(
+        &asset,
+        ENTITY_TYPE_ASSET,
+        TimeRange { start: 7, end: 7 },
+        9,
+        b"initial text",
+    )?;
+    source.migrate_entity_text(
+        &asset,
+        &TextField::Utf8Body,
+        actor,
+        &DocAuthorization::Owner(&owner),
+    )?;
+    let pointer = source.get_raw(&asset)?.unwrap();
+    let anchor = source.entity_text_anchor(&asset, 12, 12)?;
+    source.edit_entity_text(
+        &asset,
+        &[AnchoredEdit {
+            actor: Some(actor),
+            verb: EditVerb::AppendToSection {
+                section: anchor,
+                text: " and later".into(),
+            },
+        }],
+        &DocAuthorization::Owner(&owner),
+        11,
+    )?;
+    assert_eq!(source.get_raw(&asset)?.unwrap(), pointer);
+    assert_eq!(source.entity_text(&asset)?, "initial text and later");
+    let window = LoroDoc::new();
+    for entity in [author, asset] {
+        canonical::insert(
+            &window,
+            "entities",
+            &entity.to_hex(),
+            &source.get_raw(&entity)?.unwrap(),
+        )?;
+    }
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("window.canonical");
+    let digest = write_canonical_window_snapshot(&source, "2026-09", &window, &path)?;
+    let bytes = fs::read(&path)?;
+    let snapshot = CanonicalSnapshot::decode(&bytes)?;
+    assert_eq!(digest, *blake3::hash(&bytes).as_bytes());
+    assert_eq!(snapshot.entity_documents.len(), 1);
+    assert_eq!(snapshot.entity_documents[0].text, "initial text and later");
+    let mut missing = snapshot.clone();
+    missing.entity_documents.clear();
+    missing.refresh_containers();
+    assert!(missing.encode().is_err());
+
+    let restored_dir = tempfile::tempdir()?;
+    let restored = Vault::open(restored_dir.path(), VaultConfig::default())?;
+    // A pointer-only source cannot publish a superficially checksummed artifact.
+    let missing_path = restored_dir.path().join("incomplete.canonical");
+    assert!(write_canonical_window_snapshot(&restored, "2026-09", &window, &missing_path).is_err());
+    assert!(!missing_path.exists());
+    let recovered = recover_vault_window(
+        &restored,
+        &crate::sync::bridge::Materializer::new(),
+        restored_dir.path().join("manifest"),
+        &snapshot,
+        RecoveryBudget::default(),
+    )?;
+    assert_eq!(recovered.tier, RecoveryTier::FullRebuild);
+    assert_eq!(restored.get_raw(&asset)?, Some(pointer));
+    assert_eq!(restored.entity_text(&asset)?, "initial text and later");
+    assert_eq!(
+        restored.get(&asset)?,
+        Some(b"initial text and later".to_vec())
+    );
+
+    // A pending fork carries a causal merge base, not just current text.
+    // Refuse a value-only artifact rather than drop that workflow.
+    source.open_text_proposal(
+        &EntityId::now(),
+        &[crate::entity_doc::ForkRequest {
+            entity: asset,
+            base: source.entity_text_frontier(&asset)?,
+            actor,
+            edits: Vec::new(),
+            rewrite: Some("pending replacement".to_owned()),
+        }],
+        &DocAuthorization::ProposeOnly,
+        12,
+    )?;
+    let unsupported = dir.path().join("unsupported.canonical");
+    assert!(write_canonical_window_snapshot(&source, "2026-09", &window, &unsupported).is_err());
+    assert!(!unsupported.exists());
+    Ok(())
+}
+
 #[test]
 fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
     let fixture = fixture()?;

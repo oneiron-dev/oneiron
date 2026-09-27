@@ -99,7 +99,8 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("tombstone timestamp or encoding"));
         }
     }
-    validate_documents(snapshot)
+    validate_documents(snapshot)?;
+    validate_entity_documents(snapshot)
 }
 
 pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
@@ -215,6 +216,95 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
     }
     super::document::validate_workflows(snapshot)
 }
+
+/// A document pointer in a raw entity row MUST have its value in the artifact.
+/// Do not trust the writer: decoded payloads enter this gate too.
+fn pointer(body: &[u8]) -> Result<Option<String>> {
+    let mut reader = std::io::Cursor::new(body);
+    let Ok(value) = rmpv::decode::read_value(&mut reader) else {
+        return Ok(None);
+    };
+    let rmpv::Value::Map(fields) = value else {
+        return Ok(None);
+    };
+    let refs: Vec<_> = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some("entity_doc_ref"))
+        .collect();
+    if refs.is_empty() {
+        return Ok(None);
+    }
+    if refs.len() != 1 || reader.position() != body.len() as u64 {
+        return Err(invalid("entity document pointer encoding"));
+    }
+    let value = refs[0]
+        .1
+        .as_str()
+        .ok_or(invalid("entity document pointer type"))?;
+    id(super::canonical::parse_id(value)?)?;
+    Ok(Some(value.to_owned()))
+}
+
+pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
+    strict(snapshot.entity_documents.iter().map(|row| row.entity_id))?;
+    let rows: BTreeMap<_, _> = snapshot
+        .entity_documents
+        .iter()
+        .map(|row| (row.entity_id, row))
+        .collect();
+    for entity in &snapshot.entity_blobs {
+        let header = EntityMetadataHeader::parse(&entity.blob).ok_or(invalid("entity envelope"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+            || entity.blob.len() == ENTITY_METADATA_HEADER_LEN
+        {
+            if rows.contains_key(&entity.id) {
+                return Err(invalid("entity document owner cannot be NOTE or shell"));
+            }
+            continue;
+        }
+        let body = &entity.blob[ENTITY_METADATA_HEADER_LEN..];
+        let ref_id = pointer(body)?;
+        let row = rows.get(&entity.id).copied();
+        match (ref_id, row) {
+            (None, None) => continue,
+            (Some(ref_id), Some(row)) if ref_id == id(row.document_id)?.to_hex() => {
+                id(row.birth_actor)?;
+                if row.birth_at != header.occurred_start {
+                    return Err(invalid("entity document birth timestamp"));
+                }
+                let mut reader = std::io::Cursor::new(body);
+                let value = rmpv::decode::read_value(&mut reader)
+                    .map_err(|_| invalid("entity document pointer row"))?;
+                let rmpv::Value::Map(fields) = value else {
+                    return Err(invalid("entity document pointer row"));
+                };
+                let others: Vec<_> = fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() != Some("entity_doc_ref"))
+                    .collect();
+                match &row.field {
+                    None if others.is_empty() => {}
+                    Some(field)
+                        if ["body", "text", "txt", "content", "markdown", "title"]
+                            .contains(&field.as_str())
+                            && !others
+                                .iter()
+                                .any(|(key, _)| key.as_str() == Some(field.as_str())) => {}
+                    _ => return Err(invalid("entity document text field")),
+                }
+            }
+            _ => return Err(invalid("entity document coverage or pointer binding")),
+        }
+    }
+    if rows
+        .keys()
+        .any(|entity| !snapshot.entity_blobs.iter().any(|row| &row.id == entity))
+    {
+        return Err(invalid("entity document owner absent"));
+    }
+    Ok(())
+}
+
 pub(super) fn strict<T: Ord>(values: impl IntoIterator<Item = T>) -> Result<()> {
     let mut previous = None;
     for value in values {
