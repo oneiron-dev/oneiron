@@ -2074,6 +2074,8 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
     let event_id = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2163,6 +2165,8 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
     let undo_id = EntityId::now();
     let undo = StoredIdentityOpEvent {
         seq: 51,
+
+        validated_at_write: false,
         at: 300,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2388,6 +2392,8 @@ fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence
     let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2525,6 +2531,8 @@ fn observer_b_malformed_type_76_envelope_cannot_bypass_delete_wins() {
     let valid_id = EntityId::from_bytes([0x73; 16]).unwrap();
     let valid_record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2616,6 +2624,8 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
     let event_id = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2724,6 +2734,8 @@ fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
     let event_id = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2808,6 +2820,8 @@ fn observer_b_quarantined_undo_commits_no_event_or_seq_advance() {
     let rejected_event = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 77,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2895,6 +2909,7 @@ fn observer_b_rejects_seq_that_would_consume_local_headroom_before_clock_mutatio
     }
     let rejected_event = EntityId::now();
     let record = StoredIdentityOpEvent {
+        validated_at_write: false,
         seq: crate::identity_topology::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING
             - crate::identity_topology::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM,
         at: 200,
@@ -2978,6 +2993,8 @@ fn observer_b_endpoint_materialization_retriggers_deferred_topology_reconcile() 
     let event_id = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3071,6 +3088,8 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
     let event_id = EntityId::now();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3242,6 +3261,8 @@ fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
     let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3315,6 +3336,8 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
 
     let base = |seq, approval, action| StoredIdentityOpEvent {
         seq,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3509,6 +3532,8 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
 
     let record = |actor_class| StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: Some(crate::write_envelope::WriteActor::new(actor, actor_class)),
         source: ClaimSource::Inferred,

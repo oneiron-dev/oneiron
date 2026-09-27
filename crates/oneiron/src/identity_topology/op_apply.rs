@@ -438,6 +438,7 @@ impl Vault {
         let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
         let record = StoredIdentityOpEvent {
             seq,
+            validated_at_write: true,
             at: now,
             actor: write.actor,
             source: write.source,

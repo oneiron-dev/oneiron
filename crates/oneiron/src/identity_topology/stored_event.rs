@@ -21,10 +21,10 @@ use super::reassignment_map::{ReassignmentMap, ReassignmentStats};
 use super::transition_table::{ProposalOutcome, ProposalScope};
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_APPROVAL, BODY_KEY_AT, BODY_KEY_CONFIDENCE,
-    BODY_KEY_EVIDENCE, BODY_KEY_KIND, BODY_KEY_SEQ, BODY_KEY_SOURCE, EVENT_KIND_ASSERT_DISTINCT,
-    EVENT_KIND_FACET, EVENT_KIND_MERGE, EVENT_KIND_PROPOSAL_CANCELLATION,
-    EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT, EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE,
-    EVIDENCE_KEY_REFS,
+    BODY_KEY_EVIDENCE, BODY_KEY_KIND, BODY_KEY_SEQ, BODY_KEY_SOURCE, BODY_KEY_VERIFIED,
+    EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
+    EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
+    EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
 };
 use crate::error::SyncError;
 
@@ -257,6 +257,11 @@ impl StoredIdentityOpAction {
 pub struct StoredIdentityOpEvent {
     /// Engine-stamped monotonic causality sequence.
     pub seq: u64,
+    /// Engine-authored admission stamp. `true` means the producer validated
+    /// every participant and actor before applying this op. A receiver still
+    /// rejects available mismatches and defers never-materialized ids; a
+    /// deleted participant can be read from history after its local marker.
+    pub validated_at_write: bool,
     /// Caller-supplied event time (Unix seconds) — data, never ordering.
     pub at: u64,
     /// Deciding actor, validated at the door when bound (r1).
@@ -306,6 +311,9 @@ impl StoredIdentityOpEvent {
             Value::from(self.action.kind_str()),
         ));
         entries.push((Value::from(BODY_KEY_SEQ), Value::from(self.seq)));
+        if self.validated_at_write {
+            entries.push((Value::from(BODY_KEY_VERIFIED), Value::Boolean(true)));
+        }
         entries.push((Value::from(BODY_KEY_AT), Value::from(self.at)));
         if let Some(actor) = self.actor {
             entries.push((Value::from(BODY_KEY_ACTOR), id_value(&actor.entity_ref())));
@@ -352,6 +360,15 @@ impl StoredIdentityOpEvent {
                 )))?;
         let kind = decode_str_field(map, BODY_KEY_KIND, "identity topology event kind")?;
         let seq = decode_u64_field(map, BODY_KEY_SEQ, "identity topology event seq")?;
+        let validated_at_write = match map_field(map, BODY_KEY_VERIFIED) {
+            None => false,
+            Some(Value::Boolean(true)) => true,
+            _ => {
+                return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
+                    "identity topology event verification stamp",
+                )));
+            }
+        };
         let at = decode_u64_field(map, BODY_KEY_AT, "identity topology event at")?;
         let actor = decode_actor(map)?;
         let source = map_field(map, BODY_KEY_SOURCE)
@@ -382,6 +399,7 @@ impl StoredIdentityOpEvent {
         };
         Ok(Self {
             seq,
+            validated_at_write,
             at,
             actor,
             source,

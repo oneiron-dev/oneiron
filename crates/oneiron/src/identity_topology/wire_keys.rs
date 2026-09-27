@@ -55,6 +55,8 @@ pub(super) const MAX_IDENTITY_TOPOLOGY_EVENT_FACETS: usize =
 
 pub(super) const BODY_KEY_KIND: &str = "kind";
 pub(super) const BODY_KEY_SEQ: &str = "seq";
+/// Producer proof that every participant and the bound author passed admission.
+pub(super) const BODY_KEY_VERIFIED: &str = "verified";
 pub(super) const BODY_KEY_AT: &str = "at";
 pub(super) const BODY_KEY_ACTOR: &str = "actor";
 pub(super) const BODY_KEY_ACTOR_CLASS: &str = "actor_class";

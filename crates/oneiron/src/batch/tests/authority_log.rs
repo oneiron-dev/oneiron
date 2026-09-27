@@ -494,6 +494,8 @@ fn authority_log_put_evicts_delete_protected_squatter() -> Result<()> {
     let loser = EntityId::from_bytes([0xD2; 16])?;
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -604,6 +606,8 @@ fn authority_dominance_unwinds_evicted_type_76_participant_shell_edges() -> Resu
 
     let squatter_record = crate::identity_topology::StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 1,
         actor: None,
         source: ClaimSource::Inferred,
@@ -717,6 +721,8 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -737,6 +743,8 @@ fn evicting_an_apply_creates_unlocked_merge_edges_on_undirect_sources() -> Resul
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -848,6 +856,8 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &t,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 40,
+
+            validated_at_write: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -866,6 +876,8 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &derived,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 41,
+
+            validated_at_write: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,
@@ -882,6 +894,8 @@ fn evicting_an_undo_removes_relocked_merge_edges_on_undirect_sources() -> Result
         &m,
         &crate::identity_topology::StoredIdentityOpEvent {
             seq: 42,
+
+            validated_at_write: false,
             at: 1,
             actor: None,
             source: ClaimSource::Inferred,

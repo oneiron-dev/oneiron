@@ -564,6 +564,8 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     };
     let split_record = StoredIdentityOpEvent {
         seq: 2,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -592,6 +594,8 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
     let cases = vec![
         StoredIdentityOpEvent {
             seq: 1,
+
+            validated_at_write: false,
             at: 100,
             actor: Some(actor),
             source: ClaimSource::UserStated,
@@ -608,6 +612,8 @@ fn stored_event_wire_round_trips_canonically_and_fails_closed() {
         },
         StoredIdentityOpEvent {
             seq: 3,
+
+            validated_at_write: false,
             at: 300,
             actor: None,
             source: ClaimSource::Inferred,
@@ -1749,6 +1755,8 @@ fn replicated_merge_record(
 ) -> StoredIdentityOpEvent {
     StoredIdentityOpEvent {
         seq,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -1805,6 +1813,8 @@ fn partial_multi_head_split_authorizes_no_shell_until_complete() {
         event_id,
         &StoredIdentityOpEvent {
             seq: 50,
+
+            validated_at_write: false,
             at: 200,
             actor: None,
             source: ClaimSource::Inferred,
@@ -2094,6 +2104,8 @@ fn reassignment_map_rejects_duplicate_items_in_the_table() {
 fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
     let record = StoredIdentityOpEvent {
         seq: 1,
+
+        validated_at_write: false,
         at: 100,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2167,6 +2179,8 @@ fn reassignment_map_wire_rejects_unsorted_and_duplicate_rows() {
 fn type_76_decoder_rejects_noncanonical_map_fields() {
     let record = StoredIdentityOpEvent {
         seq: 1,
+
+        validated_at_write: false,
         at: 100,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2437,6 +2451,8 @@ fn reconcile_materializes_and_tears_shell_edges_from_the_fold() {
     let undo_event = id(0x71);
     let undo_record = StoredIdentityOpEvent {
         seq: 51,
+
+        validated_at_write: false,
         at: 300,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3255,6 +3271,8 @@ fn replicated_resolution_is_validated_against_the_same_door_rule() {
     // the shared rule rejects it typed, never a lighter replay-side pass.
     let second = StoredIdentityOpEvent {
         seq: 500,
+
+        validated_at_write: false,
         at: 400,
         actor: None,
         source: ClaimSource::UserStated,
@@ -3290,6 +3308,8 @@ fn replicated_resolution_is_validated_against_the_same_door_rule() {
     let open_park = park_merge_proposal(&vault, vec![other_loser], survivor, 210);
     let misscoped = StoredIdentityOpEvent {
         seq: 501,
+
+        validated_at_write: false,
         at: 400,
         actor: None,
         source: ClaimSource::UserStated,
@@ -3424,6 +3444,8 @@ fn fold_rejected_duplicate_resolution_mints_no_outcome_receipt() {
         .expect("winner exists");
     let loser_row = StoredIdentityOpEvent {
         seq: winner_record.seq + 1,
+
+        validated_at_write: false,
         at: 400,
         actor: None,
         source: ClaimSource::UserStated,
@@ -3795,6 +3817,8 @@ fn sync_reconcile_derives_and_retires_replicated_assignment_rows() {
     let event_id = id(0x74);
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3834,6 +3858,8 @@ fn sync_reconcile_derives_and_retires_replicated_assignment_rows() {
         id(0x75),
         &StoredIdentityOpEvent {
             seq: 51,
+
+            validated_at_write: false,
             action: StoredIdentityOpAction::Undo { target: event_id },
             evidence: None,
             ..record
@@ -3936,6 +3962,8 @@ fn seam_apply_facet(
 fn facet_event_wire_round_trips_and_bounds_its_mask_count() {
     let record = |facets: Vec<EntityId>| StoredIdentityOpEvent {
         seq: 1,
+
+        validated_at_write: false,
         at: 100,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3998,6 +4026,8 @@ fn zero_applied_counts_stay_off_the_wire() {
     let entries = |action| {
         StoredIdentityOpEvent {
             seq: 1,
+
+            validated_at_write: false,
             at: 100,
             actor: None,
             source: ClaimSource::Inferred,
@@ -4215,6 +4245,8 @@ fn reassignment_records_only_claims_the_origin_owns() {
 fn a_parked_facet_event_is_refused_at_the_replicated_door_too() {
     let record = |approval| StoredIdentityOpEvent {
         seq: 7,
+
+        validated_at_write: false,
         at: 100,
         actor: None,
         source: ClaimSource::Inferred,
@@ -4277,6 +4309,8 @@ fn applied_counts_are_bounded_by_the_map_and_the_consent_axis() {
     let record = |approval, entries: Vec<ReassignmentEntry>, applied_assigned, applied_residue| {
         StoredIdentityOpEvent {
             seq: 9,
+
+            validated_at_write: false,
             at: 100,
             actor: None,
             source: ClaimSource::Inferred,
@@ -4715,6 +4749,8 @@ fn assert_distinct_event_wire_round_trips_and_pins_the_normalized_pair() {
     let pair = distinct_pair_key(id(0x21), id(0x22));
     let record = StoredIdentityOpEvent {
         seq: 7,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -5111,6 +5147,8 @@ fn cancellation_without_a_participant_delete_is_not_effective_or_receipted() {
     let fake = id(0x70);
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 300,
         actor: None,
         source: ClaimSource::Inferred,
@@ -5230,5 +5268,52 @@ fn generic_batch_delete_cannot_bypass_active_merge_or_open_proposal_guard() {
     assert_eq!(
         expect_rejection(err),
         IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: source }
+    );
+}
+
+#[test]
+fn writer_verified_event_arriving_after_author_and_head_erasure_keeps_history_without_ghost_edge() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let author = put_person(&vault, 0x63);
+    vault
+        .delete_entity_with_reason(&author, crate::deletion::DeleteReason::GdprDelete)
+        .expect("author erased before event arrives");
+    vault
+        .delete_entity(&survivor)
+        .expect("head erased before event arrives");
+    let event = id(0x70);
+    let mut record = replicated_merge_record(vec![source], survivor, 50);
+    record.actor = Some(WriteActor::new(author, EdgeActorClass::Human));
+    record.validated_at_write = true;
+    put_identity_event_record(&vault, event, &record);
+    let rtxn = vault.store.env.read_txn().expect("read txn");
+    let store_events =
+        super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(
+            &vault.store,
+            &rtxn,
+        )
+        .expect("store fold");
+    assert_eq!(
+        store_events,
+        vault
+            .fold_effective_identity_topology_events_in_txn(&rtxn)
+            .expect("vault fold")
+    );
+    assert_eq!(
+        fold_identity_topology_log(&store_events)
+            .current_event
+            .get(&source),
+        Some(&event)
+    );
+    drop(rtxn);
+    vault
+        .with_write_txn(|wtxn| vault.reconcile_identity_topology_edges_in_txn(wtxn))
+        .expect("reconcile without resurrecting an edge to erased head");
+    assert!(
+        !vault
+            .edge_exists(&source, EdgeKind::MergedInto, &survivor)
+            .expect("read edge")
     );
 }

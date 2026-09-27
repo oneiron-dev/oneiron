@@ -1408,6 +1408,8 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -1775,6 +1777,8 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
     let event_id = EntityId::from_bytes([0x70; 16])?;
     let record = StoredIdentityOpEvent {
         seq: 50,
+
+        validated_at_write: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,

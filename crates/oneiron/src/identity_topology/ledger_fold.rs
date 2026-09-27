@@ -212,13 +212,58 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
     let events = identity_topology_events_for_store_in_txn(store, rtxn)?;
     let mut effective = Vec::with_capacity(events.len());
     for event in events {
+        let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+            store,
+            rtxn,
+            &event.event_id,
+        )?
+        .ok_or(crate::error::Error::CorruptedIndex(
+            "identity topology event index",
+        ))?;
+        let sealed = identity_event_validated_in_txn(store, rtxn, &event.event_id)?;
         let references_complete = match &event.action {
             IdentityTopologyAction::Apply(op) => {
-                identity_event_validated_in_txn(store, rtxn, &event.event_id)?
-                    || matches!(
-                        validate_identity_op_participants_for_store_in_txn(store, rtxn, op)?,
-                        IdentityTopologyParticipantValidation::Complete
-                    )
+                if sealed {
+                    true
+                } else {
+                    match validate_identity_op_participants_for_store_in_txn(store, rtxn, op)? {
+                        IdentityTopologyParticipantValidation::Complete => true,
+                        IdentityTopologyParticipantValidation::Invalid(_) => false,
+                        IdentityTopologyParticipantValidation::Deferred => {
+                            // A producer stamp alone cannot authorize a
+                            // never-materialized participant. Only a local
+                            // hard-delete marker for each missing id can stand
+                            // in for a row previously validated by the writer.
+                            if !record.validated_at_write {
+                                false
+                            } else {
+                                let mut accounted = true;
+                                for participant in op.participants() {
+                                    if identity_topology_entity_type_for_store_in_txn(
+                                        store,
+                                        rtxn,
+                                        &participant,
+                                    )?
+                                    .is_none()
+                                        && store
+                                            .sync_state
+                                            .get(
+                                                rtxn,
+                                                &crate::deletion::local_hard_delete_key(
+                                                    &participant,
+                                                ),
+                                            )?
+                                            .is_none()
+                                    {
+                                        accounted = false;
+                                        break;
+                                    }
+                                }
+                                accounted
+                            }
+                        }
+                    }
+                }
             }
             IdentityTopologyAction::Undo { target } => {
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, target)?
@@ -277,20 +322,30 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 }
             }
         };
-        // The actor ref and class are stamped into the immutable event at
-        // admission. A later actor delete does not rewrite a decided op.
-        // An actor-bearing event needs an admission witness; an unbound
-        // actor has no live reference to recheck. The witness persists when
-        // an author is erased, so neither fold dereferences a live actor.
-        if references_complete
-            && (identity_event_validated_in_txn(store, rtxn, &event.event_id)?
-                || super::store_entity_helpers::identity_topology_event_for_store_in_txn(
-                    store,
-                    rtxn,
-                    &event.event_id,
-                )?
-                .is_some_and(|record| record.actor.is_none()))
-        {
+        // A writer-stamped author is historical, not a live authority
+        // dependency. An unstamped legacy event still waits for the actor
+        // to materialize before its first local validation witness is set.
+        let actor_complete = sealed
+            || record.actor.is_none()
+            || match record.actor {
+                Some(actor) if record.validated_at_write => {
+                    identity_topology_entity_type_for_store_in_txn(
+                        store,
+                        rtxn,
+                        &actor.entity_ref(),
+                    )?
+                    .is_some()
+                        || store
+                            .sync_state
+                            .get(
+                                rtxn,
+                                &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
+                            )?
+                            .is_some()
+                }
+                Some(_) | None => false,
+            };
+        if references_complete && actor_complete {
             effective.push(event);
         }
     }
