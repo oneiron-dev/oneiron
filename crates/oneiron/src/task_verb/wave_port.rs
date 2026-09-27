@@ -11,6 +11,16 @@ use crate::wave_orchestration::*;
 use crate::{EntityId, Vault};
 use std::collections::BTreeMap;
 
+/// Bounded scan of durable, still-live TASKs minted by a wave plan.
+/// The cursor advances across RAW inspected TASK ids, even when this page
+/// contains no wave TASKs, so non-wave rows cannot strand later work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WaveDispatchPage {
+    pub task_refs: Vec<EntityId>,
+    pub next_after: Option<EntityId>,
+    pub exhausted: bool,
+}
+
 pub struct VaultWaveTaskPort<'a> {
     vault: &'a Vault,
     actor: EntityId,
@@ -264,6 +274,37 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
 }
 
 impl Vault {
+    /// Scan one bounded slice of durable TASKs for unfinished wave work.
+    /// No readiness bit is stored: the running host checks the live graph
+    /// again before handing these refs to its executor.
+    pub fn wave_dispatch_page(
+        &self,
+        after: Option<EntityId>,
+        limit: usize,
+    ) -> crate::Result<WaveDispatchPage> {
+        const MAX_PAGE: usize = 256;
+        let limit = limit.clamp(1, MAX_PAGE);
+        let scanned =
+            self.entities_by_type_page(crate::registry::ENTITY_TYPE_TASK, after.as_ref(), limit)?;
+        let mut task_refs = Vec::new();
+        for id in &scanned {
+            let Some(body) = super::wire_decode::task_verb_body(self, *id)? else {
+                continue;
+            };
+            if body.provenance == facade_provenance(WAVE_PLAN_ATTEMPT_KIND)
+                && body.terminal().is_none()
+                && body.settled_ladder_disposition().is_none()
+            {
+                task_refs.push(*id);
+            }
+        }
+        Ok(WaveDispatchPage {
+            task_refs,
+            next_after: scanned.last().copied(),
+            exhausted: scanned.len() < limit,
+        })
+    }
+
     /// Queue a planning attempt. Planning itself remains host/agent code.
     pub fn enqueue_wave_plan(
         &self,

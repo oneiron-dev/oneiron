@@ -16,7 +16,7 @@ use oneiron_server::{
 };
 
 /// Host-supplied consumer of the live ready TASK subset.
-pub type WaveReadyDispatcher = Box<dyn FnMut(&[EntityId]) -> Result<()> + Send>;
+pub type WaveReadyDispatcher = Box<dyn FnMut(&Vault, &[EntityId]) -> Result<()> + Send>;
 
 /// Builds the per-pass attempt executor. Generic-associated so executors may
 /// borrow factory-owned state (the backend constructed at startup, the
@@ -45,7 +45,7 @@ pub trait PassExecutorFactory {
 
     /// The existing host TASK dispatch path receives only the live ready set.
     /// A factory that registers a planner must also supply this consumer.
-    fn dispatch_wave_ready(&mut self, _ready: &[EntityId]) -> Result<()> {
+    fn dispatch_wave_ready(&mut self, _vault: &Vault, _ready: &[EntityId]) -> Result<()> {
         Err(oneiron::Error::InvalidConfig(
             "wave dispatcher not registered".into(),
         ))
@@ -228,11 +228,11 @@ impl PassExecutorFactory for ConsolidationExecutorFactory {
         self.wave_planner.clone()
     }
 
-    fn dispatch_wave_ready(&mut self, ready: &[EntityId]) -> Result<()> {
+    fn dispatch_wave_ready(&mut self, vault: &Vault, ready: &[EntityId]) -> Result<()> {
         self.wave_dispatch
             .as_mut()
             .ok_or_else(|| oneiron::Error::InvalidConfig("wave dispatcher not registered".into()))?(
-            ready,
+            vault, ready,
         )
     }
 

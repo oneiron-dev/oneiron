@@ -505,95 +505,89 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
         _ => panic!("unexpected wave enqueue outcome"),
     };
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let dispatched = Arc::new(std::sync::Mutex::new(Vec::<oneiron::EntityId>::new()));
-    let observer = Arc::clone(&dispatched);
+    let (sent, mut claimed_tasks) = tokio::sync::mpsc::unbounded_channel();
     let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
         .with_wave_planner(
             Arc::new(HostCutPlanner {
                 calls: Arc::clone(&calls),
             }),
-            Box::new(move |ready| {
-                observer
-                    .lock()
-                    .expect("ready observer")
-                    .extend_from_slice(ready);
+            Box::new(move |vault, ready| {
+                for &task in ready {
+                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
+                        "tasks.realize",
+                        ClaimAttempt {
+                            lease_owner: "executor".into(),
+                            now: u64::MAX,
+                        },
+                    )?
+                    else {
+                        return Err(oneiron::Error::InvalidConfig(
+                            "ready TASK had no claimable attempt".into(),
+                        ));
+                    };
+                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
+                        return Err(oneiron::Error::InvalidConfig(
+                            "dispatch claimed a different TASK".into(),
+                        ));
+                    }
+                    sent.send(task).map_err(|_| {
+                        oneiron::Error::InvalidConfig("dispatch observer closed".into())
+                    })?;
+                }
                 Ok(())
             }),
         );
     let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
+    let stop = supervisor.shutdown_handle();
+    let (report, (first, second)) = tokio::join!(supervisor.run(), async {
+        let first = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
+            .await
+            .expect("initial dispatch timeout")
+            .expect("initial dispatch");
+        assert_ne!(first, epic);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            AttemptQueue::new(&vault)
+                .get(attempt.id)
+                .expect("attempt")
+                .unwrap()
+                .state,
+            AttemptState::Completed
+        );
+        // Keep the supervisor alive. A TASK terminal write must wake its
+        // durable rescan and hand the dependent to the SAME dispatcher.
+        vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .land_task_result(
+                first,
+                &TaskResultInput {
+                    result_ref: actor,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("clock")
+                        .as_secs()
+                        + 1,
+                },
+            )
+            .expect("complete blocker");
+        let second = tokio::time::timeout(Duration::from_secs(5), claimed_tasks.recv())
+            .await
+            .expect("dependent dispatch timeout")
+            .expect("dependent dispatch");
+        assert_ne!(second, first);
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "no second plan was needed to wake the dependent"
+        );
+        stop.shutdown();
+        (first, second)
+    },);
     drop(wake);
     drop(hint);
-    let report = tokio::time::timeout(
-        Duration::from_secs(5),
-        WakeSupervisor::new(&vault, push, factory, test_config()).run(),
-    )
-    .await
-    .expect("wave supervisor must not loop on its own empty-claim notification");
     assert_eq!(report.passes_completed, 0, "planning is not a Dreamer pass");
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert_eq!(
-        AttemptQueue::new(&vault)
-            .get(attempt.id)
-            .expect("attempt")
-            .unwrap()
-            .state,
-        AttemptState::Completed
-    );
-    let ready = dispatched.lock().expect("ready observer").clone();
-    assert_eq!(ready.len(), 1, "blocked second TASK was not dispatched");
-    let first = ready[0];
-    let ClaimOutcome::Claimed(claimed) = AttemptQueue::new(&vault)
-        .claim_kind(
-            "tasks.realize",
-            ClaimAttempt {
-                lease_owner: "executor".into(),
-                now: u64::MAX,
-            },
-        )
-        .expect("claim first")
-    else {
-        panic!("ready TASK claim");
-    };
-    assert_eq!(claimed.task_ref.as_deref(), Some(first.to_hex().as_str()));
-    assert!(matches!(
-        AttemptQueue::new(&vault)
-            .claim_kind(
-                "tasks.realize",
-                ClaimAttempt {
-                    lease_owner: "executor".into(),
-                    now: u64::MAX
-                }
-            )
-            .expect("blocked claim"),
-        ClaimOutcome::Empty
-    ));
-    vault
-        .memory(actor, oneiron::EdgeActorClass::Human)
-        .land_task_result(
-            first,
-            &TaskResultInput {
-                result_ref: actor,
-                disposition: TaskTerminalDisposition::Completed,
-                finished_at: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("clock")
-                    .as_secs()
-                    + 1,
-            },
-        )
-        .expect("complete blocker");
-    assert!(matches!(
-        AttemptQueue::new(&vault)
-            .claim_kind(
-                "tasks.realize",
-                ClaimAttempt {
-                    lease_owner: "executor".into(),
-                    now: u64::MAX
-                }
-            )
-            .expect("unblocked claim"),
-        ClaimOutcome::Claimed(_)
-    ));
 
     // Same running-host flow crosses the durable TASK outbox and the
     // normalized Linear source: a wave TASK pushes, then a later poll applies.
@@ -605,11 +599,7 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
     );
     let (pushed, _) = sync.synchronize(200).expect("wave TASKs push");
     assert!(pushed.iter().any(|receipt| receipt.task_ref == first));
-    let second = pushed
-        .iter()
-        .find(|receipt| receipt.task_ref != first && receipt.task_ref != epic)
-        .expect("dependent TASK pushed")
-        .task_ref;
+    assert!(pushed.iter().any(|receipt| receipt.task_ref == second));
     let link = sync
         .tasks()
         .link(second)
@@ -636,5 +626,130 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
             .fields
             .description,
         from_tracker.description
+    );
+}
+
+#[tokio::test]
+async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
+    use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
+    use oneiron::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0x92, oneiron::registry::ENTITY_TYPE_PERSON);
+    let epic = vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("epic id");
+    vault
+        .enqueue_wave_plan(epic, "recover on startup", serde_json::Value::Null, 100)
+        .expect("enqueue");
+    let plans = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // This returns AFTER the cut and planning attempt committed. The new
+    // supervisor must find the TASKs without any pending wave.plan attempt.
+    let landed = crate::WaveHost::new(
+        &vault,
+        HostCutPlanner {
+            calls: Arc::clone(&plans),
+        },
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .run_plan_once("pre-crash", 100)
+    .expect("plan")
+    .expect("cut");
+    let first = landed.task_refs["first"];
+    let second = landed.task_refs["second"];
+    let handoffs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let attempts = Arc::clone(&handoffs);
+    let (sent, mut delivered) = tokio::sync::mpsc::unbounded_channel();
+    let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
+        .with_wave_planner(
+            Arc::new(HostCutPlanner {
+                calls: Arc::clone(&plans),
+            }),
+            Box::new(move |vault, ready| {
+                if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    return Err(oneiron::Error::InvalidConfig(
+                        "one transient handoff failure".into(),
+                    ));
+                }
+                for &task in ready {
+                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
+                        "tasks.realize",
+                        ClaimAttempt {
+                            lease_owner: "executor".into(),
+                            now: u64::MAX,
+                        },
+                    )?
+                    else {
+                        return Err(oneiron::Error::InvalidConfig("missing task claim".into()));
+                    };
+                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
+                        return Err(oneiron::Error::InvalidConfig("wrong task claim".into()));
+                    }
+                    sent.send(task)
+                        .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
+                }
+                Ok(())
+            }),
+        );
+    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let mut config = test_config();
+    config.backoff = RestartBackoffConfig {
+        initial: Duration::from_millis(10),
+        max: Duration::from_millis(10),
+    };
+    let supervisor = WakeSupervisor::new(&vault, push, factory, config);
+    let stop = supervisor.shutdown_handle();
+    let (report, ()) = tokio::join!(supervisor.run(), async {
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), delivered.recv())
+                .await
+                .expect("failed callback retry timeout")
+                .expect("first delivery"),
+            first
+        );
+        assert_eq!(
+            plans.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "restart must not replan a completed cut"
+        );
+        vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .land_task_result(
+                first,
+                &TaskResultInput {
+                    result_ref: actor,
+                    disposition: TaskTerminalDisposition::Completed,
+                    finished_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .expect("clock")
+                        .as_secs()
+                        + 1,
+                },
+            )
+            .expect("complete blocker");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), delivered.recv())
+                .await
+                .expect("dependent delivery timeout")
+                .expect("dependent"),
+            second
+        );
+        stop.shutdown();
+    });
+    drop(wake);
+    drop(hint);
+    assert_eq!(report.passes_completed, 0);
+    assert!(
+        handoffs.load(std::sync::atomic::Ordering::SeqCst) >= 3,
+        "failed first handoff, retry, and newly ready dependent"
     );
 }

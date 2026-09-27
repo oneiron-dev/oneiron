@@ -94,7 +94,7 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 #[cfg(test)]
 mod symbol_lease_tests;
 
-pub use wave_port::VaultWaveTaskPort;
+pub use wave_port::{VaultWaveTaskPort, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
 pub(crate) use linear_store::{forget_task_mirror, note_task_write};

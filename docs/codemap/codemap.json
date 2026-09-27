@@ -32225,13 +32225,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "VaultWaveTaskPort"
+      "VaultWaveTaskPort",
+      "WaveDispatchPage"
      ],
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {

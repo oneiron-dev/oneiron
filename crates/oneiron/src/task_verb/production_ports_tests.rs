@@ -81,6 +81,25 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
     let orchestration =
         WaveOrchestrator::new(VaultWaveTaskPort::new(&vault, owner, EdgeActorClass::Human));
     assert_eq!(orchestration.ready_set(&[a, b])?, vec![a]);
+    // The first raw TASK page is the non-wave epic. Even an empty filtered
+    // page advances its cursor so the durable scan finds later wave TASKs.
+    let first_page = vault.wave_dispatch_page(None, 1)?;
+    assert!(first_page.task_refs.is_empty());
+    assert!(!first_page.exhausted);
+    let mut cursor = first_page.next_after;
+    let mut recovered = Vec::new();
+    for _ in 0..8 {
+        let page = vault.wave_dispatch_page(cursor, 1)?;
+        recovered.extend(page.task_refs);
+        cursor = page.next_after;
+        if page.exhausted {
+            break;
+        }
+    }
+    recovered.sort();
+    let mut expected = vec![a, b];
+    expected.sort();
+    assert_eq!(recovered, expected);
     let claim = || {
         queue.claim_kind(
             super::consts::TASK_REALIZE_ATTEMPT_KIND,
@@ -106,6 +125,21 @@ fn wave_plan_attempt_lands_idempotent_tasks_and_dispatch_reads_live_blockers() -
         )
         .expect("land");
     assert_eq!(orchestration.ready_set(&[b])?, vec![b]);
+    let mut cursor = None;
+    let mut still_live = Vec::new();
+    for _ in 0..8 {
+        let page = vault.wave_dispatch_page(cursor, 1)?;
+        still_live.extend(page.task_refs);
+        cursor = page.next_after;
+        if page.exhausted {
+            break;
+        }
+    }
+    assert_eq!(
+        still_live,
+        vec![b],
+        "settled blocker is no longer a dispatch candidate"
+    );
     let ClaimOutcome::Claimed(second) = claim()? else {
         panic!("unblocked second task");
     };

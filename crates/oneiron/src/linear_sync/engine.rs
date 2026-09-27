@@ -169,7 +169,22 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
 
         let expected_link_revision = link.link_revision;
         let next_link_revision = link.next_revision()?;
-        let decision = decide_fields(&link.base_field_hashes, &snapshot.fields, &change.fields);
+        let mut decision = decide_fields(&link.base_field_hashes, &snapshot.fields, &change.fields);
+        // A local edit OFF a pinned conflicting value is an intentional
+        // resolution. An unrelated tracker event must not re-pin it while the
+        // tracker still holds the value the conflict witnessed. Keep the old
+        // common base until the conditional outbound publish succeeds.
+        let pending_resolution = pending_resolution_fields(&link, &snapshot.fields, &change.fields);
+        decision
+            .conflicts
+            .retain(|conflict| !pending_resolution.contains(&conflict.field));
+        let mut held_base_conflicts = decision.conflicts.clone();
+        held_base_conflicts.extend(
+            link.unresolved_conflicts
+                .iter()
+                .filter(|conflict| pending_resolution.contains(&conflict.field))
+                .cloned(),
+        );
         // `merge_fields` takes the issue value only for the fields the issue
         // OWNS in this change, and a conflicting field is never one of them, so
         // the conflicting task values are carried through untouched even when
@@ -211,12 +226,15 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             base_field_hashes: rebased_fields(
                 &link.base_field_hashes,
                 &change.fields,
-                &decision.conflicts,
+                &held_base_conflicts,
             ),
-            // Re-derived from the base this event was just attributed against,
-            // so a conflict the tracker has since reverted clears itself and a
-            // conflict still live stays pinned.
-            unresolved_conflicts: decision.conflicts.clone(),
+            remote_field_hashes: change.fields.field_hashes(),
+            // Keep the prior witness while a third-value local resolution is
+            // pending publication. It no longer blocks (the local value moved
+            // off task_value), but a later unrelated event needs that witness
+            // to avoid re-pinning the intentional resolution against the old
+            // three-way base. The conditional push clears it on success.
+            unresolved_conflicts: held_base_conflicts.clone(),
             link_revision: next_link_revision,
             updated_at: now,
         };
@@ -268,6 +286,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: created.fields.field_hashes(),
+            remote_field_hashes: created.fields.field_hashes(),
             unresolved_conflicts: Vec::new(),
             link_revision: 0,
             updated_at: now,
@@ -345,7 +364,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         let pushed = self.outbound.update_issue(
             operation_id,
             &link.issue,
-            &link.base_field_hashes,
+            &link.remote_field_hashes,
             &snapshot.fields,
         )?;
         let updated = TaskIssueLink {
@@ -363,6 +382,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             last_operation_id: operation_id,
             last_direction: LinearSyncDirection::TaskToIssue,
             base_field_hashes: pushed.fields.field_hashes(),
+            remote_field_hashes: pushed.fields.field_hashes(),
             // Reached only with an empty barrier, and this push republished
             // every bidirectional field, so nothing is left unresolved.
             unresolved_conflicts: Vec::new(),
@@ -571,6 +591,27 @@ fn decide_fields(
         }
     }
     decision
+}
+
+/// Conflicted fields whose LOCAL side deliberately moved while the REMOTE
+/// side still holds the value of the pinned conflict. They remain pending
+/// local resolutions, not renewed conflicts after an unrelated inbound event.
+fn pending_resolution_fields(
+    link: &TaskIssueLink,
+    task: &MirroredTaskFields,
+    issue: &MirroredTaskFields,
+) -> BTreeSet<String> {
+    let remote_hashes = issue.field_hashes();
+    link.unresolved_conflicts
+        .iter()
+        .filter(|conflict| {
+            task.field_value(&conflict.field) != conflict.task_value
+                && task.field_value(&conflict.field) != issue.field_value(&conflict.field)
+                && link.remote_field_hashes.get(&conflict.field)
+                    == remote_hashes.get(&conflict.field)
+        })
+        .map(|conflict| conflict.field.clone())
+        .collect()
 }
 
 /// The base after one inbound event: the tracker's post-event value for every

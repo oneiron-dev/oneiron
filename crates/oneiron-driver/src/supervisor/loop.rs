@@ -1,4 +1,5 @@
 //! Biased-select supervisor loop with panic containment and backoff.
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -7,7 +8,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::WaveHost;
-use oneiron::{AttemptQueue, Vault, WakeCancellation, WakePassReport, WakePassStop};
+use oneiron::{AttemptQueue, EntityId, Vault, WakeCancellation, WakePassReport, WakePassStop};
 use tokio::sync::{Semaphore, watch};
 
 use super::budget_ids::{
@@ -165,11 +166,18 @@ where
         // disappear between snapshot and receiver nor need a polling timer.
         let mut wave_events = AttemptQueue::new(vault).subscribe();
         let wave_planner = factory.wave_planner();
-        let mut wave_pending = wave_planner.is_some();
+        let mut wave_plan_pending = wave_planner.is_some();
+        let mut wave_scan_pending = wave_planner.is_some();
+        let mut scan_after: Option<EntityId> = None;
+        // Delivery is at least once across a process restart, so the host
+        // callback must be idempotent by TASK id. Within one process this set
+        // prevents its own claim/write notifications from redelivering work.
+        let mut delivered = BTreeSet::new();
+        let mut dispatch_backoff = RestartBackoff::new(config.backoff);
 
         loop {
-            if wave_pending {
-                wave_pending = false;
+            if wave_plan_pending {
+                wave_plan_pending = false;
                 if let (Some(planner), Some(actor)) = (wave_planner.as_ref(), factory.actor()) {
                     let host = WaveHost::new(
                         vault,
@@ -178,22 +186,68 @@ where
                         actor.actor_class(),
                     );
                     match host.run_plan_once(&config.lease_owner, now_secs()) {
-                        Ok(Some(receipt)) => {
-                            let candidates: Vec<_> = receipt.task_refs.values().copied().collect();
-                            match host.ready_to_dispatch(&candidates) {
-                                Ok(ready) => {
-                                    if let Err(error) = factory.dispatch_wave_ready(&ready) {
-                                        tracing::error!(?error, "wave ready-set dispatch failed");
-                                    }
-                                }
-                                Err(error) => tracing::error!(%error, "wave readiness read failed"),
-                            }
-                            // One claim per iteration bounds work; drain all
-                            // already-queued waves before waiting for a signal.
-                            wave_pending = true;
+                        Ok(Some(_receipt)) => {
+                            // Scan the durable TASK plane, not just the new
+                            // receipt: a crash after plan commit still has work.
+                            scan_after = None;
+                            wave_scan_pending = true;
+                            wave_plan_pending = true;
                         }
                         Ok(None) => {}
                         Err(error) => tracing::error!(%error, "wave plan attempt failed"),
+                    }
+                }
+                if shutdown.requested() {
+                    break;
+                }
+                continue;
+            }
+            if wave_scan_pending {
+                let result = vault.wave_dispatch_page(scan_after, 256).and_then(|page| {
+                    let planner = wave_planner.as_ref().ok_or_else(|| {
+                        oneiron::Error::InvalidConfig("wave planner not registered".into())
+                    })?;
+                    let actor = factory.actor().ok_or_else(|| {
+                        oneiron::Error::InvalidConfig("wave dispatch actor not registered".into())
+                    })?;
+                    let host = WaveHost::new(
+                        vault,
+                        Arc::clone(planner),
+                        actor.entity_ref(),
+                        actor.actor_class(),
+                    );
+                    let ready = host
+                        .ready_to_dispatch(&page.task_refs)
+                        .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;
+                    let pending: Vec<_> = ready
+                        .into_iter()
+                        .filter(|task| !delivered.contains(task))
+                        .collect();
+                    if !pending.is_empty() {
+                        factory.dispatch_wave_ready(vault, &pending)?;
+                    }
+                    Ok((page, pending))
+                });
+                match result {
+                    Ok((page, handed_off)) => {
+                        delivered.extend(handed_off);
+                        dispatch_backoff.reset();
+                        scan_after = page.next_after;
+                        wave_scan_pending = !page.exhausted;
+                        if !wave_scan_pending {
+                            scan_after = None;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            ?error,
+                            "wave ready-set dispatch failed; retrying durable page"
+                        );
+                        if !wait_backoff(&mut shutdown, dispatch_backoff.advance()).await {
+                            break;
+                        }
+                        // Keep the RAW page cursor: failed handoffs cannot
+                        // advance past this page or disappear on restart.
                     }
                 }
                 if shutdown.requested() {
@@ -211,7 +265,9 @@ where
                     biased;
                     () = shutdown.triggered() => break,
                     _ = wave_events.recv(), if wave_planner.is_some() => {
-                        wave_pending = true;
+                        wave_plan_pending = true;
+                        wave_scan_pending = true;
+                        scan_after = None;
                         continue;
                     }
                     tick = ticks.next_tick() => match tick {

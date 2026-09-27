@@ -8,20 +8,17 @@ use super::codec::{field_hash, linear_event_digest};
 
 /// Wire version of the mirror link rows and receipts.
 ///
-/// v2 made two correctness facts durable that v1 kept nowhere: the inbound
-/// event history and the unresolved-conflict barrier. v3 (ONE-1959) fixes the
-/// shape of both: the history becomes a NON-EVICTING digest set (a 32-entry
-/// ring forgets identities that are still redeliverable) and every row carries
-/// a [`TaskIssueLink::link_revision`] compare-and-set token. An older row read
-/// as a v3 row would present an empty history and revision zero — that is, it
-/// would silently re-open the replay and the clobber — so the row namespace
-/// moves with the version and the version stays hashed into every operation id.
-pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 3;
+/// v3 (ONE-1959) made the inbound history non-evicting and the link writes
+/// compare-and-set. v4 separates the REMOTE CAS snapshot from the three-way
+/// merge base: a conflicted field keeps its old merge base but the tracker has
+/// already moved. Old rows cannot supply that separate remote observation, so
+/// the link namespace and operation-id version both move with the shape.
+pub const LINEAR_SYNC_SCHEMA_VERSION: u8 = 4;
 
 /// Durable key prefix of the TASK ↔ issue link row. Versioned with
 /// [`LINEAR_SYNC_SCHEMA_VERSION`], so a row written under the older shape can
 /// never be read back as the newer one.
-pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v3:";
+pub const LINEAR_SYNC_LINK_KEY_PREFIX: &[u8] = b"linear_sync:link:v4:";
 
 /// Domain separator for [`linear_operation_id`](crate::linear_operation_id); pinned, because operation ids
 /// are compared across processes and replicas to suppress duplicate writes.
@@ -207,6 +204,11 @@ pub struct TaskIssueLink {
     /// the divergence, let the next unrelated event clear the barrier, and hand
     /// the following push the overwrite the pull refused (ONE-1959).
     pub base_field_hashes: BTreeMap<String, [u8; 32]>,
+    /// Current tracker values witnessed by the last accepted inbound event or
+    /// outbound receipt. Unlike the common merge base, conflicted fields move
+    /// here with the tracker, so a human resolution can use a sound remote
+    /// conditional-write precondition without declaring the conflict settled.
+    pub remote_field_hashes: BTreeMap<String, [u8; 32]>,
     /// Same-field concurrent edits this link refused to resolve, pinned with
     /// both sides' values.
     ///
@@ -225,8 +227,11 @@ pub struct TaskIssueLink {
     /// the base, so a conflict the tracker has since reverted clears itself.
     ///
     /// Re-derived, never accumulated: an inbound event rewrites this set from
-    /// the base comparison it just performed, so a settled conflict does not
-    /// linger. A settled conflict cannot be RESURRECTED either, which needs two
+    /// the base comparison it just performed. A local third-value resolution
+    /// may retain its prior witness until a conditional outbound write lands;
+    /// `blocking_conflicts` checks the current local value, so that witness
+    /// does NOT bar the deliberate resolution. A settled conflict cannot be
+    /// RESURRECTED either, which needs two
     /// separate guarantees — `seen_event_digests` stops the resolved event's
     /// own redelivery, `task_revision` rejects a pre-resolution full TASK
     /// snapshot, and `link_revision` stops an older in-flight operation from
