@@ -1,4 +1,4 @@
-//! Transactional epoch integration, output-marker mint, and swap plans.
+//! Transactional epoch integration, typed executor coverage, and swap plans.
 
 use super::*;
 
@@ -32,55 +32,26 @@ impl CompactionDriver {
         Ok(plan)
     }
 
-    /// Commit the epoch summary and every executor coverage marker in ONE
-    /// transaction. The live views move only after that transaction commits.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "sealed compaction input and atomic output markers"
-    )]
-    pub(crate) fn integrate_with_output_markers(
+    /// Commit executor run/span coverage with the actual minted SUMMARY.
+    /// Read-time views project this record; the driver advances only on commit.
+    pub(crate) fn integrate_with_coverage(
         &mut self,
         vault: &Vault,
         byline: WriteActor,
         request: &CompactionRequest,
         product: CompactionProduct,
         accumulated: &[CompactionWindowMessage],
-        outputs: &mut crate::compaction::output::OutputWorkingContext,
-        markers: &[(crate::code_run::CodeRunRawOutput, Vec<u8>)],
+        span: &crate::code_run::ExecutorOutputSpan,
     ) -> Result<SwapPlan> {
-        let (_, last) = validate_window_span(&request.window)?;
-        let covered = last
-            .checked_sub(request.turn_start)
-            .and_then(|span| span.checked_add(1))
-            .ok_or(Error::InvariantViolation(
-                "compaction output span is invalid",
-            ))?;
-        if markers.len() as u64 != covered {
-            return Err(Error::InvariantViolation(
-                "compaction output markers must cover the span",
-            ));
-        }
-        let plan = self.integrate_inner(
+        self.integrate_inner(
             vault,
             &request.session_ref,
             byline,
             request,
             product,
             accumulated,
-            |txn| {
-                for (marker, raw) in markers {
-                    vault.put_code_run_raw_output_in_txn(txn, marker, raw)?;
-                }
-                Ok(())
-            },
-        )?;
-        let last = request
-            .window
-            .last()
-            .expect("integrated window is nonempty")
-            .turn;
-        outputs.compact_span(request.turn_start, last);
-        Ok(plan)
+            |txn, mint| vault.put_code_run_compaction_coverage_in_txn(txn, span, mint),
+        )
     }
 
     /// Integrates a finished compaction: mints the epoch summary and returns
@@ -112,7 +83,7 @@ impl CompactionDriver {
             request,
             product,
             accumulated,
-            |_| Ok(()),
+            |_, _| Ok(()),
         )
     }
 
@@ -128,7 +99,7 @@ impl CompactionDriver {
         request: &CompactionRequest,
         product: CompactionProduct,
         accumulated: &[CompactionWindowMessage],
-        extra: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+        extra: impl FnOnce(&mut heed::RwTxn<'_>, &crate::compaction::EpochMint) -> Result<()>,
     ) -> Result<SwapPlan> {
         let CompactionState::Compacting {
             request: active, ..

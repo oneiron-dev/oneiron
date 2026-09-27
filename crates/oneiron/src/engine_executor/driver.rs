@@ -1,7 +1,5 @@
 //! Executor driver: struct, constructors, and the witness-turn doors.
 
-use super::record::completed_step_count;
-use super::store::compacted_output_marker;
 use super::types::{EngineExecutorResult, ExecutorLegibility, JsCodeModeRuntime};
 use crate::code_run::{ExecutorStorage, GatedActorWrite};
 use crate::compaction::output::{OutputDecayPolicy, OutputWorkingContext};
@@ -139,38 +137,23 @@ impl<'a> EngineNativeExecutor<'a> {
         let record = self.storage.get_code_run_replay_record(&run_id)?.ok_or(
             crate::Error::CorruptedIndex("missing executor replay record"),
         )?;
-        let completed = completed_step_count(&record)?;
-        let last = request
-            .window
-            .last()
-            .ok_or(crate::Error::InvariantViolation(
-                "compaction window carries no messages",
-            ))?
-            .turn;
-        if last >= completed || request.turn_start > last {
-            return Err(crate::Error::InvalidConfig(
-                "executor compaction span exceeds committed observations".into(),
-            )
-            .into());
-        }
+        let span = crate::code_run::ExecutorOutputSpan::from_replay(&record, request)?;
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
-        let markers = (request.turn_start..=last)
-            .map(|seq| compacted_output_marker(run_id, seq))
-            .collect::<crate::Result<Vec<_>>>()?;
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             unreachable!("canonical storage checked before sync")
         };
-        let plan = driver.integrate_with_output_markers(
-            vault,
-            byline,
-            request,
-            product,
-            accumulated,
-            &mut self.output_context,
-            &markers,
-        )?;
+        let plan =
+            driver.integrate_with_coverage(vault, byline, request, product, accumulated, &span)?;
+        // This is only an in-memory cache; the next assembly re-derives it
+        // from the typed row joined to the committed SUMMARY.
+        let last = request
+            .window
+            .last()
+            .expect("integrated window is nonempty")
+            .turn;
+        self.output_context.compact_span(request.turn_start, last);
         Ok(plan)
     }
 

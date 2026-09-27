@@ -11,9 +11,8 @@ use super::record::{
 };
 use super::store::{
     RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
-    implicit_speak_output_path, load_utf8_output, observation_output_path, output_was_compacted,
-    record_output, record_text_output, recoverable_chunk_path, script_output_path,
-    validate_runtime_outputs,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, record_output,
+    record_text_output, recoverable_chunk_path, script_output_path, validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -595,22 +594,26 @@ impl EngineNativeExecutor<'_> {
         let completed_steps = completed_step_count(record)?;
         // Reconstruct references from the routed durable replay record. No
         // observation is copied into the base vault for off-record sessions.
-        if self.output_run != Some(record.run_id) {
-            self.output_context = OutputWorkingContext::default();
-            self.output_run = Some(record.run_id);
-        }
+        // Working flags are projections of committed typed coverage. Rebuild
+        // rather than trusting a cached flag or any raw-output existence.
+        self.output_context = OutputWorkingContext::default();
+        self.output_run = Some(record.run_id);
+        let coverage = match &self.storage {
+            crate::code_run::ExecutorStorage::Canonical(vault) => {
+                vault.code_run_compaction_coverage(record.run_id)?
+            }
+            crate::code_run::ExecutorStorage::Session(_) => Vec::new(),
+        };
         let mut raw = HashMap::new();
         for seq in 0..completed_steps {
             let observation =
                 load_utf8_output(&self.storage, record, &observation_output_path(seq))?;
             let source = OutputRef::from_bytes(observation.as_bytes());
-            if seq >= self.output_context.len() as u64 {
-                let overview: String = observation.chars().take(128).collect();
-                self.output_context
-                    .record_referenced(seq, source, overview)?;
-                if output_was_compacted(&self.storage, record.run_id, seq)? {
-                    self.output_context.compact_span(seq, seq);
-                }
+            let overview: String = observation.chars().take(128).collect();
+            self.output_context
+                .record_referenced(seq, source, overview)?;
+            if coverage.iter().any(|row| row.covers(record.run_id, seq)) {
+                self.output_context.compact_span(seq, seq);
             }
             raw.insert(source, observation);
         }

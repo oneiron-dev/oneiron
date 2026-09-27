@@ -738,7 +738,9 @@ fn working_outputs_decay_and_compaction_restores_exact_bytes() -> Result<()> {
 
 #[test]
 fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()> {
-    use crate::code_run::CodeRunRawOutput;
+    use crate::code_run::{
+        CodeRunDeterminism, CodeRunReplayRecord, CodeRunStepCheckpoint, ExecutorOutputSpan,
+    };
     use crate::compaction::output::{OutputDecayPolicy, OutputTier, OutputWorkingContext};
 
     let (_dir, vault) = open_vault();
@@ -755,35 +757,31 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
     driver.evaluate_now(&vault, u64::MAX)?;
     let request = driver.request_for(&vault, &session, host_window(&vault, 0xB1, 1, 2))?;
     let product = driver.backend().compact(&request)?;
-    let first = CodeRunRawOutput::from_bytes("executor/compacted/1", b"first marker")?;
-    let second = CodeRunRawOutput::from_bytes("executor/compacted/2", b"second marker")?;
+    let run = entity(0xB8);
+    let mut replay = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(1, [0x55; 32]));
+    for seq in 0..3_u64 {
+        replay.step_checkpoints.push(CodeRunStepCheckpoint::new(
+            seq,
+            format!("step-{seq}"),
+            [0x33; 32],
+            seq,
+        )?);
+    }
+    vault.put_code_run_replay_record(&replay)?;
+    let span = ExecutorOutputSpan::from_replay(&replay, &request)?;
     let before = summary_row_count(&vault);
     driver
-        .integrate_with_output_markers(
+        .integrate_with_coverage(
             &vault,
             actor,
             &request,
             product.clone(),
             &[],
-            &mut outputs,
-            &[(first.clone(), b"first marker".to_vec())],
+            &span.fail_after_write_for_test(),
         )
-        .expect_err("a partial coverage list cannot commit a summary");
-    driver
-        .integrate_with_output_markers(
-            &vault,
-            actor,
-            &request,
-            product.clone(),
-            &[],
-            &mut outputs,
-            &[
-                (first.clone(), b"first marker".to_vec()),
-                (second.clone(), b"wrong".to_vec()),
-            ],
-        )
-        .expect_err("second marker refusal rolls back first marker AND summary");
+        .expect_err("coverage write failure rolls back both coverage and SUMMARY");
     assert_eq!(summary_row_count(&vault), before);
+    assert!(vault.code_run_compaction_coverage(run)?.is_empty());
     assert!(driver.is_compacting());
     assert_eq!(
         outputs
@@ -793,21 +791,31 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
             .collect::<Vec<_>>(),
         vec![OutputTier::Full, OutputTier::Full]
     );
-    assert!(vault.get_code_run_raw_output(&first)?.is_none());
-    assert!(vault.get_code_run_raw_output(&second)?.is_none());
-    driver.integrate_with_output_markers(
-        &vault,
-        actor,
+
+    let different_run = CodeRunReplayRecord::new(entity(0xB9), replay.determinism);
+    let wrong = ExecutorOutputSpan::from_replay(
+        &CodeRunReplayRecord {
+            step_checkpoints: replay.step_checkpoints.clone(),
+            ..different_run
+        },
         &request,
-        product,
-        &[],
-        &mut outputs,
-        &[
-            (first.clone(), b"first marker".to_vec()),
-            (second.clone(), b"second marker".to_vec()),
-        ],
     )?;
+    driver
+        .integrate_with_coverage(&vault, actor, &request, product.clone(), &[], &wrong)
+        .expect_err("a different run's span cannot bind this SUMMARY");
+    assert_eq!(summary_row_count(&vault), before);
+    assert!(vault.code_run_compaction_coverage(run)?.is_empty());
+
+    let plan = driver.integrate_with_coverage(&vault, actor, &request, product, &[], &span)?;
     assert_eq!(summary_row_count(&vault), before + 1);
+    outputs.compact_span(request.turn_start, request.window.last().unwrap().turn);
+    let coverage = vault.code_run_compaction_coverage(run)?;
+    assert_eq!(coverage.len(), 1);
+    assert_eq!(coverage[0].summary_id(), plan.summary_id);
+    assert_eq!(coverage[0].epoch(), plan.epoch);
+    assert!(coverage[0].covers(run, 1));
+    assert!(coverage[0].covers(run, 2));
+    assert!(!coverage[0].covers(run, 0));
     assert_eq!(
         outputs
             .assemble(&vault, 2, policy)?
@@ -815,14 +823,6 @@ fn marker_failure_rolls_back_summary_and_leaves_request_retryable() -> Result<()
             .map(|v| v.tier)
             .collect::<Vec<_>>(),
         vec![OutputTier::Stub, OutputTier::Stub]
-    );
-    assert_eq!(
-        vault.get_code_run_raw_output(&first)?,
-        Some(b"first marker".to_vec())
-    );
-    assert_eq!(
-        vault.get_code_run_raw_output(&second)?,
-        Some(b"second marker".to_vec())
     );
     Ok(())
 }

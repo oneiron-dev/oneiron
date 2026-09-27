@@ -132,27 +132,16 @@ impl Vault {
 
     /// Stores raw output bytes under a deterministic content handle.
     pub fn put_code_run_raw_output(&self, output: &CodeRunRawOutput, raw: &[u8]) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        self.put_code_run_raw_output_in_txn(&mut wtxn, output, raw)?;
-        Ok(wtxn.commit()?)
-    }
-
-    /// Canonical raw-output write joined to a caller-owned vault transaction.
-    pub(crate) fn put_code_run_raw_output_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        output: &CodeRunRawOutput,
-        raw: &[u8],
-    ) -> Result<()> {
         if CodeRunRawOutput::from_bytes(output.path.clone(), raw)? != *output {
             return Err(invalid_code_run_replay(
                 "raw output metadata does not match bytes",
             ));
         }
+        let mut wtxn = self.store.env.write_txn()?;
         self.store
             .vault_meta
-            .put(wtxn, &code_run_raw_output_key(output), raw)?;
-        Ok(())
+            .put(&mut wtxn, &code_run_raw_output_key(output), raw)?;
+        Ok(wtxn.commit()?)
     }
 
     /// Stores raw output bytes ALONGSIDE the taint refs of the action that
