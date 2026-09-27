@@ -2,7 +2,11 @@
 
 mod codec;
 mod ladder;
+mod local;
 mod policy;
+pub use local::{
+    DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression,
+};
 pub mod questions;
 mod seat;
 mod types;
