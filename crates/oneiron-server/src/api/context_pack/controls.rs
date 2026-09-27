@@ -233,7 +233,8 @@ pub(crate) struct CoreInterlocutorStamp {
     "view": "full"
 }))]
 pub(crate) struct CoreContextPackRequest {
-    /// Room membership defines the audience independently of runtime presence.
+    /// Room membership defines the audience and the disclosure meet. An
+    /// explicit owner_present signal is needed for supervised room disclosure.
     #[serde(default)]
     pub(super) conversation_id: Option<String>,
     /// Optional actor-bound read-session id; omission uses the active session.
