@@ -29202,7 +29202,7 @@
      "path": "src/skill_hub/pack_catalog/admission.rs",
      "purpose": "Post-fit installation of pinned pack source; requested powers stay inert",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7
      }
     },
@@ -29351,7 +29351,7 @@
      "path": "src/skill_hub/pack_catalog/transport.rs",
      "purpose": "Generic Git/HTTP source fetch composes with the post-fit pack install door",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
       "trait": 1
      }
