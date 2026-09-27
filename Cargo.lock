@@ -1152,6 +1152,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f78a02292a74a88ac736019ab962ece0bc380e3f977bf72e376c5d78ff0678"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2682,6 +2691,16 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "expat-sys"
+version = "2.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "658f19728920138342f68408b7cf7644d90d4784353d8ebc32e7e8663dbe45fa"
+dependencies = [
+ "cmake",
+ "pkg-config",
 ]
 
 [[package]]
@@ -7196,6 +7215,7 @@ dependencies = [
  "loro",
  "ocrs",
  "oneiron",
+ "oneiron-docedit",
  "oneiron-guest",
  "oneiron-sandbox-contract",
  "oneiron-seal",
@@ -7281,6 +7301,18 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-tungstenite 0.26.2",
+]
+
+[[package]]
+name = "oneiron-docedit"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "expat-sys",
+ "flate2",
+ "roxmltree",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -9122,6 +9154,15 @@ dependencies = [
  "rmp",
  "serde",
  "serde_bytes",
+]
+
+[[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]

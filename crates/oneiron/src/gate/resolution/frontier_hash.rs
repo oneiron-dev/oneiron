@@ -91,6 +91,17 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "slide_review_policy");
         hash_bytes(hasher, &slide_policy);
     }
+    // Absent and explicit shipped baseline resolve identically. A stricter
+    // trusted row changes the frontier; its six ceilings are hashed together.
+    if let Some(bounds) = resolution.docedit_resource_policy {
+        let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
+        if bounds != baseline {
+            hash_str(hasher, "docedit_resource_policy");
+            for value in crate::gate::docedit_resource::row_values(bounds) {
+                hash_u64(hasher, value);
+            }
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

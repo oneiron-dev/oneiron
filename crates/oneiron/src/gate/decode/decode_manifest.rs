@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use super::decode_docedit_resource::parse_docedit_resource_policy;
 use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
@@ -12,16 +13,17 @@ use crate::gate::ceiling::{
 use crate::gate::constants::{
     POLICY_ACTOR_CEILINGS_KEY, POLICY_AUTO_CHECKER_KEY, POLICY_BUDGET_POLICY_KEY,
     POLICY_COMM_OPT_OUT_POSTURE_KEY, POLICY_DEFAULTS_KEY, POLICY_DELEGATED_GRANTS_KEY,
-    POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY, POLICY_MIN_ENGINE_VERSION_KEY,
-    POLICY_ON_BUDGET_EXHAUSTED_KEY, POLICY_OWNER_POLICY_DOCUMENT_KEY,
-    POLICY_OWNER_POLICY_ENABLED_KEY, POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY,
-    POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
-    POLICY_PACK_VERSION_KEY, POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY,
-    POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY,
-    POLICY_SHEET_ANSWER_LIMITS_KEY, POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY,
-    POLICY_SIGNATURES_KEY, POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY,
-    POLICY_WEAVE_CORRECTION_POLICY_KEY,
+    POLICY_DOCEDIT_RESOURCE_KEY, POLICY_HOSTED_TTS_KEY, POLICY_LEGAL_FLOOR_ROWS_KEY,
+    POLICY_MIN_ENGINE_VERSION_KEY, POLICY_ON_BUDGET_EXHAUSTED_KEY,
+    POLICY_OWNER_POLICY_DOCUMENT_KEY, POLICY_OWNER_POLICY_ENABLED_KEY,
+    POLICY_OWNER_POLICY_OUTPUT_CONTRACT_KEY, POLICY_OWNER_POLICY_PATTERNS_KEY,
+    POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY, POLICY_PACK_VERSION_KEY,
+    POLICY_PPTX_COMMENT_LIMITS_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION,
+    POLICY_SCHEMA_VERSION_KEY, POLICY_SCOPED_GRANTS_KEY, POLICY_SHEET_ANSWER_LIMITS_KEY,
+    POLICY_SHEET_ANSWER_PRECEDENCE_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY,
+    POLICY_SLIDE_REVIEW_KEY, POLICY_SOURCE_TRUST_KEY, POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
+use crate::gate::docedit_resource::DoceditResourcePolicy;
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
 use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
@@ -69,6 +71,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) slide_review_policy: crate::llm::decision::SlideReviewPolicy,
+    pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) sheet_answer_limits: Vec<crate::gate::resolution::SheetAnswerLimitRow>,
@@ -123,6 +126,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_HOSTED_TTS_KEY
 
                 | POLICY_SLIDE_REVIEW_KEY
+                | POLICY_DOCEDIT_RESOURCE_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | POLICY_SHEET_ANSWER_LIMITS_KEY
@@ -271,6 +275,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => crate::llm::decision::SlideReviewPolicy::decode(value)?,
     };
+    let docedit_resource_policy = match single_map_value(&entries, POLICY_DOCEDIT_RESOURCE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(parse_docedit_resource_policy(value)?),
+    };
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -347,8 +356,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         pack_install_policy,
         pptx_comment_limits,
         hosted_tts,
-
         slide_review_policy,
+        docedit_resource_policy,
         diagnostic_bounds,
         proposal_check_threshold,
         sheet_answer_limits,
