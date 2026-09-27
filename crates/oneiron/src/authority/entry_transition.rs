@@ -1,16 +1,15 @@
 //! Per-entry state transition and the consent / quorum / widen-delay predicates.
 //!
-//! MUST BE READ TOGETHER WITH [`super::fork_resolution`]. The two files are
-//! mutually recursive by direct call — [`fold_entry_state`] consults the
-//! quarantine and global-fork-resolution helpers there, and
-//! [`super::fork_resolution::resolve_equivocation_group`] calls
-//! [`fold_entry_state`] back. Any fork, quorum, or equivocation correctness
-//! change has to be reasoned about across both files; the file boundary is a
-//! readability split, not a decoupling.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
+
+#[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
+pub(in crate::authority) enum EntryFold {
+    Ready(FoldState),
+    Waiting,
+    Invalid(AuthorityFoldIssue),
+}
 
 pub(super) fn fold_entry_state(
     entry: &AuthorityLogEntry,
@@ -22,10 +21,12 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
+    // A strictly older observed sequence is rollback. Equal-sequence siblings
+    // have separate hashes and fold under their own ancestry, not a fork alarm.
     if context
         .sequence_floors
         .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq <= *floor)
+        .is_some_and(|floor| entry.seq < *floor)
     {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
@@ -77,8 +78,6 @@ pub(super) fn fold_entry_state(
             pending_widens: BTreeMap::new(),
             vetoed_widens: context.vetoed_widens.clone(),
             delayed_rotation_veto_revocations: BTreeMap::new(),
-            fork_resolution_revocations: BTreeSet::new(),
-            authority_forks: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -130,9 +129,6 @@ pub(super) fn fold_entry_state(
     {
         return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
     }
-    if entry_waits_on_unresolved_equivocation(entry, hash, context) {
-        return EntryFold::Waiting;
-    }
     if let AuthorityOp::VetoPendingWiden { pending_widen_hash } = &entry.op {
         if !context.vetoed_widens.contains(pending_widen_hash) {
             let Some(target_state) = states.get(pending_widen_hash) else {
@@ -142,11 +138,11 @@ pub(super) fn fold_entry_state(
                 return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
             }
         }
-        let participants =
-            match veto_participant_keys(&state, entry, hash, *pending_widen_hash, context) {
-                Ok(participants) => participants,
-                Err(issue) => return EntryFold::Invalid(issue),
-            };
+        let participants = match veto_participant_keys(&state, entry, *pending_widen_hash, context)
+        {
+            Ok(participants) => participants,
+            Err(issue) => return EntryFold::Invalid(issue),
+        };
         if !has_veto_authority_consent(&state, &participants, *pending_widen_hash, context) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
@@ -173,7 +169,7 @@ pub(super) fn fold_entry_state(
     {
         return EntryFold::Invalid(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
-    let participants = match active_participant_keys(&state, entry, hash, context) {
+    let participants = match active_participant_keys(&state, entry) {
         Ok(participants) => participants,
         Err(issue) => return EntryFold::Invalid(issue),
     };
@@ -188,12 +184,12 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if entry_requires_peer_cosign(entry)
-        && active_roster_count_for_entry(&state, entry, context, hash) >= 2
+        && active_roster_count(&state) >= 2
         && participants.len() < 2
     {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingQuorum(hash));
     }
-    if revoke_would_break_quorum(&state, entry, &participants, hash, context) {
+    if revoke_would_break_quorum(&state, entry, &participants) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingQuorum(hash));
     }
     if let Some(prior_seq) = state.seqs.get(&signer).copied()
@@ -280,7 +276,7 @@ pub(super) fn fold_entry_state(
     {
         let mut eventual_state = state.clone();
         apply_op(&mut eventual_state, &entry.op, hash, true, &signer);
-        if !state_has_authority_consent_for_entry(&eventual_state, entry, context, hash) {
+        if !state_has_authority_consent(&eventual_state, context) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
         // Record eligibility before a later veto (or fixed-point pass) can
@@ -300,30 +296,7 @@ pub(super) fn fold_entry_state(
     let applied_delayed_widen =
         context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op, &participants);
     apply_op(&mut state, &entry.op, hash, applied_delayed_widen, &signer);
-    match &entry.op {
-        AuthorityOp::RevokeDevice { revoked_key } => {
-            resolve_global_forks_for_revoke(&mut state, context, revoked_key);
-        }
-        AuthorityOp::ReRoot { .. } => {
-            resolve_global_forks_for_re_root(&mut state, context);
-        }
-        AuthorityOp::Genesis { .. }
-        | AuthorityOp::EnrollDevice { .. }
-        | AuthorityOp::RetiredCeiling { .. }
-        | AuthorityOp::SlipMint(_)
-        | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. }
-        | AuthorityOp::RotateKey { .. }
-        | AuthorityOp::SetTierFloor { .. }
-        | AuthorityOp::FederationConfirm(_)
-        | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
-        | AuthorityOp::FederationLifecycle(_)
-        | AuthorityOp::BindActor { .. }
-        | AuthorityOp::RebindActor { .. }
-        | AuthorityOp::RevokeActor { .. } => {}
-    }
-    if !state_has_authority_consent_for_entry(&state, entry, context, hash) {
+    if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     state.seqs.insert(signer, entry.seq);
@@ -333,7 +306,6 @@ pub(super) fn fold_entry_state(
 fn veto_participant_keys(
     state: &FoldState,
     entry: &AuthorityLogEntry,
-    hash: AuthorityEntryHash,
     pending_widen_hash: AuthorityEntryHash,
     context: FoldContext<'_>,
 ) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
@@ -344,14 +316,7 @@ fn veto_participant_keys(
             .roster
             .get(key)
             .is_some_and(|device| !device.revoked && device.roles != 0);
-        if key_is_quarantined_for_entry(
-            state,
-            context,
-            key,
-            hash,
-            Some((entry.signer_key(), entry.seq)),
-        ) || (!active_member
-            && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context))
+        if !active_member && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
         {
             return Err(AuthorityFoldIssue::SignerNotInAncestry(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
@@ -365,8 +330,6 @@ fn veto_participant_keys(
 pub(super) fn active_participant_keys(
     state: &FoldState,
     entry: &AuthorityLogEntry,
-    hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
 ) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
     let mut participants = BTreeSet::new();
     for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
@@ -375,13 +338,6 @@ pub(super) fn active_participant_keys(
             .roster
             .get(key)
             .is_none_or(|device| device.revoked || device.roles == 0)
-            || key_is_quarantined_for_entry(
-                state,
-                context,
-                key,
-                hash,
-                Some((entry.signer_key(), entry.seq)),
-            )
         {
             return Err(AuthorityFoldIssue::SignerNotInAncestry(
                 authority_entry_hash(entry).unwrap_or([0; 32]),
@@ -439,22 +395,11 @@ fn delayed_rotation_veto_allowed(
         .all(|revocation| !target_ancestors.contains(revocation))
 }
 
-fn state_has_authority_consent_for_entry(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    context: FoldContext<'_>,
-    hash: AuthorityEntryHash,
-) -> bool {
-    state.roster.iter().any(|(key, device)| {
-        context.device_can_consent(device)
-            && !key_is_quarantined_for_entry(
-                state,
-                context,
-                key,
-                hash,
-                Some((entry.signer_key(), entry.seq)),
-            )
-    })
+fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
+    state
+        .roster
+        .values()
+        .any(|device| context.device_can_consent(device))
 }
 
 fn pending_widen_for_entry(
@@ -631,47 +576,23 @@ fn revoke_would_break_quorum(
     state: &FoldState,
     entry: &AuthorityLogEntry,
     participants: &BTreeSet<AuthorityKey>,
-    hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
 ) -> bool {
     let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
         return false;
     };
-    let active_before = active_roster_count_for_entry(state, entry, context, hash);
-    let revoked_was_active = state.roster.get(revoked_key).is_some_and(|device| {
-        !device.revoked
-            && device.roles != 0
-            && !key_is_quarantined_for_entry(
-                state,
-                context,
-                revoked_key,
-                hash,
-                Some((entry.signer_key(), entry.seq)),
-            )
-    });
+    let active_before = active_roster_count(state);
+    let revoked_was_active = state
+        .roster
+        .get(revoked_key)
+        .is_some_and(|device| !device.revoked && device.roles != 0);
     let active_after = active_before.saturating_sub(usize::from(revoked_was_active));
     participants.len() < 2 || active_after < 2
 }
 
-fn active_roster_count_for_entry(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    context: FoldContext<'_>,
-    hash: AuthorityEntryHash,
-) -> usize {
+fn active_roster_count(state: &FoldState) -> usize {
     state
         .roster
-        .iter()
-        .filter(|(key, device)| {
-            !device.revoked
-                && device.roles != 0
-                && !key_is_quarantined_for_entry(
-                    state,
-                    context,
-                    key,
-                    hash,
-                    Some((entry.signer_key(), entry.seq)),
-                )
-        })
+        .values()
+        .filter(|device| !device.revoked && device.roles != 0)
         .count()
 }

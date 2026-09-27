@@ -19,6 +19,7 @@
 
 mod blocked_reports;
 mod classify;
+mod custom_review;
 mod healer_case;
 mod ladder;
 mod lineage;
@@ -30,6 +31,9 @@ pub use self::blocked_reports::{BlockedReportRef, FailureIssueEntry, ingest_repo
 pub use self::classify::{
     DEFAULT_MAX_CONSECUTIVE_TRANSIENTS, DetectorTier, FailureClass, TypedFailureEvidence,
     TypedFailureVerdict, classify_failure,
+};
+pub use self::custom_review::{
+    AgentKind, CustomFailureGroup, FailureSignalClass, TierOneFailureCount,
 };
 pub(crate) use self::healer_case::require_in_txn as require_healer_case_in_txn;
 pub use self::ladder::{FailureLadder, failure_card_ref, failure_case_ref};

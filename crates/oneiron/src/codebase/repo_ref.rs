@@ -91,6 +91,26 @@ impl RepoRef {
             Self::GitHubAtCommit { commit, .. } => Some(commit.as_str()),
         }
     }
+
+    /// Stable repository identity, without the revision carried by `RepoRef`.
+    pub(super) fn same_repository(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::LocalFolder { path: a, .. }, Self::LocalFolder { path: b, .. }) => a == b,
+            (
+                Self::GitHubAtCommit {
+                    owner: a_owner,
+                    repo: a_repo,
+                    ..
+                },
+                Self::GitHubAtCommit {
+                    owner: b_owner,
+                    repo: b_repo,
+                    ..
+                },
+            ) => a_owner == b_owner && a_repo == b_repo,
+            _ => false,
+        }
+    }
 }
 
 fn parse_local_repo_ref(input: &str) -> Result<RepoRef> {

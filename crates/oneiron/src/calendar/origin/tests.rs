@@ -152,7 +152,9 @@ fn source_delete_invalidates_dreamer_but_not_native() {
     vault
         .put_edge(&native, EdgeKind::DerivedFrom, &turn, 1.0)
         .unwrap();
-    vault.delete_entity(&turn).unwrap();
+    vault
+        .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
+        .unwrap();
     assert!(
         read_event(
             &vault,
@@ -446,7 +448,9 @@ fn late_origin_binding_preserves_source_invalidation_without_hiding_native_event
 
         // Delete while the typed body exists but its authoritative claim has
         // not arrived. The row stays pending rather than becoming legacy data.
-        vault.delete_entity(&turn).unwrap();
+        vault
+            .delete_entity_with_options(&turn, crate::deletion::DeleteEntityOptions { purge: true })
+            .unwrap();
         assert_eq!(
             vault.get(&event).unwrap().is_some(),
             origin != CalendarOrigin::Dreamer

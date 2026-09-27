@@ -42,7 +42,6 @@ serde = { workspace = true }
 schemars = "=0.8.22"
 serde_json = { workspace = true }
 serde_path_to_error = "0.1"
-jsonschema = { version = "0.33", default-features = false }
 postcard = { workspace = true, optional = true }
 blake3 = { workspace = true }
 # SECRET-02 (ONE-1920): lease materialization returns the value wrapped in
