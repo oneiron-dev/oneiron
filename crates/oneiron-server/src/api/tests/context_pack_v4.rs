@@ -308,35 +308,26 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
-    let private_note = "private warm companion note one1266";
+    let private_note = "private identity note one1266";
     let person_ref = seeded_test_entity_id(0x1266_0001);
     let persona_ref = seeded_test_entity_id(0x1266_0002);
-    let companion_id = seeded_test_entity_id(0x1266_0003);
     let turn_id = seeded_test_entity_id(0x1266_0004);
-    let actor_ref = seeded_test_entity_id(0x1266_0005);
     let principal_ref = seeded_test_entity_id(0x1266_0006);
     let grant_id = seeded_test_entity_id(0x1266_0007);
 
-    let record = oneiron::CompanionRecord::relationship(
-        oneiron::CompanionScope::personal(person_ref),
-        person_ref,
-        persona_ref,
-        oneiron::companion_value_from_json(&json!({ "note": private_note }))
-            .expect("companion value"),
-        oneiron::CompanionProvenance::new(
-            actor_ref,
-            oneiron::EdgeActorClass::Agent,
-            oneiron::ClaimSource::UserStated,
-            oneiron::ClaimApprovalStatus::Approved,
-            oneiron::companion_value_from_json(&json!({ "source": "test" }))
-                .expect("provenance value"),
-        ),
-        oneiron::federation::Sensitivity::Restricted,
-    );
-    server
-        .vault
-        .create_companion_record(&companion_id, &record, 10)
-        .expect("create companion record");
+    for id in [person_ref, persona_ref] {
+        server
+            .vault
+            .put_entity(
+                &id,
+                oneiron::registry::ENTITY_TYPE_PERSON,
+                oneiron::TimeRange { start: 9, end: 9 },
+                9,
+                &rmp_serde::to_vec_named(&json!({ "private_note": private_note }))
+                    .expect("encode PERSON identity"),
+            )
+            .expect("create PERSON identity");
+    }
     let turn_body = json!({ "txt": "warm companion route needle" });
     let turn_data = rmp_serde::to_vec_named(&turn_body).expect("encode turn body");
     server
@@ -405,10 +396,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     assert_eq!(status, StatusCode::OK);
     let companion = &body["memories"]["companion"];
     assert_eq!(companion["scope"], Value::from("personal"));
-    assert_eq!(
-        companion["scope_source"],
-        Value::from("relationship_record")
-    );
+    assert_eq!(companion["scope_source"], Value::from("person_identity"));
     assert_eq!(companion["expression"], Value::from("warm"));
     assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
     assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));

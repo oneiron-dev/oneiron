@@ -11,7 +11,7 @@ pub(crate) fn companion_scope_resolution_authorized(
     person_ref: Option<oneiron::EntityId>,
     persona_ref: Option<oneiron::EntityId>,
 ) -> Result<bool, ApiError> {
-    if auth.has_scope(CoreScope::CompanionRegisterRead) || auth.has_scope(CoreScope::Auth) {
+    if auth.has_scope(CoreScope::Auth) {
         return Ok(true);
     }
     let (Some(person_ref), Some(persona_ref)) = (person_ref, persona_ref) else {
