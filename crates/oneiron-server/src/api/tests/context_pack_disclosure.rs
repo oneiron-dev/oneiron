@@ -1,6 +1,7 @@
 //! Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance.
 
 use super::*;
+use oneiron::federation::{ScopeAxis, ScopeId};
 
 #[tokio::test]
 async fn context_pack_route_returns_pack_evidence_and_records_telemetry() {
@@ -404,7 +405,7 @@ async fn core_context_pack_rejects_malformed_interlocutor_parties() {
 }
 
 #[tokio::test]
-async fn core_context_pack_owner_absent_narrow_scope_filters_stamped_records() {
+async fn core_context_pack_owner_absent_happy_path_clamps_to_scope() {
     let (_dir, server) = interlocutor_test_server();
     let identity_ref = seeded_test_entity_id(0x1517_0001);
     let contact_principal = seeded_test_entity_id(0x1517_0002);
@@ -414,149 +415,37 @@ async fn core_context_pack_owner_absent_narrow_scope_filters_stamped_records() {
         identity_ref,
         "kenji@example.com",
     );
-
-    let subject = seeded_test_entity_id(0x1517_0003);
-    server
-        .vault
-        .put_entity(
-            &subject,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange {
-                start: 100,
-                end: 100,
-            },
-            100,
-            b"disclosure test subject",
-        )
-        .expect("seed claim subject");
-    let party = seeded_test_entity_id(0x1517_0004);
-    let diary = seeded_test_entity_id(0x1517_0005);
-    let foreign_world = seeded_test_entity_id(0x1517_0006);
-    let mut party_body = oneiron::ClaimBody::new(
-        "event.headcount",
-        oneiron::ClaimSubject::Entity(subject),
-        rmpv::Value::from("hanami party planning needle17"),
-        0.9,
-        oneiron::ClaimApprovalStatus::Auto,
-        oneiron::ClaimLifecycleStatus::Active,
+    let party = seed_text_turn(&server, "hanami party planning needle17");
+    // A base-world claim leaves capacity for the other-world claim under the
+    // context pack's non-base-world claim fraction.
+    let base_claim = seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "party details needle17",
+        oneiron::claim::base_world_id(),
     );
-    party_body.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("public"),
-    )]));
-    let scope_facet = party_body.scope_facet;
-    let scope_project = party_body.scope_project;
-    let mut diary_body = oneiron::ClaimBody::new(
-        "event.headcount",
-        oneiron::ClaimSubject::Entity(subject),
-        rmpv::Value::from("private diary entry needle17"),
-        0.9,
-        oneiron::ClaimApprovalStatus::Auto,
-        oneiron::ClaimLifecycleStatus::Active,
+    let diary_world = seeded_test_entity_id(0x1517_00f1);
+    let diary =
+        seed_disclosure_claim_in_world(&server, party, "private diary entry needle17", diary_world);
+    seed_disclosure_scope(
+        &server,
+        contact_principal,
+        disclosure_base_world_clearance(),
     );
-    diary_body.scope = Some(rmpv::Value::Map(vec![(
-        rmpv::Value::from("sensitivity"),
-        rmpv::Value::from("public"),
-    )]));
-    diary_body.scope_facet = scope_facet;
-    diary_body.scope_project = scope_project;
-    diary_body.world = Some(foreign_world);
 
-    for (id, claim, text) in [
-        (party, party_body, "hanami party planning needle17"),
-        (diary, diary_body, "private diary entry needle17"),
-    ] {
-        server
-            .vault
-            .put_claim(
-                &id,
-                &claim,
-                oneiron::TimeRange {
-                    start: 100,
-                    end: 100,
-                },
-                100,
-            )
-            .expect("seed stamped disclosure claim");
-        server
-            .vault
-            .batch()
-            .text(&id, &[("body", text)])
-            .commit()
-            .expect("index disclosure claim");
-    }
-
-    // This contact is constrained on all six scope axes. The party claim is
-    // stamped in the base world; the diary claim has the same facet, band,
-    // audience, verb, and sensitivity, but its stamped world is outside scope.
-    let clearance = oneiron::federation::Scope {
-        worlds: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::federation::ScopeId(oneiron::claim::base_world_id()),
-        ])),
-        facets: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::federation::ScopeId(scope_facet),
-        ])),
-        bands: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::registry::ENTITY_TYPE_CLAIM,
-        ])),
-        audience: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::federation::ScopeId(scope_project),
-        ])),
-        verbs: oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            "read".to_owned()
-        ])),
-        sensitivity: oneiron::federation::SensitivityCeiling::AtMost(
-            oneiron::federation::Sensitivity::Private,
-        ),
-    };
-    let disclosure_scope =
-        oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
-            .expect("disclosure scope");
-    server
-        .vault
-        .set_counterparty_disclosure_scope(&contact_principal, &disclosure_scope)
-        .expect("set disclosure scope");
-
-    let party_stamp = server
-        .vault
-        .record_scope(&party)
-        .expect("read party record scope")
-        .expect("party record scope stamp");
-    let diary_stamp = server
-        .vault
-        .record_scope(&diary)
-        .expect("read diary record scope")
-        .expect("diary record scope stamp");
-    assert_eq!(
-        party_stamp.worlds,
-        oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::federation::ScopeId(oneiron::claim::base_world_id()),
-        ]))
-    );
-    assert_eq!(
-        diary_stamp.worlds,
-        oneiron::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
-            oneiron::federation::ScopeId(foreign_world),
-        ]))
-    );
-    assert_eq!(party_stamp.facets, diary_stamp.facets);
-    assert_eq!(party_stamp.bands, diary_stamp.bands);
-    assert_eq!(party_stamp.audience, diary_stamp.audience);
-    assert_eq!(party_stamp.verbs, diary_stamp.verbs);
-    assert_eq!(party_stamp.sensitivity, diary_stamp.sensitivity);
-
+    // Scoped bearer whose principal IS the contact row; no block (N13 shape
+    // with a base-world clearance). AbsenceClamp excludes the other-world claim.
     let request = json!({ "query": "needle17", "limit": 10 });
-    let (status, body) = route_json(
-        server,
+    let call = || {
         core_request_with_principal_ref(
             "POST",
             "/v1/core/context-pack",
             "core:read",
             &contact_principal.to_hex(),
             Some(&request),
-        ),
-    )
-    .await;
+        )
+    };
+    let (status, body) = route_json(server.clone(), call()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["disclosure"]["mode"], Value::from("absence_clamp"));
     assert!(
@@ -564,26 +453,20 @@ async fn core_context_pack_owner_absent_narrow_scope_filters_stamped_records() {
         "notice is Some iff supervised"
     );
     assert!(
-        body["disclosure"]["clamped_out"]
-            .as_u64()
-            .unwrap_or_default()
-            > 0,
-        "the out-of-scope stamped diary claim is counted as clamped"
+        body["disclosure"]["clamped_out"].as_u64().unwrap_or(0) > 0,
+        "candidate sweep counted removals: {body:?}"
     );
-    let results = body["results"].as_array().expect("results");
-    let party_hex = party.to_hex();
-    let diary_hex = diary.to_hex();
+    let result_ids: Vec<&str> = body["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(|entity| entity["id"].as_str())
+        .collect();
+    assert!(result_ids.contains(&party.to_hex().as_str()));
+    assert!(result_ids.contains(&base_claim.to_hex().as_str()));
     assert!(
-        results
-            .iter()
-            .any(|entity| entity["id"].as_str() == Some(party_hex.as_str())),
-        "in-scope party record is retained"
-    );
-    assert!(
-        results
-            .iter()
-            .all(|entity| entity["id"].as_str() != Some(diary_hex.as_str())),
-        "out-of-scope diary record is excluded"
+        !result_ids.contains(&diary.to_hex().as_str()),
+        "out-of-world Tier-B claim absent from the assembled context"
     );
     let neighbors = body["neighbors"].as_array().expect("neighbors");
     assert!(neighbors.is_empty());
@@ -592,6 +475,32 @@ async fn core_context_pack_owner_absent_narrow_scope_filters_stamped_records() {
         .expect("stamps");
     assert_eq!(stamps.len(), 1);
     assert_eq!(stamps[0]["class"], Value::from("known_contact"));
+
+    // Keep the stored Tier-B claim unchanged. Widen only this contact's world
+    // clearance, then prove the previously excluded claim is retrievable.
+    let mut widened = disclosure_base_world_clearance();
+    widened.worlds = ScopeAxis::Some(
+        [
+            ScopeId(oneiron::claim::base_world_id()),
+            ScopeId(diary_world),
+        ]
+        .into(),
+    );
+    seed_disclosure_scope(&server, contact_principal, widened);
+    let (status, widened_body) = route_json(server, call()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        widened_body["disclosure"]["mode"],
+        Value::from("absence_clamp")
+    );
+    assert!(
+        widened_body["results"]
+            .as_array()
+            .expect("widened results")
+            .iter()
+            .any(|entity| entity["id"].as_str() == Some(diary.to_hex().as_str())),
+        "the same Tier-B claim is admitted by the wider world clearance: {widened_body:?}"
+    );
 }
 
 #[tokio::test]
@@ -712,8 +621,16 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     let contact_id = seeded_test_entity_id(0x1517_0022);
     seed_counterparty_contact(&server, contact_id, identity_ref, "kenji@example.com");
     let party = seed_text_turn(&server, "party event needle21");
-    let diary = seed_text_turn(&server, "private diary needle21");
-    seed_disclosure_scope(&server, contact_id, vec![party]);
+    let base_claim = seed_disclosure_claim_in_world(
+        &server,
+        party,
+        "party details needle21",
+        oneiron::claim::base_world_id(),
+    );
+    let diary_world = seeded_test_entity_id(0x1517_00f2);
+    let diary =
+        seed_disclosure_claim_in_world(&server, party, "private diary needle21", diary_world);
+    seed_disclosure_scope(&server, contact_id, disclosure_base_world_clearance());
 
     let clean = json!({
         "query": "needle21",
@@ -722,14 +639,14 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
             "third_parties": [{ "contact_ref": contact_id.to_hex() }]
         }
     });
-    // No request field can name scope entities; smuggled members fall to
-    // serde's ignored-unknown-fields floor and change nothing.
+    // Request fields cannot widen stored world clearance; smuggled fields fall
+    // to serde's ignored-unknown-fields floor and change nothing.
     let smuggled = json!({
         "query": "needle21",
         "interlocutors": {
             "owner_present": false,
             "third_parties": [{ "contact_ref": contact_id.to_hex() }],
-            "scope": { "entities": [diary.to_hex()] },
+            "scope": { "worlds": [seeded_test_entity_id(0x1517_00f2).to_hex()] },
             "entities": [diary.to_hex()]
         }
     });
@@ -742,7 +659,7 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     )
     .await;
     let (smuggled_status, smuggled_body) = core_json(
-        server,
+        server.clone(),
         "POST",
         "/v1/core/context-pack",
         "core:read",
@@ -765,8 +682,14 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
         assert!(
             results
                 .iter()
+                .any(|entity| entity["id"].as_str() == Some(base_claim.to_hex().as_str())),
+            "base-world Tier-B claim reaches the same disclosure door",
+        );
+        assert!(
+            results
+                .iter()
                 .all(|entity| entity["id"].as_str() != Some(diary_id.as_str())),
-            "request fields cannot admit the out-of-scope diary",
+            "request fields cannot admit the out-of-world diary",
         );
         let mode = body["disclosure"]["mode"]
             .as_str()
@@ -787,6 +710,35 @@ async fn core_context_pack_n9_scope_smuggling_members_are_ignored() {
     assert_eq!(
         clean_body["disclosure"]["mode"], smuggled_body["disclosure"]["mode"],
         "smuggled members cannot change disclosure mode",
+    );
+
+    // The stored diary is Tier B and can surface when the contact actually
+    // widens its world clearance, rather than via caller-supplied scope fields.
+    let mut widened = disclosure_base_world_clearance();
+    widened.worlds = ScopeAxis::Some(
+        [
+            ScopeId(oneiron::claim::base_world_id()),
+            ScopeId(diary_world),
+        ]
+        .into(),
+    );
+    seed_disclosure_scope(&server, contact_id, widened);
+    let (status, widened_body) = core_json(
+        server,
+        "POST",
+        "/v1/core/context-pack",
+        "core:read",
+        Some(&clean),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        widened_body["results"]
+            .as_array()
+            .expect("widened results")
+            .iter()
+            .any(|entity| entity["id"].as_str() == Some(diary_id.as_str())),
+        "widening the contact's world clearance admits the same diary: {widened_body:?}"
     );
 }
 
@@ -836,8 +788,8 @@ async fn core_context_pack_n14_wider_scoped_contact_cannot_widen_scoped_token() 
     let identity_ref = seeded_test_entity_id(0x1517_0041);
     let wider_contact = seeded_test_entity_id(0x1517_0042);
     seed_counterparty_contact(&server, wider_contact, identity_ref, "wider@example.com");
-    let party = seed_text_turn(&server, "party event needle23");
-    seed_disclosure_scope(&server, wider_contact, vec![party]);
+    seed_text_turn(&server, "party event needle23");
+    seed_disclosure_scope(&server, wider_contact, disclosure_base_world_clearance());
     // Principal X has no contact row: it contributes the deny-all scope.
     let principal_ref = seeded_test_entity_id(0x1517_0043).to_hex();
 
