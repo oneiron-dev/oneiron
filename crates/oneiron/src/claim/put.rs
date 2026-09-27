@@ -52,6 +52,7 @@ impl Vault {
         self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
         let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         // Canonical consolidation opens its own writer only after durable
         // approval. Errors remain errors, without rolling back Approved.
         for claim_id in approved {
@@ -194,6 +195,7 @@ impl Vault {
             ApplyOpsGateMode::new(false, true).with_source_in_gate_input(),
         )?;
         wtxn.commit()?;
+        self.store.notify_proactivity_changes();
         Ok(())
     }
 

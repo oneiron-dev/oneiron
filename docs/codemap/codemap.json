@@ -13464,18 +13464,22 @@
       "DigestProposal",
       "ProactivityCadence",
       "ProactivityDigest",
+      "ProactivityPolicyProposal",
+      "ProactivityPolicyRequest",
       "ProactivityPresentation",
       "UrgentDigestWake"
      ],
      "path": "src/dreamer_runner/maintenance/digest.rs",
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
-      "fn": 7,
-      "struct": 5
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 11,
+      "struct": 7
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/digest/tests.rs",
@@ -36595,7 +36599,7 @@
      "path": "src/tick/timer.rs",
      "purpose": "Timer lane: attempt-queue deadline reads, commitment reconcile and fire, deadline timer, and due sleep",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 3
      }

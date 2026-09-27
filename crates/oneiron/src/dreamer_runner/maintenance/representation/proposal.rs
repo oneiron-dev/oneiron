@@ -177,7 +177,9 @@ pub(in crate::dreamer_runner::maintenance) fn run(
             &serde_json::to_vec(&record).map_err(|_| invalid())?,
         )?;
         Ok(id)
-    })
+    })?;
+    vault.store.notify_proactivity_changes();
+    Ok(id)
 }
 pub(super) fn review_revision(body: &crate::ClaimBody) -> Result<[u8; 32]> {
     let mut normalized = body.clone();

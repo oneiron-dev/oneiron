@@ -8,6 +8,10 @@ const CADENCE_KEY: &[u8] = b"settings:dreamer:proactivity:cadence:v1";
 const STATE_KEY: &[u8] = b"dreamer:proactivity:state:v1";
 const DIGEST_PREFIX: &[u8] = b"dreamer:proactivity:digest:v1:";
 const PRESENTATION_KEY: &[u8] = b"settings:dreamer:proactivity:presentation:v1";
+const POLICY_CONFIRMED_PREFIX: &[u8] = b"settings:dreamer:proactivity:confirmed:v1:";
+/// Generic proposed claim written through the existing gated agent memory
+/// verb. It changes NO settings until the owner confirms its exact revision.
+pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityCadence {
@@ -57,6 +61,29 @@ impl ProactivityPresentation {
         Ok(())
     }
 }
+/// Typed request payload for the existing `self.memory.put_claim` agent verb.
+/// The host may build it from a chat request; no natural-language parser or
+/// product persona is embedded in the engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProactivityPolicyRequest {
+    pub cadence: ProactivityCadence,
+    pub presentation: ProactivityPresentation,
+}
+impl ProactivityPolicyRequest {
+    pub fn claim_value(&self) -> Result<String> {
+        if self.cadence.period_secs == 0 {
+            return Err(invalid());
+        }
+        self.presentation.validate()?;
+        serde_json::to_string(self).map_err(|_| invalid())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProactivityPolicyProposal {
+    pub request: ProactivityPolicyRequest,
+    pub revision: [u8; 32],
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UrgentDigestWake {
     pub intent_ref: EntityId,
@@ -84,7 +111,7 @@ pub struct ProactivityDigest {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DigestState {
-    last_emitted: Option<u64>,
+    last_regular: Option<u64>,
     last_digest_id: Option<[u8; 32]>,
     seen: BTreeMap<String, [u8; 32]>,
 }
@@ -102,7 +129,9 @@ impl Vault {
             super::validate_owner_in_txn(self, txn, owner)?;
             self.store.vault_meta.put(txn, CADENCE_KEY, &bytes)?;
             Ok(())
-        })
+        })?;
+        self.store.notify_proactivity_changes();
+        Ok(())
     }
     /// An agent may draft this row in chat; only the authenticated owner's
     /// confirmation writes it. Edits affect the next digest, not past rows.
@@ -117,7 +146,65 @@ impl Vault {
             super::validate_owner_in_txn(self, txn, owner)?;
             self.store.vault_meta.put(txn, PRESENTATION_KEY, &bytes)?;
             Ok(())
-        })
+        })?;
+        self.store.notify_proactivity_changes();
+        Ok(())
+    }
+
+    /// Resolve an agent-authored, still-pending policy claim for exact owner
+    /// review. An ordinary claim alone has no settings authority.
+    pub fn proactivity_policy_proposal(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_ref: EntityId,
+    ) -> Result<ProactivityPolicyProposal> {
+        let txn = self.store.env.read_txn()?;
+        super::validate_owner_in_txn(self, &txn, owner)?;
+        load_policy_proposal(self, &txn, owner.actor(), claim_ref)
+    }
+
+    /// Confirm the exact proposal the host showed the authenticated owner.
+    /// Both policy rows and a replay marker commit together; an agent claim
+    /// cannot edit either row directly, nor replay an old confirmation.
+    pub fn confirm_proactivity_policy_proposal(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_ref: EntityId,
+        expected_revision: [u8; 32],
+    ) -> Result<()> {
+        let confirmed_key = [POLICY_CONFIRMED_PREFIX, claim_ref.as_bytes()].concat();
+        self.with_write_txn(|txn| {
+            super::validate_owner_in_txn(self, txn, owner)?;
+            if self.store.vault_meta.get(&*txn, &confirmed_key)?.is_some() {
+                return Err(invalid());
+            }
+            let proposal = load_policy_proposal(self, &*txn, owner.actor(), claim_ref)?;
+            if proposal.revision != expected_revision {
+                return Err(invalid());
+            }
+            self.store.vault_meta.put(
+                txn,
+                CADENCE_KEY,
+                &serde_json::to_vec(&proposal.request.cadence).map_err(|_| invalid())?,
+            )?;
+            self.store.vault_meta.put(
+                txn,
+                PRESENTATION_KEY,
+                &serde_json::to_vec(&proposal.request.presentation).map_err(|_| invalid())?,
+            )?;
+            self.store
+                .vault_meta
+                .put(txn, &confirmed_key, &expected_revision)?;
+            Ok(())
+        })?;
+        self.store.notify_proactivity_changes();
+        Ok(())
+    }
+
+    /// Subscribe before the first deadline read. Every notification means
+    /// "re-read committed state", never "deliver a wake".
+    pub fn subscribe_proactivity_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.store.proactivity_updates.subscribe()
     }
 
     /// Next armed cadence, only while there is unseen pending work. The host
@@ -130,7 +217,7 @@ impl Vault {
         if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty() {
             return Ok(None);
         }
-        Ok(Some(state.last_emitted.map_or(0, |last| {
+        Ok(Some(state.last_regular.map_or(0, |last| {
             last.saturating_add(cadence.period_secs)
         })))
     }
@@ -183,7 +270,7 @@ impl Vault {
             let presentation = load_presentation(self, &*txn)?;
             let mut state = load_state(self, &*txn)?;
             let next = state
-                .last_emitted
+                .last_regular
                 .map(|last| last.saturating_add(cadence.period_secs));
             let due = next.is_none_or(|next| now >= next);
             let breakthrough = if let (Some(wake), Some(next), Some(owner)) = (urgent, next, owner)
@@ -266,7 +353,9 @@ impl Vault {
             self.store
                 .vault_meta
                 .put(txn, &[DIGEST_PREFIX, &digest.id].concat(), &bytes)?;
-            state.last_emitted = Some(now);
+            if due {
+                state.last_regular = Some(now);
+            }
             state.last_digest_id = Some(digest.id);
             self.store.vault_meta.put(
                 txn,
@@ -353,7 +442,17 @@ fn pending_proposals(
     cadence: &ProactivityCadence,
 ) -> Result<Vec<(String, DigestProposal)>> {
     let mut pending = Vec::new();
-    for id in crate::claim::pending_claim_ids_for_producer_in_txn(&vault.store, txn, authority)? {
+    // Stream the producer index rather than using its capped 10k-ID query:
+    // previously displayed proposals remain Proposed and still occupy index
+    // slots. A full tray must not disable the scheduler's other deadlines.
+    let prefix = crate::claim::producer_prefix(authority);
+    for row in vault.store.vault_meta.prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let id = EntityId::from_bytes(
+            key[prefix.len()..]
+                .try_into()
+                .map_err(|_| crate::Error::CorruptedIndex("claim projection index"))?,
+        )?;
         let Some(bytes) = vault.store.entities.get(txn, id.as_bytes())? else {
             continue;
         };
@@ -364,7 +463,8 @@ fn pending_proposals(
             continue;
         }
         let body = crate::claim::decode_claim_body(&bytes[ENTITY_METADATA_HEADER_LEN..], true)?;
-        if body.approval != ClaimApprovalStatus::Proposed
+        if body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE
+            || body.approval != ClaimApprovalStatus::Proposed
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.source != Some(ClaimSource::Generated)
             || body.stale
@@ -395,4 +495,53 @@ fn pending_proposals(
         ));
     }
     Ok(pending)
+}
+
+impl crate::store::Store {
+    /// Only post-commit callers signal; the watch value carries no user data.
+    pub(crate) fn notify_proactivity_changes(&self) {
+        self.proactivity_updates.send_modify(|generation| {
+            *generation = generation.wrapping_add(1);
+        });
+    }
+}
+
+fn load_policy_proposal(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: EntityId,
+    claim_ref: EntityId,
+) -> Result<ProactivityPolicyProposal> {
+    let raw = vault
+        .store
+        .entities
+        .get(txn, claim_ref.as_bytes())?
+        .ok_or_else(invalid)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+        || raw.len() == ENTITY_METADATA_HEADER_LEN
+    {
+        return Err(invalid());
+    }
+    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+    if body.predicate != PROACTIVITY_POLICY_REQUEST_PREDICATE
+        || body.subject != crate::ClaimSubject::Entity(owner)
+        || body.source != Some(ClaimSource::Generated)
+        || body.approval != ClaimApprovalStatus::Proposed
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || body.stale
+        || crate::claim::session_claim_producer(&body).is_none()
+    {
+        return Err(invalid());
+    }
+    let value = body.value.as_str().ok_or_else(invalid)?;
+    if value.len() > 16_384 {
+        return Err(invalid());
+    }
+    let request: ProactivityPolicyRequest = serde_json::from_str(value).map_err(|_| invalid())?;
+    request.claim_value()?;
+    Ok(ProactivityPolicyProposal {
+        request,
+        revision: *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
+    })
 }

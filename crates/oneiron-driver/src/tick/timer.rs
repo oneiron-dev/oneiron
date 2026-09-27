@@ -88,6 +88,10 @@ impl<'v> AttemptQueueDeadlines<'v> {
 }
 
 impl DeadlineSource for AttemptQueueDeadlines<'_> {
+    fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        Some(self.vault.subscribe_proactivity_changes())
+    }
+
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
         // The commitment lane runs FIRST (CMT-3, ONE-1540). Consuming a due
         // phase COMMITS a Dreamer attempt, so reading the attempt queue after
@@ -119,13 +123,28 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         }
         // A digest is per vault, so only the elected home node arms its
         // cadence. It shares the same concrete deadline timer, not a poll.
-        if macro_admissible && let Some(at) = self.vault.next_proactivity_digest_at()? {
-            let due = CommitmentDeadline {
-                due_at_ms: at.saturating_mul(1_000),
-                scope: DreamerConsolidationScope::Micro,
+        if macro_admissible {
+            // A broken digest index is observable, but cannot silence a
+            // separately valid attempt or commitment deadline.
+            let digest = match self.vault.next_proactivity_digest_at() {
+                Ok(digest) => digest,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "digest deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
             };
-            if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
-                next = Some(due);
+            if let Some(at) = digest {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
             }
         }
         // The lanes are independent durable sources; the earlier one arms
@@ -285,6 +304,10 @@ pub struct TimerTick<D> {
 }
 
 impl<D: DeadlineSource> TimerTick<D> {
+    pub(super) fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        self.source.subscribe_changes()
+    }
+
     /// Timer over the system wall clock.
     #[must_use]
     pub fn new(source: D) -> Self {
