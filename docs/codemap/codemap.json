@@ -10132,7 +10132,20 @@
      "path": "src/connector_key/lifecycle/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 1
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorQualificationError"
+     ],
+     "path": "src/connector_key/lifecycle/qualification.rs",
+     "purpose": "Qualification is a vault door: callers cannot submit a self-graded report",
+     "surface": {
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -10182,9 +10195,47 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
       "crate-vis": 7,
-      "mod": 1,
+      "mod": 2,
       "re-export": 8
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GroundingOracle",
+      "ProbeCitation",
+      "ProbeDisposition",
+      "ProbeReply",
+      "ProbeRequest",
+      "ProbeTool",
+      "ProbeTraceEvent",
+      "ProbeTraceKind",
+      "ProbeWrite",
+      "QualificationCase",
+      "QualificationConnection",
+      "QualificationConnector",
+      "QualificationFailure",
+      "QualificationLimits",
+      "QualificationPlan",
+      "QualificationReport"
+     ],
+     "path": "src/connector_key/qualification.rs",
+     "purpose": "Connector qualification probes",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 10,
+      "trait": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/connector_key/qualification/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -10265,8 +10316,9 @@
      "path": "src/connector_key/slate.rs",
      "purpose": "ARCH-0072 typed per-tool grant slates",
      "surface": {
+      "crate-vis": 2,
       "enum": 2,
-      "fn": 10,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -34789,7 +34841,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 20,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35764,8 +35816,8 @@
    },
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2110,
-   "test_files": 722
+   "source_files": 2112,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
@@ -42019,42 +42071,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "GroundingOracle",
-      "ProbeCitation",
-      "ProbeDisposition",
-      "ProbeReply",
-      "ProbeRequest",
-      "ProbeTool",
-      "ProbeTraceEvent",
-      "ProbeTraceKind",
-      "ProbeWrite",
-      "QualificationCase",
-      "QualificationConnection",
-      "QualificationConnector",
-      "QualificationFailure",
-      "QualificationLimits",
-      "QualificationPlan",
-      "QualificationReport"
-     ],
-     "path": "src/mcp/qualification.rs",
-     "purpose": "Connector qualification probes",
-     "surface": {
-      "enum": 3,
-      "fn": 2,
-      "struct": 10,
-      "trait": 3
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "test",
      "notable": [],
-     "path": "src/mcp/qualification/tests.rs",
-     "purpose": "—",
-     "surface": {}
+     "path": "src/mcp/qualification.rs",
+     "purpose": "Public MCP qualification API, implemented at the vault boundary",
+     "surface": {
+      "re-export": 1
+     }
     },
     {
      "bucket": "s",
@@ -42894,7 +42918,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 22,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -42974,7 +42998,7 @@
    "over_bar": 3,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 231,
-   "test_files": 97
+   "test_files": 96
   },
   "oneiron-uniffi": {
    "files": [

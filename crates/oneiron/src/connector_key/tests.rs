@@ -2748,6 +2748,18 @@ fn send_admit_row_count(vault: &Vault, id: &EntityId) -> Result<usize> {
 }
 
 #[test]
+fn catalog_key_cannot_encode_active_without_qualification() {
+    let record = ConnectorKeyRecord {
+        catalog: Some(catalog_entry("unqualified", "unqualified")),
+        ..ConnectorKeyRecord::active("unqualified", None, Vec::new(), 1_000)
+    };
+    assert!(matches!(
+        encode_connector_key_body(&record),
+        Err(Error::Record(RecordError::InvalidConnectorKeyBody(_)))
+    ));
+}
+
+#[test]
 fn secret_ref_round_trip_additive() -> Result<()> {
     let record = ConnectorKeyRecord {
         secret_ref: Some("slack/bot_token".to_owned()),
@@ -2756,6 +2768,7 @@ fn secret_ref_round_trip_additive() -> Result<()> {
             registered_at: 1_000,
             ..catalog_entry("herald_slack", "slack")
         }),
+        status: ConnectorKeyStatus::Pending,
         ..ConnectorKeyRecord::active("slack", None, all_dimension_budgets(), 1_000)
     };
     let encoded = encode_connector_key_body(&record)?;
@@ -2807,7 +2820,14 @@ fn secret_ref_round_trip_additive() -> Result<()> {
     entries.retain(|(key, _)| {
         !matches!(
             key.as_str(),
-            Some("secret_ref" | "key_generation" | "catalog")
+            Some(
+                "secret_ref"
+                    | "key_generation"
+                    | "catalog"
+                    | "slate_ref"
+                    | "protocol_revision"
+                    | "slate_revision"
+            )
         )
     });
     assert_eq!(entries.len(), 11);
@@ -3204,17 +3224,13 @@ fn catalog_meta_verbs() -> Result<()> {
         1_001,
     )?;
 
-    // A hyphenated query finds the underscored name.
-    let hits = vault.search_connector_catalog("herald-slack")?;
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].name, "herald_slack");
-    // The summary matches case-insensitively.
-    let hits = vault.search_connector_catalog("workspace")?;
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].name, "herald_slack");
-    // A blank query lists the live catalog.
-    assert_eq!(vault.search_connector_catalog("")?.len(), 2);
+    // Installed catalog entries remain discoverable to the history lens,
+    // but Pending keys never enter the live discovery or execution lenses.
+    assert!(vault.search_connector_catalog("herald-slack")?.is_empty());
+    assert!(vault.search_connector_catalog("workspace")?.is_empty());
+    assert!(vault.search_connector_catalog("")?.is_empty());
     assert!(vault.search_connector_catalog("nothing_here")?.is_empty());
+    assert!(vault.describe_connector("market_feed")?.is_some());
 
     // describe: the entry plus VALUE-LESS key metadata.
     let described = vault
@@ -3222,7 +3238,7 @@ fn catalog_meta_verbs() -> Result<()> {
         .expect("describe normalizes its query");
     assert_eq!(described.key_ref, slack_id);
     assert_eq!(described.connector, "slack");
-    assert_eq!(described.status, ConnectorKeyStatus::Active);
+    assert_eq!(described.status, ConnectorKeyStatus::Pending);
     assert_eq!(described.secret_ref.as_deref(), Some("slack_token"));
     assert_eq!(described.key_generation, 0);
     assert_eq!(described.registered_at, 1_000);
@@ -3232,16 +3248,18 @@ fn catalog_meta_verbs() -> Result<()> {
             .contains(std::str::from_utf8(CUSTODY_VALUE_FIXTURE).expect("utf8 fixture"))
     );
 
-    // route: entry-wide classification, no verb parameter.
-    let route = vault.route_connector_call("herald_slack")?.expect("route");
-    assert_eq!(route.key_ref, slack_id);
-    assert_eq!(route.call_class, ConnectorCallClass::CounterpartyComm);
-    assert!(route.budgeted_as_sends);
-    assert_eq!(route.verbs, vec!["send".to_owned(), "read".to_owned()]);
+    // The pending key still describes its entry-wide classification, but
+    // execution has no route until qualification activates it.
+    assert_eq!(
+        described.entry.verbs,
+        vec!["send".to_owned(), "read".to_owned()]
+    );
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
+    assert!(vault.route_connector_call("market_feed")?.is_none());
     assert!(
         !vault
-            .route_connector_call("market_feed")?
-            .expect("route")
+            .describe_connector("market_feed")?
+            .unwrap()
             .budgeted_as_sends
     );
 
@@ -3289,9 +3307,14 @@ fn budget_rider_send_is_counterparty_only() -> Result<()> {
         ConnectorKeySpec::new("slack"),
         1_000,
     )?;
-    let route = vault.route_connector_call("herald_slack")?.expect("route");
-    assert!(route.budgeted_as_sends);
-    assert_eq!(route.verbs.len(), 2, "no verb narrows the classification");
+    let described = vault.describe_connector("herald_slack")?.expect("history");
+    assert!(described.budgeted_as_sends);
+    assert_eq!(
+        described.entry.verbs.len(),
+        2,
+        "no verb narrows the classification"
+    );
+    assert!(vault.route_connector_call("herald_slack")?.is_none());
 
     // A scoped-MCP connector stays unbudgeted for Sends.
     vault.register_connector(
@@ -3304,10 +3327,11 @@ fn budget_rider_send_is_counterparty_only() -> Result<()> {
     )?;
     assert!(
         !vault
-            .route_connector_call("mcp_tools")?
-            .expect("route")
+            .describe_connector("mcp_tools")?
+            .expect("history")
             .budgeted_as_sends
     );
+    assert!(vault.route_connector_call("mcp_tools")?.is_none());
 
     // UNCLASSIFIED is unbudgeted: a catalog-free key has no route, so the
     // executor keeps the canon default. This says nothing about the

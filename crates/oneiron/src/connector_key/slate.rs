@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 const PREFIX: &[u8] = b"connector.grant_slate.v1/";
+const BIND_PREFIX: &[u8] = b"connector.grant_slate.binding.v1/";
 fn key(id: EntityId) -> Vec<u8> {
     [PREFIX, id.as_bytes()].concat()
 }
@@ -101,6 +102,12 @@ impl ConnectorGrantSlate {
     pub fn rows(&self) -> &[SlateRow] {
         &self.rows
     }
+    pub fn tool_names(&self) -> BTreeSet<&str> {
+        self.manifest
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect()
+    }
     pub fn manifest_hash(&self) -> [u8; 32] {
         self.manifest_hash
     }
@@ -172,6 +179,45 @@ fn validate(manifest: &[SlateToolManifest], rows: &[SlateDraftRow]) -> Result<()
     Ok(())
 }
 
+/// A stamped slate is an admission for one connector, not a reusable grant.
+/// Reserve its identity in the same transaction as the key registration.
+pub(in crate::connector_key) fn bind_connector_slate_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    slate_id: EntityId,
+    key_id: &EntityId,
+) -> Result<()> {
+    if read_connector_slate_in_txn(vault, txn, slate_id)?.is_none() {
+        return Err(crate::connector_key::record::invalid_body(
+            "slate_ref does not resolve",
+        ));
+    }
+    let binding = [BIND_PREFIX, slate_id.as_bytes()].concat();
+    if vault.store.vault_meta.get(&*txn, &binding)?.is_some() {
+        return Err(crate::connector_key::record::invalid_body(
+            "slate already bound to a connector",
+        ));
+    }
+    vault
+        .store
+        .vault_meta
+        .put(txn, &binding, key_id.as_bytes())?;
+    Ok(())
+}
+
+pub(in crate::connector_key) fn read_connector_slate_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<ConnectorGrantSlate>> {
+    vault
+        .store
+        .vault_meta
+        .get(txn, &key(id))?
+        .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid()))
+        .transpose()
+}
+
 impl Vault {
     /// Persists the typed admission artifact. Free text, partial rows, duplicate
     /// tools, and owner columns in the draft all fail before the first write.
@@ -209,11 +255,7 @@ impl Vault {
     }
     pub fn connector_slate(&self, id: EntityId) -> Result<Option<ConnectorGrantSlate>> {
         let txn = self.store.env.read_txn()?;
-        self.store
-            .vault_meta
-            .get(&txn, &key(id))?
-            .map(|raw| serde_json::from_slice(&raw).map_err(|_| invalid()))
-            .transpose()
+        read_connector_slate_in_txn(self, &txn, id)
     }
     /// One authenticated stamp for the entire typed slate. This neither
     /// qualifies a connector nor activates its key: probes own that transition.

@@ -90,6 +90,9 @@ impl Vault {
         );
         normalize_budget_channel_classes(&mut record.budgets);
         record.secret_ref = key_spec.secret_ref;
+        record.status = ConnectorKeyStatus::Pending;
+        record.slate_ref = key_spec.slate_ref;
+        record.protocol_revision = key_spec.protocol_revision;
         record.catalog = Some(entry);
         // `validate` binds the entry to the key: a catalog naming a different
         // connector than the key governs is rejected here, pre-write.
@@ -115,8 +118,14 @@ impl Vault {
         record: &ConnectorKeyRecord,
     ) -> Result<()> {
         record.validate()?;
-        if record.status != ConnectorKeyStatus::Active {
-            return Err(invalid_body("registration requires status active"));
+        if record.status
+            != if record.catalog.is_some() {
+                ConnectorKeyStatus::Pending
+            } else {
+                ConnectorKeyStatus::Active
+            }
+        {
+            return Err(invalid_body("invalid registration status"));
         }
         if record.charter.is_some() || record.pending_charter.is_some() {
             return Err(invalid_body("registration must not carry a charter"));
@@ -127,6 +136,9 @@ impl Vault {
             return Err(invalid_body("registration mints generation 0"));
         }
 
+        if let Some(slate_ref) = record.slate_ref {
+            super::super::slate::bind_connector_slate_in_txn(self, wtxn, slate_ref, id)?;
+        }
         let data = encode_connector_key_body(record)?;
         if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::ConnectorKeyAlreadyExists));
