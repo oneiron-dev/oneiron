@@ -154,7 +154,7 @@ impl Vault {
             if task.outcome == Some(ConnectorSendTaskOutcome::Ambiguous) {
                 // A terminal possibly-delivered send is not a fresh send permit,
                 // even if a duplicate queue row is scheduled later.
-                complete_connector_task_attempt(&queue, &attempt, now)?;
+                complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
             #[cfg(test)]
@@ -166,7 +166,7 @@ impl Vault {
                 attempt_started_node_id,
                 now,
             )? {
-                complete_connector_task_attempt(&queue, &attempt, now)?;
+                complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
             let actor = OutboundDispatchActor {
@@ -239,15 +239,7 @@ impl Vault {
             ) {
                 Ok(result) => result,
                 Err(OutboundDispatchError::InvalidBoundActor) => {
-<<<<<<< HEAD
                     if !reconcile_connector_task(
-=======
-                    // Bound-actor validation fails before the chokepoint admits,
-                    // charges, or sends the effect, so this is a definite
-                    // non-delivery: fail the attempt terminally and project it.
-                    fail_connector_task_attempt(self, &attempt, now, "dispatch_rejected")?;
-                    project_connector_send_task_outcome(
->>>>>>> origin/main
                         self,
                         &attempt,
                         &task,
@@ -304,16 +296,6 @@ impl Vault {
                     )? {
                         executed = executed.saturating_add(1);
                     }
-<<<<<<< HEAD
-=======
-                    project_connector_send_task_outcome(
-                        self,
-                        task_ref,
-                        ConnectorSendTaskOutcome::Delivered,
-                        now,
-                    )?;
-                    complete_connector_task_attempt(self, &attempt, now)?;
->>>>>>> origin/main
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
                     // The door supplies a window-edge retry_at when it knows one;
@@ -363,12 +345,7 @@ impl Vault {
                         settle_suppressed_send(self, &attempt, task_ref, now)?;
                         continue;
                     }
-<<<<<<< HEAD
                     fail_connector_task_attempt_and_project(
-=======
-                    fail_connector_task_attempt(self, &attempt, now, result.outcome.as_str())?;
-                    project_connector_send_task_outcome(
->>>>>>> origin/main
                         self,
                         &queue,
                         &attempt,
@@ -454,7 +431,6 @@ impl Vault {
                         // Pending and may be manually retried under O6.
                         super::retry_audit::persist_terminal_send_receipt_and_fail(
                             self,
-<<<<<<< HEAD
                             super::retry_audit::TerminalSendSettlement {
                                 attempt: &attempt,
                                 task_ref,
@@ -477,20 +453,6 @@ impl Vault {
                                 },
                                 now,
                             },
-=======
-                            task_ref,
-                            result.receipt,
-                            SendReceiptOutcome::Failed,
-                            false,
-                            None,
-                        )?;
-                        fail_connector_task_attempt(self, &attempt, now, "transport_failed")?;
-                        project_connector_send_task_outcome(
-                            self,
-                            task_ref,
-                            ConnectorSendTaskOutcome::Failed,
-                            now,
->>>>>>> origin/main
                         )?;
                     }
                 }

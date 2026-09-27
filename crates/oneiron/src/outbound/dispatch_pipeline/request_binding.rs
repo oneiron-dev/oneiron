@@ -17,6 +17,7 @@ use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchReq
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentState, read_intent_for_attempt_in_txn,
 };
+use crate::ports::TombstoneStore;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -174,6 +175,9 @@ impl PreparedOutboundDispatch {
             }
             if let Some((actor, actor_class)) = self.verified_actor {
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                if vault.port_tombstone_is_deleted(&txn, &actor)? {
+                    return Err(OutboundDispatchError::InvalidBoundActor);
+                }
                 let entity_type = vault
                     .get_entity_type_in_txn(&txn, &actor)?
                     .ok_or(OutboundDispatchError::InvalidBoundActor)?;

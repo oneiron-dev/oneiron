@@ -5,16 +5,9 @@ use crate::error::Error;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
-<<<<<<< HEAD
-use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
-use crate::ports::TombstoneStore;
-use std::collections::BTreeMap;
-/// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
-=======
 use crate::receipt::{DispatchObservationKey, read_dispatch_observation};
 use crate::{EntityId, Vault};
 
->>>>>>> origin/main
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OutboundDispatchPipeline;
 
@@ -173,67 +166,6 @@ impl OutboundDispatchPipeline {
             super::admission::DispatchAdmission::Execute
         ) || prepared.replay.is_some()
         {
-<<<<<<< HEAD
-            let mut hygiene_headers = BTreeMap::new();
-            inject_campaign_email_hygiene_headers(
-                &normalize_key(&request.intent.channel),
-                &mut hygiene_headers,
-                request.campaign_unsubscribe.as_ref(),
-            )?;
-            let payload = serde_json::to_vec(&FrozenOutboundPayload {
-                intent: &request.intent,
-                hygiene_headers,
-                calendar_invite: request.calendar_invite.as_ref(),
-                space_posting: space_posting.as_ref(),
-                actor_class: &request.actor.actor_class,
-                actor_ref: request.actor.actor_ref.as_deref(),
-                actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
-                channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
-                counterparty_ref: request.counterparty_ref.as_deref(),
-                has_opted_in: request.gate.has_opted_in,
-                has_permission: request.gate.has_permission,
-                requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
-                policy_risk: policy_risk.as_str(),
-                originating_session_ref: request.originating_session_ref.as_deref(),
-            })
-            .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
-            if let Some(record) = replay.as_ref() {
-                if record.server != request.intent.channel
-                    || record.tool != verb_contract.kind
-                    || record.payload() != payload.as_slice()
-                    || record.idempotency_supported != idempotency_supported
-                    || !record.budget_accounting.budget_class.is_send()
-                    || record.resolved_endpoint.is_some()
-                    || record.authorization_binding.is_some()
-                    || record.capability_provenance().is_some()
-                {
-                    return Err(invalid_replay());
-                }
-                // New validates this only at admission. A facade retry must still
-                // name its bound actor, not borrow the original actor's authority.
-                if let Some((actor, actor_class)) = verified_actor {
-                    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-                    if vault.port_tombstone_is_deleted(&rtxn, &actor)? {
-                        return Err(OutboundDispatchError::InvalidBoundActor);
-                    }
-                    let entity_type = vault
-                        .get_entity_type_in_txn(&rtxn, &actor)?
-                        .ok_or(OutboundDispatchError::InvalidBoundActor)?;
-                    crate::provenance::validate_actor_class(entity_type, actor_class)?;
-                    if request.actor.actor_entity_ref != Some(actor)
-                        || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
-                        || request.actor.actor_class != actor_class.gate_actor_class()
-                    {
-                        return Err(OutboundDispatchError::InvalidBoundActor);
-                    }
-                }
-            }
-            Some(payload)
-        } else {
-            None
-        };
-
-=======
             prepared.freeze_and_validate(vault)?;
         }
         let identity = prepared.identity();
@@ -249,7 +181,6 @@ impl OutboundDispatchPipeline {
             ..
         } = prepared;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
->>>>>>> origin/main
         let verdict = match admission.decision {
             super::admission::DispatchAdmission::Execute => {
                 super::effect::execute_admitted(super::effect::EffectInput {
