@@ -238,6 +238,15 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     }
                     return Ok(EdgeRematOutcome::Deferred);
                 }
+                if soft_addressing
+                    && crate::batch::stored_entity_type(&vault.store, &*wtxn, &tgt)?
+                        != Some(crate::registry::ENTITY_TYPE_PERSON)
+                {
+                    return Err(crate::error::ArtifactError::InvalidRecoveryArtifact(
+                        "retained addressing recipient missing or not a PERSON",
+                    )
+                    .into());
+                }
                 if matches!(
                     kind,
                     crate::edge::EdgeKind::SpawnedBy | crate::edge::EdgeKind::RepliesTo

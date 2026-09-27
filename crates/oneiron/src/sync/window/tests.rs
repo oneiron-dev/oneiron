@@ -254,6 +254,154 @@ fn soft_deleted_addressed_turn_keeps_its_edge_across_canonical_recovery() -> Res
 }
 
 #[test]
+fn soft_addressing_recovers_across_monthly_recipient_window() -> Result<()> {
+    let (_dir, source, conv, actor) = crate::conversation_dag::fixtures::fixture();
+    let jan = 1_768_435_200_u64; // 2026-01-15 UTC
+    let feb = 1_771_113_600_u64; // 2026-02-15 UTC
+    let recipient = EntityId::now();
+    source.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: jan,
+            end: jan,
+        },
+        jan,
+        &crate::conversation_dag::fixtures::body("recipient"),
+    )?;
+    let mut input = crate::conversation_dag::fixtures::input(conv, None, true, actor);
+    input.occurred = TimeRange {
+        start: feb,
+        end: feb,
+    };
+    input.learned_at = feb;
+    input.address = crate::conversation_dag::AddressMode::Direct;
+    input.recipients = vec![recipient];
+    let record = source.append_dag_record(&input)?.id;
+    let jan_key = WindowKey::from_timestamp(jan);
+    let jan_doc = create_window_doc("source", &jan_key);
+    reverse_rematerialize(&source, &jan_doc, &jan_key)?;
+    assert!(map_contains_binary(
+        &jan_doc.get_map("entities"),
+        &recipient.to_hex()
+    ));
+    let feb_key = WindowKey::from_timestamp(feb);
+    let feb_doc = create_window_doc("source", &feb_key);
+    reverse_rematerialize(&source, &feb_doc, &feb_key)?;
+    assert!(!map_contains_binary(
+        &feb_doc.get_map("entities"),
+        &recipient.to_hex()
+    ));
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserDelete,
+        deleted_at: feb + 10,
+        request_id: *EntityId::now().as_bytes(),
+    }
+    .encode();
+    source.apply_replayed_tombstone(&record, &tombstone)?;
+    apply_tombstone_to_window_doc(&feb_doc, &record, &tombstone)?;
+    feb_doc.commit();
+    let snapshot = crate::recovery::capture_canonical_window(&source, feb_key.as_str(), &feb_doc)?;
+    assert!(
+        !snapshot
+            .entity_blobs
+            .iter()
+            .any(|row| row.id == *recipient.as_bytes())
+    );
+    assert!(
+        snapshot
+            .base_edges
+            .iter()
+            .any(|row| row.source == *record.as_bytes()
+                && row.kind == EdgeKind::AddressedTo as u8
+                && row.target == *recipient.as_bytes())
+    );
+    let wrong_dir = tempfile::tempdir()?;
+    let wrong = Vault::open(wrong_dir.path(), VaultConfig::device())?;
+    for id in [conv, actor.entity_ref()] {
+        let raw = source.get_raw_unsealed(&id)?.unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        wrong
+            .batch()
+            .put_replicated(
+                &id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()?;
+    }
+    wrong.put_entity(
+        &recipient,
+        crate::registry::ENTITY_TYPE_CONVERSATION,
+        TimeRange {
+            start: jan,
+            end: jan,
+        },
+        jan,
+        &crate::conversation_dag::fixtures::body("wrong-kind"),
+    )?;
+    assert!(
+        crate::recovery::recover_vault_window(
+            &wrong,
+            &Materializer::new(),
+            wrong_dir.path().join("feb-manifest"),
+            &snapshot,
+            crate::recovery::RecoveryBudget::default()
+        )
+        .is_err()
+    );
+    assert_eq!(wrong.get_entity_type(&record)?, None);
+    let dir = tempfile::tempdir()?;
+    let peer = Vault::open(dir.path(), VaultConfig::device())?;
+    for id in [conv, actor.entity_ref()] {
+        let raw = source.get_raw_unsealed(&id)?.unwrap();
+        let header = crate::batch::EntityMetadataHeader::parse(&raw).unwrap();
+        peer.batch()
+            .put_replicated(
+                &id,
+                header.entity_type,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .commit()?;
+    }
+    forward_rematerialize(&peer, &jan_doc, &Materializer::new(), &jan_key)?;
+    assert_eq!(
+        peer.get_entity_type(&recipient)?,
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    crate::recovery::recover_vault_window(
+        &peer,
+        &Materializer::new(),
+        dir.path().join("feb-manifest"),
+        &snapshot,
+        crate::recovery::RecoveryBudget::default(),
+    )?;
+    assert_eq!(
+        peer.get_raw_unsealed(&record)?.unwrap().len(),
+        crate::batch::ENTITY_METADATA_HEADER_LEN
+    );
+    assert_eq!(
+        peer.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    assert_eq!(
+        source.targets(&record, EdgeKind::AddressedTo, None)?,
+        [recipient]
+    );
+    Ok(())
+}
+
+#[test]
 fn deleted_recipient_recovery_keeps_conversation_readable_without_resurrecting_hard_edge()
 -> Result<()> {
     for reason in [

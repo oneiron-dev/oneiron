@@ -9,7 +9,6 @@ use std::collections::{BTreeMap, BTreeSet};
 /// TURN. Ordinary peer replay never receives this trust: the old `to` bytes
 /// are gone, so only a validated local canonical snapshot of the retained
 /// shell and its BaseEdge can carry the historical structural fact.
-#[cfg(feature = "sync")]
 pub(crate) fn trusted_soft_addressing_edge(
     snapshot: &CanonicalSnapshot,
     source: &crate::EntityId,
@@ -41,13 +40,15 @@ pub(crate) fn trusted_soft_addressing_edge(
     {
         return Err(invalid("addressing shell is not an erased TURN"));
     }
-    let person = snapshot
+    // A canonical window need not contain a recipient from another month.
+    // If it does, validate it here; otherwise the capture/replay doors prove
+    // the PERSON against the vault holding the neighboring window.
+    if let Some(person) = snapshot
         .entity_blobs
         .iter()
         .find(|row| row.id == *target.as_bytes())
-        .ok_or(invalid("retained addressing recipient missing"))?;
-    if EntityMetadataHeader::parse(&person.blob)
-        .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
+        && EntityMetadataHeader::parse(&person.blob)
+            .is_none_or(|h| h.entity_type != crate::registry::ENTITY_TYPE_PERSON)
     {
         return Err(invalid("retained addressing recipient is not a PERSON"));
     }
@@ -141,7 +142,6 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
         }
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(invalid("edge kind"))?;
         crate::edge::decode_edge_value_for_kind(kind, &edge.value)?;
-        #[cfg(feature = "sync")]
         if kind == crate::EdgeKind::AddressedTo
             && snapshot.tombstones.iter().any(|row| row.id == edge.source)
         {

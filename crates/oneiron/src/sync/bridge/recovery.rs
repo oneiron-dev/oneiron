@@ -65,6 +65,15 @@ pub(crate) fn preflight_canonical_recovery(
                 &target,
                 &edge.value,
             )?;
+            if trusted_soft
+                && crate::batch::stored_entity_type(&vault.store, &txn, &target)?
+                    != Some(crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Err(ArtifactError::InvalidRecoveryArtifact(
+                    "retained addressing recipient missing or not a PERSON",
+                )
+                .into());
+            }
             if !trusted_soft
                 && !crate::conversation_dag::addressed_to_echo_in_txn(
                     &vault.store,
