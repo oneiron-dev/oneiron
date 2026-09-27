@@ -10,9 +10,10 @@ use super::record::{
     validate_executor_config_marker,
 };
 use super::store::{
-    checkpoint_label, fallback_speech_marker, implicit_speak_output_path, load_utf8_output,
-    observation_output_path, output_was_compacted, record_output, record_text_output,
-    recoverable_output_path, script_output_path, validate_runtime_outputs,
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, checkpoint_label, fallback_speech_marker,
+    implicit_speak_output_path, load_utf8_output, observation_output_path, output_was_compacted,
+    record_output, record_text_output, recoverable_chunk_path, script_output_path,
+    validate_runtime_outputs,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -657,7 +658,9 @@ impl EngineNativeExecutor<'_> {
                 OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
                     .map_err(|_| Error::CorruptedIndex("executor observation encoding"))?,
                 OutputTier::Stub => serde_json::to_string(&json!({
-                    "sandbox.fs.read_file": recoverable_output_path(seq as u64, view.source),
+                    "sandbox.fs.read_file": recoverable_chunk_path(seq as u64, view.source, 0),
+                    "byte_len": view.source.byte_len,
+                    "max_chunk_bytes": RECOVERABLE_OUTPUT_CHUNK_BYTES,
                 }))?,
             };
             let turn = CodeRunHistoryTurn {

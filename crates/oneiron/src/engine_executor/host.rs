@@ -1,7 +1,10 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
 use super::record::completed_step_count;
-use super::store::{decode_text_output, observation_output_path, recoverable_output_path};
+use super::store::{
+    RECOVERABLE_OUTPUT_CHUNK_BYTES, decode_text_output, observation_output_path,
+    recoverable_output_path,
+};
 use super::types::{
     EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, SelfDispatchResponse,
 };
@@ -110,12 +113,29 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
                 .get_code_run_raw_output(output)?
                 .ok_or(Error::CorruptedIndex("executor replay output bytes"))?;
             let text = decode_text_output(&output.path, raw)?;
-            if recoverable_output_path(*seq, OutputRef::from_bytes(text.as_bytes())) != path {
-                return Err(Error::InvalidConfig(
+            let source = OutputRef::from_bytes(text.as_bytes());
+            let base = recoverable_output_path(*seq, source);
+            let offset = path
+                .strip_prefix(&format!("{base}/chunk/"))
+                .and_then(|value| {
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|offset| value == offset.to_string())
+                })
+                .ok_or(Error::InvalidConfig(
                     "invalid recoverable output reference".into(),
+                ))?;
+            let bytes = text.as_bytes();
+            if offset > bytes.len() {
+                return Err(Error::InvalidConfig(
+                    "recoverable output offset exceeds source".into(),
                 ));
             }
-            return Ok(Some(text.into_bytes()));
+            let end = offset
+                .saturating_add(RECOVERABLE_OUTPUT_CHUNK_BYTES)
+                .min(bytes.len());
+            return Ok(Some(bytes[offset..end].to_vec()));
         }
         Err(Error::InvalidConfig(
             "recoverable output is outside this run".into(),

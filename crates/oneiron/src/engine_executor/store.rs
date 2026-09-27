@@ -156,6 +156,10 @@ pub(super) fn output_was_compacted(
     Ok(storage.get_code_run_raw_output(&marker)?.is_some())
 }
 
+/// Maximum raw bytes handed to one guest read. Worst-case JSON byte-array
+/// encoding is under 262 KiB before the bridge applies its exact wire cap.
+pub(super) const RECOVERABLE_OUTPUT_CHUNK_BYTES: usize = 64 * 1024;
+
 /// A model-facing, typed read-file affordance in the guest's existing output
 /// mount. Neither the path nor its digest grants access without a matching
 /// committed observation in the current run's routed replay store.
@@ -168,6 +172,14 @@ pub(super) fn recoverable_output_path(
         crate::entity_id::bytes_to_hex_lower(&source.hash),
         source.byte_len,
     )
+}
+
+pub(super) fn recoverable_chunk_path(
+    seq: u64,
+    source: crate::compaction::output::OutputRef,
+    offset: u64,
+) -> String {
+    format!("{}/chunk/{offset}", recoverable_output_path(seq, source))
 }
 
 pub(super) fn script_output_path(seq: u64) -> String {
