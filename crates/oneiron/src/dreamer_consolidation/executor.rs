@@ -30,8 +30,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepResult, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId,
-    ModelLocality, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
+    DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
@@ -53,6 +53,8 @@ pub struct ConsolidationExecutor<'a> {
     /// The resolved vault Dreamer authority, checked against the queued stamp.
     pub actor: WriteActor,
     pub model: ModelId,
+    /// Explicit host binding and extraction egress decision for this backend.
+    pub inference: HostInferenceContext<'a>,
     pub sink: &'a mut dyn ConsolidationSink,
     /// Trusted caller's exact branch scope, in addition to actor authority.
     /// A queued scope is its upper bound. None inherits that scope, or admits
@@ -109,14 +111,18 @@ impl ConsolidationExecutor<'_> {
             now_ms: ctx.now_ms,
         };
         let rules = failure_rules::load(ctx.vault)?;
-        let mut request = self.extraction_request(&partition, &transcript, resources.scope());
-        ctx.vault.bind_model_role(
-            crate::llm::manifest::ModelRole::ExtractionTeacher,
-            &mut request,
-        )?;
+        let mut request = self.extraction_request(&partition, &transcript, resources.scope())?;
         if let Some(rules) = &rules {
             rules.bind(Stage::Extraction, &mut request);
         }
+        let request = ctx
+            .vault
+            .authorize_model_role(
+                crate::llm::manifest::ModelRole::ExtractionTeacher,
+                request,
+                &self.inference,
+            )?
+            .into_request();
         let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
         let response = match outcome {
@@ -254,10 +260,7 @@ impl ConsolidationExecutor<'_> {
                 &prior_heads,
                 resources.scope(),
             )?;
-            ctx.vault.bind_model_role(
-                crate::llm::manifest::ModelRole::GenerativeReasoner,
-                &mut request,
-            )?;
+
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id: step_identity.0,
@@ -270,6 +273,14 @@ impl ConsolidationExecutor<'_> {
             if let Some(rules) = rules {
                 rules.bind(Stage::Conflict, &mut request);
             }
+            let request = ctx
+                .vault
+                .authorize_model_role(
+                    crate::llm::manifest::ModelRole::GenerativeReasoner,
+                    request,
+                    &self.inference,
+                )?
+                .into_request();
             let step_hash = request.canonical_hash()?;
             let outcome = call_as_step(&step_ctx, self.backend, self.guard, request).await;
             let response = match outcome {
@@ -472,7 +483,8 @@ impl ConsolidationExecutor<'_> {
                         "value": {}
                     }, "required": ["resolution"]}),
                 },
-                locality: ModelLocality::OwnServer,
+                locality: self.inference.selected_locality().ok_or_else(||
+                    crate::Error::InvalidConfig("consolidation host binding needs locality".into()))?,
             }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {

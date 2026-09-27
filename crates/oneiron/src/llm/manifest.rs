@@ -268,76 +268,11 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
-    /// Call-path binding: absent manifest and resident policy preserves explicit host configuration.
-    pub fn bind_model_role(&self, role: ModelRole, request: &mut LlmRequest) -> Result<()> {
-        self.bind_model_role_with_egress(role, request, None)
-    }
-
-    /// Host-authenticated route binding. A nonlocal stored extraction default
-    /// only runs if the host's predicate admits the actual bound request.
-    pub fn bind_model_role_with_egress(
-        &self,
-        role: ModelRole,
-        request: &mut LlmRequest,
-        egress: Option<&dyn super::ExtractionEgressPredicate>,
-    ) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        // Only an explicitly stored resident policy changes host-supplied
-        // envelopes. The owner manifest still has higher tier precedence.
-        let mut bound = request.clone();
-        let table = super::defaults::read_stored_defaults(&self.store, &txn)?;
-        let manifest = read_manifest(&self.store, &txn)?;
-        if let Some(table) = &table {
-            table.apply(&mut bound.envelope);
-        }
-        if let Some(manifest) = manifest {
-            manifest.bind_request(role, &read_routes(&self.store, &txn)?, &mut bound)?;
-        } else if let Some(row) = table
-            .as_ref()
-            .and_then(|table| table.purpose(&bound.envelope.purpose))
-        {
-            // A default locality is a route request, not evidence that the
-            // caller's already selected model/transport moved to that route.
-            if row.locality != bound.envelope.locality {
-                return Err(invalid("no model binding for inference default locality"));
-            }
-            // A local zero-reservation lease must never rely on the caller's
-            // locality label alone. Without a manifest, the registered model
-            // and transport must both be local before budget admission.
-            if row.locality == ModelLocality::OnDevice
-                && !super::registry::read_model_registry_row(&self.store, &txn, &bound.model)?
-                    .is_some_and(|binding| {
-                        binding.catalog.locality == ModelLocality::OnDevice
-                            && binding.wire == super::registry::ModelWireFormat::Local
-                    })
-            {
-                return Err(invalid(
-                    "local inference default has no local model binding",
-                ));
-            }
-        }
-        if matches!(bound.envelope.purpose, super::CallPurpose::Extraction)
-            && bound.envelope.locality != ModelLocality::OnDevice
-        {
-            // The shipped bound applies even when the vault has no stored
-            // table. An absent predicate cannot turn host egress into a default.
-            let max_locality = table.as_ref().map_or(ModelLocality::OnDevice, |table| {
-                table.extraction_max_locality
-            });
-            if super::defaults::locality_rank(bound.envelope.locality)
-                > super::defaults::locality_rank(max_locality)
-                || !egress.is_some_and(|predicate| predicate.permits(&bound))
-            {
-                return Err(invalid(
-                    "nonlocal extraction needs host egress authorization",
-                ));
-            }
-        }
-        *request = bound;
-        Ok(())
-    }
 }
-fn read_routes(store: &Store, txn: &heed::RoTxn<'_>) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
+pub(super) fn read_routes(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
     store
         .vault_meta
         .get(txn, ROUTES_KEY)?

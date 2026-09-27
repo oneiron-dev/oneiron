@@ -129,9 +129,11 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
             .status(),
         StatusCode::BAD_REQUEST
     );
+    let policy_reader = vault.clone();
     let allow: Arc<dyn oneiron::llm::ExtractionEgressPredicate> =
-        Arc::new(|request: &LlmRequest| {
-            request.model.as_str() == "own/extraction@r1"
+        Arc::new(move |request: &LlmRequest| {
+            policy_reader.purpose_default_table().is_ok()
+                && request.model.as_str() == "own/extraction@r1"
                 && request.envelope.locality == ModelLocality::OwnServer
         });
     let allowed = server(vault.clone(), count.clone(), Some(allow));
@@ -164,6 +166,16 @@ async fn owner_edits_nonlocal_default_only_with_host_egress_and_call_rechecks() 
             .expect("response")
             .status(),
         StatusCode::FORBIDDEN
+    );
+    let mut stream = call(&model);
+    *stream.uri_mut() = "/v1/llm/stream".parse().expect("stream path");
+    assert_eq!(
+        server(vault.clone(), count.clone(), None)
+            .oneshot(stream)
+            .await
+            .expect("stream refusal")
+            .status(),
+        StatusCode::FORBIDDEN,
     );
     let deny: Arc<dyn oneiron::llm::ExtractionEgressPredicate> = Arc::new(|_: &LlmRequest| false);
     assert_eq!(

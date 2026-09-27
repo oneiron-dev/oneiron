@@ -62,6 +62,7 @@ fn prior_head_judge_routes_merge_accumulate_escalate_and_down() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {
@@ -172,6 +173,7 @@ fn manifest_single_value_skips_judge_only_at_sufficient_trust() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: Some(prior_scope(&vault, &admitted, &turns, head)?),
         };
         let mut ctx = WakeAttemptContext {

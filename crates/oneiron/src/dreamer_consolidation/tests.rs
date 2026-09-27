@@ -45,8 +45,34 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::device());
+    authorize_test_inference(&vault).expect("owner-pinned test egress");
     grant_fixture_reads(&vault).expect("explicit consolidation read grant");
     (dir, vault)
+}
+
+fn authorize_test_inference(vault: &Vault) -> Result<()> {
+    let mut policy = vault.purpose_default_table()?;
+    policy.extraction_max_locality = crate::ModelLocality::OwnServer;
+    policy
+        .purposes
+        .get_mut(&crate::CallPurpose::Extraction)
+        .ok_or_else(|| crate::Error::InvalidConfig("missing extraction row".into()))?
+        .locality = crate::ModelLocality::OwnServer;
+    vault.set_purpose_default_table(&policy)?;
+    Ok(())
+}
+
+fn allow_fixture_extraction(_: &crate::LlmRequest) -> bool {
+    true
+}
+fn test_inference_host() -> crate::llm::HostInferenceContext<'static> {
+    crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: crate::ModelId::new("test/model@r1").expect("test backend model"),
+            locality: crate::ModelLocality::OwnServer,
+        },
+        extraction_egress: Some(&allow_fixture_extraction),
+    }
 }
 
 fn grant_fixture_reads(vault: &Vault) -> Result<()> {
@@ -1489,6 +1515,61 @@ impl ConsolidationSink for CapturingSink {
 }
 
 #[test]
+fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let store = DreamerRunnerStore::new(&vault);
+    let (admitted, turns, _) =
+        admitted_attempt_fixture(&vault, &store, 0x71, &[("user", "call me Casey")])?;
+    let subject = EntityId::now();
+    let backend = ScriptedBackend::new(vec![Ok(extraction_response(&subject, &turns[0]))]);
+    let guard = crate::BudgetGuard::with_reserve_units(
+        "wake",
+        10_000,
+        100,
+        BudgetExhaustionPolicy::Suspend,
+    );
+    let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
+    let mut sink = CapturingSink::default();
+    let mut executor = ConsolidationExecutor {
+        backend: &backend,
+        guard: &guard,
+        strategy: DreamerClaimAuthoringStrategy::SinglePass,
+        actor: vault.dreamer_authority()?,
+        model: crate::ModelId::new("test/model@r1").expect("model"),
+        inference: crate::llm::HostInferenceContext {
+            binding: crate::llm::HostInferenceBinding::Advertised {
+                model: crate::ModelId::new("test/model@r1").expect("host model"),
+                locality: crate::ModelLocality::OwnServer,
+            },
+            extraction_egress: None,
+        },
+        sink: &mut sink,
+        scope: None,
+    };
+    let mut ctx = WakeAttemptContext {
+        vault: &vault,
+        deadline: &deadline,
+        budget_id: "wake",
+        now_ms: 21_000,
+    };
+    assert!(matches!(
+        block_on_ready(executor.execute(&admitted, &mut ctx)),
+        Err(crate::Error::InvalidConfig(_))
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(guard.read().used_units, 0);
+    assert_eq!(guard.read().reserved_units, 0);
+    executor.inference.extraction_egress = Some(&allow_fixture_extraction);
+    assert!(matches!(
+        block_on_ready(executor.execute(&admitted, &mut ctx))?,
+        DreamerAttemptExecution::Completed { .. }
+    ));
+    assert_eq!(backend.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
 fn no_fabricated_belief_writes() -> Result<()> {
     let (_dir, vault) = open_vault();
     let before = vault.entities_by_type(crate::registry::ENTITY_TYPE_CLAIM)?;
@@ -1539,6 +1620,7 @@ fn no_fabricated_belief_writes() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -1853,6 +1935,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -1891,6 +1974,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         assert!(matches!(
@@ -1938,6 +2022,7 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -1993,6 +2078,7 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -2353,6 +2439,7 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -2416,6 +2503,7 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {
@@ -2488,6 +2576,7 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -2558,6 +2647,7 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: test_inference_host(),
             scope: None,
         };
         let mut ctx = WakeAttemptContext {
@@ -2676,6 +2766,7 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         actor: vault.dreamer_authority()?,
         model: crate::ModelId::new("test/model@r1").expect("model"),
         sink: &mut sink,
+        inference: test_inference_host(),
         scope: None,
     };
     let mut ctx = WakeAttemptContext {

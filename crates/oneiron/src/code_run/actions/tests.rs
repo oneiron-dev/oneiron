@@ -231,10 +231,20 @@ fn authorized_agent_edits_inference_rows_and_next_call_uses_them() -> Result<()>
         params: Default::default(),
         provider_options: Default::default(),
     };
-    vault.bind_model_role(
-        crate::llm::manifest::ModelRole::GenerativeReasoner,
-        &mut request,
-    )?;
+    let host = crate::llm::HostInferenceContext {
+        binding: crate::llm::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality: ModelLocality::OwnServer,
+        },
+        extraction_egress: None,
+    };
+    request = vault
+        .authorize_model_role(
+            crate::llm::manifest::ModelRole::GenerativeReasoner,
+            request,
+            &host,
+        )?
+        .into_request();
     assert_eq!(
         request.envelope.tier.resolved().as_str(),
         "resident-consolidation"

@@ -1,5 +1,6 @@
 //! A resident-authored policy changes what the real executor can publish on fatal fallback.
 use super::*;
+use crate::CallClass;
 use crate::code_run::{HostSelfDispatcher, SelfCall, SelfDispatcher, SelfMemoryPutClaimCall};
 
 fn rows(subject: EntityId, turn: EntityId, eligible: bool) -> Vec<u8> {
@@ -33,6 +34,13 @@ fn rows(subject: EntityId, turn: EntityId, eligible: bool) -> Vec<u8> {
         }
     }
     serde_json::to_vec(&serde_json::json!({"version":1,"rows":rows})).expect("policy")
+}
+
+fn permits_only_decorated_extraction(request: &LlmRequest) -> bool {
+    matches!(&request.envelope.class, CallClass::Durable { fallback }
+        if fallback.config.as_ref()
+            .and_then(|config| config.pointer("/rows/0/value/candidates/0/value"))
+            .and_then(serde_json::Value::as_str) == Some("from declared fallback"))
 }
 
 #[test]
@@ -138,6 +146,10 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
             actor: vault.dreamer_authority()?,
             model: crate::ModelId::new("test/model@r1").expect("model"),
             sink: &mut sink,
+            inference: crate::llm::HostInferenceContext {
+                extraction_egress: Some(&permits_only_decorated_extraction),
+                ..test_inference_host()
+            },
             scope: None,
         };
         let execution = block_on_ready(executor.execute(

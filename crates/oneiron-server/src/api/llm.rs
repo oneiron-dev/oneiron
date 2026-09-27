@@ -65,14 +65,21 @@ async fn replace_defaults(
     if !auth.is_owner_grade() {
         return refusal(StatusCode::FORBIDDEN, "owner_required");
     }
-    if table.purposes[&oneiron::CallPurpose::Extraction].locality
-        != oneiron::ModelLocality::OnDevice
+    // A JSON body is only a DTO. Validate all rows before inspecting any key.
+    let table = match oneiron::llm::ValidatedPurposeDefaults::try_from(table) {
+        Ok(table) => table,
+        Err(_) => return refusal(StatusCode::BAD_REQUEST, "invalid_defaults"),
+    };
+    if table
+        .table()
+        .purpose(&oneiron::CallPurpose::Extraction)
+        .is_some_and(|row| row.locality != oneiron::ModelLocality::OnDevice)
         && server.extraction_egress.is_none()
     {
         return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
     }
-    match server.vault.set_purpose_default_table(&table) {
-        Ok(()) => Json(table).into_response(),
+    match server.vault.set_purpose_default_table(table.table()) {
+        Ok(()) => Json(table.table()).into_response(),
         Err(oneiron::Error::InvalidConfig(_)) => {
             refusal(StatusCode::BAD_REQUEST, "invalid_defaults")
         }
@@ -119,42 +126,22 @@ fn admit(
             "llm_unavailable",
         )));
     };
-    let row = server
+    let original_purpose = request.envelope.purpose.clone();
+    let context = oneiron::llm::HostInferenceContext {
+        binding: oneiron::llm::HostInferenceBinding::Registered,
+        extraction_egress: server.extraction_egress.as_deref(),
+    };
+    let authorized = server
         .vault
-        .model_registry_row(&request.model)
+        .authorize_raw_inference(request.clone(), &context)
         .map_err(|_| {
-            Box::new(refusal(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "catalog_unavailable",
-            ))
-        })?
-        .ok_or_else(|| Box::new(refusal(StatusCode::BAD_REQUEST, "unknown_model")))?;
-    request.envelope.locality = row.catalog.locality;
-    if request.envelope.purpose == oneiron::CallPurpose::Extraction
-        && request.envelope.locality != oneiron::ModelLocality::OnDevice
-    {
-        let policy = server.vault.purpose_default_table().map_err(|_| {
-            Box::new(refusal(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "defaults_unavailable",
-            ))
+            Box::new(if original_purpose == oneiron::CallPurpose::Extraction {
+                refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
+            } else {
+                refusal(StatusCode::BAD_REQUEST, "invalid_request")
+            })
         })?;
-        let allowed = oneiron::llm::locality_within_extraction_bound(
-            request.envelope.locality,
-            policy.extraction_max_locality,
-        );
-        if !allowed
-            || !server
-                .extraction_egress
-                .as_ref()
-                .is_some_and(|predicate| predicate.permits(request))
-        {
-            return Err(Box::new(refusal(
-                StatusCode::FORBIDDEN,
-                "extraction_egress_denied",
-            )));
-        }
-    }
+    *request = authorized.into_request();
     let admission = guard
         .admit_for_request(request)
         .map_err(|e| Box::new(failure(e.into())))?;

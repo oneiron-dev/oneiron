@@ -30,6 +30,19 @@ fn request(model: ModelId, locality: ModelLocality) -> LlmRequest {
     }
 }
 
+fn bind(vault: &Vault, role: ModelRole, request: &mut LlmRequest) -> Result<(), Error> {
+    let host = oneiron::llm::HostInferenceContext {
+        binding: oneiron::llm::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality: request.envelope.locality,
+        },
+        extraction_egress: None,
+    };
+    let authorized = vault.authorize_model_role(role, request.clone(), &host)?;
+    *request = authorized.into_request();
+    Ok(())
+}
+
 #[test]
 fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
     let dir = tempfile::tempdir().expect("temp dir");
@@ -76,8 +89,7 @@ fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
     assert!(vault.model_manifest().expect("read manifest").is_none());
 
     let mut call = request(model.clone(), ModelLocality::OnDevice);
-    vault
-        .bind_model_role(ModelRole::GenerativeReasoner, &mut call)
+    bind(&vault, ModelRole::GenerativeReasoner, &mut call)
         .expect("local binding must not open another reader");
     assert_eq!(call.model, model);
     assert_eq!(call.envelope.locality, ModelLocality::OnDevice);
@@ -90,7 +102,7 @@ fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
     );
     let before = remote.clone();
     assert!(matches!(
-        vault.bind_model_role(ModelRole::GenerativeReasoner, &mut remote),
+        bind(&vault, ModelRole::GenerativeReasoner, &mut remote),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(remote, before);
@@ -105,8 +117,36 @@ fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
     let mut mislabeled = request(wrong_wire.catalog.model, ModelLocality::OnDevice);
     let before = mislabeled.clone();
     assert!(matches!(
-        vault.bind_model_role(ModelRole::GenerativeReasoner, &mut mislabeled),
+        bind(&vault, ModelRole::GenerativeReasoner, &mut mislabeled),
         Err(Error::InvalidConfig(_))
     ));
     assert_eq!(mislabeled, before);
+}
+
+#[test]
+fn storing_the_shipped_rows_does_not_change_a_host_bound_decision() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
+    let model = ModelId::new("own/answer@r1").expect("model id");
+    let mut input = request(model.clone(), ModelLocality::OwnServer);
+    input.envelope.purpose = CallPurpose::AnswerGen;
+    input.envelope.tier.per_seat = Some(ModelTierRef("explicit-host".into()));
+    let host = oneiron::llm::HostInferenceContext {
+        binding: oneiron::llm::HostInferenceBinding::Advertised {
+            model,
+            locality: ModelLocality::OwnServer,
+        },
+        extraction_egress: None,
+    };
+    let absent = vault
+        .authorize_model_role(ModelRole::GenerativeReasoner, input.clone(), &host)
+        .expect("explicit host route without stored table");
+    vault
+        .set_purpose_default_table(&vault.purpose_default_table().expect("defaults"))
+        .expect("store the unchanged shipped policy");
+    let stored = vault
+        .authorize_model_role(ModelRole::GenerativeReasoner, input, &host)
+        .expect("same explicit host route after storing policy");
+    assert_eq!(absent.request(), stored.request());
+    assert_eq!(absent.binding(), stored.binding());
 }

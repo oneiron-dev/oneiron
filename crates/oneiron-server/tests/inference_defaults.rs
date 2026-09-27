@@ -83,6 +83,23 @@ async fn owner_can_edit_inference_defaults_over_http_without_rebuilding() {
             .status(),
         StatusCode::BAD_REQUEST,
     );
+    for missing in [Some(CallPurpose::Extraction), None] {
+        let mut malformed = table.clone();
+        if let Some(purpose) = missing {
+            malformed.purposes.remove(&purpose);
+        } else {
+            malformed.purposes.clear();
+        }
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(put("owner", &malformed))
+                .await
+                .expect("malformed policy response")
+                .status(),
+            StatusCode::BAD_REQUEST,
+        );
+    }
     let response = router
         .oneshot(get("owner"))
         .await
