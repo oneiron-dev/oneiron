@@ -22,10 +22,10 @@ pub(crate) fn is_identity_facet_body(data: &[u8]) -> bool {
     })
 }
 
-pub use self::codec::{
-    companion_value_from_json, companion_value_to_json, decode_companion_record_body,
-    encode_companion_record_body,
-};
+pub(crate) use self::codec::decode_companion_record_body;
+#[cfg(test)]
+pub(crate) use self::codec::encode_companion_record_body;
+pub use self::codec::{companion_value_from_json, companion_value_to_json};
 pub use self::keys::{
     COMPANION_RECORD_BODY_KEYS, COMPANION_RECORD_SCHEMA_VERSION, COMPANION_REGISTER_PACK_ID,
     COMPANION_REGISTER_SHORT_ID_PREFIX, COMPANION_TASK_ATTEMPT_KIND, COMPANION_TASK_PAYLOAD_KEYS,

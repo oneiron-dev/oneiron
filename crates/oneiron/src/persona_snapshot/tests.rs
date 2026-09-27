@@ -1,13 +1,11 @@
 use super::*;
 use crate::claim::ClaimSource;
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::config::VaultConfig;
 use crate::deletion::DeleteReason;
-use crate::edge::EdgeActorClass;
 use crate::federation::Sensitivity;
 use crate::receipt::{ReceiptKind, ReceiptQuery};
-use crate::registry::ENTITY_TYPE_PERSON;
-use crate::{ErrorKind, Vault};
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use crate::{EdgeKind, ErrorKind, Vault};
 
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -74,21 +72,24 @@ fn put_relationship(
     role: &str,
     sensitivity: Sensitivity,
 ) -> Result<()> {
-    let record = CompanionRecord::relationship(
-        CompanionScope::neutral(),
-        source,
-        target,
-        Value::Map(vec![(Value::from("role"), Value::from(role))]),
-        CompanionProvenance::new(
-            source,
-            EdgeActorClass::Human,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            Value::from("test"),
-        ),
-        sensitivity,
-    );
-    vault.create_companion_record(&EntityId::now(), &record, 5)
+    let relation = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "role": role,
+        "sensitivity": sensitivity.as_str(),
+    }))
+    .expect("relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&source, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&target, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()
 }
 
 fn owner_consent(compile: &PersonaSnapshotCompile) -> PersonaSnapshotExportConsent {
@@ -766,6 +767,36 @@ fn struck_identity_line_stays_out_of_export_record() -> Result<()> {
         !record.identity_line.contains("Lexi"),
         "struck identity text must not survive in the queryable export record"
     );
+    Ok(())
+}
+
+#[test]
+fn portable_card_refuses_shared_relationship_even_with_public_label() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let subject = put_person(&vault, 0x61)?;
+    let other = put_person(&vault, 0xB1)?;
+    let relation = EntityId::now();
+    let body = rmp_serde::to_vec_named(&serde_json::json!({
+        "sensitivity": "public",
+        "role": "colleague",
+        "scope": {"kind": "shared_vault", "vault_id": 42},
+    }))
+    .expect("shared relationship body");
+    vault
+        .batch()
+        .put(
+            &relation,
+            ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 5, end: 5 },
+            5,
+            &body,
+        )
+        .edge(&subject, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .edge(&other, EdgeKind::ParticipatesIn, &relation, 1.0)
+        .commit()?;
+    let card =
+        vault.compile_persona_snapshot(&subject, &PersonaSnapshotCompileOptions::default())?;
+    assert!(card.rows.iter().all(|row| row.subject_ref != other));
     Ok(())
 }
 

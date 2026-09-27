@@ -1,24 +1,10 @@
 //! Vault record APIs for companion profiles, relationships, and register snapshots.
 
-use super::codec::{decode_companion_record_body, encode_companion_record_body};
-use super::keys::COMPANION_TASK_ATTEMPT_KIND;
-use super::model::{CompanionRecord, CompanionRecordKey, CompanionSubject};
-use super::queue::{
-    CompanionTask, CompanionTaskKind, CompanionTaskStatus, EndCompanionRelationship,
-    EndCompanionRelationshipOutcome, EnqueueCompanionTaskOutcome, encode_companion_task_payload,
-};
-use super::register::CompanionRegister;
-use super::store::{companion_record_any_id_for_key_in_txn, companion_record_id_for_key_in_txn};
 use crate::Vault;
-use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
-use crate::ports::EntityStoreRead;
-use crate::temporal::TimeRange;
-
-use rmpv::Value;
+#[cfg(any(test, feature = "sync"))]
+use crate::error::Error;
+use crate::error::Result;
 
 impl Vault {
     /// Returns the active grant id authorizing a companion profile, if any.
@@ -37,10 +23,52 @@ impl Vault {
             persona_ref,
         )
     }
+    #[cfg(any(test, feature = "sync"))]
+    pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
+        if crate::registry::entity_type_registry_entry(crate::registry::ENTITY_TYPE_FACET).is_some()
+        {
+            Ok(())
+        } else {
+            Err(Error::InvalidEntityType(crate::registry::ENTITY_TYPE_FACET))
+        }
+    }
+}
 
+#[cfg(test)]
+use super::codec::{decode_companion_record_body, encode_companion_record_body};
+#[cfg(test)]
+use super::keys::COMPANION_TASK_ATTEMPT_KIND;
+#[cfg(test)]
+use super::model::{CompanionRecord, CompanionRecordKey, CompanionSubject};
+#[cfg(test)]
+use super::queue::{
+    CompanionTask, CompanionTaskKind, CompanionTaskStatus, EndCompanionRelationship,
+    EndCompanionRelationshipOutcome, EnqueueCompanionTaskOutcome, encode_companion_task_payload,
+};
+#[cfg(test)]
+use super::register::CompanionRegister;
+#[cfg(test)]
+use super::store::{companion_record_any_id_for_key_in_txn, companion_record_id_for_key_in_txn};
+#[cfg(test)]
+use crate::attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome};
+#[cfg(test)]
+use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+#[cfg(test)]
+use crate::claim::ClaimLifecycleStatus;
+#[cfg(test)]
+use crate::error::RecordError;
+#[cfg(test)]
+use crate::ports::EntityStoreRead;
+#[cfg(test)]
+use crate::temporal::TimeRange;
+#[cfg(test)]
+use rmpv::Value;
+
+#[cfg(test)]
+impl Vault {
     /// Creates a companion register record when neither the entity id nor the
     /// `(scope, subject)` register key is already present.
-    pub fn create_companion_record(
+    pub(crate) fn create_companion_record(
         &self,
         id: &EntityId,
         record: &CompanionRecord,
@@ -112,7 +140,7 @@ impl Vault {
     /// The register key is immutable for an existing record; callers that need
     /// a different `(scope, subject)` should create a new record and retire the
     /// old one.
-    pub fn update_companion_record(
+    pub(crate) fn update_companion_record(
         &self,
         id: &EntityId,
         record: &CompanionRecord,
@@ -148,7 +176,7 @@ impl Vault {
     }
 
     /// Reads and decodes one companion register record by entity id.
-    pub fn get_companion_record(&self, id: &EntityId) -> Result<Option<CompanionRecord>> {
+    pub(crate) fn get_companion_record(&self, id: &EntityId) -> Result<Option<CompanionRecord>> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self
             .store
@@ -169,7 +197,7 @@ impl Vault {
     /// stamping an auditable lifecycle event. Repeating retire on an already
     /// retracted record is an idempotent no-op that returns the stored record
     /// without adding another lifecycle event.
-    pub fn retire_companion_record(
+    pub(crate) fn retire_companion_record(
         &self,
         id: &EntityId,
         retired_at: u64,
@@ -204,7 +232,7 @@ impl Vault {
     /// scrubbing the private relationship payload, and optionally enqueueing a
     /// goodbye-artifact generation task. General vault entities are not
     /// deleted by this teardown path.
-    pub fn end_companion_relationship(
+    pub(crate) fn end_companion_relationship(
         &self,
         id: &EntityId,
         input: EndCompanionRelationship,
@@ -277,7 +305,7 @@ impl Vault {
     /// The retired row remains readable and inactive; the new id receives an
     /// active copy with a typed revive event. Raw updates to retired rows still
     /// fail closed through the generic companion-register put validator.
-    pub fn revive_companion_record(
+    pub(crate) fn revive_companion_record(
         &self,
         retired_id: &EntityId,
         revived_id: &EntityId,
@@ -320,7 +348,7 @@ impl Vault {
     }
 
     /// Returns the entity id for a companion register key, if present.
-    pub fn companion_record_id_for_key(
+    pub(crate) fn companion_record_id_for_key(
         &self,
         key: &CompanionRecordKey,
     ) -> Result<Option<EntityId>> {
@@ -329,7 +357,7 @@ impl Vault {
     }
 
     /// Reads all companion records into an in-memory register snapshot.
-    pub fn companion_register(&self) -> Result<CompanionRegister> {
+    pub(crate) fn companion_register(&self) -> Result<CompanionRegister> {
         let rtxn = self.store.env.read_txn()?;
         let mut register = CompanionRegister::new();
         for index_entry in
@@ -361,15 +389,6 @@ impl Vault {
             }
         }
         Ok(register)
-    }
-
-    pub(crate) fn ensure_companion_register_kind(&self) -> Result<()> {
-        if crate::registry::entity_type_registry_entry(crate::registry::ENTITY_TYPE_FACET).is_some()
-        {
-            Ok(())
-        } else {
-            Err(Error::InvalidEntityType(crate::registry::ENTITY_TYPE_FACET))
-        }
     }
 
     fn read_companion_record_in_txn(

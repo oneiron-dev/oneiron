@@ -305,7 +305,7 @@ fn companion_register_api_context_pack_retrieves_affect_without_private_note_lea
             &serde_json::json!({ "source": "fixture", "note": private_provenance }),
         )?,
     );
-    let record = crate::CompanionRecord::persona(
+    let record = crate::companion::CompanionRecord::persona(
         crate::CompanionScope::personal(EntityId::from_bytes_unchecked([0x74; 16])),
         EntityId::from_bytes_unchecked([0x75; 16]),
         crate::companion_value_from_json(&serde_json::json!({ "note": private_note }))?,

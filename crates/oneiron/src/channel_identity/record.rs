@@ -241,6 +241,7 @@ impl ChannelIdentity {
 
     /// Shared-vault content stays on a live sending identity bound to that exact
     /// vault. A matching sensitivity ceiling alone never supplies this binding.
+    #[cfg(test)]
     pub(crate) fn permits_companion_export_scope(
         &self,
         scope: &crate::companion::CompanionScope,

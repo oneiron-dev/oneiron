@@ -356,7 +356,8 @@ pub struct CompanionRecord {
 impl CompanionRecord {
     /// Constructs a persona record with active lifecycle.
     #[must_use]
-    pub fn persona(
+    #[cfg(test)]
+    pub(crate) fn persona(
         scope: CompanionScope,
         persona_ref: EntityId,
         value: Value,
@@ -375,7 +376,8 @@ impl CompanionRecord {
 
     /// Constructs a relationship record with active lifecycle.
     #[must_use]
-    pub fn relationship(
+    #[cfg(test)]
+    pub(crate) fn relationship(
         scope: CompanionScope,
         source_ref: EntityId,
         target_ref: EntityId,
@@ -395,7 +397,7 @@ impl CompanionRecord {
 
     /// Constructs a record from already-typed fields.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         scope: CompanionScope,
         subject: CompanionSubject,
         value: Value,
@@ -464,7 +466,8 @@ impl CompanionRecord {
     }
 
     /// Returns a copy of this active record with canonical created history.
-    pub fn created_at(&self, created_at: u64) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn created_at(&self, created_at: u64) -> Result<Self> {
         if self.lifecycle != ClaimLifecycleStatus::Active {
             return Err(invalid_companion(
                 "companion record create requires active record",
@@ -480,7 +483,8 @@ impl CompanionRecord {
     /// without stamping a lifecycle event.
     ///
     /// Use [`Self::retired_at`] for auditable retire transitions.
-    pub fn retired(&self) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn retired(&self) -> Result<Self> {
         if self.lifecycle != ClaimLifecycleStatus::Active {
             return Err(invalid_companion(
                 "companion record retire requires active record",
@@ -498,7 +502,8 @@ impl CompanionRecord {
     }
 
     /// Returns a copy of this record with a stamped retired lifecycle event.
-    pub fn retired_at(&self, retired_at: u64) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn retired_at(&self, retired_at: u64) -> Result<Self> {
         if self.lifecycle != ClaimLifecycleStatus::Active {
             return Err(invalid_companion(
                 "companion record retire requires active record",
@@ -514,7 +519,8 @@ impl CompanionRecord {
     }
 
     /// Returns a copy of this record revived to active lifecycle.
-    pub fn revived_at(&self, revived_at: u64) -> Result<Self> {
+    #[cfg(test)]
+    pub(crate) fn revived_at(&self, revived_at: u64) -> Result<Self> {
         if self.lifecycle != ClaimLifecycleStatus::Retracted {
             return Err(invalid_companion(
                 "companion record revive requires retired record",

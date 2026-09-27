@@ -9,9 +9,8 @@ mod puts;
 mod types;
 
 pub use self::types::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput,
-    EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
-    TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
+    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 
 pub(super) use self::codec::{edge_kind_from_str, kind_string_for_type};

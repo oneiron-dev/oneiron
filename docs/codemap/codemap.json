@@ -9704,8 +9704,8 @@
      "path": "src/companion/codec.rs",
      "purpose": "Canonical MessagePack codec for companion records, scope, subject, and provenance",
      "surface": {
-      "crate-vis": 8,
-      "fn": 4
+      "crate-vis": 10,
+      "fn": 2
      }
     },
     {
@@ -9726,7 +9726,7 @@
      "path": "src/companion/mod.rs",
      "purpose": "Companion relationship/persona record substrate",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 6
      }
     },
@@ -9747,9 +9747,9 @@
      "path": "src/companion/model.rs",
      "purpose": "Typed companion record domain: kinds, scopes, subjects, provenance, and records",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 11,
       "enum": 5,
-      "fn": 35,
+      "fn": 28,
       "struct": 4
      }
     },
@@ -9765,6 +9765,7 @@
      "purpose": "PERSON identity baselines and deterministic replay of recorded changes",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 4,
       "struct": 3
      }
@@ -9848,8 +9849,8 @@
      "path": "src/companion/vault.rs",
      "purpose": "Vault record APIs for companion profiles, relationships, and register snapshots",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9
+      "crate-vis": 11,
+      "fn": 1
      }
     },
     {
@@ -20907,7 +20908,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes, companion records, and imported-claim admission verbs",
      "surface": {
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -20958,7 +20959,6 @@
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
       "BlobVersionView",
-      "CompanionRecordInput",
       "EntityRefReceipt",
       "EntityView",
       "HabitCheckinInput",
@@ -20969,7 +20969,7 @@
      "path": "src/memory/structural/types.rs",
      "purpose": "Read-facing views and per-verb inputs for structural puts",
      "surface": {
-      "struct": 10
+      "struct": 9
      }
     },
     {
@@ -32956,7 +32956,7 @@
      "path": "src/workspace_roster/steps.rs",
      "purpose": "Ordered onboarding writes and idempotent primitives",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -37620,7 +37620,6 @@
       "NapiClaimListFilter",
       "NapiClaimView",
       "NapiCommitReceipt",
-      "NapiCompanionRecordInput",
       "NapiConsolidationJobInput",
       "NapiDeleteReceipt",
       "NapiDreamerJobRef",
@@ -37652,7 +37651,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 41
+      "struct": 40
      }
     },
     {
@@ -37711,7 +37710,7 @@
      "path": "src/facade/verbs_services.rs",
      "purpose": "Structural/blob/retrieval/outbound/calendar verbs of the actor surface",
      "surface": {
-      "fn": 18
+      "fn": 17
      }
     },
     {
@@ -38847,7 +38846,7 @@
      "path": "src/api/companion/errors.rs",
      "purpose": "Companion error constructors",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -38855,9 +38854,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/companion/mod.rs",
-     "purpose": "Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record…",
+     "purpose": "Companion control-plane surface: access grants and psych-mirror profiles",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 5
      }
     },
     {
@@ -38868,26 +38867,6 @@
      "purpose": "Companion profile routes, DTOs, and state builders",
      "surface": {
       "crate-vis": 24
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/companion/register.rs",
-     "purpose": "Companion register record routes and DTOs",
-     "surface": {
-      "crate-vis": 18
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/api/companion/register_wire.rs",
-     "purpose": "Register wire-format converters and validators",
-     "surface": {
-      "crate-vis": 14
      }
     },
     {
@@ -41980,7 +41959,7 @@
      "purpose": "Host-bound UI and agent action executor over the engine's one verb registry"
     },
     "api": {
-     "files": 156,
+     "files": 154,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -42157,7 +42136,7 @@
    },
    "over_bar": 1,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 230,
+   "source_files": 228,
    "test_files": 96
   },
   "oneiron-uniffi": {
@@ -42192,7 +42171,6 @@
       "ClaimListFilter",
       "ClaimView",
       "CommitReceipt",
-      "CompanionRecordInput",
       "ConsolidationJobInput",
       "DeleteReceipt",
       "DreamerJobRef",
@@ -42230,7 +42208,7 @@
      "purpose": "The complete DTO inventory for the WIRE head contract",
      "surface": {
       "enum": 3,
-      "struct": 37
+      "struct": 36
      }
     },
     {

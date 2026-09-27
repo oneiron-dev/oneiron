@@ -438,10 +438,6 @@ pub(super) fn companion_canonical_value(companion: &CompanionBirthIntent) -> Res
             Value::from(companion.work_facet_ref.to_hex()),
         ),
         (
-            Value::from("companion_record_ref"),
-            Value::from(companion.companion_record_ref.to_hex()),
-        ),
-        (
             Value::from("profile_grant_ref"),
             Value::from(companion.profile_grant_ref.to_hex()),
         ),

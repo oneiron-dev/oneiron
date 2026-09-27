@@ -373,15 +373,6 @@ Fetch Tier-1 first. It contains one endpoint block per live route literal and no
   - "get pending notifications"
 - safety: Read-only aggregation with a POST body; requires core read auth. Retrieval, when requested, runs the same scoped context-pack pipeline as `POST /v1/core/context-pack` and advances the caller's cursor.
 
-#### companion-relationship-end - `POST /v1/companion/register/records/{record_id}/end-relationship`
-
-- when-to-use: End an active companion relationship record, scrub its private relationship memory, and optionally enqueue the goodbye-artifact task.
-- trigger phrases:
-  - "end companion relationship"
-  - "remove private relationship memory"
-  - "enqueue goodbye artifact"
-- safety: Mutating teardown endpoint. Requires companion register write auth and an idempotency key for retries; skips the goodbye-artifact hook when the request marks the ending as bad.
-
 #### usage-event - `POST /v1/usage/events`
 
 - when-to-use: Submit per-owner, per-vault meter facts stamped with provider-list money, currency, and price-table snapshot. Local and BYO routes return an unrecorded response; hosted mode records each idempotency key once.
@@ -986,51 +977,6 @@ Example response for an empty request body:
     "query_count": 0,
     "last_retrieval_run_id": null,
     "last_result_ids": []
-  }
-}
-```
-
-### Companion Relationship End
-
-Method: `POST`
-
-Authentication: scoped core bearer with `companion:register:write`, or an owner-grade bearer credential.
-
-Headers:
-
-- `Idempotency-Key` optional but recommended for retries after timeouts or connection loss. Same key plus same body replays the cached response. Same key plus a different body returns a replay-conflict error.
-
-Request body:
-
-- `ended_at` optional: Unix timestamp for the relationship-ending event. Defaults to server time.
-- `ended_badly` optional: `true` skips goodbye-artifact generation. Defaults to `false`.
-- `run_id` optional: run identifier to stamp on the goodbye-artifact job when one is enqueued.
-
-Response fields:
-
-- `id`: companion register record entity id.
-- `record`: retired relationship record with private memory replaced by a scrubbed ending marker.
-- `goodbye_artifact`: hook status, task kind, optional run id, and optional job id.
-
-Example response:
-
-```json
-{
-  "id": "0123456789abcdef0123456789abcdef",
-  "record": {
-    "kind": "relationship",
-    "lifecycle": "retracted",
-    "value": {
-      "kind": "relationship_ended",
-      "private_memory": "removed",
-      "ended_at": 1770000000
-    }
-  },
-  "goodbye_artifact": {
-    "status": "enqueued",
-    "task": "goodbye_artifact",
-    "run_id": "eiri-goodbye-artifact-1770000000",
-    "job_id": "0123456789abcdef0123456789abcdef"
   }
 }
 ```

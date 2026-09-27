@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
+#[cfg(test)]
 pub(super) fn companion_record_id_for_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -38,6 +39,7 @@ pub(super) fn companion_record_id_for_key_in_txn(
     Ok(None)
 }
 
+#[cfg(test)]
 pub(super) fn companion_record_any_id_for_key_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

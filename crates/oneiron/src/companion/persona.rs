@@ -239,12 +239,25 @@ impl Vault {
         baseline: &JsonValue,
         at: u64,
     ) -> Result<()> {
-        object(baseline)?;
         let mut txn = self.store.env.write_txn()?;
+        self.put_persona_baseline_in_txn(&mut txn, person, baseline, at)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Transactional baseline write for authorized composite operations.
+    pub(crate) fn put_persona_baseline_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        person: &EntityId,
+        baseline: &JsonValue,
+        at: u64,
+    ) -> Result<()> {
+        object(baseline)?;
         let raw = self
             .store
             .entities
-            .get(&txn, person.as_bytes())?
+            .get(&*txn, person.as_bytes())?
             .ok_or(Error::EntityNotFound)?
             .into_owned();
         let header = EntityMetadataHeader::parse(&raw)
@@ -273,8 +286,7 @@ impl Vault {
                 at,
                 &bytes,
             )
-            .apply(&mut txn)?;
-        txn.commit()?;
+            .apply(txn)?;
         Ok(())
     }
 

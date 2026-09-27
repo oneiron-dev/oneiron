@@ -517,45 +517,6 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
             ("score", "Raw signal score."),
         ],
     ),
-    (
-        "CompanionRegisterSubjectPayload",
-        &[(
-            "relationship_ref",
-            "Source and target entity pair for relationship records.",
-        )],
-    ),
-    (
-        "CompanionRegisterRecordPayload",
-        &[
-            (
-                "scope",
-                "Visibility and privacy scope for this register record.",
-            ),
-            (
-                "subject",
-                "Persona or relationship subject for this register record.",
-            ),
-            ("provenance", "Provenance stamp for this register record."),
-        ],
-    ),
-    (
-        "CompanionRegisterCreateRecordRequest",
-        &[(
-            "record",
-            "Typed companion register record envelope to create.",
-        )],
-    ),
-    (
-        "CompanionRegisterUpdateRecordRequest",
-        &[(
-            "record",
-            "Replacement record envelope; scope and subject must match the existing record.",
-        )],
-    ),
-    (
-        "CompanionRegisterRecordResponse",
-        &[("record", "Typed companion register record envelope.")],
-    ),
 ];
 
 pub(crate) fn fill_schema_description_gaps(spec: &mut Value) {

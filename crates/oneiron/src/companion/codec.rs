@@ -19,7 +19,8 @@ use serde_json::Value as JsonValue;
 use std::io::Cursor;
 
 /// Encodes a companion record body in canonical MessagePack field order.
-pub fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>> {
+#[cfg(test)]
+pub(crate) fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>> {
     record.validate_current_schema_lifecycle_events()?;
     let value = Value::Map(vec![
         (
@@ -55,7 +56,7 @@ pub fn encode_companion_record_body(record: &CompanionRecord) -> Result<Vec<u8>>
 }
 
 /// Decodes and validates a companion record body.
-pub fn decode_companion_record_body(bytes: &[u8]) -> Result<CompanionRecord> {
+pub(crate) fn decode_companion_record_body(bytes: &[u8]) -> Result<CompanionRecord> {
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor)
         .map_err(|_| invalid_companion("body is not valid MessagePack"))?;
@@ -231,10 +232,12 @@ fn decode_companion_record_value(value: &Value) -> Result<CompanionRecord> {
     Ok(record)
 }
 
+#[cfg(test)]
 pub(super) fn encode_lifecycle_events(events: &[CompanionLifecycleEvent]) -> Value {
     Value::Array(events.iter().map(encode_lifecycle_event).collect())
 }
 
+#[cfg(test)]
 fn encode_lifecycle_event(event: &CompanionLifecycleEvent) -> Value {
     Value::Map(vec![
         (
@@ -519,6 +522,7 @@ fn decode_relationship_ref(value: &Value) -> Result<(EntityId, EntityId)> {
     ))
 }
 
+#[cfg(test)]
 pub(super) fn encode_provenance(provenance: &CompanionProvenance) -> Value {
     Value::Map(vec![
         (

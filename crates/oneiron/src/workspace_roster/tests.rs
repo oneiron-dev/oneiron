@@ -43,7 +43,6 @@ const ADMIN_GRANT: u8 = 0xB7;
 const COMPANION_PERSON: u8 = 0xC1;
 const COMPANION_ACTOR: u8 = 0xC2;
 const COMPANION_FACET: u8 = 0xC3;
-const COMPANION_RECORD: u8 = 0xC4;
 const PROFILE_GRANT: u8 = 0xC5;
 const MAILBOX_IDENTITY: u8 = 0xC6;
 
@@ -163,7 +162,6 @@ fn companion_birth() -> CompanionBirthIntent {
         person_ref: entity(COMPANION_PERSON),
         actor_ref: entity(COMPANION_ACTOR),
         work_facet_ref: entity(COMPANION_FACET),
-        companion_record_ref: entity(COMPANION_RECORD),
         profile_grant_ref: entity(PROFILE_GRANT),
         actor_definition: definition("fixture.companion"),
         display_name: "Quillfeather".to_owned(),
@@ -355,17 +353,17 @@ fn companion_birth_is_full_person() -> Result<()> {
             .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == birth.work_facet_ref)
     );
 
-    // The persona is a FACET over the companion PERSON, never the actor definition.
-    assert_eq!(
-        vault.get_entity_type(&birth.companion_record_ref)?,
-        Some(ENTITY_TYPE_FACET)
-    );
-    let persona = vault
-        .get_companion_record(&birth.companion_record_ref)?
-        .expect("persona facet");
-    assert!(
-        matches!(persona.subject,crate::companion::CompanionSubject::Persona { persona_ref } if persona_ref==birth.person_ref)
-    );
+    // The identity baseline is on PERSON, not an extra persona-shaped FACET.
+    let raw = vault
+        .get(&birth.person_ref)?
+        .expect("companion PERSON body");
+    let body: Value = rmpv::decode::read_value(&mut &raw[..]).expect("valid PERSON body");
+    let Value::Map(fields) = body else {
+        panic!("companion PERSON must be a map");
+    };
+    assert!(fields.iter().any(|(key, value)| {
+        key.as_str() == Some("persona_definition") && matches!(value, Value::Map(_))
+    }));
     assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
 
     // Exactly the requested companion-profile read, and nothing wider.
@@ -522,7 +520,6 @@ fn workspace_preset_is_settled_once_and_shared() -> Result<()> {
     let mut second_birth = companion_birth();
     second_birth.person_ref = entity(0xD1);
     second_birth.actor_ref = entity(0xD2);
-    second_birth.companion_record_ref = entity(0xD3);
     second_birth.profile_grant_ref = entity(0xD4);
     second_birth.actor_definition = definition("fixture.second_companion");
     second_birth.display_name = "Silverleaf".to_owned();

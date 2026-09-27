@@ -1,9 +1,6 @@
 use std::fmt;
 
-use oneiron::companion::{
-    CompanionLifecycleEvent, CompanionScope, CompanionSubject, ENTITY_TYPE_COMPANION_REGISTER,
-    decode_companion_record_body,
-};
+use oneiron::companion::ENTITY_TYPE_COMPANION_REGISTER;
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_PERSON, ENTITY_TYPE_SKILL, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
@@ -239,119 +236,38 @@ fn entity_kind(entity_type: u8) -> String {
 
 fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {
     if entity_type == ENTITY_TYPE_COMPANION_REGISTER {
-        return decode_companion_register_fields(body).unwrap_or_else(|| {
-            Map::from_iter([(
-                "redacted".to_owned(),
-                Value::String("invalid_companion_register_body".to_owned()),
-            )])
-        });
+        return Map::from_iter([(
+            "redacted".to_owned(),
+            Value::String("retired_companion_register_body".to_owned()),
+        )]);
     }
     if entity_type == ENTITY_TYPE_FACET {
         let mut cursor = std::io::Cursor::new(body);
-        if rmpv::decode::read_value(&mut cursor).is_err() || cursor.position() != body.len() as u64
+        let parsed = rmpv::decode::read_value(&mut cursor).ok();
+        if cursor.position() != body.len() as u64 || parsed.is_none() {
+            return Map::from_iter([(
+                "redacted".to_owned(),
+                Value::String("invalid_facet_body".to_owned()),
+            )]);
+        }
+        // Old persona/relationship-shaped FACET bytes may still be present in
+        // development vaults or hostile replay. Never feed their opaque value
+        // and provenance through the generic JSON projection.
+        if let Some(rmpv::Value::Map(entries)) = parsed
+            && entries.iter().any(|(key, value)| {
+                key.as_str() == Some("kind")
+                    && matches!(value.as_str(), Some("persona" | "relationship"))
+            })
         {
             return Map::from_iter([(
                 "redacted".to_owned(),
-                Value::String("invalid_companion_register_body".to_owned()),
+                Value::String("retired_companion_facet_body".to_owned()),
             )]);
         }
     }
-    // Companion records now live on FACET rows: a body that decodes as a
-    // companion record projects through the redacting companion shape, never
-    // the generic MessagePack shape that would leak private values. A FACET
-    // body that is neither a valid companion record nor valid MessagePack is
-    // redacted rather than exposed as raw bytes.
-    if entity_type == ENTITY_TYPE_FACET
-        && let Some(fields) = decode_companion_register_fields(body)
-    {
-        return fields;
-    }
-
     match oneiron::batch::export::redacted_memory_body(body) {
         Value::Object(fields) => fields,
         value => Map::from_iter([("body".to_owned(), value)]),
-    }
-}
-
-fn decode_companion_register_fields(body: &[u8]) -> Option<Map<String, Value>> {
-    let record = decode_companion_record_body(body).ok()?;
-    let mut fields = Map::new();
-    fields.insert(
-        "record_kind".to_owned(),
-        Value::String(record.kind().as_str().to_owned()),
-    );
-    fields.insert("scope".to_owned(), companion_scope_to_json(&record.scope));
-    fields.insert(
-        "subject".to_owned(),
-        companion_subject_to_json(&record.subject),
-    );
-    fields.insert(
-        "lifecycle".to_owned(),
-        Value::String(record.lifecycle.as_str().to_owned()),
-    );
-    fields.insert(
-        "export".to_owned(),
-        Value::String(record.sensitivity.as_str().to_owned()),
-    );
-    fields.insert(
-        "provenance".to_owned(),
-        json!({
-            "actor_ref": record.provenance.actor_ref.to_hex(),
-            "actor_class": record.provenance.actor_class as u8,
-            "source": record.provenance.source.as_str(),
-            "approval": record.provenance.approval.as_str(),
-        }),
-    );
-    fields.insert(
-        "lifecycle_events".to_owned(),
-        companion_lifecycle_events_to_json(&record.lifecycle_events),
-    );
-    Some(fields)
-}
-
-fn companion_lifecycle_events_to_json(events: &[CompanionLifecycleEvent]) -> Value {
-    Value::Array(
-        events
-            .iter()
-            .map(|event| {
-                json!({
-                    "kind": event.kind.as_str(),
-                    "at": event.at,
-                })
-            })
-            .collect(),
-    )
-}
-
-fn companion_scope_to_json(scope: &CompanionScope) -> Value {
-    match scope {
-        CompanionScope::Neutral => json!({ "kind": "neutral" }),
-        CompanionScope::Personal { person_ref } => {
-            json!({ "kind": "personal", "person_ref": person_ref.to_hex() })
-        }
-        CompanionScope::SharedVault { vault_id } => {
-            json!({ "kind": "shared_vault", "vault_id": vault_id })
-        }
-        _ => json!({ "kind": "unknown" }),
-    }
-}
-
-fn companion_subject_to_json(subject: &CompanionSubject) -> Value {
-    match subject {
-        CompanionSubject::Persona { persona_ref } => {
-            json!({ "kind": "persona", "persona_ref": persona_ref.to_hex() })
-        }
-        CompanionSubject::Relationship {
-            source_ref,
-            target_ref,
-        } => json!({
-            "kind": "relationship",
-            "relationship_ref": {
-                "source_ref": source_ref.to_hex(),
-                "target_ref": target_ref.to_hex(),
-            },
-        }),
-        _ => json!({ "kind": "unknown" }),
     }
 }
 

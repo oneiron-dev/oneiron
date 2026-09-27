@@ -91,6 +91,7 @@ impl ChannelIdentityBinding {
 
     /// A shared-vault record requires an exact destination binding, independently
     /// of the channel's sensitivity ceiling.
+    #[cfg(any(test, feature = "sync"))]
     pub(crate) fn permits_companion_scope(self, scope: &crate::companion::CompanionScope) -> bool {
         match scope {
             crate::companion::CompanionScope::SharedVault { vault_id } => {

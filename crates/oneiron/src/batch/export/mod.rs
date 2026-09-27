@@ -1,6 +1,7 @@
 mod credential_filter;
 pub use credential_filter::{redact_credentials, redacted_memory_body, redacted_memory_payload};
 mod export_authority;
+#[cfg(test)]
 mod export_companion;
 mod export_egress;
 mod export_enumerate;
@@ -9,6 +10,7 @@ mod export_manifest;
 mod foreign_stage;
 
 pub use self::export_authority::*;
+#[cfg(test)]
 pub use self::export_companion::*;
 pub use self::export_egress::*;
 pub use self::export_enumerate::*;
