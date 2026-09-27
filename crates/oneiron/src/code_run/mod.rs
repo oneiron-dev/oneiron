@@ -38,7 +38,7 @@ pub use self::replay::{
     CodeRunReplayRecord, CodeRunStepCheckpoint, code_run_replay_abi_layout_checks,
 };
 pub use self::storage::CodeRunModelHealCount;
-pub(crate) use self::storage::ExecutorStorage;
+pub(crate) use self::storage::{ExecutorOutputSpan, ExecutorStorage};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.
