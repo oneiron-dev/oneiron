@@ -8,15 +8,16 @@ use crate::error::{Error, Result};
 
 use super::normalize_keys::bounded_ref;
 use super::{
-    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
-    LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS, LINKEDIN_DEFAULT_DAILY_DM_CAP,
-    LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP, LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB,
-    LinkedInSandboxHostConfig,
+    LINKEDIN_CHANNEL, LINKEDIN_CONNECT_CONSENT_BODY, LINKEDIN_CONNECT_REQUEST_VERB,
+    LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS, LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
+    LINKEDIN_DEFAULT_DAILY_DM_CAP, LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
+    LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB, LinkedInSandboxHostConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedInAccountRiskLimits {
     pub daily_dm_cap: u16,
+    pub daily_connect_request_cap: u16,
     pub daily_profile_read_cap: u16,
     pub cadence_jitter_min_seconds: u32,
     pub cadence_jitter_max_seconds: u32,
@@ -28,6 +29,7 @@ impl Default for LinkedInAccountRiskLimits {
     fn default() -> Self {
         Self {
             daily_dm_cap: LINKEDIN_DEFAULT_DAILY_DM_CAP,
+            daily_connect_request_cap: LINKEDIN_DEFAULT_DAILY_DM_CAP,
             daily_profile_read_cap: LINKEDIN_DEFAULT_DAILY_PROFILE_READ_CAP,
             cadence_jitter_min_seconds: LINKEDIN_DEFAULT_CADENCE_JITTER_MIN_SECONDS,
             cadence_jitter_max_seconds: LINKEDIN_DEFAULT_CADENCE_JITTER_MAX_SECONDS,
@@ -90,6 +92,14 @@ impl LinkedInAccountRiskLimits {
                     .to_owned(),
             ));
         }
+        if self.daily_connect_request_cap == 0
+            || (self.daily_connect_request_cap > LINKEDIN_DEFAULT_DAILY_DM_CAP
+                && self.owner_warning_ack_ref.is_none())
+        {
+            return Err(Error::InvalidConfig(
+                "LinkedIn connect-request cap must be non-zero and above-default caps require owner warning acknowledgement".to_owned(),
+            ));
+        }
         if self.daily_profile_read_cap == 0 {
             return Err(Error::InvalidConfig(
                 "LinkedIn daily profile-read cap must be non-zero".to_owned(),
@@ -109,6 +119,7 @@ impl LinkedInAccountRiskLimits {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedInSeatDispatchState {
     pub dm_sends_today: u16,
+    pub connect_requests_today: u16,
     pub profile_reads_today: u16,
     pub session_active: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +132,7 @@ impl LinkedInSeatDispatchState {
     pub const fn active() -> Self {
         Self {
             dm_sends_today: 0,
+            connect_requests_today: 0,
             profile_reads_today: 0,
             session_active: true,
             next_send_not_before: None,
@@ -131,6 +143,12 @@ impl LinkedInSeatDispatchState {
     #[must_use]
     pub const fn with_dm_sends_today(mut self, dm_sends_today: u16) -> Self {
         self.dm_sends_today = dm_sends_today;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_connect_requests_today(mut self, connect_requests_today: u16) -> Self {
+        self.connect_requests_today = connect_requests_today;
         self
     }
 
@@ -249,9 +267,19 @@ impl LinkedInSeatSandboxPolicy {
         if !self.state.session_active {
             return LinkedInSeatPolicyDecision::hold("linkedin.session_inactive", fields);
         }
-        if verb == LINKEDIN_SEND_DM_VERB {
-            if self.state.dm_sends_today >= self.limits.daily_dm_cap {
+        if verb == LINKEDIN_SEND_DM_VERB || verb == LINKEDIN_CONNECT_REQUEST_VERB {
+            if verb == LINKEDIN_SEND_DM_VERB
+                && self.state.dm_sends_today >= self.limits.daily_dm_cap
+            {
                 return LinkedInSeatPolicyDecision::hold("linkedin.daily_dm_cap", fields);
+            }
+            if verb == LINKEDIN_CONNECT_REQUEST_VERB
+                && self.state.connect_requests_today >= self.limits.daily_connect_request_cap
+            {
+                return LinkedInSeatPolicyDecision::hold(
+                    "linkedin.daily_connect_request_cap",
+                    fields,
+                );
             }
             if let Some(not_before) = self.state.next_send_not_before
                 && occurred_at < not_before
@@ -301,6 +329,14 @@ impl LinkedInSeatSandboxPolicy {
         fields.insert(
             "linkedin_dm_sends_today".to_owned(),
             self.state.dm_sends_today.to_string(),
+        );
+        fields.insert(
+            "linkedin_daily_connect_request_cap".to_owned(),
+            self.limits.daily_connect_request_cap.to_string(),
+        );
+        fields.insert(
+            "linkedin_connect_requests_today".to_owned(),
+            self.state.connect_requests_today.to_string(),
         );
         fields.insert(
             "linkedin_daily_profile_read_cap".to_owned(),
