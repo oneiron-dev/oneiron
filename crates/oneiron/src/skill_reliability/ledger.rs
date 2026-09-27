@@ -97,6 +97,9 @@ pub fn record_skill_contributing_win(
     at: u64,
 ) -> Result<()> {
     let record = read_skill(vault, skill)?;
+    if crate::skill::resident_of(&record)?.is_some() {
+        return Err(invalid("resident win requires its attributed actor"));
+    }
     let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
         return Err(invalid("contributing win cites an unstamped receipt"));
     };
@@ -114,6 +117,54 @@ pub fn record_skill_contributing_win(
         record_outcome_in_txn(
             vault,
             wtxn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            true,
+            at,
+        )
+    })
+}
+
+/// Credits a resident fork only from its own attributed outcome. The
+/// unrestricted win door cannot name an actor and therefore refuses forks.
+pub fn record_resident_skill_contributing_win(
+    vault: &Vault,
+    resident: &EntityId,
+    skill: &EntityId,
+    receipt_ref: &str,
+    at: u64,
+) -> Result<()> {
+    let record = read_skill(vault, skill)?;
+    if crate::skill::resident_of(&record)? != Some(*resident)
+        || crate::skill::resident::receipt_resident(vault, receipt_ref)? != Some(*resident)
+        || !crate::skill::resident::receipt_loaded_skill(vault, receipt_ref, skill)?
+    {
+        return Err(invalid(
+            "resident win names a foreign or unowned skill or attempt",
+        ));
+    }
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
+        return Err(invalid("contributing win cites an unstamped receipt"));
+    };
+    if receipt.outcome != ATTEMPT_OUTCOME_COMPLETED {
+        return Err(invalid(
+            "a contributing win requires a completed attempt receipt",
+        ));
+    }
+    let Some(manifest) = receipt.pack_manifest_skills() else {
+        return Err(invalid("resident win needs a versioned manifest"));
+    };
+    if !manifest.iter().any(|entry| {
+        ManifestEntry::parse_wire_form(entry)
+            .is_some_and(|(name, version)| name == record.skill_id && version == record.version)
+    }) {
+        return Err(invalid("resident win needs its exact revision"));
+    }
+    vault.with_write_txn(|txn| {
+        record_outcome_in_txn(
+            vault,
+            txn,
             skill,
             receipt_executor(&receipt),
             receipt_ref,

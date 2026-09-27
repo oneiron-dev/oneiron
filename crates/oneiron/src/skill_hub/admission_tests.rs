@@ -510,13 +510,26 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
         let company = Fixture::new();
         let personal = Fixture::new();
         let fork = EntityId::now();
-        personal.vault.fork_skill_record(
+        let resident = EntityId::now();
+        personal.vault.put_entity(
+            &resident,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at(9),
+            9,
+            b"resident",
+        )?;
+        personal.vault.fork_skill_for_resident(
+            &resident,
             &personal.baseline,
             &fork,
             "fixture.personal-fork",
             at(10),
             10,
         )?;
+        assert_eq!(
+            crate::skill::resident_of(&personal.vault.get_skill_record(&fork)?.expect("fork"))?,
+            Some(resident),
+        );
         personal.vault.write_shared_skill_fork_package(
             &fork,
             &package("fixture.personal-fork", "2", "check result"),
@@ -596,6 +609,83 @@ fn federation_and_company_merge_only_submitted_bytes_with_useful_and_replay_line
     }
     Ok(())
 }
+#[test]
+fn resident_fork_delta_without_held_out_gain_cannot_merge_upstream() -> Result<()> {
+    let company = Fixture::new();
+    let personal = Fixture::new();
+    let resident = EntityId::now();
+    personal.vault.put_entity(
+        &resident,
+        crate::registry::ENTITY_TYPE_PERSON,
+        at(9),
+        9,
+        b"resident",
+    )?;
+    let fork = EntityId::now();
+    personal.vault.fork_skill_for_resident(
+        &resident,
+        &personal.baseline,
+        &fork,
+        "fixture.resident-fork",
+        at(10),
+        10,
+    )?;
+    personal.vault.write_shared_skill_fork_package(
+        &fork,
+        &package("fixture.resident-fork", "2", "check result"),
+        at(11),
+        11,
+    )?;
+    let submitted = encode_hub_package(&package("fixture.base", "2", "check result"))?;
+    drop(personal);
+    let id = company.vault.submit_shared_skill_delta(
+        &company.baseline,
+        &submitted,
+        SharedSkillLane::FederationMergeBack,
+        "member:fixture",
+        &fork,
+        at(20),
+        20,
+    )?;
+    let ask =
+        company
+            .vault
+            .prepare_shared_skill_merge(id, company.resident, useful_question(id))?;
+    company
+        .vault
+        .approve_shared_skill_merge(&ask, &company.owner)?;
+    let SharedSkillMergeDisposition::Ruled(receipt) = company.vault.merge_shared_skill_delta(
+        &ask,
+        &Useful(true),
+        &Replay::new(false),
+        at(21),
+        21,
+    )?
+    else {
+        panic!("consented")
+    };
+    assert!(receipt.useful_upstream);
+    assert!(!receipt.accepted);
+    assert!(receipt.before.is_some() && receipt.after.is_some());
+    assert_eq!(
+        company
+            .vault
+            .get_skill_record(&company.baseline)?
+            .expect("base")
+            .lifecycle_status,
+        SkillLifecycle::Active
+    );
+    assert_eq!(
+        company
+            .vault
+            .get_skill_record(&id)?
+            .expect("candidate")
+            .lifecycle_status,
+        SkillLifecycle::Candidate
+    );
+    Ok(())
+}
+
 #[test]
 fn useless_shared_delta_never_runs_replay_or_changes_base() -> Result<()> {
     let fixture = Fixture::new();

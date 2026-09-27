@@ -90,13 +90,23 @@ fn stamped_receipt(vault: &Vault, skill_id: &str) -> String {
 
 /// [`stamped_receipt`] with the manifest revision named explicitly.
 fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) -> String {
-    stamped_receipt_for_model(vault, skill_id, version, None)
+    stamped_receipt_for_as_model(vault, skill_id, version, None, None)
 }
 
-fn stamped_receipt_for_model(
+fn stamped_receipt_for_revision_as(
     vault: &Vault,
     skill_id: &str,
     version: &str,
+    actor: Option<EntityId>,
+) -> String {
+    stamped_receipt_for_as_model(vault, skill_id, version, actor, None)
+}
+
+fn stamped_receipt_for_as_model(
+    vault: &Vault,
+    skill_id: &str,
+    version: &str,
+    actor: Option<EntityId>,
     model: Option<&str>,
 ) -> String {
     let queue = AttemptQueue::new(vault);
@@ -112,6 +122,11 @@ fn stamped_receipt_for_model(
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    if let Some(actor) = actor {
+        vault
+            .bind_actor_attempt(attempt.id, &actor)
+            .expect("bind executor");
+    }
     queue
         .append_manifest_entry(
             attempt.id,
@@ -119,10 +134,13 @@ fn stamped_receipt_for_model(
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "sk05-worker".to_owned(),
-            now: 12,
-        })
+        .claim_kind(
+            "sk05.attempt",
+            ClaimAttempt {
+                lease_owner: "sk05-worker".to_owned(),
+                now: 12,
+            },
+        )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
@@ -164,7 +182,7 @@ fn route(
     covered: bool,
     at: u64,
 ) -> (String, Vec<AttributionJudgment>) {
-    let receipt = stamped_receipt(vault, skill_id);
+    let receipt = stamped_receipt_for_revision_as(vault, skill_id, "1.0.0", Some(*actor));
     record_attribution_evidence(
         vault,
         &OutcomeEvidence::new(&receipt, *actor, AttemptOutcome::Failed, at)
@@ -597,7 +615,8 @@ fn a_routed_defect_outranks_the_default_win_credit_in_either_order() {
         put_active_import(&vault, &skill, "sk05.skill.order");
         put_actor(&vault, &actor);
 
-        let receipt = stamped_receipt(&vault, "sk05.skill.order");
+        let receipt =
+            stamped_receipt_for_revision_as(&vault, "sk05.skill.order", "1.0.0", Some(actor));
         let blame = |vault: &Vault| {
             record_attribution_evidence(
                 vault,
@@ -1371,7 +1390,13 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     put_active_import(&vault, &skill, "sk05.pair.swap");
     put_actor(&vault, &actor);
     let prior = skill_reliability_prior(&vault, &skill)?;
-    let old = stamped_receipt_for_model(&vault, "sk05.pair.swap", "1.0.0", Some("old@1"));
+    let old = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.pair.swap",
+        "1.0.0",
+        Some(actor),
+        Some("old@1"),
+    );
     record_skill_contributing_win(&vault, &skill, &old, 20)?;
     project_skill_reliability_for_executor(&vault, &skill, "old@1", 21)?;
     let old_posterior = skill_reliability_posterior_for_executor(&vault, &skill, "old@1")?.unwrap();
@@ -1395,8 +1420,13 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
     // An A/B slice credits only the new model. A held-out rerun has the same
     // receipt-stamped door; neither can borrow the incumbent's observations.
     for _ in 0..2 {
-        let new_receipt =
-            stamped_receipt_for_model(&vault, "sk05.pair.swap", "1.0.0", Some("new@2"));
+        let new_receipt = stamped_receipt_for_as_model(
+            &vault,
+            "sk05.pair.swap",
+            "1.0.0",
+            Some(actor),
+            Some("new@2"),
+        );
         record_skill_contributing_win(&vault, &skill, &new_receipt, 22)?;
         project_skill_reliability_for_executor(&vault, &skill, "new@2", 23)?;
     }
@@ -1417,7 +1447,13 @@ fn swapping_executor_forks_statistics_without_retiring_skill() -> crate::error::
         prior.ucb(8)
     );
 
-    let failed = stamped_receipt_for_model(&vault, "sk05.pair.swap", "1.0.0", Some("new@2"));
+    let failed = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.pair.swap",
+        "1.0.0",
+        Some(actor),
+        Some("new@2"),
+    );
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&failed, actor, AttemptOutcome::Failed, 24)
@@ -1520,7 +1556,13 @@ fn displaced_judge_marks_receipt_and_supersedes_weight_without_erasing() -> crat
     let actor = EntityId::now();
     put_active_import(&vault, &skill, "sk05.displaced");
     put_actor(&vault, &actor);
-    let receipt = stamped_receipt_for_model(&vault, "sk05.displaced", "1.0.0", Some("executor@1"));
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.displaced",
+        "1.0.0",
+        Some(actor),
+        Some("executor@1"),
+    );
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
@@ -1626,7 +1668,13 @@ fn replay_cannot_reassign_an_unknown_judgment_to_a_new_judge() -> crate::error::
     let actor = EntityId::now();
     put_active_import(&vault, &skill, "sk05.unknown-judge");
     put_actor(&vault, &actor);
-    let receipt = stamped_receipt_for_model(&vault, "sk05.unknown-judge", "1.0.0", Some("model@1"));
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.unknown-judge",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
@@ -1660,8 +1708,13 @@ fn displaced_floor_crossing_retires_only_its_own_proposal() -> crate::error::Res
     put_active_import(&vault, &skill, "sk05.displaced-floor");
     put_actor(&vault, &actor);
     for _ in 0..9 {
-        let receipt =
-            stamped_receipt_for_model(&vault, "sk05.displaced-floor", "1.0.0", Some("old@1"));
+        let receipt = stamped_receipt_for_as_model(
+            &vault,
+            "sk05.displaced-floor",
+            "1.0.0",
+            Some(actor),
+            Some("old@1"),
+        );
         record_attribution_evidence(
             &vault,
             &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
@@ -1716,7 +1769,8 @@ fn displacement_between_batch_read_and_writer_cannot_restore_loss() -> crate::er
     let actor = EntityId::now();
     put_active_import(&vault, &skill, "sk05.race");
     put_actor(&vault, &actor);
-    let receipt = stamped_receipt_for_model(&vault, "sk05.race", "1.0.0", Some("model@1"));
+    let receipt =
+        stamped_receipt_for_as_model(&vault, "sk05.race", "1.0.0", Some(actor), Some("model@1"));
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 30)
@@ -1789,8 +1843,13 @@ fn displaced_attribution_judge_cannot_commit_a_new_inflight_verdict() -> crate::
     let actor = EntityId::now();
     put_active_import(&vault, &skill, "sk05.inflight-judge");
     put_actor(&vault, &actor);
-    let receipt =
-        stamped_receipt_for_model(&vault, "sk05.inflight-judge", "1.0.0", Some("model@1"));
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.inflight-judge",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
     record_attribution_evidence(
         &vault,
         &OutcomeEvidence::new(&receipt, actor, AttemptOutcome::Failed, 29)
@@ -1818,8 +1877,13 @@ fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> cra
     let actor = EntityId::now();
     put_active_import(&vault, &skill, "sk05.replacement-scan");
     put_actor(&vault, &actor);
-    let receipt =
-        stamped_receipt_for_model(&vault, "sk05.replacement-scan", "1.0.0", Some("model@1"));
+    let receipt = stamped_receipt_for_as_model(
+        &vault,
+        "sk05.replacement-scan",
+        "1.0.0",
+        Some(actor),
+        Some("model@1"),
+    );
     std::thread::scope(|scope| -> crate::error::Result<()> {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
         let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
@@ -1865,3 +1929,5 @@ fn displacement_scan_cannot_miss_a_judgment_committed_before_its_writer() -> cra
     );
     Ok(())
 }
+
+mod resident;

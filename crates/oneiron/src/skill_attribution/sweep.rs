@@ -122,12 +122,28 @@ pub fn run_task_attribution_sweep_with_judge(
             && evidence.outcome == AttemptOutcome::Succeeded
             && let Some(skill) = evidence.skill
         {
-            crate::skill_reliability::record_skill_contributing_win(
-                vault,
-                &skill,
-                &evidence.receipt_ref,
-                evidence.at,
-            )?;
+            if crate::skill::resident_of(
+                &vault
+                    .get_skill_record(&skill)?
+                    .ok_or(Error::EntityNotFound)?,
+            )?
+            .is_some()
+            {
+                crate::skill_reliability::record_resident_skill_contributing_win(
+                    vault,
+                    &evidence.actor,
+                    &skill,
+                    &evidence.receipt_ref,
+                    evidence.at,
+                )?;
+            } else {
+                crate::skill_reliability::record_skill_contributing_win(
+                    vault,
+                    &skill,
+                    &evidence.receipt_ref,
+                    evidence.at,
+                )?;
+            }
             let receipt = crate::receipt::attempt_pack_receipt(vault, &evidence.receipt_ref)?
                 .ok_or(Error::InvalidClaimBody("attribution receipt disappeared"))?;
             match receipt
@@ -151,6 +167,7 @@ pub fn run_task_attribution_sweep_with_judge(
                     )?;
                 }
             }
+
             if !report.skills.contains(&skill) {
                 report.skills.push(skill);
             }

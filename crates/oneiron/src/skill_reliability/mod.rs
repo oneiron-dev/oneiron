@@ -48,13 +48,17 @@ mod posterior;
 mod projector;
 mod provenance;
 mod read;
+mod resident;
 
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
     check_reliability_floor_for_executor, set_skill_reliability_floor, skill_reliability_floor,
 };
-pub use self::ledger::{SKILL_RELIABILITY_MAX_CITED_RECEIPTS, record_skill_contributing_win};
+pub use self::ledger::{
+    SKILL_RELIABILITY_MAX_CITED_RECEIPTS, record_resident_skill_contributing_win,
+    record_skill_contributing_win,
+};
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, mark_displaced_outcome_in_txn,
 };
@@ -74,6 +78,7 @@ pub use self::read::{
 pub(crate) use self::read::{
     selection_posterior_in_txn, skill_selection_score_from_posterior, validate_executor,
 };
+pub use self::resident::rank_resident_skill_versions;
 
 #[cfg(test)]
 mod tests;
