@@ -40,8 +40,8 @@ pub enum WaveHandoffOutcome {
     NoLongerCurrent,
 }
 
-/// Work bound for each supervisor arbitration turn. A gate-policy resolver
-/// can inject its resolved ceilings here; defaults are temporary until wired.
+/// Holder narrowing of manifest-resolved work bounds for one supervisor turn.
+/// Runtime defaults are read from the vault's operational policy manifest.
 #[derive(Debug, Clone, Copy)]
 pub struct WaveDispatchLimits {
     pub page_size: usize,
@@ -50,21 +50,10 @@ pub struct WaveDispatchLimits {
     pub retry_max: Duration,
 }
 
-impl Default for WaveDispatchLimits {
-    fn default() -> Self {
-        Self {
-            page_size: 256,
-            retry_quantum: 8,
-            retry_initial: Duration::from_millis(500),
-            retry_max: Duration::from_secs(60),
-        }
-    }
-}
-
 impl WaveDispatchLimits {
     pub fn validate(self) -> Result<()> {
         if !(1..=256).contains(&self.page_size)
-            || !(1..=256).contains(&self.retry_quantum)
+            || !(1..=self.page_size).contains(&self.retry_quantum)
             || self.retry_initial.is_zero()
             || self.retry_max < self.retry_initial
         {
@@ -109,6 +98,12 @@ impl WaveDispatchPump {
             failed: HashMap::new(),
             delivered: HashMap::new(),
         }
+    }
+
+    pub(crate) fn set_limits(&mut self, limits: WaveDispatchLimits) -> Result<()> {
+        limits.validate()?;
+        self.limits = limits;
+        Ok(())
     }
 
     pub(crate) fn notify(&mut self) {

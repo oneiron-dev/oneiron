@@ -25,10 +25,15 @@ struct LinearBridge {
     client: Client,
     base: reqwest::Url,
     credential: reqwest::header::HeaderValue,
+    request_timeout: Duration,
 }
 
 impl LinearBridge {
-    fn configured(base: Option<String>, token: Option<String>) -> anyhow::Result<Option<Self>> {
+    fn configured(
+        base: Option<String>,
+        token: Option<String>,
+        timeout_secs: u64,
+    ) -> anyhow::Result<Option<Self>> {
         anyhow::ensure!(
             base.is_some() == token.is_some(),
             "Linear bridge requires both URL and token"
@@ -58,12 +63,12 @@ impl LinearBridge {
         let credential = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(15))
             .build()?;
         Ok(Some(Self {
             client,
             base,
             credential,
+            request_timeout: Duration::from_secs(timeout_secs),
         }))
     }
 
@@ -80,7 +85,8 @@ impl LinearBridge {
         let mut request = self
             .client
             .request(method, endpoint)
-            .header(reqwest::header::AUTHORIZATION, self.credential.clone());
+            .header(reqwest::header::AUTHORIZATION, self.credential.clone())
+            .timeout(self.request_timeout);
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -135,6 +141,7 @@ impl LinearChangeSource for LinearBridge {
             .client
             .get(endpoint)
             .header(reqwest::header::AUTHORIZATION, self.credential.clone())
+            .timeout(self.request_timeout)
             .send()
             .map_err(|error| LinearSyncError::Transport(error.to_string()))?;
         if !response.status().is_success() {
@@ -196,11 +203,13 @@ fn synchronize_once(
     inbound: LinearBridge,
     outbound: LinearBridge,
     now: u64,
+    max_pull_pages_per_pass: usize,
 ) -> LinearSyncResult<(
     Vec<oneiron::LinearMirrorReceipt>,
     oneiron::LinearPullReceipt,
 )> {
-    LinearSyncAdapter::new(VaultLinearTaskStore::new(vault), inbound, outbound).synchronize(now)
+    LinearSyncAdapter::new(VaultLinearTaskStore::new(vault), inbound, outbound)
+        .synchronize(now, max_pull_pages_per_pass)
 }
 
 /// Construct the blocking HTTP client off the Tokio runtime thread. Inputs
@@ -208,8 +217,9 @@ fn synchronize_once(
 async fn build_bridge(
     base: Option<String>,
     token: Option<String>,
+    timeout_secs: u64,
 ) -> anyhow::Result<Option<LinearBridge>> {
-    tokio::task::spawn_blocking(move || LinearBridge::configured(base, token))
+    tokio::task::spawn_blocking(move || LinearBridge::configured(base, token, timeout_secs))
         .await
         .map_err(|error| anyhow::anyhow!("Linear bridge setup failed: {error}"))?
 }
@@ -222,35 +232,64 @@ pub(crate) async fn spawn(
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
     let base = std::env::var("ONEIRON_LINEAR_BRIDGE_URL").ok();
     let token = std::env::var("ONEIRON_LINEAR_BRIDGE_TOKEN").ok();
-    let Some(bridge) = build_bridge(base, token).await? else {
+    if base.is_none() && token.is_none() {
+        return Ok(None);
+    }
+    // Fail at configuration time if a provided credential is incomplete or
+    // the resolved manifest is unreadable. The client itself is built off
+    // Tokio's runtime thread.
+    let policy = server.vault().linear_mirror_policy()?;
+    let Some(bridge) = build_bridge(base, token, policy.request_timeout_secs).await? else {
         return Ok(None);
     };
     let handle = tokio::spawn(async move {
-        let mut ticks = tokio::time::interval(Duration::from_secs(30));
-        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut wait = Duration::ZERO;
+        let mut last_valid_interval = policy.poll_interval_secs;
         loop {
-            ticks.tick().await;
+            tokio::time::sleep(wait).await;
             let vault = server.vault().clone();
-            let inbound = bridge.clone();
-            let outbound = bridge.clone();
+            let client = bridge.clone();
             let outcome = tokio::task::spawn_blocking(move || {
+                let policy = vault
+                    .linear_mirror_policy()
+                    .map_err(LinearSyncError::Store)?;
+                let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
+                let mut inbound = client;
+                inbound.request_timeout = Duration::from_secs(policy.request_timeout_secs);
+                let outbound = inbound.clone();
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |time| time.as_secs());
-                synchronize_once(&vault, inbound, outbound, now)
+                let result = synchronize_once(
+                    &vault,
+                    inbound,
+                    outbound,
+                    now,
+                    budget.max_pull_pages_per_pass,
+                )?;
+                Ok::<_, LinearSyncError>((result, policy.poll_interval_secs))
             })
             .await;
             match outcome {
-                Ok(Ok((pushed, pulled))) => tracing::debug!(
-                    pushed = pushed.len(),
-                    pulled = pulled.applied,
-                    "Linear mirror pass"
-                ),
+                Ok(Ok(((pushed, pulled), interval))) => {
+                    last_valid_interval = interval;
+                    wait = Duration::from_secs(interval);
+                    tracing::debug!(
+                        pushed = pushed.len(),
+                        pulled = pulled.applied,
+                        "Linear mirror pass"
+                    );
+                }
                 Ok(Err(error)) => {
                     tracing::warn!(error = %error, "Linear mirror pass failed; will retry");
+                    // A policy read failure cannot authorize a provider call.
+                    // Re-read after the last VALID interval, never a hardcoded
+                    // timer or a stale operational policy for the effect.
+                    wait = Duration::from_secs(last_valid_interval);
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, "Linear mirror worker failed; will retry");
+                    wait = Duration::from_secs(last_valid_interval);
                 }
             }
         }

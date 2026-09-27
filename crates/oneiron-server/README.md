@@ -87,10 +87,14 @@ llama-server -m harrier-oss-v1-0.6b.f16.gguf --embeddings --pooling last -c 4096
 
 ## Linear mirror host bridge (opt-in)
 
-The server starts a 30-second mirror pass only when both
+The server starts a mirror pass only when both
 `ONEIRON_LINEAR_BRIDGE_URL` and `ONEIRON_LINEAR_BRIDGE_TOKEN` are set. The URL
 must be HTTPS (or loopback HTTP for a local bridge). A partial or blank config
-stops startup. The token is sent only as an `Authorization: Bearer` header; it
+stops startup. Poll wait and request timeout resolve from vault policy manifest rows
+`linear_mirror_policy` (seeded 30s/15s), and the page allowance from
+`linear_sync_budget` (seeded 64); allowed holder selectors may only narrow
+the resolved vault bounds. The daemon re-resolves these at each pass. The
+token is sent only as an `Authorization: Bearer` header; it
 is not stored in the vault. Unmanaged `serve` starts the pass. A failed pass
 keeps the TASK outbox revision and inbound cursor for retry.
 

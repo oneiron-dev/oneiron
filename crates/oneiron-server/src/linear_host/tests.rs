@@ -75,6 +75,7 @@ fn bridge_authenticates_pull_and_idempotent_push_with_normalized_receipts() {
             .expect("client"),
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
     };
     let page = bridge.changes_since(Some("old/cursor")).expect("page");
     assert_eq!(page.next_cursor.as_deref(), Some("next"));
@@ -179,13 +180,15 @@ fn scheduled_pass_pushes_dirty_task_then_applies_inbound_page() {
             .expect("client"),
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("URL"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
     };
     let (push, initial_pull) =
-        synchronize_once(&vault, bridge.clone(), bridge.clone(), 100).expect("link pass");
+        synchronize_once(&vault, bridge.clone(), bridge.clone(), 100, 64).expect("link pass");
     assert_eq!(push.len(), 1);
     assert_eq!(push[0].status, LinearMirrorStatus::Linked);
     assert_eq!(initial_pull.applied, 0);
-    let (_push, pulled) = synchronize_once(&vault, bridge.clone(), bridge, 101).expect("pull pass");
+    let (_push, pulled) =
+        synchronize_once(&vault, bridge.clone(), bridge, 101, 64).expect("pull pass");
     assert_eq!(pulled.applied, 1);
     assert_eq!(
         VaultLinearTaskStore::new(&vault)
@@ -202,6 +205,7 @@ async fn configured_bridge_builds_inside_tokio_without_blocking_client_panic() {
     let bridge = build_bridge(
         Some("http://127.0.0.1:12345/".to_owned()),
         Some("test-token".to_owned()),
+        15,
     )
     .await
     .expect("construct blocking client off runtime thread")
@@ -265,6 +269,7 @@ fn linked_update_sends_expected_base_and_refuses_remote_precondition_miss() {
             .expect("client"),
         base: reqwest::Url::parse(&format!("http://{addr}/")).expect("url"),
         credential: reqwest::header::HeaderValue::from_static("Bearer test-token"),
+        request_timeout: Duration::from_secs(3),
     };
     let issue = LinearIssueRef {
         issue_id: "opaque".into(),

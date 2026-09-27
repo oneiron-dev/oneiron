@@ -16954,8 +16954,24 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 28,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearMirrorPolicy",
+      "LinearSyncBudget",
+      "WaveHandoffPolicy"
+     ],
+     "path": "src/gate/operational_policy.rs",
+     "purpose": "Vault-resident operational schedules and per-pass limits (DEC-0005)",
+     "surface": {
+      "crate-vis": 14,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -16999,7 +17015,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 27
      }
     },
     {
@@ -17262,6 +17278,14 @@
      "notable": [],
      "path": "src/gate/tests/mod.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/operational_policy.rs",
+     "purpose": "Manifest-resident scheduler policy: defaults, restrictive fold and holder cap",
      "surface": {}
     },
     {
@@ -35628,7 +35652,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36316,8 +36340,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2143,
-   "test_files": 732
+   "source_files": 2144,
+   "test_files": 733
   },
   "oneiron-android": {
    "files": [
@@ -37885,7 +37909,7 @@
      "path": "src/wave_dispatch.rs",
      "purpose": "Bounded, per-item delivery of durable wave TASKs to a host dispatcher",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 3,
       "fn": 1,
       "struct": 2
@@ -42220,7 +42244,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/linear_host.rs",
@@ -43590,7 +43614,7 @@
     "linear_host": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },

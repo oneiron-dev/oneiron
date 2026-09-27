@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use super::*;
 use crate::tick::PushTick;
+use crate::{WaveDispatchRoute, WaveHandoffOutcome, WaveHandoffReceipt};
 use oneiron::attempt_queue::AttemptState;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, DREAMER_EXECUTOR_ERROR_PARK_REASON,
@@ -612,7 +613,7 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
         mirror.clone(),
         mirror.clone(),
     );
-    let (pushed, _) = sync.synchronize(200).expect("wave TASKs push");
+    let (pushed, _) = sync.synchronize(200, 64).expect("wave TASKs push");
     assert!(pushed.iter().any(|receipt| receipt.task_ref == first));
     assert!(pushed.iter().any(|receipt| receipt.task_ref == second));
     let link = sync
@@ -632,7 +633,7 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
             updated_at_ms: 3000,
             fields: from_tracker.clone(),
         });
-    let (_, pulled) = sync.synchronize(201).expect("scheduled source poll");
+    let (_, pulled) = sync.synchronize(201, 64).expect("scheduled source poll");
     assert_eq!(pulled.applied, 1);
     assert_eq!(
         sync.tasks()
@@ -646,7 +647,6 @@ async fn running_supervisor_claims_plan_and_dispatches_only_live_ready_tasks() {
 
 #[tokio::test]
 async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
-    use oneiron::attempt_queue::AttemptQueue;
     use oneiron::task_verb::{
         TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
     };
@@ -915,7 +915,7 @@ impl oneiron::WavePlanner for IndependentWavePlanner {
 async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
     let (_dir, vault) = open_vault();
-    let actor = seed_actor(&vault, 0xA4, oneiron::registry::ENTITY_TYPE_PERSON);
+    let actor = seed_actor(&vault, 0x24, oneiron::registry::ENTITY_TYPE_PERSON);
     let epic = |label: &str| {
         vault
             .memory(actor, oneiron::EdgeActorClass::Human)
@@ -981,8 +981,8 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
         crate::WaveDispatchLimits {
             page_size: 1,
             retry_quantum: 1,
-            retry_initial: Duration::from_millis(10),
-            retry_max: Duration::from_millis(20),
+            retry_initial: Duration::from_millis(500),
+            retry_max: Duration::from_secs(60),
         },
     );
     let stop = supervisor.shutdown_handle();
@@ -1024,7 +1024,7 @@ async fn rejected_wave_item_does_not_block_sibling_tick_or_new_plan() {
 async fn wave_scan_reaches_later_pages_despite_notifications() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
     let (_dir, vault) = open_vault();
-    let actor = seed_actor(&vault, 0xA6, oneiron::registry::ENTITY_TYPE_PERSON);
+    let actor = seed_actor(&vault, 0x26, oneiron::registry::ENTITY_TYPE_PERSON);
     let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
     for i in 0..260 {
         memory
@@ -1083,8 +1083,8 @@ async fn wave_scan_reaches_later_pages_despite_notifications() {
         .with_wave_dispatch_limits(crate::WaveDispatchLimits {
             page_size: 256,
             retry_quantum: 1,
-            retry_initial: Duration::from_millis(10),
-            retry_max: Duration::from_millis(20),
+            retry_initial: Duration::from_millis(500),
+            retry_max: Duration::from_secs(60),
         });
     let stop = supervisor.shutdown_handle();
     let (report, ()) = tokio::time::timeout(Duration::from_secs(12), async {
@@ -1112,7 +1112,7 @@ async fn wave_scan_reaches_later_pages_despite_notifications() {
 fn wave_point_claim_never_claims_neighbor_or_stale_generation() {
     use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, WaveDispatchGeneration};
     let (_dir, vault) = open_vault();
-    let actor = seed_actor(&vault, 0xA5, oneiron::registry::ENTITY_TYPE_PERSON);
+    let actor = seed_actor(&vault, 0x25, oneiron::registry::ENTITY_TYPE_PERSON);
     let epic = vault
         .memory(actor, oneiron::EdgeActorClass::Human)
         .tasks_create(
@@ -1196,7 +1196,7 @@ fn mirror_pushes_working_state_before_task_settles() {
         mirror.clone(),
         mirror.clone(),
     );
-    adapter.synchronize(100).expect("initial queued mirror");
+    adapter.synchronize(100, 64).expect("initial queued mirror");
     assert_eq!(
         mirror.remote.lock().expect("remote")[&task.to_hex()].status,
         "queued"
@@ -1214,7 +1214,9 @@ fn mirror_pushes_working_state_before_task_settles() {
             .status,
         "working"
     );
-    let (pushed, _) = adapter.synchronize(102).expect("publish working status");
+    let (pushed, _) = adapter
+        .synchronize(102, 64)
+        .expect("publish working status");
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
     assert_eq!(
@@ -1255,7 +1257,7 @@ fn mirror_resolves_original_title_under_remote_cas_with_and_without_later_event(
             mirror.clone(),
             mirror.clone(),
         );
-        adapter.synchronize(100).expect("initial Base link");
+        adapter.synchronize(100, 64).expect("initial Base link");
         let link = adapter.tasks().link(task).expect("link").expect("linked");
         let mut local = adapter
             .tasks()
@@ -1289,7 +1291,7 @@ fn mirror_resolves_original_title_under_remote_cas_with_and_without_later_event(
                 updated_at_ms: 1500,
                 fields: tracker.clone(),
             });
-        let (push, pull) = adapter.synchronize(102).expect("surface conflict");
+        let (push, pull) = adapter.synchronize(102, 64).expect("surface conflict");
         assert_eq!(push[0].status, LinearMirrorStatus::Conflict);
         assert_eq!(pull.conflicts.len(), 1);
         let mut original = adapter
@@ -1325,7 +1327,9 @@ fn mirror_resolves_original_title_under_remote_cas_with_and_without_later_event(
                     fields: tracker,
                 });
         }
-        let (pushed, _) = adapter.synchronize(104).expect("conditional resolution");
+        let (pushed, _) = adapter
+            .synchronize(104, 64)
+            .expect("conditional resolution");
         assert_eq!(pushed.len(), 1);
         assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
         assert_eq!(

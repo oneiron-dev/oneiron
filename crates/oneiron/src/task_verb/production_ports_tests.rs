@@ -241,7 +241,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         tracker.clone(),
         tracker.clone(),
     );
-    let (pushed, _) = adapter.synchronize(100)?;
+    let (pushed, _) = adapter.synchronize(100, 64)?;
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Linked);
     assert!(adapter.tasks().dirty_tasks()?.is_empty());
@@ -260,7 +260,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         updated_at_ms: 3000,
         fields: new_fields.clone(),
     });
-    let (_, pulled) = adapter.synchronize(101)?;
+    let (_, pulled) = adapter.synchronize(101, 64)?;
     assert_eq!(pulled.applied, 1);
     assert_eq!(adapter.tasks().task_snapshot(task)?.fields, new_fields);
     assert!(matches!(
@@ -307,7 +307,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
         tracker.clone(),
         tracker.clone(),
     );
-    let (pushed, _) = reopened.synchronize(104)?;
+    let (pushed, _) = reopened.synchronize(104, 64)?;
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
     assert!(reopened.tasks().dirty_tasks()?.is_empty());
@@ -320,7 +320,7 @@ fn linear_vault_occ_cas_reverse_lookup_and_production_push_poll() -> LinearSyncR
             Some("next".into())
         ]
     );
-    assert!(reopened.synchronize(105)?.0.is_empty());
+    assert!(reopened.synchronize(105, 64)?.0.is_empty());
     Ok(())
 }
 
@@ -473,7 +473,7 @@ fn scheduled_mirror_pulls_all_pages_before_dirty_full_snapshot_push() -> LinearS
         tracker.clone(),
         tracker.clone(),
     );
-    adapter.synchronize(100)?; // durable link at 1000
+    adapter.synchronize(100, 64)?; // durable link at 1000
     let link = adapter.tasks().link(task)?.expect("linked");
     terminal_task(&vault, owner, task, 101);
     let mut remote = adapter.tasks().task_snapshot(task)?.fields;
@@ -501,7 +501,7 @@ fn scheduled_mirror_pulls_all_pages_before_dirty_full_snapshot_push() -> LinearS
     );
     state.operations.clear();
     drop(state);
-    let (pushed, pulled) = adapter.synchronize(102)?;
+    let (pushed, pulled) = adapter.synchronize(102, 64)?;
     assert_eq!(pulled.applied, 1);
     assert_eq!(pushed.len(), 1);
     assert_eq!(
@@ -536,7 +536,7 @@ fn scheduled_mirror_rejection_keeps_first_dirty_but_moves_second_and_inbound()
         tracker.clone(),
         tracker.clone(),
     );
-    adapter.synchronize(100)?;
+    adapter.synchronize(100, 64)?;
     terminal_task(&vault, owner, a, 101);
     terminal_task(&vault, owner, b, 101);
     let (bad, good) = if a < b { (a, b) } else { (b, a) };
@@ -561,7 +561,7 @@ fn scheduled_mirror_rejection_keeps_first_dirty_but_moves_second_and_inbound()
         state.operations.clear();
     }
     assert!(
-        adapter.synchronize(102).is_err(),
+        adapter.synchronize(102, 64).is_err(),
         "failed first item remains reported"
     );
     let dirty = adapter.tasks().dirty_tasks()?;
@@ -592,14 +592,14 @@ fn conditional_push_refuses_remote_edit_racing_after_terminal_pull() -> LinearSy
         tracker.clone(),
         tracker.clone(),
     );
-    adapter.synchronize(100)?;
+    adapter.synchronize(100, 64)?;
     terminal_task(&vault, owner, task, 101);
     let mut raced = adapter.tasks().task_snapshot(task)?.fields;
     raced.status = "queued".into();
     raced.description = Some("human race".into());
     tracker.state.borrow_mut().race_change = Some((task.to_hex(), raced.clone()));
     assert!(matches!(
-        adapter.synchronize(102),
+        adapter.synchronize(102, 64),
         Err(LinearSyncError::RemoteChanged)
     ));
     assert!(
@@ -626,7 +626,7 @@ fn conditional_push_refuses_remote_edit_racing_after_terminal_pull() -> LinearSy
             next_cursor: None,
         },
     );
-    adapter.synchronize(103)?;
+    adapter.synchronize(103, 64)?;
     assert_eq!(
         adapter.tasks().task_snapshot(task)?.fields.description,
         raced.description
@@ -655,7 +655,7 @@ fn working_task_pushes_authoritative_status_before_terminal_settlement() -> Line
         tracker.clone(),
         tracker.clone(),
     );
-    let (created, _) = adapter.synchronize(100)?;
+    let (created, _) = adapter.synchronize(100, 64)?;
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].status, LinearMirrorStatus::Linked);
     assert_eq!(
@@ -669,7 +669,7 @@ fn working_task_pushes_authoritative_status_before_terminal_settlement() -> Line
         .expect("start work");
     let working = adapter.tasks().task_snapshot(task)?;
     assert_eq!(working.fields.status, "working");
-    let (pushed, _) = adapter.synchronize(102)?;
+    let (pushed, _) = adapter.synchronize(102, 64)?;
     assert_eq!(pushed.len(), 1);
     assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
     assert_eq!(

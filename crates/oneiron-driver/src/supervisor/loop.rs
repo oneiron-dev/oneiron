@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use crate::WaveHost;
 use crate::wave_dispatch::{WaveDispatchLimits, WaveDispatchPump};
 use oneiron::{AttemptQueue, Vault, WakeCancellation, WakePassReport, WakePassStop};
 use tokio::sync::{Semaphore, watch};
@@ -59,6 +58,38 @@ fn zero_progress_should_backoff(pass: &WakePassReport) -> bool {
         )
 }
 
+/// Resolve operational pump limits from a fresh vault policy snapshot. A
+/// host-supplied selector can NARROW, never widen, the vault-owned ceilings.
+fn resolved_wave_limits(
+    vault: &Vault,
+    holder: Option<WaveDispatchLimits>,
+) -> oneiron::Result<(WaveDispatchLimits, [u8; 32])> {
+    let policy = vault.wave_handoff_policy()?;
+    let selected = match holder {
+        Some(value) => {
+            value.validate()?;
+            let mut requested = policy;
+            requested.scan_limit = value.page_size;
+            requested.retry_floor_ms =
+                u64::try_from(value.retry_initial.as_millis()).map_err(|_| {
+                    oneiron::Error::InvalidConfig("wave retry floor exceeds u64".into())
+                })?;
+            requested.retry_cap_ms = u64::try_from(value.retry_max.as_millis())
+                .map_err(|_| oneiron::Error::InvalidConfig("wave retry cap exceeds u64".into()))?;
+            policy.with_holder(Some(requested))?;
+            value
+        }
+        None => WaveDispatchLimits {
+            page_size: policy.scan_limit,
+            retry_quantum: policy.scan_limit,
+            retry_initial: Duration::from_millis(policy.retry_floor_ms),
+            retry_max: Duration::from_millis(policy.retry_cap_ms),
+        },
+    };
+    selected.validate()?;
+    Ok((selected, policy.policy_frontier))
+}
+
 /// The in-process starter motor: waits on its [`TickSource`], runs at most
 /// one wake pass at a time, survives pass panics, and shuts down
 /// cooperatively.
@@ -71,7 +102,7 @@ pub struct WakeSupervisor<'v, T, F> {
     shutdown: ShutdownListener,
     pass_gate: Arc<Semaphore>,
     now_secs: NowSeconds,
-    wave_limits: WaveDispatchLimits,
+    wave_limits: Option<WaveDispatchLimits>,
 }
 
 impl<'v, T, F> WakeSupervisor<'v, T, F>
@@ -101,7 +132,7 @@ where
             },
             pass_gate: Arc::new(Semaphore::new(1)),
             now_secs: Arc::new(system_now_secs),
-            wave_limits: WaveDispatchLimits::default(),
+            wave_limits: None,
         }
     }
 
@@ -129,7 +160,7 @@ where
     /// Injects resolved operational page/retry ceilings for the wave pump.
     #[must_use]
     pub fn with_wave_dispatch_limits(mut self, limits: WaveDispatchLimits) -> Self {
-        self.wave_limits = limits;
+        self.wave_limits = Some(limits);
         self
     }
 
@@ -155,7 +186,7 @@ where
         // runner store's validation: the startup scan reads those errors as
         // "occupied" and admission fails every pass, redelivering due work
         // forever. No pass can ever succeed, so stop before ticking.
-        if let Err(error) = config.validate().and_then(|()| wave_limits.validate()) {
+        if let Err(error) = config.validate() {
             tracing::error!(?error, "wake supervisor config invalid; refusing to run");
             return report;
         }
@@ -180,7 +211,24 @@ where
             tracing::error!("wave planner requires an authenticated factory actor");
             return report;
         }
-        let mut wave = WaveDispatchPump::new(wave_limits);
+        let mut wave_policy_frontier = None;
+        let mut wave = if wave_planner.is_some() {
+            match resolved_wave_limits(vault, wave_limits) {
+                Ok((limits, frontier)) => {
+                    wave_policy_frontier = Some(frontier);
+                    Some(WaveDispatchPump::new(limits))
+                }
+                Err(error) => {
+                    tracing::error!(
+                        ?error,
+                        "wave operational policy invalid; refusing supervisor"
+                    );
+                    return report;
+                }
+            }
+        } else {
+            None
+        };
         let mut prefer_tick = false;
         let mut ticks_exhausted = false;
 
@@ -188,12 +236,8 @@ where
             // A single arbiter for plans, bounded pages, retries, ordinary
             // passes, notifications and shutdown. Alternate ready wave work
             // and ready ticks; a hot notification stream cannot pin either.
-            let wave_ready = wave_planner.is_some() && wave.ready();
-            let delay = if wave_planner.is_some() {
-                wave.next_delay(now_secs())
-            } else {
-                None
-            };
+            let wave_ready = wave.as_ref().is_some_and(WaveDispatchPump::ready);
+            let delay = wave.as_ref().and_then(|pump| pump.next_delay(now_secs()));
             enum Wake {
                 Wave,
                 Notify,
@@ -234,25 +278,49 @@ where
             let tick = match wake {
                 Wake::Wave => {
                     prefer_tick = true;
-                    if let (Some(planner), Some(actor)) = (wave_planner.as_ref(), factory.actor()) {
-                        wave.work_one(
-                            vault,
-                            &mut factory,
-                            planner,
-                            actor,
-                            &config.lease_owner,
-                            now_secs(),
-                        );
+                    if let (Some(planner), Some(actor), Some(pump)) =
+                        (wave_planner.as_ref(), factory.actor(), wave.as_mut())
+                    {
+                        match resolved_wave_limits(vault, wave_limits) {
+                            Ok((limits, frontier)) => {
+                                if wave_policy_frontier != Some(frontier) {
+                                    if let Err(error) = pump.set_limits(limits) {
+                                        tracing::error!(?error, "wave policy narrowing refused");
+                                        return report;
+                                    }
+                                    wave_policy_frontier = Some(frontier);
+                                }
+                                pump.work_one(
+                                    vault,
+                                    &mut factory,
+                                    planner,
+                                    actor,
+                                    &config.lease_owner,
+                                    now_secs(),
+                                );
+                            }
+                            Err(error) => {
+                                tracing::error!(
+                                    ?error,
+                                    "wave operational policy changed invalidly"
+                                );
+                                return report;
+                            }
+                        }
                     }
                     tokio::task::yield_now().await;
                     continue;
                 }
                 Wake::Notify => {
-                    wave.notify();
+                    if let Some(pump) = wave.as_mut() {
+                        pump.notify();
+                    }
                     continue;
                 }
                 Wake::Due => {
-                    wave.on_timer(now_secs());
+                    if let Some(pump) = wave.as_mut() {
+                        pump.on_timer(now_secs());
+                    }
                     continue;
                 }
                 Wake::Tick(None) => {

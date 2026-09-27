@@ -264,7 +264,6 @@ impl LinearTaskStore for VaultLinearTaskStore<'_> {
 }
 
 const PULL_CURSOR: &[u8] = b"linear.pull_cursor.v1";
-const MAX_PULL_PAGES_PER_PASS: usize = 64;
 impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskStore<'_>, I, O> {
     /// Scheduled host entry: reconcile every available inbound page BEFORE
     /// publishing any dirty TASK snapshot. A rejected outbound item retains
@@ -272,7 +271,13 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
     pub fn synchronize(
         &mut self,
         now: u64,
+        max_pull_pages_per_pass: usize,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
+        if !(1..=1024).contains(&max_pull_pages_per_pass) {
+            return Err(
+                Error::InvalidConfig("linear pull page policy is out of bounds".into()).into(),
+            );
+        }
         let mut cursor = {
             let txn = self
                 .tasks()
@@ -304,7 +309,7 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         // the next; no outbound write occurs until a terminal page is reached.
         let mut seen = std::collections::BTreeSet::new();
         let mut caught_up = false;
-        for _ in 0..MAX_PULL_PAGES_PER_PASS {
+        for _ in 0..max_pull_pages_per_pass {
             let page = self.pull_page(cursor.as_deref(), now)?;
             pulled.applied += page.applied;
             pulled.skipped_echo += page.skipped_echo;
