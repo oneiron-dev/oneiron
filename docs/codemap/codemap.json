@@ -10252,7 +10252,7 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "struct": 5
      }
     },
@@ -16680,7 +16680,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16898,7 +16898,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -16936,6 +16936,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LinearHostPolicy",
+      "LinearMissedTick",
+      "LinearPermission",
+      "LinearPolicyPrecedence",
+      "LinearPolicyRisk"
+     ],
+     "path": "src/gate/linear_policy.rs",
+     "purpose": "Narrowable host policy rows stored in the trusted Gate manifest",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ManifestContribution"
      ],
      "path": "src/gate/manifest_authenticity.rs",
@@ -16954,7 +16973,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 26,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -19732,7 +19751,7 @@
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -19757,7 +19776,7 @@
      "path": "src/linear_sync/mod.rs",
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -32397,7 +32416,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/task_verb/production_ports_tests.rs",
@@ -35621,7 +35640,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36309,7 +36328,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2143,
+   "source_files": 2144,
    "test_files": 730
   },
   "oneiron-android": {

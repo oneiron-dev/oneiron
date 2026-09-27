@@ -8,8 +8,9 @@ use std::time::Duration;
 use chrono::DateTime;
 use oneiron::linear_sync::{
     LinearChangePage, LinearChangeSource, LinearEffectKind, LinearEffectRequest, LinearEgress,
-    LinearIssueChange, LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult,
-    LinearTaskStore, MirroredTaskFields, VaultLinearTaskStore,
+    LinearHostPolicy, LinearIssueChange, LinearIssueRef, LinearMissedTick, LinearPermission,
+    LinearSyncAdapter, LinearSyncError, LinearSyncResult, LinearTaskStore, MirroredTaskFields,
+    VaultLinearTaskStore,
 };
 use oneiron::{EntityId, Vault};
 use serde_json::{Value, json};
@@ -17,9 +18,6 @@ use serde_json::{Value, json};
 const GRAPHQL: &str = "https://api.linear.app/graphql";
 const ISSUE_FIELDS: &str =
     "id identifier updatedAt title description priority team { id } assignee { id } state { name }";
-const PAGE_SIZE: u64 = 50;
-const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
-const TICK: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 #[path = "linear_host/tests.rs"]
@@ -57,6 +55,7 @@ pub(crate) struct LinearHostConfig {
     status_names: BTreeMap<String, String>,
     assignee_ids: BTreeMap<String, String>,
     scheduler_actor: EntityId,
+    policy_override: Option<LinearHostPolicy>,
     #[cfg(test)]
     endpoint: Option<String>,
 }
@@ -68,12 +67,14 @@ impl LinearHostConfig {
         let status_map = std::env::var("ONEIRON_LINEAR_STATUS_NAMES").ok();
         let assignee_map = std::env::var("ONEIRON_LINEAR_ASSIGNEE_IDS").ok();
         let scheduler_actor = std::env::var("ONEIRON_LINEAR_SCHEDULER_ACTOR").ok();
+        let policy_manifest = std::env::var("ONEIRON_LINEAR_POLICY_MANIFEST").ok();
         if enabled.is_none()
             && token.is_none()
             && team_id.is_none()
             && status_map.is_none()
             && assignee_map.is_none()
             && scheduler_actor.is_none()
+            && policy_manifest.is_none()
         {
             return Ok(None);
         }
@@ -119,7 +120,11 @@ impl LinearHostConfig {
         {
             anyhow::bail!("Linear assignee mapping must be canonical and bijective");
         }
+        let policy_override = policy_manifest
+            .map(|manifest| toml::from_str::<LinearHostPolicy>(&manifest))
+            .transpose()?;
         Ok(Some(Self {
+            policy_override,
             token,
             team_id,
             status_names,
@@ -139,12 +144,14 @@ struct LinearHttp {
     status_names: Arc<BTreeMap<String, String>>,
     assignee_ids: Arc<BTreeMap<String, String>>,
     scheduler_actor: EntityId,
+    policy: LinearHostPolicy,
     endpoint: Arc<str>,
 }
 impl LinearHttp {
-    fn new(config: LinearHostConfig) -> anyhow::Result<Self> {
+    fn new(config: LinearHostConfig, policy: LinearHostPolicy) -> anyhow::Result<Self> {
+        policy.validate()?;
         let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(policy.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .no_proxy()
             .build()?;
@@ -159,6 +166,7 @@ impl LinearHttp {
             status_names: Arc::new(config.status_names),
             assignee_ids: Arc::new(config.assignee_ids),
             scheduler_actor: config.scheduler_actor,
+            policy,
             endpoint: Arc::from(endpoint),
         })
     }
@@ -184,10 +192,10 @@ impl LinearHttp {
         }
         let mut bytes = Vec::new();
         response
-            .take(MAX_RESPONSE_BYTES + 1)
+            .take(self.policy.max_response_bytes + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| transport())?;
-        if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        if bytes.len() as u64 > self.policy.max_response_bytes {
             return Err(transport());
         }
         let response: Value = serde_json::from_slice(&bytes).map_err(|_| transport())?;
@@ -222,13 +230,15 @@ impl LinearHttp {
         else {
             return Ok(None);
         };
-        Ok(Some(
-            self.parse_issue(
-                data.get("issue")
-                    .filter(|issue| issue.is_object())
-                    .ok_or_else(transport)?,
-            )?,
-        ))
+        let issue = self.parse_issue(
+            data.get("issue")
+                .filter(|issue| issue.is_object())
+                .ok_or_else(transport)?,
+        )?;
+        if issue.unmapped_assignee {
+            return Err(LinearSyncError::AssigneeUnmapped);
+        }
+        Ok(Some(issue))
     }
     fn state_id(&self, status: &str) -> LinearSyncResult<String> {
         // Unknown status is a refusal, not permission to silently lose a TASK field.
@@ -260,7 +270,16 @@ impl LinearHttp {
         if issue.issue.team_id != *self.team_id {
             return Err(transport());
         }
-        issue.fields.assignee_ref = self.engine_assignee(issue.fields.assignee_ref.as_deref())?;
+        match self.engine_assignee(issue.fields.assignee_ref.as_deref()) {
+            Ok(mapped) => issue.fields.assignee_ref = mapped,
+            Err(LinearSyncError::AssigneeUnmapped) => {
+                // Preserve the provider ID as opaque DATA. The engine can skip
+                // an unlinked issue or refuse a linked one before applying it;
+                // it may never turn an unknown user into `None`.
+                issue.unmapped_assignee = true;
+            }
+            Err(error) => return Err(error),
+        }
         Ok(issue)
     }
     fn engine_assignee(&self, provider: Option<&str>) -> LinearSyncResult<Option<String>> {
@@ -339,6 +358,7 @@ fn parse_issue(value: &Value) -> LinearSyncResult<LinearIssueChange> {
             .as_slice(),
     );
     Ok(LinearIssueChange {
+        unmapped_assignee: false,
         event_id: event.finalize().to_hex().to_string(),
         issue: LinearIssueRef {
             issue_id,
@@ -407,6 +427,9 @@ impl LinearPort {
             .vault
             .as_ref()
             .ok_or(LinearSyncError::AuthorizationDenied)?;
+        if self.http.policy.permission == LinearPermission::Denied {
+            return Err(LinearSyncError::AuthorizationDenied);
+        }
         let gate_ref = vault.authorize_linear_effect(&LinearEffectRequest {
             operation_id,
             task_ref,
@@ -415,6 +438,7 @@ impl LinearPort {
             issue_id: issue_id.map(str::to_owned),
             kind,
             fields: fields.clone(),
+            risk: self.http.policy.risk,
         })?;
         tracing::debug!(gate_ref = %gate_ref, "Linear external effect admitted");
         Ok(())
@@ -426,7 +450,7 @@ impl LinearChangeSource for LinearPort {
         // resumes from that position; echo suppression lives in the TASK link.
         let data = self.http.query(
             &format!("query($team:ID!,$after:String,$first:Int!){{ issues(filter:{{team:{{id:{{eq:$team}}}}}},sort:[{{updatedAt:{{order:Ascending}}}}],after:$after,first:$first){{nodes{{{ISSUE_FIELDS}}} pageInfo{{endCursor hasNextPage}}}}}}"),
-            json!({"team":&*self.http.team_id,"after":cursor,"first":PAGE_SIZE}),
+            json!({"team":&*self.http.team_id,"after":cursor,"first":self.http.policy.page_size}),
         )?;
         let nodes = data
             .pointer("/issues/nodes")
@@ -582,13 +606,25 @@ pub(crate) async fn spawn_linear_sync(
     // thread before the server reports ready; a failed init refuses startup.
     let init_vault = Arc::clone(&vault);
     let port = tokio::task::spawn_blocking(move || {
-        Ok::<_, anyhow::Error>(LinearPort::new(LinearHttp::new(config)?, Some(init_vault)))
+        let floor = init_vault.linear_host_policy()?;
+        let policy = config
+            .policy_override
+            .as_ref()
+            .map_or(Ok(floor.clone()), |override_row| floor.narrow(override_row))?;
+        Ok::<_, anyhow::Error>(LinearPort::new(
+            LinearHttp::new(config, policy)?,
+            Some(init_vault),
+        ))
     })
     .await
     .map_err(|_| anyhow::anyhow!("Linear host client initialization failed"))??;
     Ok(tokio::spawn(async move {
-        let mut interval = tokio::time::interval(TICK);
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(port.http.policy.interval_secs));
+        interval.set_missed_tick_behavior(match port.http.policy.missed_tick {
+            LinearMissedTick::Skip => tokio::time::MissedTickBehavior::Skip,
+            LinearMissedTick::Delay => tokio::time::MissedTickBehavior::Delay,
+        });
         loop {
             interval.tick().await;
             let vault = Arc::clone(&vault);

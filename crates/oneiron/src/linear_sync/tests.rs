@@ -184,6 +184,7 @@ impl LinearEgress for FakeEgress {
         self.operations.push(operation_id);
         self.payloads.push(fields.clone());
         let created = LinearIssueChange {
+            unmapped_assignee: false,
             event_id: format!("evt-create-{}", self.created),
             issue: issue_ref(self.created),
             updated_at_ms: self.clock_ms,
@@ -208,6 +209,7 @@ impl LinearEgress for FakeEgress {
         self.operations.push(operation_id);
         self.payloads.push(fields.clone());
         Ok(LinearIssueChange {
+            unmapped_assignee: false,
             event_id: format!("evt-update-{}", self.updated),
             issue: issue.clone(),
             updated_at_ms: self.clock_ms,
@@ -264,6 +266,7 @@ fn linked_adapter(task_ref: EntityId, source: FakeSource) -> TestAdapter {
 
 fn change(event_id: &str, updated_at_ms: u64, fields: MirroredTaskFields) -> LinearIssueChange {
     LinearIssueChange {
+        unmapped_assignee: false,
         event_id: event_id.to_owned(),
         issue: issue_ref(1),
         updated_at_ms,
@@ -742,6 +745,7 @@ fn pull_skips_unmirrored_issues_and_replays_nothing_twice() {
     let mut mirrored = task_fields();
     mirrored.status = "done".to_owned();
     let foreign = LinearIssueChange {
+        unmapped_assignee: false,
         event_id: "evt-foreign".to_owned(),
         issue: issue_ref(99),
         updated_at_ms: 7_000,

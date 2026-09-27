@@ -94,6 +94,7 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         let mut applied = 0;
         let mut skipped_echo = 0;
         let mut conflicts = Vec::new();
+        let mut refused_inbound = Vec::new();
         for change in page.changes {
             // Before the link lookup, not after: an unidentifiable event is
             // rejected by the page it arrived in, and never reaches a store
@@ -101,6 +102,13 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             ensure_event_identity(&change)?;
             if self.tasks.link_for_issue(&change.issue)?.is_none() {
                 skipped_echo += 1;
+                continue;
+            }
+            if change.unmapped_assignee {
+                // A linked issue needs an operator mapping; do not acknowledge
+                // or apply this event. The source page may advance because the
+                // worker redrives these unresolved links on later ticks.
+                refused_inbound.push(change.issue);
                 continue;
             }
             let receipt = self.apply_issue_change(change, now)?;
@@ -114,9 +122,22 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
             applied,
             skipped_echo,
             conflicts,
-            new_cursor: page.next_cursor,
-            has_more: page.has_more,
+            // Do not consume a linked unknown-assignee event. Replay the
+            // page from its prior checkpoint after the mapping is supplied;
+            // processed siblings are deduped by their event digests. Outbound
+            // work can still run instead of being held by this refusal.
+            new_cursor: if refused_inbound.is_empty() {
+                page.next_cursor
+            } else {
+                None
+            },
+            has_more: if refused_inbound.is_empty() {
+                page.has_more
+            } else {
+                false
+            },
             refused_outbound: Vec::new(),
+            refused_inbound,
             pulled_at: now,
         })
     }

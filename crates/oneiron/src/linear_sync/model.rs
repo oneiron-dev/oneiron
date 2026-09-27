@@ -315,6 +315,9 @@ impl MirroredTaskFields {
 /// One normalized inbound change record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinearIssueChange {
+    /// An assignee that is not mapped on this host. The issue may be skipped
+    /// if unlinked; a linked issue is retained as an explicit refusal.
+    pub unmapped_assignee: bool,
     /// Tracker event id; third component of the inbound idempotency key, and
     /// the only component that separates two events sharing an `updated_at` or
     /// recognizes one event redelivered under a new one.
@@ -410,6 +413,10 @@ pub struct LinearPullReceipt {
     /// Dirty TASKs refused individually by the host (unmapped assignee or a
     /// mismatched create replay). Later TASKs may still sync; these stay dirty.
     pub refused_outbound: Vec<EntityId>,
+    /// Linked inbound issues with unmapped identities. They remain unapplied
+    /// and require an operator mapping; unrelated issues and outbound TASKs
+    /// continue without silently replacing their assignees.
+    pub refused_inbound: Vec<LinearIssueRef>,
     /// Wall-clock stamp of the pass.
     pub pulled_at: u64,
 }

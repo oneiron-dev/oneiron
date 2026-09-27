@@ -5,14 +5,18 @@ use std::net::TcpListener;
 use std::thread;
 
 fn host() -> LinearHttp {
-    LinearHttp::new(LinearHostConfig {
-        token: "fixture-private-key".into(),
-        team_id: "team-id".into(),
-        status_names: BTreeMap::from([("queued".into(), "Backlog".into())]),
-        assignee_ids: BTreeMap::new(),
-        scheduler_actor: EntityId::from_bytes([3; 16]).unwrap(),
-        endpoint: None,
-    })
+    LinearHttp::new(
+        LinearHostConfig {
+            token: "fixture-private-key".into(),
+            team_id: "team-id".into(),
+            status_names: BTreeMap::from([("queued".into(), "Backlog".into())]),
+            assignee_ids: BTreeMap::new(),
+            scheduler_actor: EntityId::from_bytes([3; 16]).unwrap(),
+            policy_override: None,
+            endpoint: None,
+        },
+        LinearHostPolicy::shipped_default(),
+    )
     .unwrap()
 }
 fn mock_http(replies: Vec<Value>) -> (String, thread::JoinHandle<Vec<String>>) {
@@ -282,6 +286,7 @@ async fn enabled_worker_initializes_off_runtime_and_polls_local_transport() {
         status_names: BTreeMap::from([("queued".into(), "Backlog".into())]),
         assignee_ids: BTreeMap::new(),
         scheduler_actor: EntityId::from_bytes([3; 16]).unwrap(),
+        policy_override: None,
         endpoint: Some(url),
     };
     // A valid opt-in must not panic while constructing reqwest's blocking
@@ -327,13 +332,15 @@ fn assigned_task_maps_both_identity_namespaces_and_refuses_unknown_ids() {
     inbound["assignee"] = json!({"id":user});
     assert_eq!(
         http.parse_issue(&inbound).unwrap().fields.assignee_ref,
-        Some(actor.clone())
+        Some(actor)
     );
     inbound["assignee"] = json!({"id":"99999999-9999-4999-8999-999999999999"});
-    assert!(matches!(
-        http.parse_issue(&inbound),
-        Err(LinearSyncError::AssigneeUnmapped)
-    ));
+    let unknown = http.parse_issue(&inbound).unwrap();
+    assert!(unknown.unmapped_assignee);
+    assert_eq!(
+        unknown.fields.assignee_ref.as_deref(),
+        Some("99999999-9999-4999-8999-999999999999")
+    );
     let mut unmapped = fields;
     unmapped.assignee_ref = Some(EntityId::from_bytes([9; 16]).unwrap().to_hex());
     assert!(matches!(
@@ -427,4 +434,81 @@ fn missing_effect_grants_refuse_before_any_linear_http_request() {
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
+}
+
+#[test]
+fn host_policy_manifest_narrows_limits_and_refuses_widening() {
+    let floor = LinearHostPolicy::shipped_default();
+    let mut tighter = floor.clone();
+    tighter.interval_secs = 120;
+    tighter.page_size = 10;
+    tighter.timeout_secs = 5;
+    tighter.max_response_bytes = 1024;
+    let override_toml = toml::to_string(&tighter).unwrap();
+    let parsed: LinearHostPolicy = toml::from_str(&override_toml).unwrap();
+    assert_eq!(floor.narrow(&parsed).unwrap(), tighter);
+    let mut wider = tighter;
+    wider.page_size = 51;
+    assert!(floor.narrow(&wider).is_err());
+}
+
+#[test]
+fn working_and_interrupted_statuses_use_host_state_mapping() {
+    let states = json!({"data":{"team":{"states":{"nodes":[
+        {"id":"state-working","name":"In Progress"},
+        {"id":"state-interrupted","name":"Blocked"}
+    ]}}}});
+    let (url, requests) = mock_http(vec![states.clone(), states]);
+    let mut http = host();
+    http.endpoint = Arc::from(url);
+    http.status_names = Arc::new(BTreeMap::from([
+        ("queued".into(), "Backlog".into()),
+        ("working".into(), "In Progress".into()),
+        ("interrupted".into(), "Blocked".into()),
+    ]));
+    let mut working = MirroredTaskFields {
+        title: "work".into(),
+        description: None,
+        priority: None,
+        assignee_ref: None,
+        status: "working".into(),
+    };
+    assert_eq!(
+        http.fields_input(&working).unwrap()["stateId"],
+        "state-working"
+    );
+    working.status = "interrupted".into();
+    assert_eq!(
+        http.fields_input(&working).unwrap()["stateId"],
+        "state-interrupted"
+    );
+    assert_eq!(requests.join().unwrap().len(), 2);
+    let mut issue = issue("work");
+    issue["state"]["name"] = json!("In Progress");
+    assert_eq!(http.parse_issue(&issue).unwrap().fields.status, "working");
+    issue["state"]["name"] = json!("Blocked");
+    assert_eq!(
+        http.parse_issue(&issue).unwrap().fields.status,
+        "interrupted"
+    );
+}
+
+#[test]
+fn unknown_assignee_on_unlinked_issue_does_not_abort_the_page() {
+    let mut foreign = issue("other team's task");
+    foreign["id"] = json!("unlinked-issue");
+    foreign["assignee"] = json!({"id":"99999999-9999-4999-8999-999999999999"});
+    let (url, calls) = mock_http(vec![json!({"data":{"issues":{
+        "nodes":[foreign,issue("linked")],
+        "pageInfo":{"endCursor":"page-end","hasNextPage":false}
+    }}})]);
+    let mut http = host();
+    http.endpoint = Arc::from(url);
+    let mut port = LinearPort::unchecked_for_test(http, None);
+    let page = port.changes_since(None).unwrap();
+    assert_eq!(page.changes.len(), 2);
+    assert!(page.changes[0].unmapped_assignee);
+    assert!(!page.changes[1].unmapped_assignee);
+    assert_eq!(page.next_cursor.as_deref(), Some("page-end"));
+    assert_eq!(calls.join().unwrap().len(), 1);
 }

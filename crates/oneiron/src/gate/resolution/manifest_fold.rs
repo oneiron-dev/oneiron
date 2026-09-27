@@ -146,6 +146,13 @@ pub(crate) fn resolve_policy_manifest(
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
                 }
+                if let Some(host_policy) = decoded.linear_host_policy {
+                    resolution.linear_host_policy =
+                        Some(resolution.linear_host_policy.as_ref().map_or_else(
+                            || host_policy.clone(),
+                            |prior| prior.restrict(&host_policy),
+                        ));
+                }
                 // Advisory threshold composition is deterministic and never
                 // authorizes or refuses a write. The earliest question wins.
                 if let Some(threshold) = decoded.proposal_check_threshold {

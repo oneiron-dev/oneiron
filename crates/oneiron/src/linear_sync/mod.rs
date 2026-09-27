@@ -86,6 +86,7 @@ pub use self::model::{
     LinearSyncError, LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
+pub use crate::gate::{LinearHostPolicy, LinearMissedTick, LinearPermission, LinearPolicyRisk};
 
 #[cfg(test)]
 mod tests;

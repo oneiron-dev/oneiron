@@ -218,9 +218,17 @@ impl<'v> VaultLinearTaskStore<'v> {
             status: "queued".to_owned(),
         });
         fields.title = body.label.clone().unwrap_or_default();
-        if let Some(terminal) = body.terminal() {
-            fields.status = terminal.disposition.as_str().to_owned();
-        }
+        fields.status = match body.state.as_ref() {
+            Some(super::TaskExecutionState::Working { .. }) => "working".to_owned(),
+            Some(super::TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
+            Some(super::TaskExecutionState::Terminal(record)) => {
+                record.disposition.as_str().to_owned()
+            }
+            Some(super::TaskExecutionState::Queued) | None => body
+                .mirror_fields
+                .as_ref()
+                .map_or_else(|| "queued".to_owned(), |mirror| mirror.status.clone()),
+        };
         Ok(TaskMirrorSnapshot {
             task_ref: task,
             issue: link.as_ref().map(|l| l.issue.clone()),
