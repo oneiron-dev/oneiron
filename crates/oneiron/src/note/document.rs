@@ -57,6 +57,7 @@ pub struct NoteDocumentView {
     pub document: EntityId,
     pub frontier: Vec<u8>,
     pub markdown: String,
+    pub title: Option<String>,
     pub pins: Vec<NotePin>,
     pub authorship: Vec<super::NoteAuthorship>,
 }
@@ -167,6 +168,20 @@ impl NoteDocument {
         {
             return Err(invalid("unknown NOTE container"));
         }
+        if root.get(META).is_none_or(|meta| match meta {
+            loro::LoroValue::Map(entries) => {
+                entries.keys().any(|key| key != "id" && key != "title")
+            }
+            _ => true,
+        }) {
+            return Err(invalid("unknown NOTE metadata"));
+        }
+        if let Some(title) = doc.get_map(META).get("title") {
+            let loro::ValueOrContainer::Value(loro::LoroValue::String(title)) = title else {
+                return Err(invalid("invalid NOTE title"));
+            };
+            validate_title(&title)?;
+        }
         if doc.get_text(BODY).len_utf8() > MAX_NOTE_BYTES
             || doc.get_map("pins").len() > 256
             || doc.get_map("authorship").len() > 4096
@@ -212,9 +227,31 @@ impl NoteDocument {
             document: self.id,
             frontier: self.doc.oplog_frontiers().encode(),
             markdown: self.doc.get_text(BODY).to_string(),
+            title: self.title()?,
             pins: self.pins()?,
             authorship: super::operations::authorship(&self.doc)?,
         })
+    }
+
+    pub(super) fn title(&self) -> Result<Option<String>> {
+        match self.doc.get_map(META).get("title") {
+            None => Ok(None),
+            Some(loro::ValueOrContainer::Value(loro::LoroValue::String(value))) => {
+                validate_title(&value)?;
+                Ok(Some(value.to_string()))
+            }
+            _ => Err(invalid("invalid NOTE title")),
+        }
+    }
+
+    pub(super) fn set_title(&self, title: &str, actor: &WriteActor) -> Result<()> {
+        validate_title(title)?;
+        self.doc
+            .get_map(META)
+            .insert("title", title)
+            .map_err(|_| invalid("NOTE title insert"))?;
+        stamp(&self.doc, actor);
+        Ok(())
     }
 
     pub(super) fn pins(&self) -> Result<Vec<NotePin>> {
@@ -392,4 +429,12 @@ fn stamp(doc: &LoroDoc, actor: &WriteActor) {
         "oneiron.note/v1 actor={}",
         actor.entity_ref().to_hex()
     )));
+}
+
+/// A title is human metadata, not a body hash. Keep the socket check bounded.
+pub(super) fn validate_title(title: &str) -> Result<()> {
+    if title.len() > 256 || title.trim().is_empty() || title.chars().any(char::is_control) {
+        return Err(invalid("invalid NOTE title"));
+    }
+    Ok(())
 }
