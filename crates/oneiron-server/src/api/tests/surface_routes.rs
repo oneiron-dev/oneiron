@@ -1,6 +1,7 @@
 //! Health/runtime/discover redaction, outbound capability contracts, local artifact serving, context-board seed check.
 
 use super::*;
+use axum::http::header::{CONTENT_DISPOSITION, X_CONTENT_TYPE_OPTIONS};
 
 #[tokio::test]
 async fn context_board_hides_fresh_default_policy_manifest() {
@@ -569,6 +570,466 @@ async fn local_artifact_route_serves_pinned_pointer_and_hash_mounts() {
 }
 
 #[tokio::test]
+async fn local_blob_artifact_route_serves_pinned_and_direct_versions() {
+    let (_dir, server) = test_server();
+    let artifact_id = oneiron::EntityId::now();
+    let artifact_body =
+        oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf");
+    server
+        .vault
+        .put_blob_artifact(
+            &artifact_id,
+            &artifact_body,
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .expect("create blob artifact");
+
+    let actor_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_entity(
+            &actor_id,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+            b"uploader",
+        )
+        .expect("create blob uploader");
+    let actor = oneiron::WriteActor::new(actor_id, oneiron::EdgeActorClass::Human);
+    let first = server
+        .vault
+        .append_blob_artifact_version(
+            &artifact_id,
+            b"%PDF-1.7\nfirst version",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .expect("append first blob version");
+    let second = server
+        .vault
+        .append_blob_artifact_version(
+            &artifact_id,
+            b"%PDF-1.7\nsecond version",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 12, end: 12 },
+            12,
+        )
+        .expect("append second blob version");
+    assert_eq!((first.version, second.version), (1, 2));
+
+    let unpublished_route = format!("/a/{}/export", artifact_id.to_hex());
+    let (status, _, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&unpublished_route)
+            .body(Body::empty())
+            .expect("unpublished blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Published,
+            first.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("pin published blob version");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Preview,
+            second.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("pin preview blob version");
+
+    let route = format!("/a/{}/report.pdf", artifact_id.to_hex());
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&route)
+            .body(Body::empty())
+            .expect("published blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(
+        headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("application/pdf")
+    );
+    assert_eq!(
+        headers
+            .get(CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some(BLOB_POINTER_CACHE_CONTROL)
+    );
+
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/export", artifact_id.to_hex()))
+            .body(Body::empty())
+            .expect("stable export request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/", artifact_id.to_hex()))
+            .body(Body::empty())
+            .expect("blob root request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+
+    let preview_route = format!("{route}?channel=preview");
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&preview_route)
+            .body(Body::empty())
+            .expect("preview blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nsecond version");
+
+    let direct_route = format!("{route}?blobVersion={}", first.version);
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&direct_route)
+            .body(Body::empty())
+            .expect("direct blob version request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(
+        headers
+            .get(CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some(BLOB_IMMUTABLE_CACHE_CONTROL)
+    );
+
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Published,
+            second.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("repoint published blob version");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Preview,
+            first.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("repoint preview blob version");
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&route)
+            .body(Body::empty())
+            .expect("repointed published blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nsecond version");
+    let repointed_preview_route = format!("{route}?channel=preview");
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&repointed_preview_route)
+            .body(Body::empty())
+            .expect("repointed preview blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+
+    server
+        .vault
+        .unpublish_blob_artifact_pointer(&artifact_id, oneiron::ArtifactPointerChannel::Published)
+        .expect("unpublish published blob version");
+    let (status, _, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&route)
+            .body(Body::empty())
+            .expect("unpublished default blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&repointed_preview_route)
+            .body(Body::empty())
+            .expect("preview remains published request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    server
+        .vault
+        .unpublish_blob_artifact_pointer(&artifact_id, oneiron::ArtifactPointerChannel::Preview)
+        .expect("unpublish preview blob version");
+
+    let (status, _, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&repointed_preview_route)
+            .body(Body::empty())
+            .expect("unpublished preview blob request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&direct_route)
+            .body(Body::empty())
+            .expect("direct blob version after unpublish"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(!body.is_empty());
+
+    for invalid_route in [
+        format!("{route}?blobVersion=0"),
+        format!("{route}?blobVersion={}&channel=published", first.version),
+        format!(
+            "{route}?blobVersion={}&forkHash={}",
+            first.version,
+            "00".repeat(32)
+        ),
+    ] {
+        let (status, _, body) = route_bytes(
+            server.clone(),
+            Request::builder()
+                .uri(&invalid_route)
+                .body(Body::empty())
+                .expect("invalid blob selector request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid_route}");
+        let error: Value = serde_json::from_slice(&body).expect("error JSON");
+        assert_error_envelope(&error, "BAD_REQUEST");
+    }
+
+    // An exported HTML blob is not a trusted site bundle: serving its bytes
+    // must not execute same-origin script, even with a forged active MIME.
+    let active_id = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &active_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.html", "text/html"),
+            oneiron::TimeRange { start: 20, end: 20 },
+            20,
+        )
+        .expect("create active-media blob");
+    server
+        .vault
+        .append_blob_artifact_version(
+            &active_id,
+            b"<script>alert(1)</script>",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 21, end: 21 },
+            21,
+        )
+        .expect("append active-media blob");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &active_id,
+            oneiron::ArtifactPointerChannel::Published,
+            1,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("publish active-media blob");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/export", active_id.to_hex()))
+            .body(Body::empty())
+            .expect("active-media request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"<script>alert(1)</script>");
+    assert_eq!(headers[CONTENT_TYPE], "application/octet-stream");
+    assert_eq!(headers[CONTENT_DISPOSITION], "attachment");
+    assert_eq!(headers[X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert_eq!(headers[CACHE_CONTROL], BLOB_POINTER_CACHE_CONTROL);
+    let attachment_etag = headers[ETAG].clone();
+
+    // Direct export URLs require a live pin. Re-pin this immutable version
+    // before testing that a later mutable body edit cannot change its bytes
+    // or presentation.
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Published,
+            first.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("re-pin first blob version");
+    // The blob body is mutable, but this URL and its response headers are not.
+    server
+        .vault
+        .put_blob_artifact(
+            &artifact_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("renamed.txt", "text/plain"),
+            oneiron::TimeRange { start: 30, end: 30 },
+            30,
+        )
+        .expect("re-put mutable artifact body");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&direct_route)
+            .body(Body::empty())
+            .expect("pinned version after body re-put"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(headers[CONTENT_TYPE], "application/pdf");
+    assert_eq!(headers[CACHE_CONTROL], BLOB_IMMUTABLE_CACHE_CONTROL);
+    assert_eq!(
+        headers[ETAG],
+        format!(
+            "\"blob-{}-{}-{}\"",
+            artifact_id.to_hex(),
+            first.version,
+            oneiron::artifact_hex(blake3::hash(b"%PDF-1.7\nfirst version").as_bytes())
+        )
+    );
+    let old_pdf_etag = headers[ETAG].clone();
+    let renamed_direct = format!(
+        "/a/{}/renamed.txt?blobVersion={}",
+        artifact_id.to_hex(),
+        first.version
+    );
+    let (status, _, _) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(renamed_direct)
+            .body(Body::empty())
+            .expect("new name must not replace pinned name"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A same-byte fork with a different pinned media type must revalidate as
+    // a new representation, not replay a stale 304 from the previous version.
+    let plain = server
+        .vault
+        .fork_blob_artifact_version(
+            &artifact_id,
+            first.version,
+            b"%PDF-1.7\nfirst version",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 31, end: 31 },
+            31,
+        )
+        .expect("same-byte plain-text fork");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &artifact_id,
+            oneiron::ArtifactPointerChannel::Published,
+            plain.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("repoint to plain-text fork");
+    let (status, headers, body) = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!("/a/{}/export", artifact_id.to_hex()))
+            .header(IF_NONE_MATCH, old_pdf_etag.clone())
+            .body(Body::empty())
+            .expect("conditional MIME repoint"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"%PDF-1.7\nfirst version");
+    assert_eq!(headers[CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_ne!(headers[ETAG], old_pdf_etag);
+
+    // Moving from an attachment to inline PDF with identical bytes must also
+    // return 200, so an old Content-Disposition cannot stick in a cache.
+    server
+        .vault
+        .put_blob_artifact(
+            &active_id,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 32, end: 32 },
+            32,
+        )
+        .expect("re-put active blob presentation");
+    let inline = server
+        .vault
+        .fork_blob_artifact_version(
+            &active_id,
+            1,
+            b"<script>alert(1)</script>",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            actor,
+            oneiron::TimeRange { start: 33, end: 33 },
+            33,
+        )
+        .expect("same-byte inline fork");
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &active_id,
+            oneiron::ArtifactPointerChannel::Published,
+            inline.version,
+            oneiron::artifact_hosting::ArtifactServeTier::Public,
+        )
+        .expect("repoint from attachment to inline");
+    let (status, headers, body) = route_bytes(
+        server,
+        Request::builder()
+            .uri(format!("/a/{}/export", active_id.to_hex()))
+            .header(IF_NONE_MATCH, attachment_etag.clone())
+            .body(Body::empty())
+            .expect("conditional attachment repoint"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_ref(), b"<script>alert(1)</script>");
+    assert_eq!(headers[CONTENT_TYPE], "application/pdf");
+    assert!(!headers.contains_key(CONTENT_DISPOSITION));
+    assert_ne!(headers[ETAG], attachment_etag);
+}
+
+#[tokio::test]
 async fn local_artifact_route_public_bypasses_api_auth_when_configured() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
         auth_secret: Some("secret".to_owned()),
@@ -1132,6 +1593,108 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
             (missing.0, stable_error(&missing.2))
         );
     }
+    // The same grant law applies to pinned blob exports and their immutable
+    // version URL, not just CODE_ARTIFACT bundles.
+    let blob = oneiron::EntityId::now();
+    server
+        .vault
+        .put_blob_artifact(
+            &blob,
+            &oneiron::blob_artifact::BlobArtifactBody::new("report.pdf", "application/pdf"),
+            oneiron::TimeRange { start: 10, end: 10 },
+            10,
+        )
+        .unwrap();
+    let version = server
+        .vault
+        .append_blob_artifact_version(
+            &blob,
+            b"%PDF-1.7\ntiered",
+            &oneiron::blob_artifact::BlobVersionProvenance::UserUpload,
+            oneiron::WriteActor::new(member, oneiron::EdgeActorClass::Human),
+            oneiron::TimeRange { start: 11, end: 11 },
+            11,
+        )
+        .unwrap()
+        .version;
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob,
+            oneiron::ArtifactPointerChannel::Published,
+            version,
+            oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
+        )
+        .unwrap();
+    let blob_route = format!("/a/{}/export", blob.to_hex());
+    let blob_version_route = format!("{blob_route}?blobVersion={version}");
+    for route in [&blob_route, &blob_version_route] {
+        let served = route_bytes(
+            server.clone(),
+            core_request_with_principal_ref("GET", route, "core:read", &member.to_hex(), None),
+        )
+        .await;
+        assert_eq!(served.0, StatusCode::OK);
+        assert_eq!(served.2.as_ref(), b"%PDF-1.7\ntiered");
+        assert_eq!(served.1.get(CACHE_CONTROL).unwrap(), "private, no-store");
+        let denied = route_bytes(
+            server.clone(),
+            core_request_with_principal_ref("GET", route, "core:read", &stranger.to_hex(), None),
+        )
+        .await;
+        assert_eq!(
+            (denied.0, stable_error(&denied.2)),
+            (missing.0, stable_error(&missing.2))
+        );
+    }
+    let (blob_tier, blob_token) = oneiron::artifact_hosting::ArtifactServeTier::mint_link_token();
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob,
+            oneiron::ArtifactPointerChannel::Published,
+            version,
+            blob_tier,
+        )
+        .unwrap();
+    let linked_blob = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!(
+                "/a/{}/_t/{blob_token}/export?blobVersion={version}",
+                blob.to_hex()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(linked_blob.0, StatusCode::OK);
+    assert_eq!(
+        linked_blob.1.get(CACHE_CONTROL).unwrap(),
+        "private, no-store"
+    );
+    let no_token_blob = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(&blob_version_route)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        (no_token_blob.0, stable_error(&no_token_blob.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    server
+        .vault
+        .publish_blob_artifact_pointer_with_tier(
+            &blob,
+            oneiron::ArtifactPointerChannel::Published,
+            version,
+            oneiron::artifact_hosting::ArtifactServeTier::WorldMembers(42),
+        )
+        .unwrap();
+
     let member_grant = oneiron::EntityId::from_hex(&creation.grant_refs[0]).unwrap();
     let disconnect = bind_artifact_member_to_divergent_pacts(&server.vault, member_grant);
     let discarded = route_bytes(
@@ -1141,6 +1704,21 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     .await;
     assert_eq!(
         (discarded.0, stable_error(&discarded.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let blob_discarded = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &blob_version_route,
+            "core:read",
+            &member.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        (blob_discarded.0, stable_error(&blob_discarded.2)),
         (missing.0, stable_error(&missing.2))
     );
     let now = server.vault.now_recorded_at();
@@ -1171,6 +1749,34 @@ async fn artifact_tiers_bind_tokens_and_live_world_grants_without_an_existence_o
     .await;
     assert_eq!(
         (terminated.0, stable_error(&terminated.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    let blob_terminated = route_bytes(
+        server.clone(),
+        core_request_with_principal_ref("GET", &blob_route, "core:read", &member.to_hex(), None),
+    )
+    .await;
+    assert_eq!(
+        (blob_terminated.0, stable_error(&blob_terminated.2)),
+        (missing.0, stable_error(&missing.2))
+    );
+    server
+        .vault
+        .unpublish_blob_artifact_pointer(&blob, oneiron::ArtifactPointerChannel::Published)
+        .unwrap();
+    let dead_blob = route_bytes(
+        server.clone(),
+        Request::builder()
+            .uri(format!(
+                "/a/{}/_t/{blob_token}/export?blobVersion={version}",
+                blob.to_hex()
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        (dead_blob.0, stable_error(&dead_blob.2)),
         (missing.0, stable_error(&missing.2))
     );
     server

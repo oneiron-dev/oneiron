@@ -21,12 +21,13 @@ impl OutboundDispatchPipeline {
             // An earlier effect remains receipted even if its pointer was
             // subsequently unpublished or moved. Replay never resurrects it.
             drop(wtxn);
+            let owner = vault.resolve_export_owner(&request.artifact, request.export)?;
             let pointer = vault
                 .artifact_pointer(&request.artifact, request.channel)?
                 .filter(|pointer| {
-                    pointer.serve_tier == admission.serve_tier
-                        && pointer.fork_hash == request.fork_hash
-                        && pointer.code_artifact_id == admission.code_artifact_id
+                    pointer.export == admission.export
+                        && pointer.serve_tier == admission.serve_tier
+                        && owner == Some(admission.export_entity_id)
                 });
             return Ok(ArtifactPublishVerbOutcome {
                 status: ArtifactPublishVerbStatus::Published,
@@ -35,9 +36,21 @@ impl OutboundDispatchPipeline {
                 gate_decision_ref: format!("gate:{}", admission.gate_id.to_hex()),
             });
         }
-        let snapshot = vault
-            .resolve_artifact_snapshot_by_fork(&request.artifact, &request.fork_hash)?
-            .ok_or(Error::EntityNotFound)?;
+        let snapshot = match request.export {
+            ArtifactExportRef::ForkHash(hash) => Some(
+                vault
+                    .resolve_artifact_snapshot_by_fork(&request.artifact, &hash)?
+                    .ok_or(Error::EntityNotFound)?,
+            ),
+            ArtifactExportRef::BlobVersion { .. } => None,
+        };
+        let export_entity_id = if let Some(snapshot) = &snapshot {
+            snapshot.code_artifact_id
+        } else {
+            vault
+                .resolve_export_owner_in_txn(&wtxn, &request.artifact, request.export)?
+                .ok_or(Error::EntityNotFound)?
+        };
         let actor_type = vault
             .get_entity_type_in_txn(&wtxn, &request.actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
@@ -55,18 +68,28 @@ impl OutboundDispatchPipeline {
                 gate_decision_ref: format!("gate:{}", gate_id.to_hex()),
             });
         }
-        let pointer = publish_artifact_pointer_in_txn(
-            vault,
-            &mut wtxn,
-            &snapshot,
-            request.channel,
-            request.serve_tier,
-        )?;
+        let pointer = if let Some(snapshot) = &snapshot {
+            publish_artifact_pointer_in_txn(
+                vault,
+                &mut wtxn,
+                snapshot,
+                request.channel,
+                request.serve_tier,
+            )?
+        } else {
+            vault.publish_export_pointer_in_txn(
+                &mut wtxn,
+                &request.artifact,
+                request.channel,
+                request.export,
+                request.serve_tier,
+            )?
+        };
         let admission = ArtifactPublishAdmission {
             artifact: request.artifact.clone(),
             channel: request.channel.key_byte(),
-            fork_hash: request.fork_hash,
-            code_artifact_id: snapshot.code_artifact_id,
+            export: request.export,
+            export_entity_id,
             actor: request.actor.entity_ref(),
             actor_class: request.actor.actor_class().gate_actor_class().to_owned(),
             gate_id,
@@ -95,7 +118,7 @@ pub(super) fn artifact_publish_approval_digest(
 ) -> Result<crate::consent::EffectDigest> {
     validate_artifact_id(&request.artifact)?;
     vault
-        .resolve_artifact_snapshot_by_fork(&request.artifact, &request.fork_hash)?
+        .resolve_export_owner(&request.artifact, request.export)?
         .ok_or(Error::EntityNotFound)?;
     let actor_type = vault
         .get_entity_type(&request.actor.entity_ref())?
@@ -111,6 +134,15 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
         ArtifactServeTier::Public => "public".to_owned(),
         ArtifactServeTier::LinkToken(capability) => format!("link:{}", artifact_hex(&capability.0)),
         ArtifactServeTier::WorldMembers(world_id) => format!("world:{world_id}"),
+    };
+    let export_ref = match request.export {
+        ArtifactExportRef::ForkHash(hash) => artifact_hex(&hash),
+        ArtifactExportRef::BlobVersion {
+            artifact_id,
+            version,
+        } => {
+            format!("blob:{}:{version}", artifact_id.to_hex())
+        }
     };
     ExternalEffectGateInput {
         actor: GateActor {
@@ -131,7 +163,7 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
-            artifact_hex(&request.fork_hash),
+            export_ref,
             tier,
         )),
         send_ref: Some(format!(
@@ -139,7 +171,7 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
             request.publish_id.to_hex(),
             request.artifact,
             request.channel.as_str(),
-            artifact_hex(&request.fork_hash),
+            export_ref,
             tier,
         )),
         standing_grant_ref: None,
@@ -186,15 +218,14 @@ pub(super) fn publish_artifact_pointer_in_txn(
         wtxn,
         &snapshot.artifact,
         channel,
-        &snapshot.fork_hash,
+        ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
         serve_tier,
     )?;
     Ok(ArtifactPointer {
         artifact: snapshot.artifact.clone(),
         channel,
-        fork_hash: snapshot.fork_hash,
-        code_artifact_id: snapshot.code_artifact_id,
+        export: ArtifactExportRef::ForkHash(snapshot.fork_hash),
         stale_taint_override,
         serve_tier,
     })
@@ -210,6 +241,16 @@ fn decode_publish_admission(raw: &[u8]) -> Result<ArtifactPublishAdmission> {
     if admission.channel > ARTIFACT_CHANNEL_PREVIEW {
         return Err(Error::CorruptedIndex("artifact publish channel"));
     }
+    if let ArtifactExportRef::BlobVersion {
+        artifact_id,
+        version,
+    } = admission.export
+        && (version == 0
+            || admission.artifact != artifact_id.to_hex()
+            || admission.export_entity_id != artifact_id)
+    {
+        return Err(Error::CorruptedIndex("artifact publish blob binding"));
+    }
     Ok(admission)
 }
 
@@ -219,7 +260,7 @@ fn check_replay_binding(
 ) -> Result<()> {
     if admission.artifact != request.artifact
         || admission.channel != request.channel.key_byte()
-        || admission.fork_hash != request.fork_hash
+        || admission.export != request.export
         || admission.actor != request.actor.entity_ref()
         || admission.actor_class != request.actor.actor_class().gate_actor_class()
         || admission.occurred_at != request.occurred_at
@@ -256,6 +297,42 @@ fn publish_receipt(
     gate: &crate::store::GateDecisionRecord,
 ) -> ReceiptRecord {
     let gate_ref = format!("gate:{}", admission.gate_id.to_hex());
+    let mut fields = BTreeMap::from([
+        ("artifact".to_owned(), admission.artifact.clone()),
+        (
+            "channel".to_owned(),
+            if admission.channel == ARTIFACT_CHANNEL_PUBLISHED {
+                "published".to_owned()
+            } else {
+                "preview".to_owned()
+            },
+        ),
+        ("gate_receipt_ref".to_owned(), gate_ref.clone()),
+        (
+            "serve_tier".to_owned(),
+            format!("{:?}", admission.serve_tier),
+        ),
+        (
+            "stale_taint_override".to_owned(),
+            admission.stale_taint_override.to_string(),
+        ),
+    ]);
+    match admission.export {
+        ArtifactExportRef::ForkHash(hash) => {
+            fields.insert("fork_hash".to_owned(), artifact_hex(&hash));
+            fields.insert(
+                "code_artifact_id".to_owned(),
+                admission.export_entity_id.to_hex(),
+            );
+        }
+        ArtifactExportRef::BlobVersion {
+            artifact_id,
+            version,
+        } => {
+            fields.insert("blob_artifact_id".to_owned(), artifact_id.to_hex());
+            fields.insert("blob_version".to_owned(), version.to_string());
+        }
+    }
     ReceiptRecord {
         receipt_id: format!("share:artifact:{}", id.to_hex()),
         receipt_kind: ReceiptKind::Share,
@@ -265,34 +342,10 @@ fn publish_receipt(
         outcome: "published".to_owned(),
         job_ref: None,
         trigger_ref: None,
-        policy_trace: std::iter::once(gate_ref.clone())
+        policy_trace: std::iter::once(gate_ref)
             .chain(crate::receipt::gate_decision_receipt(gate).policy_trace)
             .collect(),
-        fields: BTreeMap::from([
-            ("artifact".to_owned(), admission.artifact.clone()),
-            (
-                "channel".to_owned(),
-                if admission.channel == ARTIFACT_CHANNEL_PUBLISHED {
-                    "published".to_owned()
-                } else {
-                    "preview".to_owned()
-                },
-            ),
-            ("fork_hash".to_owned(), artifact_hex(&admission.fork_hash)),
-            (
-                "code_artifact_id".to_owned(),
-                admission.code_artifact_id.to_hex(),
-            ),
-            ("gate_receipt_ref".to_owned(), gate_ref),
-            (
-                "serve_tier".to_owned(),
-                format!("{:?}", admission.serve_tier),
-            ),
-            (
-                "stale_taint_override".to_owned(),
-                admission.stale_taint_override.to_string(),
-            ),
-        ]),
+        fields,
     }
 }
 

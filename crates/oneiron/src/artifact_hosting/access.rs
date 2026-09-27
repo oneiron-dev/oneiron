@@ -71,7 +71,7 @@ impl Vault {
             ArtifactSnapshotSelector::Channel(ArtifactPointerChannel::Preview) => {
                 &[ArtifactPointerChannel::Preview]
             }
-            ArtifactSnapshotSelector::ForkHash(_) => &[
+            ArtifactSnapshotSelector::ForkHash(_) | ArtifactSnapshotSelector::BlobVersion(_) => &[
                 ArtifactPointerChannel::Published,
                 ArtifactPointerChannel::Preview,
             ],
@@ -80,8 +80,14 @@ impl Vault {
             let Some(pointer) = self.artifact_pointer(artifact, *channel)? else {
                 continue;
             };
-            if let ArtifactSnapshotSelector::ForkHash(hash) = selector
-                && hash != pointer.fork_hash
+            let pinned_selector = match pointer.export {
+                ArtifactExportRef::ForkHash(hash) => ArtifactSnapshotSelector::ForkHash(hash),
+                ArtifactExportRef::BlobVersion { version, .. } => {
+                    ArtifactSnapshotSelector::BlobVersion(version)
+                }
+            };
+            if !matches!(selector, ArtifactSnapshotSelector::Channel(_))
+                && selector != pinned_selector
             {
                 continue;
             }
@@ -97,11 +103,7 @@ impl Vault {
             if !allowed {
                 continue;
             }
-            let mut file = self.resolve_artifact_file(
-                artifact,
-                ArtifactSnapshotSelector::ForkHash(pointer.fork_hash),
-                path,
-            )?;
+            let mut file = self.resolve_artifact_file(artifact, pinned_selector, path)?;
             if let Some(file) = &mut file {
                 file.selector = selector;
                 file.serve_tier = pointer.serve_tier;
