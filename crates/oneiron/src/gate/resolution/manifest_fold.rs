@@ -179,15 +179,27 @@ pub(crate) fn resolve_policy_manifest(
         resolution.source_trust.restrict_only(contribution);
     }
 
-    // Equal key/scope rows cannot silently depend on entity scan order, and a
-    // stored row at a level its key's door cannot resolve fails closed.
-    let mut value_slots = BTreeSet::new();
-    if resolution
-        .policy_values
-        .iter()
-        .any(|row| !value_slots.insert((row.key, row.scope)))
-        || crate::gate::policy_values::unadmitted_row(&resolution.policy_values).is_some()
-    {
+    // Two manifests carrying the identical row (a copy of the shipped defaults,
+    // say) state one value and keep one copy. Different rows for one key/scope
+    // slot cannot silently depend on entity scan order, and a stored row at a
+    // level its key's door cannot resolve fails closed.
+    let mut value_slots = std::collections::BTreeMap::new();
+    let mut value_rows = Vec::with_capacity(resolution.policy_values.len());
+    for row in std::mem::take(&mut resolution.policy_values) {
+        match value_slots.get(&(row.key, row.scope)) {
+            Some(&index) if value_rows[index] == row => {}
+            Some(_) => {
+                resolution.diagnostics.malformed_manifest_seen = true;
+                value_rows.push(row);
+            }
+            None => {
+                value_slots.insert((row.key, row.scope), value_rows.len());
+                value_rows.push(row);
+            }
+        }
+    }
+    resolution.policy_values = value_rows;
+    if crate::gate::policy_values::unadmitted_row(&resolution.policy_values).is_some() {
         resolution.diagnostics.malformed_manifest_seen = true;
     }
 

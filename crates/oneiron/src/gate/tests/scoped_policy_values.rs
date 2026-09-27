@@ -440,6 +440,18 @@ fn duplicate_or_invalid_policy_value_rows_fail_closed() -> Result<()> {
         put_policy_manifest_bytes(&vault, test_id(0x37), &manifest(rows))?;
         assert!(resolve(&vault)?.is_fail_closed());
     }
+    // The identical row in two manifests (a copied template) is one statement.
+    let (_tmp, vault) = temp_vault();
+    let copied = manifest(vec![row(
+        "a",
+        "comm_opt_out_posture",
+        Value::from("escalate"),
+        "vault",
+        None,
+    )]);
+    put_policy_manifest_bytes(&vault, test_id(0x37), &copied)?;
+    put_policy_manifest_bytes(&vault, test_id(0x38), &copied)?;
+    assert!(!resolve(&vault)?.is_fail_closed());
     Ok(())
 }
 
@@ -842,7 +854,7 @@ fn flat_opt_out_field_decides_nothing() -> Result<()> {
         let decision = policy.evaluate_gate(&opted_out_effect());
         assert_eq!(decision.policy_row_ref(), Some("vault-posture"));
         assert_eq!(
-            decision.reason_codes() == &[GateReasonCode::PendingCounterpartyOptOut],
+            decision.reason_codes() == [GateReasonCode::PendingCounterpartyOptOut],
             held
         );
     }
