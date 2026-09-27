@@ -6,10 +6,11 @@
 use super::{
     last_startxref,
     lex::{Kind, LexError, PdfLexer, Token, stream_delimiter},
+    revision_ends,
 };
 use crate::api::SealResourceLimits;
 use lopdf::{
-    Document, LoadOptions, Object, ObjectId,
+    Document, LoadOptions, ObjectId,
     xref::{XrefEntry, XrefType},
 };
 use std::{collections::BTreeSet, ops::Range};
@@ -66,6 +67,17 @@ impl RevisionFacts {
         let Some(rev) = self.revisions.get(index) else {
             return false;
         };
+        let Some(prior) = index.checked_sub(1).and_then(|i| self.revisions.get(i)) else {
+            return false;
+        };
+        if rev.prev_xref != Some(prior.xref_offset)
+            || std::mem::discriminant(&rev.xref_style) != std::mem::discriminant(&prior.xref_style)
+            || rev.trailer.get(b"Root").ok() != prior.trailer.get(b"Root").ok()
+            || rev.trailer.get(b"ID").ok() != prior.trailer.get(b"ID").ok()
+            || rev.trailer.get(b"Info").ok() != prior.trailer.get(b"Info").ok()
+        {
+            return false;
+        }
         let mut ids = BTreeSet::new();
         for definition in &rev.definitions {
             if !definition.indexed && !definition.xref_role {
@@ -104,53 +116,81 @@ fn stream_span(
     object_start: usize,
     doc: &Document,
     id: ObjectId,
+    limits: &SealResourceLimits,
 ) -> Result<Range<usize>, RevisionAnalysisError> {
-    let (_, begin) = stream_delimiter(
-        bytes
-            .get(object_start..header.span.end + 2)
-            .ok_or(RevisionAnalysisError::Framing)?,
-    )
-    .ok_or(RevisionAnalysisError::Framing)?;
+    let candidate = bytes
+        .get(object_start..header.span.end + 2)
+        .ok_or(RevisionAnalysisError::Framing)?;
+    let (_, begin) = stream_delimiter(candidate).ok_or(RevisionAnalysisError::Framing)?;
     let begin = object_start + begin;
     if begin > bytes.len() {
         return Err(RevisionAnalysisError::Framing);
     }
-    // Indexed streams are checked against the strict parser's raw bytes.
-    // For a shadowed stream, a direct /Length is required; an unresolved
-    // indirect length cannot be used to claim a complete definition inventory.
-    let length = if let Ok(Object::Stream(stream)) = doc.get_object(id) {
-        if matches!(doc.reference_table.get(id.0), Some(XrefEntry::Normal{offset,..})
-            if *offset as usize == object_start)
-        {
-            Some(stream.content.len())
-        } else {
-            None
+    // /Length is the encoded byte count. lopdf may expose DECOMPRESSED
+    // `Stream.content` for object streams, so its length cannot frame the
+    // original bytes. Direct lengths are bound to this definition's header.
+    // An indirect length is resolved only when this stream is xref-selected.
+    let mut lex = PdfLexer::new(bytes, object_start, 4096);
+    let mut length = None;
+    while let Some(t) = lex.next()? {
+        if t.span.start >= header.span.start {
+            break;
         }
-    } else {
-        None
-    };
-    let length = match length {
-        Some(n) => n,
-        None => {
-            let mut lex = PdfLexer::new(bytes, object_start, 4096);
-            let mut n = None;
-            while let Some(t) = lex.next()? {
-                if t.span.start >= header.span.start {
-                    break;
-                }
-                if t.kind == Kind::Name && t.value == b"/Length" {
-                    let v = lex.next()?.ok_or(RevisionAnalysisError::Framing)?;
-                    if v.kind != Kind::Word || n.is_some() {
-                        return Err(RevisionAnalysisError::UnresolvedStream);
-                    }
-                    n = std::str::from_utf8(v.value)
-                        .ok()
-                        .and_then(|s| s.parse::<usize>().ok());
-                }
+        if t.kind == Kind::Name && t.value == b"/Length" {
+            if length.is_some() {
+                return Err(RevisionAnalysisError::Framing);
             }
-            n.ok_or(RevisionAnalysisError::UnresolvedStream)?
+            let v = lex.next()?.ok_or(RevisionAnalysisError::Framing)?;
+            if v.kind != Kind::Word {
+                return Err(RevisionAnalysisError::UnresolvedStream);
+            }
+            let n = std::str::from_utf8(v.value)
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .ok_or(RevisionAnalysisError::UnresolvedStream)?;
+            // A PDF stream may reference a separate /Length object. Bind
+            // that value to this strict revision snapshot, never a future
+            // document state or an unindexed shadow definition.
+            let mut lookahead = PdfLexer::new(bytes, lex.at, 3);
+            let second = lookahead.next()?;
+            let third = lookahead.next()?;
+            let indirect =
+                second
+                    .as_ref()
+                    .zip(third.as_ref())
+                    .is_some_and(|(generation_token, r)| {
+                        generation_token.kind == Kind::Word
+                            && generation_token.value.iter().all(u8::is_ascii_digit)
+                            && r.kind == Kind::Word
+                            && r.value == b"R"
+                    });
+            if indirect {
+                let indexed = matches!(doc.reference_table.get(id.0),
+                    Some(XrefEntry::Normal{offset,generation})
+                        if *offset as usize == object_start && *generation == id.1);
+                if !indexed {
+                    return Err(RevisionAnalysisError::UnresolvedStream);
+                }
+                let generation = second
+                    .and_then(|t| std::str::from_utf8(t.value).ok()?.parse::<u16>().ok())
+                    .ok_or(RevisionAnalysisError::UnresolvedStream)?;
+                let num = u32::try_from(n).map_err(|_| RevisionAnalysisError::UnresolvedStream)?;
+                let value = doc
+                    .get_object((num, generation))
+                    .ok()
+                    .and_then(|o| o.as_i64().ok())
+                    .and_then(|v| usize::try_from(v).ok())
+                    .ok_or(RevisionAnalysisError::UnresolvedStream)?;
+                length = Some(value);
+            } else {
+                length = Some(n);
+            }
         }
-    };
+    }
+    let length = length.ok_or(RevisionAnalysisError::UnresolvedStream)?;
+    if length > limits.max_input_bytes {
+        return Err(RevisionAnalysisError::Limit);
+    }
     let end = begin
         .checked_add(length)
         .ok_or(RevisionAnalysisError::Limit)?;
@@ -192,7 +232,7 @@ fn definitions(
             if span.is_some() {
                 return Err(RevisionAnalysisError::Framing);
             }
-            let content = stream_span(bytes, t, *begin, doc, *id)?;
+            let content = stream_span(bytes, t, *begin, doc, *id, limits)?;
             lexer.skip_to(content.end)?;
             *span = Some(content);
             first = None;
@@ -253,124 +293,6 @@ fn definitions(
     Ok(out)
 }
 
-/// Return the actual final EOF marker end, allowing at most four CR/LF bytes.
-pub(crate) fn eof_tail(bytes: &[u8]) -> Option<usize> {
-    let mut end = bytes.len();
-    while end > 0 && matches!(bytes[end - 1], b'\r' | b'\n') {
-        end -= 1;
-        if bytes.len() - end > 4 {
-            return None;
-        }
-    }
-    bytes[..end].ends_with(b"%%EOF").then_some(end)
-}
-
-/// Locate the revision footer whose `startxref` points to `at`. A raw
-/// `%%EOF` inside a stream is not a revision boundary. Work stays bounded by
-/// the validated input size and MAX_REVISIONS in the caller.
-fn revision_footer(bytes: &[u8], at: usize, upper: usize) -> Option<(usize, usize)> {
-    let section = bytes.get(at..upper)?;
-    for (i, window) in section.windows(b"startxref".len()).enumerate().rev() {
-        if window != b"startxref" {
-            continue;
-        }
-        let mut cursor = at + i + b"startxref".len();
-        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
-            cursor += 1;
-        }
-        let first = cursor;
-        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
-            cursor += 1;
-        }
-        if first == cursor
-            || bytes
-                .get(first..cursor)?
-                .iter()
-                .try_fold(0usize, |value, b| {
-                    value.checked_mul(10)?.checked_add(usize::from(*b - b'0'))
-                })
-                != Some(at)
-        {
-            continue;
-        }
-        while matches!(bytes.get(cursor), Some(b' ' | b'\r' | b'\n')) {
-            cursor += 1;
-        }
-        if bytes.get(cursor..cursor + 5) == Some(b"%%EOF") && cursor + 5 <= upper {
-            return Some((at + i, cursor + 5));
-        }
-    }
-    None
-}
-
-/// The previous xref is read only from the current xref/trailer header.
-/// lopdf's merged trailer deliberately drops /Prev.
-fn xref_previous(bytes: &[u8], at: usize, footer_start: usize) -> Option<Option<usize>> {
-    let section = bytes.get(at..footer_start)?;
-    let header = if section.starts_with(b"xref") {
-        section
-    } else {
-        let (stream_at, _) = stream_delimiter(section)?;
-        &section[..stream_at]
-    };
-    let mut lexer = PdfLexer::new(header, 0, header.len().min(8_000_000));
-    let mut prev = None;
-    while let Some(token) = lexer.next().ok()? {
-        if token.kind == Kind::Name && token.value == b"/Prev" {
-            if prev.is_some() {
-                return None;
-            }
-            let n = lexer.next().ok()??;
-            if n.kind != Kind::Word {
-                return None;
-            }
-            prev = Some(std::str::from_utf8(n.value).ok()?.parse::<usize>().ok()?);
-        }
-    }
-    Some(prev)
-}
-
-/// Follow the validated xref `/Prev` chain and its matching startxref/EOF
-/// footers. Never infer revisions from raw `%%EOF` occurrences in streams.
-fn revision_boundaries(bytes: &[u8]) -> Vec<usize> {
-    let Some(mut upper) = eof_tail(bytes) else {
-        return Vec::new();
-    };
-    let Ok(start) = last_startxref(bytes) else {
-        return Vec::new();
-    };
-    let Ok(mut at) = usize::try_from(start) else {
-        return Vec::new();
-    };
-    let mut ends = Vec::new();
-    for _ in 0..=MAX_REVISIONS {
-        if at >= upper {
-            return Vec::new();
-        }
-        let Some((footer, end)) = revision_footer(bytes, at, upper) else {
-            return Vec::new();
-        };
-        if ends.is_empty() && end != upper {
-            return Vec::new();
-        }
-        ends.push(end);
-        let Some(prev) = xref_previous(bytes, at, footer) else {
-            return Vec::new();
-        };
-        let Some(prev) = prev else {
-            ends.reverse();
-            return ends;
-        };
-        if prev >= at {
-            return Vec::new();
-        }
-        upper = at;
-        at = prev;
-    }
-    ends.reverse(); // MAX_REVISIONS + 1 is the fail-closed sentinel.
-    ends
-}
-
 /// Complete structural account: every raw definition has a byte span and a
 /// reference-table role, even if it is shadowed or unindexed.
 pub(crate) fn analyze(
@@ -380,10 +302,8 @@ pub(crate) fn analyze(
     if bytes.len() > limits.max_input_bytes {
         return Err(RevisionAnalysisError::Limit);
     }
-    let ends = revision_boundaries(bytes);
-    if ends.is_empty() {
-        return Err(RevisionAnalysisError::Framing);
-    }
+    let final_doc = strict(bytes, limits)?;
+    let ends = revision_ends(bytes, &final_doc, limits).ok_or(RevisionAnalysisError::Framing)?;
     if ends.len() > MAX_REVISIONS {
         return Err(RevisionAnalysisError::Limit);
     }
@@ -395,18 +315,12 @@ pub(crate) fn analyze(
             last_startxref(&bytes[..end]).map_err(|_| RevisionAnalysisError::Framing)?,
         )
         .map_err(|_| RevisionAnalysisError::Limit)?;
-        let footer = revision_footer(bytes, xref_offset, end)
-            .ok_or(RevisionAnalysisError::Framing)?
-            .0;
-        let prev_xref =
-            xref_previous(bytes, xref_offset, footer).ok_or(RevisionAnalysisError::Framing)?;
-        match revisions.last() {
-            None if prev_xref.is_some() => return Err(RevisionAnalysisError::Framing),
-            Some(prior) if prev_xref != Some(prior.xref_offset) => {
-                return Err(RevisionAnalysisError::Framing);
-            }
-            _ => {}
-        }
+        // `revision_ends` already proved the actual /Prev chain with strict
+        // snapshots. Store the prior proven offset, never reparse it with a
+        // competing grammar here.
+        let prev_xref = revisions
+            .last()
+            .map(|prior: &RevisionFact| prior.xref_offset);
         let definitions = definitions(&bytes[..end], previous_end, end, &doc, xref_offset, limits)?;
         if definitions.iter().any(|d| {
             d.byte_span.start >= d.byte_span.end

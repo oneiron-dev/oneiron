@@ -8,26 +8,27 @@ use crate::api::{
 use crate::error::SealError;
 
 use super::super::{cms, pdf};
-use super::verify_chain_gates::{
-    VerifyCtx, malformed_input, signer_root_unavailable, validate_chain,
-};
+use super::timestamp_evidence::{TimestampEvidence, TimestampKind, TimestampResult};
+use super::verify_chain_gates::{VerifyCtx, malformed_input};
 use super::verify_dss_core::EmbeddedCert;
-#[path = "timestamp_evidence.rs"]
-mod timestamp_evidence;
-use timestamp_evidence::{TimestampEvidence, TimestampKind};
+use super::verify_evidence::CadesEvidence;
+pub(super) use super::verify_evidence::evaluate_envelope;
 #[cfg(test)]
 #[path = "verify_tests_timestamp_evidence.rs"]
 mod verify_tests_timestamp_evidence;
 
 #[derive(Debug)]
 pub(super) struct SigEntry {
+    pub(super) field_name: String,
     pub(super) is_doc_ts: bool,
-    pub(super) field_name: Option<String>,
     pub(super) byte_range: [u64; 4],
     /// Decoded `/Contents` bytes (DER CMS followed by zero padding).
     pub(super) contents: Vec<u8>,
 }
 
+fn resolved_name<'a>(doc: &'a Document, obj: &'a Object) -> Result<&'a Object, SealError> {
+    Ok(doc.dereference(obj).map_err(|_| malformed_input())?.1)
+}
 fn name_eq(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
 }
@@ -143,7 +144,7 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         // /FT is inheritable: a node's own /FT overrides, otherwise the
         // ancestor's verdict carries down.
         let is_sig_ft = match field.get(b"FT") {
-            Ok(ft) => name_eq(ft, b"Sig"),
+            Ok(ft) => name_eq(resolved_name(doc, ft)?, b"Sig"),
             Err(_) => inherited_sig_ft,
         };
         // Descend /Kids whenever present. A node's /Kids may hold CHILD
@@ -179,15 +180,25 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let Object::Dictionary(d) = doc.dereference(v).map_err(|_| malformed_input())?.1 else {
             return Err(malformed_input());
         };
-        let is_doc_ts = match d.get(b"Type") {
-            Ok(t) if name_eq(t, b"Sig") => {
-                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.CAdES.detached")) {
+        let ty = d
+            .get(b"Type")
+            .ok()
+            .map(|o| resolved_name(doc, o))
+            .transpose()?;
+        let subfilter = d
+            .get(b"SubFilter")
+            .ok()
+            .map(|o| resolved_name(doc, o))
+            .transpose()?;
+        let is_doc_ts = match ty {
+            Some(t) if name_eq(t, b"Sig") => {
+                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.CAdES.detached")) {
                     continue;
                 }
                 false
             }
-            Ok(t) if name_eq(t, b"DocTimeStamp") => {
-                if !matches!(d.get(b"SubFilter"), Ok(sf) if name_eq(sf, b"ETSI.RFC3161")) {
+            Some(t) if name_eq(t, b"DocTimeStamp") => {
+                if !subfilter.is_some_and(|sf| name_eq(sf, b"ETSI.RFC3161")) {
                     continue;
                 }
                 true
@@ -195,13 +206,13 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
             // A PRESENT /Type naming neither handler (or not a name at all)
             // is never a candidate: the typeless interop allowance exists
             // only for an ABSENT /Type.
-            Ok(_) => continue,
-            Err(_) if !d.has(b"ByteRange") => continue,
-            Err(_) => {
+            Some(_) => continue,
+            None if !d.has(b"ByteRange") => continue,
+            None => {
                 if !d.has(b"Contents") {
                     return Err(malformed_input());
                 }
-                if matches!(d.get(b"SubFilter"), Ok(sf) if !name_eq(sf, b"ETSI.CAdES.detached")) {
+                if subfilter.is_some_and(|sf| !name_eq(sf, b"ETSI.CAdES.detached")) {
                     continue;
                 }
                 false
@@ -224,13 +235,18 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let Object::String(contents, _) = d.get(b"Contents").map_err(|_| malformed_input())? else {
             return Err(malformed_input());
         };
-        let field_name = match field.get(b"T") {
-            Ok(Object::String(name, _)) => Some(String::from_utf8_lossy(name).into_owned()),
-            _ => None,
-        };
+        let field_name = field
+            .get(b"T")
+            .ok()
+            .and_then(|o| doc.dereference(o).ok())
+            .and_then(|(_, o)| o.as_str().ok())
+            .map_or_else(
+                || "unnamed".to_owned(),
+                |v| String::from_utf8_lossy(v).into_owned(),
+            );
         out.push(SigEntry {
-            is_doc_ts,
             field_name,
+            is_doc_ts,
             byte_range: br,
             contents: contents.clone(),
         });
@@ -260,6 +276,19 @@ impl Checks {
         });
     }
 
+    pub(super) fn record_status(
+        &mut self,
+        kind: VerifyCheckKind,
+        status: VerifyCheckStatus,
+        finding: VerifyFindingCode,
+    ) {
+        self.list.push(VerifyCheck {
+            kind,
+            status,
+            finding: (status == VerifyCheckStatus::Fail).then_some(finding),
+        });
+    }
+
     pub(super) fn absent(&mut self, kind: VerifyCheckKind) {
         self.list.push(VerifyCheck {
             kind,
@@ -268,11 +297,18 @@ impl Checks {
         });
     }
 
-    pub(super) fn not_run(&mut self, kind: VerifyCheckKind, reason: VerifyFindingCode) {
+    pub(super) fn not_run(&mut self, kind: VerifyCheckKind) {
+        self.not_run_with_reason(kind, None);
+    }
+    pub(super) fn not_run_with_reason(
+        &mut self,
+        kind: VerifyCheckKind,
+        reason: Option<VerifyFindingCode>,
+    ) {
         self.list.push(VerifyCheck {
             kind,
             status: VerifyCheckStatus::NotRun,
-            finding: Some(reason),
+            finding: reason,
         });
     }
 
@@ -298,48 +334,64 @@ pub(super) fn decoded_contents_within_input(decoded_len: usize, input_len: usize
 }
 
 /// ByteRange shape, bounds, non-overlap, and exact `/Contents` exclusion.
-pub(super) fn check_byte_range_shape(bytes: &[u8], e: &SigEntry) -> bool {
+pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
     let [s1, l1, s2, l2] = e.byte_range;
-    s1 == 0
-        && l1 < s2
-        && s2
-            .checked_add(l2)
-            .is_some_and(|end| end <= bytes.len() as u64)
-}
-
-pub(super) fn check_unsigned_gap(bytes: &[u8], e: &SigEntry) -> bool {
-    if !check_byte_range_shape(bytes, e) {
-        return false;
+    let (s1, l1, s2, l2) = match (
+        usize::try_from(s1),
+        usize::try_from(l1),
+        usize::try_from(s2),
+        usize::try_from(l2),
+    ) {
+        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
+        _ => return false,
+    };
+    if s1 != 0 || l1 >= s2 {
+        return false; // span1 must start at 0 and end before span2
     }
-    let Ok(l1) = usize::try_from(e.byte_range[1]) else {
+    let Some(end2) = s2.checked_add(l2) else {
         return false;
     };
-    let Ok(s2) = usize::try_from(e.byte_range[2]) else {
-        return false;
-    };
-    // The only unsigned bytes must be the exact /Contents hex string.
-    if l1 >= bytes.len()
-        || s2 > bytes.len()
-        || s2 < l1 + 2
-        || bytes[l1] != b'<'
-        || bytes[s2 - 1] != b'>'
-    {
+    if end2 > bytes.len() {
+        return false; // out of bounds
+    }
+    // Exact /Contents exclusion: gap delimiters and hex length must line up.
+    if l1 >= bytes.len() || s2 > bytes.len() || s2 < l1 + 2 {
         return false;
     }
+    if bytes[l1] != b'<' || bytes[s2 - 1] != b'>' {
+        return false;
+    }
+    // Whitespace inside the hex string is spec-legal: strip it before the
+    // length check so padded real-world /Contents values verify.
     let hex_chars = bytes[l1 + 1..s2 - 1]
         .iter()
         .filter(|b| !is_pdf_whitespace(**b))
         .count();
-    decoded_contents_within_input(e.contents.len(), bytes.len())
-        && hex_chars == e.contents.len().saturating_mul(2)
-}
-
-pub(super) fn check_byte_range(bytes: &[u8], e: &SigEntry) -> bool {
-    check_byte_range_shape(bytes, e) && check_unsigned_gap(bytes, e)
+    // botfix7 P3: enforce the bytes cap on the decoded /Contents (defense
+    // in depth) after the whitespace strip has measured the digit count.
+    if !decoded_contents_within_input(e.contents.len(), bytes.len()) {
+        return false;
+    }
+    if hex_chars != e.contents.len() * 2 {
+        return false;
+    }
+    let mut digits = bytes[l1 + 1..s2 - 1]
+        .iter()
+        .copied()
+        .filter(|b| !is_pdf_whitespace(*b));
+    e.contents.iter().all(|value| {
+        let (Some(hi), Some(lo)) = (
+            digits.next().and_then(|b| (b as char).to_digit(16)),
+            digits.next().and_then(|b| (b as char).to_digit(16)),
+        ) else {
+            return false;
+        };
+        (hi * 16 + lo) == u32::from(*value)
+    })
 }
 
 /// Strip the zero padding after the leading CMS DER; reject nonzero padding.
-fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
+pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     let mut r = cms::DerReader::new(contents);
     let first = r.read().ok()?;
     let used = first.full.len();
@@ -360,19 +412,17 @@ pub(super) fn verify_cades_sig(
     anchors: &[pkix_chain::TrustAnchor],
     checks: &mut Checks,
     covered: &mut Vec<EmbeddedCert>,
-) {
-    let br_shape_ok = check_byte_range_shape(bytes, e);
-    let gap_ok = check_unsigned_gap(bytes, e);
-    let br_ok = br_shape_ok && gap_ok;
+) -> CadesEvidence {
+    let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
-        br_shape_ok,
+        br_ok,
         VerifyFindingCode::InvalidByteRange,
     );
     checks.record(
         VerifyCheckKind::UnsignedGap,
-        gap_ok,
-        VerifyFindingCode::InvalidByteRange,
+        br_ok,
+        VerifyFindingCode::InvalidUnsignedGap,
     );
     let spans_digest = if br_ok {
         pdf::hash_byte_range(bytes, e.byte_range).ok()
@@ -420,8 +470,12 @@ pub(super) fn verify_cades_sig(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
-        return;
+        let timestamp =
+            TimestampEvidence::NotEvaluated.project(TimestampKind::Signature, checks, covered);
+        return CadesEvidence {
+            signer_chain: None,
+            timestamp,
+        };
     };
     covered.extend(
         parsed
@@ -429,7 +483,7 @@ pub(super) fn verify_cades_sig(
             .iter()
             .filter_map(|d| EmbeddedCert::from_der(d)),
     );
-    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered);
+    verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered)
 }
 
 /// Signer-level checks after the envelope parses: baseline attributes,
@@ -443,7 +497,7 @@ fn verify_signer(
     parsed: &cms::ParsedCms,
     spans_digest: Option<Sha256Digest>,
     covered: &mut Vec<EmbeddedCert>,
-) {
+) -> CadesEvidence {
     let signer = &parsed.signer;
     let md = cms::check_baseline_attrs(signer).ok();
     checks.record(
@@ -483,12 +537,15 @@ fn verify_signer(
             false,
             VerifyFindingCode::CertificatePathInvalid,
         );
-        TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
+        let timestamp = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors).project(
             TimestampKind::Signature,
             checks,
             covered,
         );
-        return;
+        return CadesEvidence {
+            signer_chain: None,
+            timestamp,
+        };
     };
     let cert_der = &parsed.certificates[idx];
     let alg = cms::cert_signature_algorithm(cert_der);
@@ -510,9 +567,7 @@ fn verify_signer(
         sig_ok,
         VerifyFindingCode::SignatureMismatch,
     );
-    let ts_evidence = TimestampEvidence::for_signature(ctx.clock_ms, signer, anchors);
-    let ts_gen_time = ts_evidence.project(TimestampKind::Signature, checks, covered);
-    let at_unix = ts_gen_time.unwrap_or(ctx.clock_ms / 1000);
+    let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered);
     let chain_ders: Vec<Vec<u8>> = std::iter::once(cert_der.clone())
         .chain(
             parsed
@@ -523,41 +578,41 @@ fn verify_signer(
                 .map(|(_, c)| c.clone()),
         )
         .collect();
-    if validate_chain(&chain_ders, anchors, at_unix).is_ok() {
-        checks.record(
-            VerifyCheckKind::CertificatePath,
-            true,
-            VerifyFindingCode::CertificatePathInvalid,
-        );
-    } else if anchors.is_empty() || signer_root_unavailable(&chain_ders, at_unix) {
-        checks.not_run(
-            VerifyCheckKind::CertificatePath,
-            VerifyFindingCode::TrustRootUnavailable,
-        );
-    } else {
-        checks.record(
-            VerifyCheckKind::CertificatePath,
-            false,
-            VerifyFindingCode::CertificatePathInvalid,
-        );
+    CadesEvidence {
+        signer_chain: Some(chain_ders),
+        timestamp,
     }
 }
 
+/// Validate the optional `signatureTimeStampToken` unsigned attribute.
+/// Present-but-malformed fails; absent is allowed. Returns the token genTime
+/// (unix seconds) for applicable-time chain validation; a validated token's
+/// TSA chain is recorded in `covered` for the DSS binding. The genTime is
+/// bounded against the verify clock (`clock_ms`): a future-dated token past
+/// the documented skew is rejected, never clamped.
+fn verify_ts_token(
+    clock_ms: u64,
+    signer: &cms::ParsedSignerInfo,
+    anchors: &[pkix_chain::TrustAnchor],
+    checks: &mut Checks,
+    covered: &mut Vec<EmbeddedCert>,
+) -> TimestampResult {
+    TimestampEvidence::for_signature(clock_ms, signer, anchors).project(
+        TimestampKind::Signature,
+        checks,
+        covered,
+    )
+}
+
 /// Verify one DocTimeStamp dictionary (§7.6/§7.7): ByteRange coverage and
-/// the RFC 3161 token over the covered bytes. Cryptographically valid tokens
-/// with trusted or unavailable TSA roots contribute their chain to `covered`
-/// for DSS binding; invalid or rejected tokens leave no trace. Returns the token's
+/// the RFC 3161 token over the covered bytes. Only a FULLY accepted
+/// DocTimeStamp records its TSA chain in `covered` for the DSS binding — a
+/// rejected token leaves no trace in the binding set. Returns the token's
 /// genTime (unix seconds) when every check passes; the caller feeds it to
 /// DSS evidence freshness only when the ByteRange provably covers the final
 /// /DSS revision (`dss_revision_end`). The genTime is bounded against the
 /// verify clock (`clock_ms`): a future-dated token past the documented skew
 /// is rejected, never clamped.
-pub(super) enum DocTimestampOutcome {
-    Trusted(u64),
-    Untrusted(u64),
-    Invalid,
-}
-
 pub(super) fn verify_doc_ts(
     bytes: &[u8],
     e: &SigEntry,
@@ -566,19 +621,17 @@ pub(super) fn verify_doc_ts(
     is_last: bool,
     covered: &mut Vec<EmbeddedCert>,
     clock_ms: u64,
-) -> DocTimestampOutcome {
-    let br_shape_ok = check_byte_range_shape(bytes, e);
-    let gap_ok = check_unsigned_gap(bytes, e);
-    let br_ok = br_shape_ok && gap_ok;
+) -> TimestampResult {
+    let br_ok = check_byte_range(bytes, e);
     checks.record(
         VerifyCheckKind::ByteRange,
-        br_shape_ok,
+        br_ok,
         VerifyFindingCode::InvalidByteRange,
     );
     checks.record(
         VerifyCheckKind::UnsignedGap,
-        gap_ok,
-        VerifyFindingCode::InvalidByteRange,
+        br_ok,
+        VerifyFindingCode::InvalidUnsignedGap,
     );
     let covers_end = !is_last
         || e.byte_range
@@ -592,12 +645,9 @@ pub(super) fn verify_doc_ts(
                 }
                 tail.is_empty()
             });
-    let evidence =
-        TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end);
-    let trusted_time = evidence.project(TimestampKind::Document, checks, covered);
-    match (trusted_time, evidence.provisional_time()) {
-        (Some(time), _) => DocTimestampOutcome::Trusted(time),
-        (None, Some(time)) => DocTimestampOutcome::Untrusted(time),
-        (None, None) => DocTimestampOutcome::Invalid,
-    }
+    TimestampEvidence::for_document(bytes, e, anchors, clock_ms, br_ok && covers_end).project(
+        TimestampKind::Document,
+        checks,
+        covered,
+    )
 }

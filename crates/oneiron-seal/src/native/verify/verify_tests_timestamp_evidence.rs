@@ -140,9 +140,9 @@ fn public_signature_timestamp_attribute_outcomes_are_total_under_both_anchor_set
             assert_eq!(
                 pair(
                     &report,
-                    SignatureKind::Signer,
+                    SignatureKind::Signature,
                     VerifyCheckKind::SignatureTimestamp,
-                    VerifyCheckKind::SignatureTimestampTrust
+                    VerifyCheckKind::TimestampCertificatePath
                 ),
                 (crypto, trust, reason),
                 "{label}"
@@ -179,14 +179,14 @@ fn public_timestamp_time_is_trusted_only_with_tsa_authority() {
             .unwrap();
         for (kind, crypto, tsa_check) in [
             (
-                SignatureKind::Signer,
+                SignatureKind::Signature,
                 VerifyCheckKind::SignatureTimestamp,
-                VerifyCheckKind::SignatureTimestampTrust,
+                VerifyCheckKind::TimestampCertificatePath,
             ),
             (
                 SignatureKind::DocumentTimestamp,
                 VerifyCheckKind::DocumentTimestamp,
-                VerifyCheckKind::DocumentTimestampTrust,
+                VerifyCheckKind::TimestampCertificatePath,
             ),
         ] {
             assert_eq!(
@@ -214,7 +214,7 @@ fn public_document_timestamps_absent_malformed_skew_and_multiple_revisions() {
     );
     assert!(
         !report
-            .all_checks()
+            .checks()
             .any(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
     );
 
@@ -237,7 +237,7 @@ fn public_document_timestamps_absent_malformed_skew_and_multiple_revisions() {
                     &report,
                     SignatureKind::DocumentTimestamp,
                     VerifyCheckKind::DocumentTimestamp,
-                    VerifyCheckKind::DocumentTimestampTrust
+                    VerifyCheckKind::TimestampCertificatePath
                 ),
                 (
                     VerifyCheckStatus::Fail,
@@ -274,7 +274,7 @@ fn public_document_timestamps_absent_malformed_skew_and_multiple_revisions() {
             assert_eq!(
                 doc.checks
                     .iter()
-                    .filter(|c| c.kind == VerifyCheckKind::DocumentTimestampTrust)
+                    .filter(|c| c.kind == VerifyCheckKind::TimestampCertificatePath)
                     .count(),
                 1
             );

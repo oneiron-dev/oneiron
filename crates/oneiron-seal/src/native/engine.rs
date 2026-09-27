@@ -93,17 +93,13 @@ impl PdfSealEngine for NativeSealEngine {
         // operation_id is validated before any signing or fetch work (§4).
         seal_request.validate_operation_id()?;
         let prepared = pdf::validate_prepared(input_bytes, &self.config.resource_limits)?;
+        // The same complete structural facts feed output classification;
+        // unsigned originals may have fully framed anomalous revisions.
         let facts = pdf::analyze_revision_facts(&prepared.bytes, &self.config.resource_limits)
             .map_err(|_| SealError::InputInvalid {
                 code: crate::error::InputInvalidCode::MalformedXref,
             })?;
-        if verify::analyze_modifications(
-            &prepared.bytes,
-            None,
-            &self.config.resource_limits,
-            &facts,
-        ) != crate::api::ModificationStatus::Clean(crate::api::ModificationLevel::None)
-        {
+        if facts.revisions.len() != 1 {
             return Err(SealError::InputInvalid {
                 code: crate::error::InputInvalidCode::MalformedXref,
             });

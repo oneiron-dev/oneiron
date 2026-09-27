@@ -97,7 +97,7 @@ mod tests {
             artifact_sha256: [0; 32],
             revisions: Vec::new(),
             signatures: Vec::new(),
-            modifications: crate::api::ModificationStatus::NotRun,
+            modifications: crate::api::Modifications::NotRun,
             anomalies: Vec::new(),
             checks: Vec::new(),
         }

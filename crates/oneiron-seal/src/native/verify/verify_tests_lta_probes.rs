@@ -131,17 +131,11 @@ pub(crate) mod tests {
 
     #[test]
     fn probe_a_filler_span_craft_attests_every_evaluated_byte() {
-        // Precondition: filler objects after the newest DSS-related object
-        // let the doc-ts span2 stop at dss_revision_end BEFORE the owning
-        // revision's xref/trailer. The gate passes — and the grant is SOUND:
-        // every object the /DSS evaluation dereferences is in the measured
-        // id set, so its offset is <= newest < dss_end == br_end and its
-        // bytes sit inside the hashed spans (the only excluded range is the
-        // /Contents gap inside the doc-ts object itself). The uncovered
-        // filler/xref/trailer bytes feed no evidence evaluation; the xref
-        // chain is attested by the final covering signature. The cryptographic
-        // profile remains informative, but this unusual filler revision is
-        // deliberately Other under the default-deny modification whitelist.
+        // Filler after the latest DSS object lets this validated token cover
+        // every evaluated evidence byte but stop before its own revision's
+        // xref/trailer. That is insufficient for archival profile credit:
+        // the timestamp must cover its entire structural revision. The
+        // first signer retains only its independently verified B-T rung.
         let (bytes, anchors, br_end, rev_xref, newest_dss) = span_craft_fixture();
         assert!(
             br_end < rev_xref,
@@ -158,19 +152,20 @@ pub(crate) mod tests {
             dss_revision_end(&doc, &bytes),
             report.achieved_profile()
         );
-        assert!(
-            report.verdict() == crate::api::VerifyVerdict::Failed,
-            "a non-whitelisted filler revision must not pass: {report:?}"
-        );
-        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
+        // The span-crafted timestamp attests the DSS bytes, but ends before
+        // its own revision EOF. It cannot own a structural revision, so the
+        // modification classifier must not claim Clean. The first signer's
+        // signature timestamp still supports its B-T profile independently.
+        assert_eq!(report.modifications, crate::api::Modifications::NotRun);
+        assert!(!report.valid());
+        assert_eq!(report.signatures[0].profile, Some(PadesProfile::BaselineT));
     }
 
     #[test]
     fn non_covering_doc_timestamp_confers_lt_not_lta() {
         // A VALID DocTimeStamp that does NOT cover the final /DSS keeps its
         // DocumentTimestamp check but must not confer B-LTA: fresh-at-clock
-        // evidence plus a non-covering DTS classifies BaselineLt. The later
-        // co-sign remains Other under the v1 modification whitelist.
+        // evidence plus a non-covering DTS classifies BaselineLt.
         let signer = test_ca("nc-signer");
         let signer2 = test_ca("nc-signer-two");
         let tsa = tsa_ca();
@@ -195,17 +190,15 @@ pub(crate) mod tests {
         let anchors = vec![signer.cert_der, signer2.cert_der, tsa.cert_der];
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b4).unwrap();
-        assert!(
-            report.verdict() == crate::api::VerifyVerdict::Failed,
-            "later co-signing is Other under the v1 LTA-only whitelist: {report:?}"
-        );
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid(), "later countersign is not an LTA update");
         let dts = report
-            .all_checks()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::DocumentTimestamp)
             .unwrap();
         assert_eq!(dts.status, VerifyCheckStatus::Pass);
         assert_eq!(
-            report.achieved_profile(),
+            report.signatures[0].profile,
             Some(PadesProfile::BaselineLt),
             "a non-covering DocTimeStamp confers no archival rung"
         );
@@ -256,12 +249,15 @@ pub(crate) mod tests {
         let report = engine.verify_sealed_pdf(&b5).unwrap();
         eprintln!("PROBE-B1 outcome -> {:?}", report.achieved_profile());
         assert!(
-            report.verdict() != crate::api::VerifyVerdict::Passed,
+            !report.valid(),
             "stale unattested evidence must not launder"
         );
-        assert_eq!(report.achieved_profile(), None);
+        assert_ne!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
+        );
         let vm = report
-            .all_checks()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -304,8 +300,7 @@ pub(crate) mod tests {
         let c2_offset = written2.iter().find(|w| w.0 == c2_num).unwrap().1;
         let b3 = append_doc_ts_revision(&b2, &tsa, AT_UNIX);
         // Activation: trailer /Root switch only (one filler object carries
-        // the revision; the doc-ts does not cover this revision). The new
-        // default-deny classifier refuses this shape despite valid crypto.
+        // the revision; the doc-ts does not cover this revision).
         let state4 = pdf::reparse_revision(&b3, &SealResourceLimits::default()).unwrap();
         let filler = state4.max_obj + 1;
         let (b4, _) = emit_revision(
@@ -324,11 +319,14 @@ pub(crate) mod tests {
         let engine = verify_engine(anchors, VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&b5).unwrap();
         eprintln!("PROBE-B2 outcome -> {:?}", report.achieved_profile());
-        assert!(
-            report.verdict() == crate::api::VerifyVerdict::Failed,
-            "a root switch is not a whitelisted renewal: {report:?}"
+        // Switching /Root in a pointer-only revision is not on the
+        // default-deny modification whitelist, even if old evidence is sound.
+        assert_eq!(report.modifications, crate::api::Modifications::Suspicious);
+        assert!(!report.valid());
+        assert_eq!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
         );
-        assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineLta));
     }
 
     /// Probe C (the sharpening found while building A/B): the /CRLs array
@@ -387,13 +385,16 @@ pub(crate) mod tests {
             "chain-resolved gate must measure the planted stream"
         );
         assert!(
-            report.verdict() != crate::api::VerifyVerdict::Passed,
+            !report.valid(),
             "unattested planted evidence laundered to {:?}",
             report.achieved_profile()
         );
-        assert_eq!(report.achieved_profile(), None);
+        assert_ne!(
+            report.signatures[0].profile,
+            Some(PadesProfile::BaselineLta)
+        );
         let vm = report
-            .all_checks()
+            .checks()
             .find(|c| c.kind == VerifyCheckKind::ValidationMaterial)
             .unwrap();
         assert_eq!(
@@ -635,7 +636,7 @@ pub(crate) mod tests {
         let engine = verify_engine(vec![signer.cert_der], VERIFY_SECS);
         let report = engine.verify_sealed_pdf(&bytes).unwrap();
         assert!(
-            report.verdict() == crate::api::VerifyVerdict::Passed,
+            report.valid(),
             "typeless signature doc must verify: {report:?}"
         );
         assert_eq!(report.achieved_profile(), Some(PadesProfile::BaselineB));

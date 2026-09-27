@@ -1,29 +1,16 @@
-//! Shared RFC 3161 evidence evaluation and exhaustive report projection.
-//!
-//! The private result separates absent optional evidence, invalid crypto,
-//! and valid crypto with trusted, unresolved or rejected TSA authority.
-
-use super::super::verify_dss_core::EmbeddedCert;
-use super::super::verify_revocation::gen_time_beyond_skew;
-use super::{Checks, SigEntry, unpadded_cms};
-use crate::api::{Sha256Digest, VerifyCheckKind, VerifyFindingCode};
+//! Total private RFC 3161 outcomes; one projection emits crypto and TSA trust.
+use super::verify_dss_core::EmbeddedCert;
+use super::verify_evidence::ValidatedTimeToken;
+use super::verify_revocation::gen_time_beyond_skew;
+use super::verify_sig_pipeline::{Checks, SigEntry, unpadded_cms};
+use crate::api::{Sha256Digest, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode};
 use crate::native::{cms, pdf, tsp};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(super) enum TimestampKind {
     Signature,
     Document,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum TsaTrust {
-    Trusted,
-    RootUnavailable,
-    Rejected,
-}
-
-/// An applicable check always has one outcome. Optional absence is not an
-/// outcome: it is represented by `TimestampSlots::Absent` instead.
 enum CheckOutcome {
     Pass,
     Fail(VerifyFindingCode),
@@ -34,7 +21,7 @@ impl CheckOutcome {
         match self {
             Self::Pass => checks.record(kind, true, VerifyFindingCode::TimestampInvalid),
             Self::Fail(reason) => checks.record(kind, false, reason),
-            Self::NotRun(reason) => checks.not_run(kind, reason),
+            Self::NotRun(reason) => checks.not_run_with_reason(kind, Some(reason)),
         }
     }
 }
@@ -46,20 +33,30 @@ enum TimestampSlots {
     },
 }
 
-/// The complete outcome of evaluating either timestamp form. No caller may
-/// independently emit just one check: `project` emits the pair together.
+/// Parsed but untrusted time is never a signer-validation proof. It may only
+/// explain why DSS verification could not complete without a trust root.
+pub(super) struct TimestampResult {
+    pub(super) trusted: Option<ValidatedTimeToken>,
+    pub(super) untrusted_time: Option<u64>,
+}
+impl TimestampResult {
+    pub(super) fn none() -> Self {
+        Self {
+            trusted: None,
+            untrusted_time: None,
+        }
+    }
+}
+
+/// `Absent` only means no optional token was present. Every other variant
+/// produces exactly one applicable crypto check AND one applicable TSA check.
 pub(super) enum TimestampEvidence {
     Absent,
     NotEvaluated,
     Malformed,
     CryptoRejected,
-    Valid {
-        gen_time: u64,
-        tsa_chain_ders: Vec<Vec<u8>>,
-        trust: TsaTrust,
-    },
+    Valid(tsp::VerifiedToken),
 }
-
 impl TimestampEvidence {
     pub(super) fn for_signature(
         clock_ms: u64,
@@ -68,8 +65,6 @@ impl TimestampEvidence {
     ) -> Self {
         let mut token = None;
         for attr in &signer.unsigned_attrs {
-            // Malformed attributes cannot be silently treated as absent,
-            // even if an earlier timestamp attribute was well formed.
             let Ok((oid, value)) = cms::parse_attribute(attr) else {
                 return Self::Malformed;
             };
@@ -85,7 +80,6 @@ impl TimestampEvidence {
         };
         Self::evaluate(&token, &cms::sha256(&signer.signature), anchors, clock_ms)
     }
-
     pub(super) fn for_document(
         bytes: &[u8],
         entry: &SigEntry,
@@ -94,54 +88,30 @@ impl TimestampEvidence {
         coverage_ok: bool,
     ) -> Self {
         if !coverage_ok {
-            return Self::Malformed;
+            return Self::CryptoRejected;
         }
-        let Some(token) = unpadded_cms(&entry.contents) else {
+        let Some(der) = unpadded_cms(&entry.contents) else {
             return Self::Malformed;
         };
         let Ok(imprint) = pdf::hash_byte_range(bytes, entry.byte_range) else {
             return Self::CryptoRejected;
         };
-        Self::evaluate(token, &imprint, anchors, clock_ms)
+        Self::evaluate(der, &imprint, anchors, clock_ms)
     }
-
     fn evaluate(
         token: &[u8],
         imprint: &Sha256Digest,
         anchors: &[pkix_chain::TrustAnchor],
         clock_ms: u64,
     ) -> Self {
-        let Ok((gen_time, tsa_chain_ders)) = tsp::validate_token_crypto_for_verify(token, imprint)
-        else {
+        let Ok(value) = tsp::validate_token_for_verify(token, imprint, anchors) else {
             return Self::CryptoRejected;
         };
-        if gen_time_beyond_skew(gen_time, clock_ms) {
+        if gen_time_beyond_skew(value.gen_time_unix, clock_ms) {
             return Self::CryptoRejected;
         }
-        let trust = if tsp::validate_tsa_chain(&tsa_chain_ders, anchors, gen_time).is_ok() {
-            TsaTrust::Trusted
-        } else if anchors.is_empty() || tsp::tsa_root_unavailable(&tsa_chain_ders, gen_time) {
-            TsaTrust::RootUnavailable
-        } else {
-            TsaTrust::Rejected
-        };
-        Self::Valid {
-            gen_time,
-            tsa_chain_ders,
-            trust,
-        }
+        Self::Valid(value)
     }
-
-    /// Crypto-accepted but untrusted time is provisional. Only DocTimeStamp
-    /// uses it as an untrusted ordering fact; signer validation does not use
-    /// it in place of a verified signature timestamp.
-    pub(super) fn provisional_time(&self) -> Option<u64> {
-        match self {
-            Self::Valid { gen_time, .. } => Some(*gen_time),
-            Self::Absent | Self::NotEvaluated | Self::Malformed | Self::CryptoRejected => None,
-        }
-    }
-
     fn slots(&self, invalid: VerifyFindingCode) -> TimestampSlots {
         match self {
             Self::Absent => TimestampSlots::Absent,
@@ -153,66 +123,77 @@ impl TimestampEvidence {
                 crypto: CheckOutcome::Fail(invalid),
                 trust: CheckOutcome::NotRun(VerifyFindingCode::TrustCheckNotRun),
             },
-            Self::Valid { trust, .. } => TimestampSlots::Complete {
+            Self::Valid(token) => TimestampSlots::Complete {
                 crypto: CheckOutcome::Pass,
-                trust: match trust {
-                    TsaTrust::Trusted => CheckOutcome::Pass,
-                    TsaTrust::RootUnavailable => {
-                        CheckOutcome::NotRun(VerifyFindingCode::TrustRootUnavailable)
-                    }
-                    TsaTrust::Rejected => {
+                trust: match token.trust {
+                    VerifyCheckStatus::Pass => CheckOutcome::Pass,
+                    VerifyCheckStatus::Fail => {
                         CheckOutcome::Fail(VerifyFindingCode::CertificatePathInvalid)
+                    }
+                    VerifyCheckStatus::NotRun | VerifyCheckStatus::NotApplicable => {
+                        CheckOutcome::NotRun(VerifyFindingCode::TrustRootUnavailable)
                     }
                 },
             },
         }
     }
-
-    /// The only check projection for both timestamp kinds. Both applicable
-    /// slots are emitted together; no early return can forget TSA trust.
+    /// Only trusted time may become signer or archival time evidence.
     pub(super) fn project(
-        &self,
+        self,
         kind: TimestampKind,
         checks: &mut Checks,
         covered: &mut Vec<EmbeddedCert>,
-    ) -> Option<u64> {
-        let (crypto_kind, trust_kind, invalid) = match kind {
+    ) -> TimestampResult {
+        let (crypto_kind, invalid) = match kind {
             TimestampKind::Signature => (
                 VerifyCheckKind::SignatureTimestamp,
-                VerifyCheckKind::SignatureTimestampTrust,
                 VerifyFindingCode::TimestampInvalid,
             ),
             TimestampKind::Document => (
                 VerifyCheckKind::DocumentTimestamp,
-                VerifyCheckKind::DocumentTimestampTrust,
                 VerifyFindingCode::DocumentTimestampInvalid,
             ),
         };
-        match self.slots(invalid) {
+        let slots = self.slots(invalid);
+        match slots {
             TimestampSlots::Absent => {
                 checks.absent(crypto_kind);
-                checks.absent(trust_kind);
+                checks.absent(VerifyCheckKind::TimestampCertificatePath);
             }
             TimestampSlots::Complete { crypto, trust } => {
                 crypto.emit(crypto_kind, checks);
-                trust.emit(trust_kind, checks);
+                trust.emit(VerifyCheckKind::TimestampCertificatePath, checks);
             }
         }
-        if let Self::Valid {
-            gen_time,
-            tsa_chain_ders,
-            trust,
-        } = self
-        {
-            if !matches!(trust, TsaTrust::Rejected) {
+        if let Self::Valid(token) = self {
+            if matches!(
+                token.trust,
+                VerifyCheckStatus::Pass | VerifyCheckStatus::NotRun
+            ) {
                 covered.extend(
-                    tsa_chain_ders
+                    token
+                        .tsa_chain_ders
                         .iter()
                         .filter_map(|d| EmbeddedCert::from_der(d)),
                 );
             }
-            return matches!(trust, TsaTrust::Trusted).then_some(*gen_time);
+            return match token.trust {
+                VerifyCheckStatus::Pass => TimestampResult {
+                    trusted: Some(ValidatedTimeToken {
+                        gen_time: token.gen_time_unix,
+                        tsa_chain_ders: token.tsa_chain_ders,
+                    }),
+                    untrusted_time: None,
+                },
+                VerifyCheckStatus::NotRun => TimestampResult {
+                    trusted: None,
+                    untrusted_time: Some(token.gen_time_unix),
+                },
+                VerifyCheckStatus::Fail | VerifyCheckStatus::NotApplicable => {
+                    TimestampResult::none()
+                }
+            };
         }
-        None
+        TimestampResult::none()
     }
 }
