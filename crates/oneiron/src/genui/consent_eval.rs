@@ -128,15 +128,10 @@ impl ConsentSurface {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "identity", rename_all = "snake_case")]
+#[serde(deny_unknown_fields, tag = "identity", rename_all = "snake_case")]
 pub enum ConsentActorIdentity {
-    SurfaceActor {
-        actor_ref: String,
-    },
-    VoicePath {
-        speaker_ref: String,
-        owner_voice_print_verified: bool,
-    },
+    SurfaceActor { actor_ref: String },
+    VoicePath { speaker_ref: String },
 }
 
 impl ConsentActorIdentity {
@@ -148,35 +143,25 @@ impl ConsentActorIdentity {
         }
     }
 
+    /// A voice label is never a principal credential, even when the engine
+    /// matched an enrolled print. Only an authenticated account/device actor
+    /// can confirm a widening grant.
     #[must_use]
     pub fn authenticates_principal(&self, principal_ref: &str) -> bool {
-        if principal_ref.trim().is_empty() || self.actor_ref().trim().is_empty() {
-            return false;
-        }
-        match self {
-            Self::SurfaceActor { actor_ref } => actor_ref == principal_ref,
-            Self::VoicePath {
-                speaker_ref,
-                owner_voice_print_verified,
-            } => *owner_voice_print_verified && speaker_ref == principal_ref,
-        }
+        !principal_ref.trim().is_empty()
+            && matches!(self, Self::SurfaceActor { actor_ref } if !actor_ref.trim().is_empty() && actor_ref == principal_ref)
     }
 
-    /// Whether this claimed actor matches a store-authenticated owner handle.
-    ///
-    /// Consent action evaluation uses this door: neither actor text nor the
-    /// caller-deserialized voice boolean is authority. The handle can only come
-    /// from [`crate::Vault::authenticate_owner`].
+    /// A store-authenticated owner handle and an account/device actor are both
+    /// necessary. A voice claim cannot borrow a handle from another channel.
     #[must_use]
     pub fn authenticates_owner(
         &self,
         principal_ref: &str,
         authenticated_owner: &AuthenticatedOwner,
     ) -> bool {
-        !principal_ref.trim().is_empty()
-            && !self.actor_ref().trim().is_empty()
-            && authenticated_owner.principal_ref() == principal_ref
-            && self.actor_ref() == principal_ref
+        authenticated_owner.principal_ref() == principal_ref
+            && self.authenticates_principal(principal_ref)
     }
 }
 
@@ -286,6 +271,10 @@ pub enum GrantMintIntentScope {
     BriefVerbClass {
         brief_ref: String,
         verb_class: String,
+    },
+    /// Allows publishing updates to exactly one artifact.
+    ArtifactPublish {
+        artifact: String,
     },
     /// One calendar shared at one rung with the intent's `principal_ref`.
     Calendar {

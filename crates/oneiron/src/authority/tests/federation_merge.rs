@@ -384,6 +384,14 @@ fn lifecycle_entries_use_existing_type_122_doors() {
         fold.federation_pacts[&fixture.pact_id].status,
         FederationPactStatus::Active
     );
+    let txn = vault.store.env.read_txn().unwrap();
+    let cached = vault.authority_view_readonly_in_txn(&txn).unwrap();
+    let reference = super::readonly_fold::uncached_reference_fold(&vault, &txn);
+    assert_eq!(
+        cached.federation_pacts[&fixture.pact_id],
+        reference.federation_pacts[&fixture.pact_id]
+    );
+    drop(txn);
 
     let body = encode_authority_log_entry_body(&connect).unwrap();
     let err = vault

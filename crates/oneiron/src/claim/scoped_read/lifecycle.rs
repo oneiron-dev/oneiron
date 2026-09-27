@@ -6,7 +6,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL};
 
 impl ScopedRead<'_> {
     pub(crate) fn read_set_lifecycle(&self, id: &EntityId) -> Result<Option<ServedLifecycle>> {
-        let txn = self.vault.store.env.read_txn()?;
+        let txn = self.grant_read_txn()?;
         let Some(raw) = self.entity_record_in(&txn, id)?.map(|row| row.encode()) else {
             return Ok(None);
         };
