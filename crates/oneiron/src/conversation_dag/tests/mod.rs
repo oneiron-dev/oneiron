@@ -1114,3 +1114,33 @@ fn headless_adopted_room_refuses_childof_preview_even_with_newer_thread() {
         "an off-line thread must not become an unselected room's preview"
     );
 }
+
+#[test]
+fn migrated_room_with_only_deleted_childof_shells_has_no_preview() {
+    let (_dir, vault, conversation, _actor) = fixture();
+    let turn = EntityId::now();
+    vault
+        .batch()
+        .put(&turn, ENTITY_TYPE_TURN, time(20), 20, &body("deleted text"))
+        .edge_checked(&turn, &conversation, 1.0)
+        .commit()
+        .unwrap();
+    vault
+        .delete_entity_with_reason(&turn, crate::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(vault.is_deleted_shell(&turn).unwrap());
+    let page = vault
+        .main_line(
+            &conversation,
+            crate::conversation_dag::DagPageRequest::default(),
+        )
+        .unwrap();
+    assert!(page.head.is_none());
+    assert!(page.main_line.is_empty());
+    assert_eq!(
+        vault
+            .conversation_last_message_snippet(&conversation)
+            .unwrap(),
+        None
+    );
+}

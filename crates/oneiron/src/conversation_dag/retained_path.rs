@@ -135,7 +135,6 @@ fn prove_childof_only(
     if marker.as_deref().is_some_and(|value| value != [1]) {
         return Err(Error::CorruptedIndex("conversation DAG migration marker"));
     }
-    let mut has_turn = false;
     for entry in store.port_edges(
         txn,
         conversation,
@@ -150,10 +149,6 @@ fn prove_childof_only(
         if raw.entity_type != ENTITY_TYPE_TURN {
             continue;
         }
-        has_turn = true;
-        if marker.is_some() {
-            return Err(graph::invalid("DAG has no selected HEAD"));
-        }
         if !graph::edge_ids(store, txn, &id, EdgeKind::Parent, false, 2)?.is_empty()
             || graph::read_id(store, txn, CANONICAL, &id)?.is_some()
         {
@@ -165,6 +160,9 @@ fn prove_childof_only(
         }
         match retained_row(store, txn, &id, ENTITY_TYPE_TURN)? {
             RetainedRow::Live { body, .. } => {
+                if marker.is_some() {
+                    return Err(graph::invalid("DAG has no selected HEAD"));
+                }
                 if super::topology::record_kind(&body)?.is_some() {
                     return Err(graph::invalid("unselected DAG record"));
                 }
@@ -184,9 +182,9 @@ fn prove_childof_only(
             }
         }
     }
-    if has_turn {
-        Ok(PreviewTopology::ChildOfOnly)
-    } else if marker.is_some() {
+    if marker.is_some() {
+        // Migration ignores deleted TURN shells. After proving there is no live
+        // TURN and no unresolved structural evidence, the marked room is empty.
         Ok(PreviewTopology::ProvenEmpty)
     } else {
         Ok(PreviewTopology::ChildOfOnly)

@@ -754,3 +754,53 @@ async fn empty_room_remains_listable_after_dag_read() {
         "healthy room content"
     );
 }
+
+#[tokio::test]
+async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
+    let (_dir, server, actor) = setup();
+    let empty = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    let turn = post(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/turns",
+            empty["id"].as_str().unwrap()
+        ),
+        json!({"body": {"txt": "erased legacy text"}}),
+    )
+    .await;
+    let turn_id = EntityId::from_hex(turn["id"].as_str().unwrap()).unwrap();
+    server
+        .vault
+        .delete_entity_with_reason(&turn_id, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&turn_id).unwrap());
+    let healthy = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+    post(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/records",
+            healthy["id"].as_str().unwrap()
+        ),
+        json!({"advance": true, "actor": actor, "body": {"txt": "healthy retained text"}}),
+    )
+    .await;
+    let dag = get(
+        &server,
+        &format!(
+            "/v1/core/conversations/{}/records",
+            empty["id"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert!(dag["head"].is_null());
+    assert_eq!(dag["main_line"], json!([]));
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    assert!(
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+    );
+    assert_eq!(
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        "healthy retained text"
+    );
+}
