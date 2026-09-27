@@ -5,6 +5,7 @@ use super::ViewQuery;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_hydrate_deletion_metadata;
+use super::facade;
 use super::hex_bytes;
 use super::json_payload;
 use super::parse_entity_id_param;
