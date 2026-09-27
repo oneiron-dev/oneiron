@@ -96,8 +96,11 @@ impl Memory<'_> {
         let at = self.vault.store.clock.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
 
-        self.with_verified_actor_write_txn(|wtxn| {
-            let Some(stored_type) = self.vault.get_entity_type_in_txn(&*wtxn, &target_id)? else {
+        self.with_actor_content_write_txn(|content| {
+            let Some(stored_type) = self
+                .vault
+                .get_entity_type_in_txn(content.read(), &target_id)?
+            else {
                 return Err(MemoryError::not_found(format!(
                     "take target {} does not exist",
                     target_id.to_hex()
@@ -109,22 +112,18 @@ impl Memory<'_> {
                     &["Use TakeTarget::Subject to take a position on a non-claim entity."],
                 ));
             }
-            self.vault
-                .batch_in()
-                .mask(envelope.mask)
-                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
-                .edge(
-                    &note_id,
-                    EdgeKind::AuthoredBy,
-                    &self.actor,
-                    registered_edge_weight(EdgeKind::AuthoredBy),
-                )
-                .edge(&note_id, link, &target_id, registered_edge_weight(link))
-                .apply(wtxn)?;
-            self.vault.authorize_shared_note_write_in_txn(
-                wtxn,
-                note_id,
-                &WriteActor::new(self.actor, self.actor_class),
+            content.apply_batch(
+                self.vault
+                    .batch_in()
+                    .mask(envelope.mask)
+                    .put_authored_note(&note_id, &self.actor, occurred, at, &body)
+                    .edge(
+                        &note_id,
+                        EdgeKind::AuthoredBy,
+                        &self.actor,
+                        registered_edge_weight(EdgeKind::AuthoredBy),
+                    )
+                    .edge(&note_id, link, &target_id, registered_edge_weight(link)),
             )?;
             Ok(())
         })?;

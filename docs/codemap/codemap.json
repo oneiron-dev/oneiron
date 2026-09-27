@@ -2476,6 +2476,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/actor_content.rs",
+     "purpose": "One actor-bound batch effect set, derived from normalized local operations",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/agent_definition_create.rs",
      "purpose": "—",
      "surface": {
@@ -3043,7 +3053,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 2
      }
@@ -3323,7 +3333,7 @@
      "path": "src/batch/txn_builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 15,
       "struct": 1
      }
@@ -15829,6 +15839,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/content_write.rs",
+     "purpose": "Actor-bound content transaction interface",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -15936,7 +15956,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 12
      }
@@ -16005,6 +16025,14 @@
       "fn": 4,
       "struct": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/record_scope/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -21118,7 +21146,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "fn": 6,
       "struct": 1
      }
@@ -21171,6 +21199,14 @@
      "notable": [],
      "path": "src/memory/tests/session_witness.rs",
      "purpose": "Session overlay witness, room-shell claims, flip/replay races, and promoted turns",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/memory/tests/shared_effects.rs",
+     "purpose": "Shared-vault cross-door content effects, independent of facade spelling",
      "surface": {}
     },
     {
@@ -33957,7 +33993,7 @@
      "purpose": "Engine-side AR-3 autoreason campaign configuration and report join"
     },
     "batch": {
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -34475,7 +34511,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 24,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -34650,7 +34686,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35184,8 +35220,8 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2075,
-   "test_files": 716
+   "source_files": 2077,
+   "test_files": 718
   },
   "oneiron-android": {
    "files": [

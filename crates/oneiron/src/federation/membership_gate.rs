@@ -155,20 +155,7 @@ impl Vault {
         let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
             return Ok(());
         };
-        let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
-        let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
-        let scope = match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
-            Some(scope) => scope,
-            None if header.entity_type == crate::registry::ENTITY_TYPE_NOTE => {
-                // A NOTE born without a FacetOf edge has the ordinary base/default
-                // position. Never use this fallback for another record kind.
-                super::record_scope::default_stamp(
-                    header.entity_type,
-                    crate::claim::substrate_facet_id(id),
-                )
-            }
-            None => return Err(denied()),
-        };
+        let scope = self.content_scope_in_txn(txn, id)?;
         self.authorize_shared_vault_write_in_txn(
             txn,
             creation.vault_id,
@@ -177,31 +164,26 @@ impl Vault {
         )
     }
 
-    /// A fresh local structural Put may materialize a typed projection after
-    /// its first stamp (TASK streak fields are one example). Bind the final
-    /// staged bytes before testing the same row's scope in this writer.
-    pub(crate) fn authorize_shared_local_put_content_in_txn(
+    /// Resolve the current content position, never a caller's asserted one.
+    pub(crate) fn content_scope_in_txn(
         &self,
-        txn: &mut heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: crate::EntityId,
-        kind: u8,
-        writer: &WriteActor,
-    ) -> Result<()> {
-        if self.shared_vault_creation_in_txn(txn)?.is_some() {
-            let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
-            if EntityMetadataHeader::parse(&raw).is_none_or(|header| header.entity_type != kind) {
-                return Err(denied());
+    ) -> Result<Scope> {
+        let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+        let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+        match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
+            Some(scope) => Ok(scope),
+            None if header.entity_type == crate::registry::ENTITY_TYPE_NOTE => {
+                // A NOTE born without a FacetOf edge has the ordinary base/default
+                // position. Never use this fallback for another record kind.
+                Ok(super::record_scope::default_stamp(
+                    header.entity_type,
+                    crate::claim::substrate_facet_id(id),
+                ))
             }
-            super::record_scope::stamp_put(
-                &self.store,
-                txn,
-                id,
-                kind,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-                false,
-            )?;
+            None => Err(denied()),
         }
-        self.authorize_shared_content_write_in_txn(txn, id, writer)
     }
 
     /// NOTE-specific spelling for the actor-bound editor doors.

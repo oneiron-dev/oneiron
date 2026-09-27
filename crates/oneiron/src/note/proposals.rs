@@ -255,33 +255,35 @@ impl Vault {
         actor: WriteActor,
     ) -> MemoryResult<EntityId> {
         self.memory(actor.entity_ref(), actor.actor_class())
-            .with_verified_actor_write_txn(|txn| {
-                super::verbs::note_core(self, txn, note)?;
-                self.authorize_shared_note_write_in_txn(txn, note, &actor)?;
-                let parent = load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
-                let fork_doc = parent
-                    .doc
-                    .fork_at(&parent.doc.state_frontiers())
-                    .map_err(|_| invalid("fork frontier"))?;
-                let mut fork = NoteDocument {
-                    note,
-                    head: parent.head,
-                    doc: fork_doc,
-                };
-                let mut rewrite = matches!(edit, NoteProgramEdit::Rewrite { .. });
-                if let Some(replacement) = fork.apply(
-                    &self.store.clock,
-                    edit,
-                    actor.entity_ref(),
-                    self.store.clock.now_recorded_at(),
-                )? {
-                    rewrite = true;
-                    fork = replacement;
-                }
-                fork.head = self.store.clock.entity_id()?;
-                store_doc(self, txn, &fork)?;
-                remember_fork(self, txn, &parent, &fork, actor.entity_ref(), rewrite)?;
-                Ok(fork.head)
+            .with_actor_content_write_txn_as(actor, |content| {
+                content.update_note(note, |txn| {
+                    super::verbs::note_core(self, txn, note)?;
+                    let parent =
+                        load_doc(self, txn, note)?.ok_or(invalid("note has no document"))?;
+                    let fork_doc = parent
+                        .doc
+                        .fork_at(&parent.doc.state_frontiers())
+                        .map_err(|_| invalid("fork frontier"))?;
+                    let mut fork = NoteDocument {
+                        note,
+                        head: parent.head,
+                        doc: fork_doc,
+                    };
+                    let mut rewrite = matches!(edit, NoteProgramEdit::Rewrite { .. });
+                    if let Some(replacement) = fork.apply(
+                        &self.store.clock,
+                        edit,
+                        actor.entity_ref(),
+                        self.store.clock.now_recorded_at(),
+                    )? {
+                        rewrite = true;
+                        fork = replacement;
+                    }
+                    fork.head = self.store.clock.entity_id()?;
+                    store_doc(self, txn, &fork)?;
+                    remember_fork(self, txn, &parent, &fork, actor.entity_ref(), rewrite)?;
+                    Ok(fork.head)
+                })
             })
     }
 }

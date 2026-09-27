@@ -1,6 +1,7 @@
 pub mod export;
 pub(crate) mod secret_scan;
 
+mod actor_content;
 mod agent_definition_create;
 mod authority_log;
 mod base_apply;
@@ -54,6 +55,7 @@ pub(crate) use self::facet_validation::validate_facet_of_edge;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
 // the historical `crate::batch::` paths resolvable in sync builds.
+pub(crate) use self::actor_content::apply_actor_ops;
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
 pub(crate) use self::facet_validation::{
     facet_of_endpoint_types_on_table, facet_of_endpoints_provably_off_table, stored_entity_type,

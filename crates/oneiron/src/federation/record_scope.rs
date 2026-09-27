@@ -156,28 +156,32 @@ fn stored_scope(
     }
     Ok(Some(stamp.scope))
 }
-/// Rebind a validated local TASK scope after a typed reducer rewrites only
-/// derived body fields. An absent or stale pre-write stamp is never upgraded.
-pub(crate) fn rebind_local_task_projection(
+/// Keep a digest-proved TASK scope when the reducer changes only derived
+/// streak counters. Opaque replay and absent/stale stamps remain unstamped.
+/// This belongs to materialization, not to either check-in facade.
+pub(crate) fn preserve_task_projection_scope(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     before: &[u8],
     after: &[u8],
 ) -> Result<()> {
-    let kind = crate::registry::ENTITY_TYPE_TASK;
-    let scope = stored_scope(store, txn, id, kind, before)?.ok_or(Error::CorruptedIndex(
-        "TASK scope stamp changed before projection",
-    ))?;
-    if before != after {
-        let bytes = serde_json::to_vec(&Stamp {
-            version: 1,
-            digest: digest(kind, after),
-            scope,
-        })
-        .map_err(|_| Error::InvariantViolation("TASK scope restamp encode"))?;
-        store.vault_meta.put(txn, &key(id), &bytes)?;
+    if before == after {
+        return Ok(());
     }
+    let Some(scope) = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_TASK, before)?
+    else {
+        // A stale stamp cannot become a valid stamp for a new body by accident.
+        store.vault_meta.delete(txn, &key(id))?;
+        return Ok(());
+    };
+    let bytes = serde_json::to_vec(&Stamp {
+        version: 1,
+        digest: digest(crate::registry::ENTITY_TYPE_TASK, after),
+        scope,
+    })
+    .map_err(|_| Error::InvariantViolation("TASK scope restamp encode"))?;
+    store.vault_meta.put(txn, &key(id), &bytes)?;
     Ok(())
 }
 
@@ -382,3 +386,7 @@ impl Vault {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "record_scope/tests.rs"]
+mod tests;

@@ -10,6 +10,7 @@ mod commit_claims;
 mod delete_tombstone;
 mod self_grant;
 mod session_witness;
+mod shared_effects;
 mod support;
 mod takes_notes;
 mod witness_policy;

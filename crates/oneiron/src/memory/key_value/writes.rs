@@ -3,7 +3,7 @@
 //! not used: BaseStore cannot truthfully return success for a parked write.
 use super::super::support::facade_provenance;
 use super::*;
-use crate::batch::{ApplyOpsGateMode, BatchOp, apply_ops_with_gate_mode};
+use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use std::sync::atomic::Ordering;
@@ -49,21 +49,20 @@ impl Memory<'_> {
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
         let id = EntityId::from_bytes(bytes)?;
         let now = crate::unix_seconds_now();
-        let (item, replayed) = self.with_verified_actor_write_txn(|txn| {
-            if self.vault.local_hard_delete_marker_exists_in_txn(txn, &id)? {
+        let (item, replayed) = self.with_actor_content_write_txn(|content| {
+            if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &id)? {
                 return Err(super::super::support::hard_deleted_refusal(&id));
             }
-            let mut rows = self.key_value_rows(txn)?;
+            let mut rows = self.key_value_rows(content.read())?;
             let prior = rows.remove(&address);
-            let writer = WriteActor::new(self.actor, self.actor_class);
             if let Some((prior_id, _)) = &prior {
-                self.vault.authorize_shared_content_write_in_txn(txn, *prior_id, &writer)?;
+                content.require_claim(*prior_id)?;
             }
-            if self.vault.get_raw_in(txn, &id)?.is_some() {
+            if self.vault.get_raw_in(content.read(), &id)?.is_some() {
                 // Even an idempotent replay is a Write request, and a reused
                 // request ID must never bypass today's membership authority.
-                self.vault.authorize_shared_content_write_in_txn(txn, id, &writer)?;
-                let body = self.vault.get_claim_in_txn(txn, &id)
+                content.require_claim(id)?;
+                let body = self.vault.get_claim_in_txn(content.read(), &id)
                     .map_err(|err| match err {
                         Error::InvalidClaimBody(_) => conflict("request_id names an erased or malformed revision"),
                         other => other.into(),
@@ -76,7 +75,7 @@ impl Memory<'_> {
                 if prior.as_ref().is_none_or(|(current, _)| *current != id) {
                     return Err(conflict("request_id names a revision that is no longer current"));
                 }
-                return Ok((self.key_value_item(txn, id, stored)?, true));
+                return Ok((self.key_value_item(content.read(), id, stored)?, true));
             }
             let stored = StoredValue { namespace: input.namespace.clone(), key: input.key.clone(),
                 value: input.value.clone(), created_at: prior.as_ref().map_or(now, |(_, old)| old.created_at),
@@ -88,19 +87,18 @@ impl Memory<'_> {
                 json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
             let envelope = WriteEnvelope::new(WriteActor::new(self.actor, self.actor_class), source,
                 WriteProvenance::new(facade_provenance("key_value_put"))?, ClaimApprovalStatus::Auto);
-            apply_ops_with_gate_mode(&self.vault.store, &self.vault.config, &self.vault.analyzer, txn,
+            content.apply_claim_ops(
                 vec![BatchOp::ClaimCandidate { id, candidate: Box::new(candidate), envelope,
                     occurred: TimeRange { start: now, end: now }, learned_at: now, internal_lexical_query_hint: false }],
                 self.vault.text_index_trusted.load(Ordering::Acquire), ApplyOpsGateMode::new(true, true))?;
-            self.vault.authorize_shared_content_write_in_txn(txn, id, &writer)?;
-            let committed = self.vault.get_claim_in_txn(txn, &id)?.ok_or(Error::EntityNotFound)?;
+            let committed = self.vault.get_claim_in_txn(content.read(), &id)?.ok_or(Error::EntityNotFound)?;
             if !matches!(committed.approval, ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved) {
                 return Err(MemoryError::new(super::super::MEMORY_CODE_FORBIDDEN,
                     "keyed write requires review and was not committed",
                     &["Use the canonical claim review workflow; BaseStore writes require an explicit policy that permits this actor and source."]));
             }
             if let Some((prior_id, _)) = prior {
-                let prior_body = self.vault.get_claim_in_txn(txn, &prior_id)?
+                let prior_body = self.vault.get_claim_in_txn(content.read(), &prior_id)?
                     .ok_or(Error::EntityNotFound)?;
                 crate::Vault::require_source_trust_supersession_rights(&committed, &prior_body)
                     .map_err(|_| MemoryError::new(
@@ -108,9 +106,11 @@ impl Memory<'_> {
                         format!("source-trust rules forbid replacing keyed address {:?}/{:?}", address.namespace, address.key),
                         &["Keep the true source. Store generated output under a separate key. Only a genuine new user statement may be submitted as user_stated; never relabel generated output."],
                     ))?;
-                self.vault.supersede_claim_in_txn(txn, &id, &prior_id, now)?;
+                content.update_claim(prior_id, |txn| {
+                    self.vault.supersede_claim_in_txn(txn, &id, &prior_id, now)
+                })?;
             }
-            Ok((self.key_value_item(txn, id, stored)?, false))
+            Ok((self.key_value_item(content.read(), id, stored)?, false))
         })?;
         Ok(KeyValuePutReceipt {
             item,
@@ -128,29 +128,24 @@ impl Memory<'_> {
         address: &KeyValueAddress,
     ) -> MemoryResult<KeyValueDeleteReceipt> {
         check_address(address)?;
-        self.with_verified_actor_write_txn(|txn| {
-            let Some((id, _)) = self.key_value_rows(txn)?.remove(address) else {
+        self.with_actor_content_write_txn(|content| {
+            let Some((id, _)) = self.key_value_rows(content.read())?.remove(address) else {
                 return Ok(KeyValueDeleteReceipt {
                     existed: false,
                     receipt_refs: Vec::new(),
                 });
             };
-            // Exact actor ownership is necessary but never substitutes for
-            // the current shared-vault role and this stored row's scope.
-            self.vault.authorize_shared_content_write_in_txn(
-                txn,
-                id,
-                &WriteActor::new(self.actor, self.actor_class),
-            )?;
-            let receipt = self
-                .vault
-                .retract_claim_in_txn(txn, &id, crate::unix_seconds_now())?;
-            Ok(KeyValueDeleteReceipt {
-                existed: true,
-                receipt_refs: vec![receipt.map_or_else(
-                    || format!("retract:{}", id.to_hex()),
-                    |r| format!("gate:{}", r.decision_id.to_hex()),
-                )],
+            content.update_claim(id, |txn| {
+                let receipt =
+                    self.vault
+                        .retract_claim_in_txn(txn, &id, crate::unix_seconds_now())?;
+                Ok(KeyValueDeleteReceipt {
+                    existed: true,
+                    receipt_refs: vec![receipt.map_or_else(
+                        || format!("retract:{}", id.to_hex()),
+                        |r| format!("gate:{}", r.decision_id.to_hex()),
+                    )],
+                })
             })
         })
     }

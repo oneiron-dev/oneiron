@@ -136,38 +136,40 @@ impl Memory<'_> {
         session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
-        let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
-                return Err(invalid("replica NOTE cannot act as an admission authority").into());
-            }
-            if !session_is_live(txn) {
-                return Err(invalid("NOTE session revoked").into());
-            }
-            crate::sync::selector::admit_note_in_txn(
-                self.vault(),
-                txn,
-                note,
-                scope,
-                selector,
-                Some(self.actor()),
-            )?;
-            // Applied and replayed receipts carry the full document view. A
-            // writable NOTE alone cannot widen disclosure of its existing pins.
-            // Check the same citation closure as document export before any edit
-            // or saved receipt can escape this committing transaction.
-            for pin in load(self.vault(), txn, note)?.pins()? {
-                super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, &pin)?;
-            }
-            if let NoteChange::Cite { pin } = &operation.change {
-                super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, pin)?;
-            }
-            self.apply_note_operation_in_txn(txn, note, operation, Some(selector.grant_id))
+        let receipt = self.with_actor_content_write_txn(|content| {
+            content.update_note(note, |txn| {
+                if self
+                    .vault()
+                    .store
+                    .sync_state
+                    .get(txn, &format!("ds:e:{}", note.to_hex()))?
+                    .is_some()
+                {
+                    return Err(invalid("replica NOTE cannot act as an admission authority").into());
+                }
+                if !session_is_live(txn) {
+                    return Err(invalid("NOTE session revoked").into());
+                }
+                crate::sync::selector::admit_note_in_txn(
+                    self.vault(),
+                    txn,
+                    note,
+                    scope,
+                    selector,
+                    Some(self.actor()),
+                )?;
+                // Applied and replayed receipts carry the full document view. A
+                // writable NOTE alone cannot widen disclosure of its existing pins.
+                // Check the same citation closure as document export before any edit
+                // or saved receipt can escape this committing transaction.
+                for pin in load(self.vault(), txn, note)?.pins()? {
+                    super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, &pin)?;
+                }
+                if let NoteChange::Cite { pin } = &operation.change {
+                    super::replica::admit_pin_disclosure(self.vault(), txn, scope, selector, pin)?;
+                }
+                self.apply_note_operation_in_txn(txn, note, operation, Some(selector.grant_id))
+            })
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(note);
@@ -184,22 +186,24 @@ impl Memory<'_> {
         session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
-        let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
-                return Err(invalid("replica NOTE cannot act as an admission authority").into());
-            }
-            if !session_is_live(txn) {
-                return Err(invalid("NOTE session revoked").into());
-            }
-            self.verify_owner_in_txn(txn)?;
-            crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
-            self.apply_note_operation_in_txn(txn, note, operation, None)
+        let receipt = self.with_actor_content_write_txn(|content| {
+            content.update_note(note, |txn| {
+                if self
+                    .vault()
+                    .store
+                    .sync_state
+                    .get(txn, &format!("ds:e:{}", note.to_hex()))?
+                    .is_some()
+                {
+                    return Err(invalid("replica NOTE cannot act as an admission authority").into());
+                }
+                if !session_is_live(txn) {
+                    return Err(invalid("NOTE session revoked").into());
+                }
+                self.verify_owner_in_txn(txn)?;
+                crate::sync::documents::owner_note_admission(self.vault(), txn, note)?;
+                self.apply_note_operation_in_txn(txn, note, operation, None)
+            })
         })?;
         self.vault().notify_note_document(note);
         Ok(receipt)
@@ -210,20 +214,22 @@ impl Memory<'_> {
         note: EntityId,
         operation: &NoteOperation,
     ) -> MemoryResult<NoteOperationReceipt> {
-        let receipt = self.with_verified_actor_write_txn(|txn| {
-            if self
-                .vault()
-                .store
-                .sync_state
-                .get(txn, &format!("ds:e:{}", note.to_hex()))?
-                .is_some()
-            {
-                return Err(invalid(
-                    "replica NOTE edits must be submitted to its authenticated authority",
-                )
-                .into());
-            }
-            self.apply_note_operation_in_txn(txn, note, operation, None)
+        let receipt = self.with_actor_content_write_txn(|content| {
+            content.update_note(note, |txn| {
+                if self
+                    .vault()
+                    .store
+                    .sync_state
+                    .get(txn, &format!("ds:e:{}", note.to_hex()))?
+                    .is_some()
+                {
+                    return Err(invalid(
+                        "replica NOTE edits must be submitted to its authenticated authority",
+                    )
+                    .into());
+                }
+                self.apply_note_operation_in_txn(txn, note, operation, None)
+            })
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(note);

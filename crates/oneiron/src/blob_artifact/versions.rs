@@ -284,6 +284,10 @@ impl Vault {
             WriteProvenance::new(write_provenance_value(provenance))?,
             provenance.approval_status(),
         );
+        // The artifact is the logical owner of this content-addressed version.
+        // The ASSET bytes and head/index rows are supporting effects of it;
+        // the canonical claim is a second semantic content owner.
+        self.authorize_shared_content_write_in_txn(wtxn, *artifact_id, &actor)?;
         crate::ports::BlobStore::port_blob_put(
             self,
             wtxn,
@@ -294,7 +298,7 @@ impl Vault {
         )?;
         self.batch_in()
             .claim_candidate(&claim_id, candidate, &envelope, occurred, learned_at)
-            .apply(wtxn)?;
+            .apply_actor(wtxn, &actor)?;
 
         let record = BlobArtifactVersion {
             version: next_version,

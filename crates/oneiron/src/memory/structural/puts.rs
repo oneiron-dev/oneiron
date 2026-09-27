@@ -1,10 +1,7 @@
 //! Generic structural puts, habit check-ins, and blob artifact verbs.
 
-use std::sync::atomic::Ordering;
-
 use rmpv::Value;
 
-use crate::batch::{BatchOp, apply_ops};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::habit::TaskRole;
 use crate::memory::support::{
@@ -165,30 +162,26 @@ impl Memory<'_> {
             .iter()
             .map(|field| (field.field.clone(), field.value.clone()))
             .collect();
-        let text_index_trusted = if text_fields.is_empty() {
-            self.vault.text_index_trusted.load(Ordering::Acquire)
-        } else {
+        if !text_fields.is_empty() {
             self.vault.ensure_text_index_trusted()?;
-            true
-        };
+        }
 
         // Marker check and put share ONE write transaction (A1): a
         // concurrent hard delete either commits first (refused here) or
         // after this txn (its purge then erases what we wrote).
-        let refused = self.with_verified_actor_write_txn(|wtxn| {
-            // Minting a PERSON mints a future actor identity, so it is an
-            // owner verb. The pre-txn class check above gives the fast typed
-            // error; the authority-log teeth run in-txn (TOCTOU-free).
+        let refused = self.with_actor_content_write_txn(|content| {
+            // An actor-capable PERSON is still an owner verb; the content
+            // transaction does not substitute for that domain authority.
             if type_byte == ENTITY_TYPE_PERSON {
-                verify_owner_actor_binding_in_txn(self.vault, &*wtxn, self.actor)?;
+                verify_owner_actor_binding_in_txn(self.vault, content.read(), self.actor)?;
             }
             if self
                 .vault
-                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+                .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
             {
                 return Ok(true);
             }
-            ensure_structural_create_in_txn(self.vault, &*wtxn, &id)?;
+            ensure_structural_create_in_txn(self.vault, content.read(), &id)?;
             let mut batch = self
                 .vault
                 .batch_in()
@@ -196,28 +189,14 @@ impl Memory<'_> {
             for (kind, target, weight) in &resolved_edges {
                 batch = batch.edge(&id, *kind, target, *weight);
             }
-            batch.apply(wtxn)?;
-            self.vault.authorize_shared_local_put_content_in_txn(
-                wtxn,
-                id,
-                type_byte,
-                &WriteActor::new(self.actor, self.actor_class),
-            )?;
             if !text_fields.is_empty() {
-                apply_ops(
-                    &self.vault.store,
-                    &self.vault.config,
-                    &self.vault.analyzer,
-                    wtxn,
-                    vec![BatchOp::Text {
-                        id,
-                        fields: text_fields.clone(),
-                    }],
-                    text_index_trusted,
-                    false,
-                    true,
-                )?;
+                let fields: Vec<(&str, &str)> = text_fields
+                    .iter()
+                    .map(|(field, value)| (field.as_str(), value.as_str()))
+                    .collect();
+                batch = batch.text(&id, &fields);
             }
+            content.apply_batch(batch)?;
             Ok(false)
         })?;
         if refused {
@@ -258,53 +237,20 @@ impl Memory<'_> {
         };
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
         // Marker check and checkin put share one write transaction (A1).
-        let refused = self.with_verified_actor_write_txn(|wtxn| {
+        let refused = self.with_actor_content_write_txn(|content| {
             if self
                 .vault
-                .local_hard_delete_marker_exists_in_txn(wtxn, &checkin_id)?
+                .local_hard_delete_marker_exists_in_txn(content.read(), &checkin_id)?
             {
                 return Ok(true);
             }
-            let writer = WriteActor::new(self.actor, self.actor_class);
-            self.vault
-                .authorize_shared_content_write_in_txn(wtxn, habit_id, &writer)?;
-            // The reducer changes the parent's streak fields. Preserve the
-            // positively verified pre-write scope on its final body, not a
-            // freshly inferred permission over arbitrary unstamped bytes.
-            let prior_habit = self
-                .vault
-                .shared_vault_creation_in_txn(wtxn)?
-                .map(|_| self.vault.get_raw_in(wtxn, &habit_id))
-                .transpose()?
-                .flatten();
-            self.vault
-                .batch_in()
-                .put_habit_checkin(&habit_id, &checkin_id, occurred, learned_at, &data)
-                .apply(wtxn)?;
-            if let Some(before) = prior_habit {
-                let after = self
-                    .vault
-                    .get_raw_in(wtxn, &habit_id)?
-                    .ok_or(crate::Error::EntityNotFound)?;
-                let header = crate::batch::EntityMetadataHeader::parse(&before)
-                    .ok_or(crate::Error::CorruptedIndex("habit header"))?;
-                if header.entity_type != crate::registry::ENTITY_TYPE_TASK {
-                    return Err(crate::Error::InvalidEntityType(header.entity_type).into());
-                }
-                crate::federation::record_scope::rebind_local_task_projection(
-                    &self.vault.store,
-                    wtxn,
-                    habit_id,
-                    &before[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                    &after[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                )?;
-            }
-            self.vault.authorize_shared_local_put_content_in_txn(
-                wtxn,
-                checkin_id,
-                crate::registry::ENTITY_TYPE_TASK,
-                &writer,
-            )?;
+            content.apply_batch(self.vault.batch_in().put_habit_checkin(
+                &habit_id,
+                &checkin_id,
+                occurred,
+                learned_at,
+                &data,
+            ))?;
             Ok(false)
         })?;
         if refused {
@@ -329,17 +275,20 @@ impl Memory<'_> {
         let learned_at = input.learned_at.unwrap_or(input.occurred_at);
         // Marker check and artifact put share one write transaction (A1);
         // the encoded body matches Vault::put_blob_artifact exactly.
-        let refused = self.with_verified_actor_write_txn(|wtxn| {
+        let refused = self.with_actor_content_write_txn(|content| {
             if self
                 .vault
-                .local_hard_delete_marker_exists_in_txn(wtxn, &id)?
+                .local_hard_delete_marker_exists_in_txn(content.read(), &id)?
             {
                 return Ok(true);
             }
-            self.vault
-                .batch_in()
-                .put(&id, ENTITY_TYPE_BLOB_ARTIFACT, occurred, learned_at, &data)
-                .apply(wtxn)?;
+            content.apply_batch(self.vault.batch_in().put(
+                &id,
+                ENTITY_TYPE_BLOB_ARTIFACT,
+                occurred,
+                learned_at,
+                &data,
+            ))?;
             Ok(false)
         })?;
         if refused {
@@ -378,10 +327,10 @@ impl Memory<'_> {
             start: occurred_at,
             end: occurred_at,
         };
-        let record = self.with_verified_actor_write_txn(|wtxn| {
-            self.vault
-                .append_blob_artifact_version_in_txn(
-                    wtxn,
+        let record = self.with_actor_content_write_txn(|content| {
+            Ok(content.update_artifact(artifact_id, |txn| {
+                self.vault.append_blob_artifact_version_in_txn(
+                    txn,
                     &artifact_id,
                     bytes,
                     &provenance,
@@ -389,7 +338,7 @@ impl Memory<'_> {
                     occurred,
                     learned_at.unwrap_or(occurred_at),
                 )
-                .map_err(MemoryError::from)
+            })?)
         })?;
         Ok(BlobVersionView {
             artifact_ref: artifact_id.to_hex(),

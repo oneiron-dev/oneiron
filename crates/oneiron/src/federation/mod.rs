@@ -6,6 +6,8 @@
 //! scope kinds, and preset/role mismatches are rejected.
 
 mod codec;
+mod content_write;
+pub(crate) use content_write::{ActorContentTxn, actor_for_txn};
 mod coreference;
 pub mod derivation;
 #[cfg(feature = "sync")]
