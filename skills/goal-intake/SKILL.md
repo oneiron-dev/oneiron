@@ -43,9 +43,13 @@ At attempt start the host loads this Active skill with `load_attempt_skill_pack`
 which stamps the attempt manifest. For the v1 room interview, ask the question
 in the project's home room. Have the human answer with a JSON `GoalRecord`
 using the fields above; ask again if any answer is missing. Show that exact
-JSON draft back to the human. Ask the human to reply `confirm <digest>`, where
-`<digest>` is the BLAKE3 hex digest of the draft's UTF-8 bytes. Their reply must
-name the draft turn. No confirmation, no write.
+JSON draft back to the human. When you show it, record the project's goal
+generation (`Vault::project_goal_generation`). Ask the human to reply
+`confirm <digest>`, where `<digest>` is
+`GoalInterviewTurns::confirmation_digest(draft, generation)`: the BLAKE3 hex
+digest of that generation as 8 big-endian bytes followed by the draft's UTF-8
+bytes. Their reply must name the draft turn. No confirmation, no write. If the
+goal changes before the write, the confirmation is refused; interview again.
 
 The host independently authenticates that human, then calls
 `Vault::write_project_goal_from_room_intake` with the attempt, project and

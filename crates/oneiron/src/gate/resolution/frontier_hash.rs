@@ -76,6 +76,7 @@ pub(super) fn hash_policy_frontier_v0(
 
     if let Some(limits) = resolution.goal_limits {
         hash_str(hasher, "goal_limits");
+        hash_str(hasher, limits.precedence.as_str());
         for field in limits.fields() {
             hash_u64(hasher, field);
         }

@@ -244,6 +244,7 @@ impl Vault {
             )
             .apply(txn)?;
         admission::disarm_pointer(&self.store, txn, project_id)?;
+        interview::bump_generation(&self.store, txn, project_id)?;
         if let Some(old) = previous {
             let prior = admission::trusted_active_claim(&self.store, txn, old, project_id)?;
             admission::arm_supersession(&self.store, txn, old, &prior, now)?;

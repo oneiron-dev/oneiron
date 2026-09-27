@@ -347,10 +347,15 @@ pub(crate) fn retire_for_delete(
         .batch_in()
         .delete_edge(&id, crate::edge::EdgeKind::ClaimOf, &project_id)
         .apply(txn)?;
-    let mut project: super::super::ProjectRecord =
-        super::super::record(store, txn, project_id, vault.project_type_byte()?)?
-            .ok_or_else(invalid)?;
-    if project.goal.as_deref() == Some(id.to_hex().as_str()) {
+    // An absent or soft-erased project has no pointer left to reconcile, and
+    // is never recreated; the goal's own edge and marker still retire here.
+    if let Some(mut project) = super::super::record::<super::super::ProjectRecord>(
+        store,
+        txn,
+        project_id,
+        vault.project_type_byte()?,
+    )? && project.goal.as_deref() == Some(id.to_hex().as_str())
+    {
         project.goal = None;
         let bytes = super::super::encode(&project)?;
         let mut marker = Vec::with_capacity(64);
@@ -373,6 +378,7 @@ pub(crate) fn retire_for_delete(
         store
             .vault_meta
             .delete(txn, &key(POINTER_KEY, project_id))?;
+        super::interview::bump_generation(store, txn, project_id)?;
     }
     store.vault_meta.delete(txn, &key(CLAIM_KEY, id))?;
     Ok(())

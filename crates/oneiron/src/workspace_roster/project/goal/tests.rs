@@ -656,3 +656,258 @@ fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn superseded_goal_erases_after_its_project_is_deleted() -> Result<()> {
+    use crate::memory::SafeDeleteReason;
+    use crate::ports::EdgeStoreRead;
+    for hard in [false, true] {
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        let root = vault.root_project()?;
+        let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+        let human = EntityId::now();
+        vault.put_entity(
+            &human,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+        let project = EntityId::now();
+        vault.put_project(
+            project,
+            &ProjectRecord::new(project, Some(root), root, leader),
+            1,
+        )?;
+        let owner = vault.authenticate_owner(
+            human,
+            &human.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let reason = || {
+            if hard {
+                SafeDeleteReason::UserHardDelete
+            } else {
+                SafeDeleteReason::UserDelete
+            }
+        };
+        let first =
+            vault.write_project_goal_from_intake(&owner, project, &transcript_record(), 2)?;
+        let mut revised = transcript_record();
+        revised.primary_axes[0].bound = ">= 95".into();
+        let current = vault.write_project_goal_from_intake(&owner, project, &revised, 3)?;
+        let memory = vault.memory(human, EdgeActorClass::Human);
+        memory
+            .safe_delete(&current.to_hex(), reason())
+            .map_err(|_| invalid())?;
+        if hard {
+            vault.delete_entity_with_options(
+                &project,
+                crate::deletion::DeleteEntityOptions { purge: true },
+            )?;
+        } else {
+            vault.delete_entity_with_reason(&project, crate::DeleteReason::UserDelete)?;
+        }
+        assert!(vault.project(project)?.is_none());
+        let result = memory
+            .safe_delete(&first.to_hex(), reason())
+            .map_err(|_| invalid())?;
+        assert!(result.existed);
+        let marker = [
+            b"project.goal_intake.admission/".as_slice(),
+            first.as_bytes(),
+        ]
+        .concat();
+        let assert_retired = |vault: &Vault| -> Result<()> {
+            {
+                let txn = vault.store.env.read_txn()?;
+                assert!(vault.store.vault_meta.get(&txn, &marker)?.is_none());
+                assert!(
+                    vault
+                        .store
+                        .port_edge_get(&txn, &first, crate::edge::EdgeKind::ClaimOf, &project)?
+                        .is_none()
+                );
+            }
+            if hard {
+                assert!(vault.get_raw(&first)?.is_none());
+            } else {
+                assert_eq!(
+                    vault.get_raw(&first)?.unwrap().len(),
+                    crate::batch::ENTITY_METADATA_HEADER_LEN
+                );
+            }
+            // The erase never recreates the deleted project.
+            assert!(vault.project(project)?.is_none());
+            assert!(vault.project_intake_goal(project)?.is_none());
+            Ok(())
+        };
+        assert_retired(&vault)?;
+        let tombstone = crate::deletion::TombstoneValueV2 {
+            reason: if hard {
+                crate::deletion::TombstoneReason::UserHardDelete
+            } else {
+                crate::deletion::TombstoneReason::UserDelete
+            },
+            deleted_at: 5,
+            request_id: [0x55; 16],
+        }
+        .encode();
+        vault.apply_replayed_tombstone(&first, &tombstone)?;
+        assert_retired(&vault)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn goal_limits_precedence_is_a_strict_manifest_row() -> Result<()> {
+    use super::limits::GoalLimitsPrecedence;
+    type Fields = Vec<(Value, Value)>;
+    let manifest = || -> Result<Value> {
+        rmpv::decode::read_value(&mut std::io::Cursor::new(
+            crate::gate::default_policy_manifest(),
+        ))
+        .map_err(|_| invalid())
+    };
+    let Value::Map(rows) = manifest()? else {
+        unreachable!()
+    };
+    let shipped = rows
+        .into_iter()
+        .find(|(k, _)| k.as_str() == Some("goal_limits"))
+        .ok_or_else(invalid)?
+        .1;
+    let decoded = GoalLimits::decode(&shipped).ok_or_else(invalid)?;
+    assert_eq!(decoded, GoalLimits::default());
+    assert_eq!(decoded.precedence, GoalLimitsPrecedence::NestedNarrowing);
+    let edited = |edit: &dyn Fn(&mut Fields)| {
+        let mut row = shipped.clone();
+        let Value::Map(fields) = &mut row else {
+            unreachable!()
+        };
+        edit(fields);
+        GoalLimits::decode(&row)
+    };
+    let missing = |fields: &mut Fields| {
+        fields.retain(|(k, _)| k.as_str() != Some("precedence"));
+    };
+    assert!(edited(&missing).is_none());
+    assert!(
+        edited(&|fields| {
+            for (k, v) in fields.iter_mut() {
+                if k.as_str() == Some("precedence") {
+                    *v = Value::from("holder_then_default");
+                }
+            }
+        })
+        .is_none()
+    );
+    // Vault-level only: a scope, holder or project key is as unknown as any other.
+    for key in ["unknown", "scope", "holder", "project"] {
+        assert!(edited(&|fields| fields.push((Value::from(key), Value::from(1_u64)))).is_none());
+        assert!(
+            edited(&|fields| {
+                for (k, _) in fields.iter_mut() {
+                    if k.as_str() == Some("preferences") {
+                        *k = Value::from(key);
+                    }
+                }
+            })
+            .is_none()
+        );
+    }
+
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let resolve = |vault: &Vault| {
+        crate::gate::resolve_policy_manifest(&vault.store, &vault.store.env.read_txn()?)
+    };
+    let policy = resolve(&vault)?;
+    assert_eq!(policy.goal_limits, Some(GoalLimits::default()));
+    let with_limits = |limits: Value| -> Result<Vec<u8>> {
+        let mut manifest = manifest()?;
+        let Value::Map(ref mut rows) = manifest else {
+            unreachable!()
+        };
+        rows.iter_mut()
+            .find(|(k, _)| k.as_str() == Some("goal_limits"))
+            .ok_or_else(invalid)?
+            .1 = limits;
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &manifest).map_err(|_| invalid())?;
+        Ok(bytes)
+    };
+    let first = GoalLimits {
+        goal_bytes: 100,
+        axes: 20,
+        ..GoalLimits::default()
+    };
+    let second = GoalLimits {
+        goal_bytes: 200,
+        axes: 10,
+        preferences: 3,
+        ..GoalLimits::default()
+    };
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &with_limits(first.encode())?,
+    )?;
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        EntityId::now(),
+        &with_limits(second.encode())?,
+    )?;
+    let policy = resolve(&vault)?;
+    assert!(!policy.diagnostics().loaded_manifest_forces_fail_closed());
+    assert_eq!(
+        policy.goal_limits(),
+        GoalLimits {
+            goal_bytes: 100,
+            axes: 10,
+            preferences: 3,
+            ..GoalLimits::default()
+        }
+    );
+    assert_eq!(
+        policy.goal_limits().precedence,
+        GoalLimitsPrecedence::NestedNarrowing
+    );
+
+    // A malformed row takes the existing fail-closed path.
+    let mut malformed = first.encode();
+    let Value::Map(fields) = &mut malformed else {
+        unreachable!()
+    };
+    missing(fields);
+    crate::test_util::put_policy_manifest_bytes(&vault, EntityId::now(), &with_limits(malformed)?)?;
+    assert!(
+        resolve(&vault)?
+            .diagnostics()
+            .loaded_manifest_forces_fail_closed()
+    );
+    let human = EntityId::now();
+    vault.put_entity(
+        &human,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"human",
+    )?;
+    let owner = vault.authenticate_owner(
+        human,
+        &human.to_hex(),
+        true,
+        crate::store::GateDecisionId::now(),
+    )?;
+    let project = vault.root_project()?;
+    assert!(
+        vault
+            .write_project_goal_from_intake(&owner, project, &transcript_record(), 2)
+            .is_err()
+    );
+    assert!(vault.project_intake_goal(project)?.is_none());
+    Ok(())
+}

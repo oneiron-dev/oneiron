@@ -6,9 +6,10 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestKind};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::store::Store;
 use crate::workspace_roster::rooms::{RoomTurn, require_member, turn_in};
 use crate::{EntityId, Result, Vault};
-use heed::RoTxn;
+use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 /// Four witnessed turns of one agent question, human answer, agent draft, human confirmation.
@@ -19,6 +20,46 @@ pub struct GoalInterviewTurns {
     pub answer: EntityId,
     pub draft: EntityId,
     pub confirmation: EntityId,
+}
+
+impl GoalInterviewTurns {
+    /// The digest a human confirms: the project's goal generation, recorded
+    /// when the draft was shown (8 bytes, big-endian), then the draft's bytes.
+    pub fn confirmation_digest(draft: &str, generation: u64) -> String {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&generation.to_be_bytes());
+        hasher.update(draft.as_bytes());
+        hasher.finalize().to_hex().to_string()
+    }
+}
+
+const GENERATION_KEY: &[u8] = b"project.goal_intake.generation/";
+
+/// A project's durable goal generation; zero before its first goal commits.
+pub(super) fn generation(store: &Store, txn: &RoTxn<'_>, project: EntityId) -> Result<u64> {
+    let Some(raw) = store
+        .vault_meta
+        .get(txn, &[GENERATION_KEY, project.as_bytes()].concat())?
+    else {
+        return Ok(0);
+    };
+    Ok(u64::from_be_bytes(
+        raw.as_ref().try_into().map_err(|_| invalid())?,
+    ))
+}
+
+/// Called in the same write txn as every goal-pointer change, so no
+/// confirmation shown against an earlier goal can apply after it.
+pub(super) fn bump_generation(store: &Store, txn: &mut RwTxn<'_>, project: EntityId) -> Result<()> {
+    let next = generation(store, txn, project)?
+        .checked_add(1)
+        .ok_or_else(invalid)?;
+    store.vault_meta.put(
+        txn,
+        &[GENERATION_KEY, project.as_bytes()].concat(),
+        &next.to_be_bytes(),
+    )?;
+    Ok(())
 }
 
 fn content(vault: &Vault, txn: &RoTxn<'_>, turn: &RoomTurn, author: &str) -> Result<String> {
@@ -58,6 +99,13 @@ fn content(vault: &Vault, txn: &RoTxn<'_>, turn: &RoomTurn, author: &str) -> Res
 }
 
 impl Vault {
+    /// The goal generation an interview records when it shows its draft. Goal
+    /// intake, supersession and deletion move it; other project edits do not.
+    pub fn project_goal_generation(&self, project_id: EntityId) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        generation(&self.store, &txn, project_id)
+    }
+
     /// Finalize an agent-asked, human-answered interview, never a caller-supplied
     /// `GoalRecord`. The host must first dispatch an attempt, load the active
     /// goal-intake body with `load_attempt_skill_pack`, witness these room turns,
@@ -121,11 +169,6 @@ impl Vault {
                 return Err(invalid());
             }
             let confirmation = content(self, txn, &rows[3], crate::gate::WITNESS_AUTHOR_USER)?;
-            // The literal is a protocol token, not prompt copy; the skill owns
-            // how the agent asks. The digest binds the human pick to this draft.
-            if confirmation != format!("confirm {}", blake3::hash(draft.as_bytes()).to_hex()) {
-                return Err(invalid());
-            }
             // A confirmation is single-use. Its stored claim is stable on an
             // identical retry; an older retry after a newer goal never rolls
             // the project back to historical words.
@@ -142,15 +185,17 @@ impl Vault {
                     Err(invalid())
                 };
             }
-            // A draft from before the current goal cannot authorize replacing
-            // that goal, even if it was only confirmed after the replacement.
-            let raw = self
-                .store
-                .entities
-                .get(txn, project_id.as_bytes())?
-                .ok_or_else(invalid)?;
-            let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-            if project.goal.is_some() && header.learned_at > rows[0].at {
+            // The literal is a protocol token, not prompt copy; the skill owns
+            // how the agent asks. The digest binds the human pick to this draft
+            // and to the goal generation it was shown against, so a goal
+            // committed or deleted since then refuses it.
+            let current = generation(&self.store, txn, project_id)?;
+            if confirmation
+                != format!(
+                    "confirm {}",
+                    GoalInterviewTurns::confirmation_digest(&draft, current)
+                )
+            {
                 return Err(invalid());
             }
             let id = self.write_project_goal_in_txn(txn, owner, project_id, &record, now)?;
