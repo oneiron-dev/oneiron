@@ -34,7 +34,8 @@ other than `$root`; it does not add a WASI adapter to make such an import work.
 
 The build emits:
 
-- `quickjs-first-party.wasm`: all 15 typed imports;
+- `quickjs-first-party.wasm`: all 14 typed imports;
+
 - `quickjs-foreign.wasm`: only the four non-write imports;
 - `manifest.json`: source, WIT, toolchain and artifact pins.
 

@@ -255,3 +255,60 @@ on **both** devices with the same freshly built binary; the extra telemetry
 lookups happen only after the timed cohort. Capture `/proc/diskstats` and
 `/proc/loadavg` just before and after each process to compare with the checked-in
 diagnostic rows; alternate device order per pair to reduce time-order bias.
+
+## BEAM deterministic versus independent Chroma fixture (ONE-2180)
+
+The Chroma arm already uses the same `run.jsonl` corpus and f32-LE query
+vectors as the deterministic arm. It sends vectors and text to Chroma's v2
+HTTP API; it does not call `ContextPackBuilder`. The plan
+[`fixtures/beam_measure.chroma.example.json`](fixtures/beam_measure.chroma.example.json)
+pins both retrieval cards and the identical answerer model for those arms.
+The checked-in run used the real Chroma HTTP server from `chromadb==1.5.9`
+(the bundled `chroma` CLI reports 1.4.4). The answerer is the independent
+retrieval-sensitive **fixture rule** in
+[`scripts/fixture_model_stub.py`](scripts/fixture_model_stub.py), not the GPT
+model whose illustrative pin occupies the plan. It extracts the updated code
+from the retrieved context and otherwise answers `unknown`. Its exact-match
+judge sees the gold only after answering and returns 0 for a wrong candidate.
+This is a scored single-question fixture comparison, not a BEAM-128K model
+benchmark. The dummy model usage and example prices do **not** support dollar
+claims.
+
+To reproduce both the supported and no-evidence control runs, start the
+server and fixture host in separate terminals, then run the two plans:
+
+```sh
+uvx --from chromadb==1.5.9 chroma run --path /tmp/chroma-beam --host 127.0.0.1 --port 8000
+python3 crates/oneiron-bench/scripts/fixture_model_stub.py
+ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.chroma.example.json > supported.json
+ONEIRON_EVAL_API_KEY=fixture-only cargo run -p oneiron-bench -j 8 -- beam measure crates/oneiron-bench/fixtures/beam_measure.no_evidence.chroma.example.json > no-evidence.json
+python3 -m unittest discover -s crates/oneiron-bench/scripts -p test_fixture_model_stub.py -v
+```
+
+The receipt [`results/beam-chroma-fixture-2026-09-27.json`](results/beam-chroma-fixture-2026-09-27.json)
+links the full retained
+[`supported`](results/beam-chroma-supported.raw.json) and
+[`no-evidence`](results/beam-chroma-no-evidence.raw.json) run outputs by SHA-256
+and pins corpus, plan, scorer-script and citation-corpus digests. With support,
+the deterministic and Chroma arms each scored 1 for light and medium effort;
+backbone-solo scored 0. Removing the supporting update but leaving the same
+question and gold made both retrieval arms abstain and score 0. These are
+**fixture scores**, not published BEAM accuracy. The timings of one local run
+and the example tariff are not a comparative latency or cost study. The
+`model_scaffold` wire/purity test still uses a Chroma HTTP stand-in; the
+retained output above was obtained from Chroma itself.
+
+The run's `citations.published_baseline_cards` gives stable IDs for the
+agent-authored v1 Honcho and BEAM-paper rows in
+[`fixtures/beam_citation_corpus.v1.json`](fixtures/beam_citation_corpus.v1.json).
+Each ID resolves to a cited source, value, tier and disposition in
+`citations.main_table` or `citations.appendix`. These are **published reference
+rows**, not same-tier comparisons with the fixture. Unknown judge and retrieval
+axes remain walled. For the separate vector-infrastructure cost-framing lane,
+the run reuses the three VDBBench vendor-run cards from ONE-2181/#1067 in
+[`fixtures/vector_db_infra.v1.json`](fixtures/vector_db_infra.v1.json). Their
+recall@10, P99 latency and modeled search-only USD/query figures come from a
+different corpus and host; never blend them into BEAM accuracy or interpret
+them as measured Oneiron/Chroma local costs. A public model benchmark still
+needs a pinned full dataset, real answering/judging, real model usage pricing,
+and matching answerer conditions.
