@@ -81,6 +81,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) proposal_check_threshold: Option<u64>,
     pub(crate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(crate) ask_policy: Option<crate::gate::ask_policy::AskOperationalPolicy>,
+    pub(crate) retry_source_policy: Vec<crate::gate::retry_source_policy::RetrySourcePolicyRow>,
     pub(super) packs: Vec<PolicyPack>,
     pub(super) actor_ceilings: Vec<ActorCeiling>,
     pub(crate) delegation_fold: DelegationFoldCache,

@@ -31,6 +31,7 @@ mod resolution;
 mod tracker_limits;
 pub use tracker_limits::LiveQueryTrackerLimits;
 mod retrieval_filter;
+pub(crate) mod retry_source_policy;
 mod share;
 mod weave_correction_policy;
 mod witness_message;
