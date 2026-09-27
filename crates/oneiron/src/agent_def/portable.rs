@@ -88,6 +88,12 @@ pub(crate) fn agent_pack_files(
         "definition": ExportBody::from_bytes(&encoded, crate::registry::ENTITY_TYPE_AGENT_DEF),
     });
     let mut knowledge = knowledge.to_vec();
+    // Source-vault short refs belong to the archive's entity envelopes, not
+    // to the portable knowledge facet. A fork captures the same claims before
+    // export and has no source-vault ref; hashing either path must agree.
+    for row in &mut knowledge {
+        row.short_ref = None;
+    }
     knowledge.sort_by(|a, b| a.id.cmp(&b.id));
     let files = vec![
         HubFile::new("PACK.md", manifest.into_bytes()),
