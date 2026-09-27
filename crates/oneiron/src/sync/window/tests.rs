@@ -1411,6 +1411,8 @@ fn forward_rematerialization_routes_type_76_through_the_ingest_door() -> Result<
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -1780,6 +1782,8 @@ fn forward_rematerialization_quarantines_concurrent_type_76_tombstone() -> Resul
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,

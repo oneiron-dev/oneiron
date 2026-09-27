@@ -18142,7 +18142,7 @@
      "path": "src/identity_topology/store_entity_helpers.rs",
      "purpose": "Store-level (pre-vault) readers for the type-76 entity kind: the helpers the batch write/materialize path…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -18205,7 +18205,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 49
+      "crate-vis": 50
      }
     },
     {

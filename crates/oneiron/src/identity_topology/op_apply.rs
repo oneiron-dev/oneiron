@@ -439,6 +439,7 @@ impl Vault {
         let record = StoredIdentityOpEvent {
             seq,
             validated_at_write: true,
+            invalidated: false,
             at: now,
             actor: write.actor,
             source: write.source,

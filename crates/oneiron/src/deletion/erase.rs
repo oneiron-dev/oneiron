@@ -287,6 +287,11 @@ impl Vault {
     ) -> Result<bool> {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         self.guard_active_merge_hard_delete_in_txn(wtxn, id)?;
+        crate::identity_topology::invalidate_identity_events_for_participant_delete_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
@@ -322,6 +327,11 @@ impl Vault {
     ) -> Result<(bool, bool)> {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
+        crate::identity_topology::invalidate_identity_events_for_participant_delete_in_txn(
+            &self.store,
+            wtxn,
+            id,
+        )?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;

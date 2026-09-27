@@ -112,9 +112,10 @@ impl Vault {
                     &event_id,
                     &event,
                 )?;
-            let Some(event) = event.without_author_stamp() else {
+            let Some(mut event) = event.without_author_stamp() else {
                 continue;
             };
+            event.invalidated |= actor_was_invalid;
             let mut record = raw[..ENTITY_METADATA_HEADER_LEN].to_vec();
             record.extend_from_slice(&encode_identity_topology_event_body(&event)?);
             scrubbed.push((event_id, record, actor_was_invalid));

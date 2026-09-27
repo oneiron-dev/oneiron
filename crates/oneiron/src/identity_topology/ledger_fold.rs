@@ -224,6 +224,9 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
         .ok_or(crate::error::Error::CorruptedIndex(
             "identity topology event index",
         ))?;
+        if record.invalidated {
+            continue;
+        }
         let sealed = identity_event_validated_in_txn(store, rtxn, &event.event_id)?;
         let references_complete = match &event.action {
             IdentityTopologyAction::Apply(op) => {

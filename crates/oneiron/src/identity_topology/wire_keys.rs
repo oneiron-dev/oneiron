@@ -57,6 +57,8 @@ pub(super) const BODY_KEY_KIND: &str = "kind";
 pub(super) const BODY_KEY_SEQ: &str = "seq";
 /// Producer proof that every participant and the bound author passed admission.
 pub(super) const BODY_KEY_VERIFIED: &str = "verified";
+/// Non-personal invalidity discovered before erasing an author/participant.
+pub(super) const BODY_KEY_INVALIDATED: &str = "invalidated";
 pub(super) const BODY_KEY_AT: &str = "at";
 pub(super) const BODY_KEY_ACTOR: &str = "actor";
 pub(super) const BODY_KEY_ACTOR_CLASS: &str = "actor_class";

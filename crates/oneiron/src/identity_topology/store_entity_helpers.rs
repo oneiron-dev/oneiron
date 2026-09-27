@@ -69,6 +69,9 @@ pub(crate) fn actor_valid_before_author_scrub_in_txn(
     event_id: &EntityId,
     record: &StoredIdentityOpEvent,
 ) -> Result<bool> {
+    if record.invalidated {
+        return Ok(false);
+    }
     if identity_event_validated_in_txn(store, rtxn, event_id)? {
         return Ok(true);
     }
@@ -145,6 +148,9 @@ pub(super) fn mark_complete_identity_events_in_txn(
         }
         let record = identity_topology_event_for_store_in_txn(store, wtxn, &event.event_id)?
             .ok_or(Error::CorruptedIndex("identity topology event index"))?;
+        if record.invalidated {
+            continue;
+        }
         if let Some(actor) = record.actor {
             let Some(kind) =
                 identity_topology_entity_type_for_store_in_txn(store, wtxn, &actor.entity_ref())?
@@ -156,6 +162,59 @@ pub(super) fn mark_complete_identity_events_in_txn(
             }
         }
         mark_identity_event_validated_in_txn(store, wtxn, &event.event_id)?;
+    }
+    Ok(())
+}
+
+/// A known-invalid applied event must never become valid merely because its
+/// wrong-kind participant was erased. Record the non-personal refusal on the
+/// canonical type-76 body BEFORE deindex removes the class witness. An
+/// already-sealed, once-valid decision remains historical authority.
+pub(crate) fn invalidate_identity_events_for_participant_delete_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut invalid = Vec::new();
+    for event in identity_topology_events_for_store_in_txn(store, wtxn)? {
+        if !matches!(
+            event.approval,
+            crate::claim::ClaimApprovalStatus::Auto | crate::claim::ClaimApprovalStatus::Approved
+        ) || identity_event_validated_in_txn(store, wtxn, &event.event_id)?
+        {
+            continue;
+        }
+        let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action else {
+            continue;
+        };
+        if !op.participants().contains(id)
+            || !matches!(
+                validate_identity_op_participants_for_store_in_txn(store, wtxn, &op)?,
+                IdentityTopologyParticipantValidation::Invalid(_)
+            )
+        {
+            continue;
+        }
+        let Some(raw) = store.entities.get(wtxn, event.event_id.as_bytes())? else {
+            return Err(Error::CorruptedIndex("identity topology event index"));
+        };
+        if raw.len() < crate::batch::ENTITY_METADATA_HEADER_LEN {
+            return Err(Error::CorruptedIndex("entity metadata"));
+        }
+        let mut record =
+            decode_identity_topology_event_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+                .map_err(|_| Error::CorruptedIndex("identity topology event body"))?;
+        if record.invalidated {
+            continue;
+        }
+        record.invalidated = true;
+        let mut bytes = raw[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
+        bytes.extend_from_slice(&super::encode_identity_topology_event_body(&record)?);
+        invalid.push((event.event_id, bytes));
+    }
+    for (event_id, bytes) in invalid {
+        crate::vault::entity_revision::remove_entity_revisions(store, wtxn, &event_id)?;
+        store.entities.put(wtxn, event_id.as_bytes(), &bytes)?;
     }
     Ok(())
 }

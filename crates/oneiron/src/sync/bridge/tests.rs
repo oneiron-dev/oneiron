@@ -2077,6 +2077,8 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2168,6 +2170,8 @@ fn observer_b_gates_reserved_edges_on_the_ledger_and_derives_shells_from_records
         seq: 51,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 300,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2395,6 +2399,8 @@ fn observer_b_tombstone_first_then_type_76_blob_neutralizes_poison_with_evidence
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2534,6 +2540,8 @@ fn observer_b_malformed_type_76_envelope_cannot_bypass_delete_wins() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2627,6 +2635,8 @@ fn observer_b_rejects_type_76_merge_with_nonstructural_participant() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2737,6 +2747,8 @@ fn observer_b_revalidates_deferred_participant_before_reserved_edge_write() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2823,6 +2835,8 @@ fn observer_b_quarantined_undo_commits_no_event_or_seq_advance() {
         seq: 77,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -2911,6 +2925,8 @@ fn observer_b_rejects_seq_that_would_consume_local_headroom_before_clock_mutatio
     let rejected_event = EntityId::now();
     let record = StoredIdentityOpEvent {
         validated_at_write: false,
+
+        invalidated: false,
         seq: crate::identity_topology::IDENTITY_TOPOLOGY_REPLICATED_SEQ_CEILING
             - crate::identity_topology::IDENTITY_TOPOLOGY_LOCAL_SEQ_HEADROOM,
         at: 200,
@@ -2996,6 +3012,8 @@ fn observer_b_endpoint_materialization_retriggers_deferred_topology_reconcile() 
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3091,6 +3109,8 @@ fn identity_topology_ingest_door_replays_diverges_and_validates() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3264,6 +3284,8 @@ fn byte_identical_type_76_replay_short_circuits_before_full_reconciliation() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3339,6 +3361,8 @@ fn observer_b_rejects_every_local_impossible_type_76_shape_before_mutation() {
         seq,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -3535,6 +3559,8 @@ fn observer_b_rejects_present_actor_class_mismatch_before_mutation() {
         seq: 50,
 
         validated_at_write: false,
+
+        invalidated: false,
         at: 200,
         actor: Some(crate::write_envelope::WriteActor::new(actor, actor_class)),
         source: ClaimSource::Inferred,
@@ -4064,6 +4090,7 @@ fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes
     let event = StoredIdentityOpEvent {
         seq: 50,
         validated_at_write: false,
+        invalidated: false,
         at: 200,
         actor: None,
         source: ClaimSource::Inferred,
@@ -4156,6 +4183,7 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
     let record = StoredIdentityOpEvent {
         seq: 50,
         validated_at_write,
+        invalidated: false,
         at: 200,
         actor: Some(crate::write_envelope::WriteActor::new(
             actor,
@@ -4254,11 +4282,200 @@ fn assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write: boo
         vault.entity_lifecycle_state(&source).unwrap(),
         crate::identity_topology::EntityLifecycleState::Active
     );
+    // The local veto is not an export carrier. Reverse-materialize a missing
+    // event into an outbound window, then ingest it through Observer B on a
+    // fresh replica with live participants. Its canonical body must carry the
+    // non-personal invalid disposition even after the actor stamp was erased.
+    let key = crate::sync::types::WindowKey::from_timestamp(record.at);
+    let outbound = crate::sync::schema::create_window_doc("source", &key);
+    crate::sync::window::reverse_rematerialize(&vault, &outbound, &key)
+        .expect("mirror scrubbed record through outbound recovery");
+    let carrier =
+        crate::sync::loro_support::map_get_bytes(&outbound.get_map("entities"), &event_id.to_hex())
+            .expect("reverse-rematerialized event carrier");
+    let header = crate::batch::EntityMetadataHeader::parse(&carrier).expect("event header");
+    assert_eq!(
+        header.entity_type,
+        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+    );
+    let mirrored = crate::identity_topology::decode_identity_topology_event_body(
+        &carrier[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    )
+    .expect("canonical scrubbed event body");
+    assert!(mirrored.invalidated);
+    assert_eq!(mirrored.actor, None);
+    let update = crate::sync::window::export_window_updates_since(
+        &vault,
+        &key,
+        &outbound,
+        &loro::VersionVector::default().encode(),
+    )
+    .expect("export recovered window");
+    let peer = test_vault();
+    for participant in [&survivor, &source] {
+        peer.put_entity(
+            participant,
+            ENTITY_TYPE_TASK,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &task_body(),
+        )
+        .expect("materialize peer participant");
+    }
+    let peer_doc = LoroDoc::new();
+    let peer_materializer = Arc::new(Materializer::new());
+    let _peer_subs = register_observer_b(&peer_doc, &peer, &peer_materializer, key.as_str());
+    import_doc(&peer_doc, &update).expect("ingest outbound update through Observer B");
+    assert!(
+        peer.identity_topology_event(&event_id)
+            .unwrap()
+            .expect("peer event")
+            .invalidated
+    );
+    assert_eq!(
+        peer.entity_lifecycle_state(&source).unwrap(),
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+    assert!(
+        !peer
+            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap(),
+        "scrubbed invalid history must not authorize a peer shell"
+    );
 }
 
 #[test]
 fn deferred_merge_actor_mismatch_stays_invalid_after_erasure_with_or_without_producer_stamp() {
     for validated_at_write in [false, true] {
         assert_deferred_merge_actor_mismatch_survives_erasure(validated_at_write);
+    }
+}
+
+#[test]
+fn invalid_deferred_participant_erasure_cannot_activate_verified_merge() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+    for invalid_kind in [crate::registry::ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET] {
+        let vault = test_vault();
+        let doc = LoroDoc::new();
+        let entities = doc.get_map("entities");
+        let materializer = Arc::new(Materializer::new());
+        let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+        let head = EntityId::from_bytes([0x61; 16]).unwrap();
+        let live_source = EntityId::from_bytes([0x62; 16]).unwrap();
+        let invalid = EntityId::from_bytes([0x63; 16]).unwrap();
+        let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
+        for id in [&head, &live_source] {
+            vault
+                .put_entity(
+                    id,
+                    ENTITY_TYPE_TASK,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    &task_body(),
+                )
+                .unwrap();
+        }
+        let record = StoredIdentityOpEvent {
+            seq: 50,
+            validated_at_write: true,
+            invalidated: false,
+            at: 200,
+            actor: None,
+            source: ClaimSource::Inferred,
+            approval: ClaimApprovalStatus::Auto,
+            confidence: 1.0,
+            evidence: None,
+            action: StoredIdentityOpAction::Merge {
+                sources: vec![live_source, invalid],
+                survivor: head,
+            },
+        };
+        map_insert_bytes(
+            &entities,
+            &event_id.to_hex(),
+            &entity_blob(
+                crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+                TimeRange {
+                    start: 200,
+                    end: 200,
+                },
+                200,
+                &crate::identity_topology::encode_identity_topology_event_body(&record).unwrap(),
+            ),
+        )
+        .unwrap();
+        doc.commit();
+        assert!(vault.identity_topology_event(&event_id).unwrap().is_some());
+        assert!(
+            !vault
+                .edge_exists(&live_source, crate::edge::EdgeKind::MergedInto, &head)
+                .unwrap()
+        );
+        let invalid_body = if invalid_kind == crate::registry::ENTITY_TYPE_CLAIM {
+            let claim = crate::claim::ClaimBody::new(
+                "user.note",
+                crate::claim::ClaimSubject::Entity(head),
+                Value::from("fixture"),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                crate::claim::ClaimLifecycleStatus::Active,
+            );
+            crate::claim::encode_claim_body(&claim).unwrap()
+        } else {
+            b"facet fixture".to_vec()
+        };
+        map_insert_bytes(
+            &entities,
+            &invalid.to_hex(),
+            &entity_blob(
+                invalid_kind,
+                TimeRange {
+                    start: 201,
+                    end: 201,
+                },
+                201,
+                &invalid_body,
+            ),
+        )
+        .unwrap();
+        doc.commit();
+        assert_eq!(vault.get_entity_type(&invalid).unwrap(), Some(invalid_kind));
+        assert!(
+            !vault
+                .edge_exists(&live_source, crate::edge::EdgeKind::MergedInto, &head)
+                .unwrap()
+        );
+        vault
+            .delete_entity_with_reason(&invalid, crate::deletion::DeleteReason::GdprDelete)
+            .expect("erase known-invalid participant");
+        assert!(
+            vault
+                .identity_topology_event(&event_id)
+                .unwrap()
+                .expect("event retained")
+                .invalidated
+        );
+        vault
+            .put_entity(
+                &live_source,
+                ENTITY_TYPE_TASK,
+                TimeRange {
+                    start: 300,
+                    end: 300,
+                },
+                300,
+                &task_body(),
+            )
+            .expect("refresh second source through materialization");
+        assert!(
+            !vault
+                .edge_exists(&live_source, crate::edge::EdgeKind::MergedInto, &head)
+                .unwrap(),
+            "invalid deleted source must never activate the valid source"
+        );
+        assert_eq!(
+            vault.entity_lifecycle_state(&live_source).unwrap(),
+            crate::identity_topology::EntityLifecycleState::Active
+        );
     }
 }
