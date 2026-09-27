@@ -5,7 +5,7 @@ use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
 use crate::error::{Error, Result};
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::ports::{EdgeDirection, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::workspace_roster::ProjectRecord;
 use crate::{EdgeKind, EntityId};
@@ -270,13 +270,17 @@ impl ScopedRead<'_> {
                             kind,
                             target,
                         } = body.subject
-                            && (!self.is_entity_retrievable_with_policy_in(
-                                txn, &policy, &filter, &source,
-                            )? || !self.is_entity_retrievable_with_policy_in(
-                                txn, &policy, &filter, &target,
-                            )? || !self.live_weave_edge_in(txn, source, kind, target)?)
                         {
-                            continue;
+                            let Some(edge) = self.live_weave_edge_in(txn, source, kind, target)?
+                            else {
+                                continue;
+                            };
+                            if !self
+                                .admit_stored_edge_in(txn, &policy, &filter, source, edge)?
+                                .visible()
+                            {
+                                continue;
+                            }
                         }
                         items.push(WeaveItem::Claim {
                             id,
@@ -347,10 +351,78 @@ impl ScopedRead<'_> {
         kinds: &[EdgeKind],
     ) -> Result<Vec<WeaveItem>> {
         let mut links = BTreeMap::new();
-        let mut add = |source: EntityId, kind: EdgeKind, target: EntityId| -> Result<()> {
-            if self.is_entity_retrievable_with_policy_in(txn, policy, filter, &source)?
-                && self.is_entity_retrievable_with_policy_in(txn, policy, filter, &target)?
-            {
+        let mut scanned = 0;
+        if let Some(person) = subject {
+            for anchor in std::iter::once(&person).chain(project_ids.iter()) {
+                for direction in [EdgeDirection::Out, EdgeDirection::In] {
+                    for (index, &kind) in kinds.iter().enumerate() {
+                        if kinds[..index].contains(&kind) {
+                            continue;
+                        }
+                        // One extra eligible row proves completeness at the cap.
+                        // Hidden pairs never consume a visible row slot.
+                        let admitted = self.admitted_edges_in(
+                            txn,
+                            policy,
+                            filter,
+                            anchor,
+                            direction,
+                            Some(kind),
+                            MAX_ROWS + 1,
+                            MAX_ROWS + 1,
+                            false,
+                        )?;
+                        for edge in admitted.edges {
+                            let edge = edge.info();
+                            if !weave_edge_live(edge.provenance) {
+                                continue;
+                            }
+                            scanned += 1;
+                            if scanned > MAX_ROWS {
+                                return Err(Error::IndexOverflow("weave link rows"));
+                            }
+                            let (source, target) = if direction == EdgeDirection::Out {
+                                (*anchor, edge.target)
+                            } else {
+                                (edge.target, *anchor)
+                            };
+                            links.insert(
+                                (source, edge.kind as u8, target),
+                                WeaveItem::Link {
+                                    source,
+                                    kind: edge.kind,
+                                    target,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // Owner-global view still uses the canonical cursor, but hidden
+            // relations cannot consume its visible scan budget either.
+            if self.session_view.is_some() {
+                return Err(Error::InvalidConfig(
+                    "owner weave links need a canonical read".into(),
+                ));
+            }
+            for row in self.vault.store.edges_out.iter(txn)? {
+                let (key, value) = row?;
+                let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
+                if !kinds.contains(&edge.kind) || !weave_edge_live(edge.decoded.provenance) {
+                    continue;
+                }
+                let (source, kind, target) = (edge.source, edge.kind, edge.target);
+                if !self
+                    .admit_stored_edge_in(txn, policy, filter, source, edge.into_edge_info())?
+                    .visible()
+                {
+                    continue;
+                }
+                scanned += 1;
+                if scanned > MAX_ROWS {
+                    return Err(Error::IndexOverflow("weave link rows"));
+                }
                 links.insert(
                     (source, kind as u8, target),
                     WeaveItem::Link {
@@ -359,55 +431,6 @@ impl ScopedRead<'_> {
                         target,
                     },
                 );
-            }
-            Ok(())
-        };
-        let mut scanned = 0;
-        if let Some(person) = subject {
-            for anchor in std::iter::once(&person).chain(project_ids.iter()) {
-                for direction in [EdgeDirection::Out, EdgeDirection::In] {
-                    let rows = match self.session_view {
-                        Some(view) => view.port_edges(txn, anchor, direction, None, None)?,
-                        None => self.vault.port_edges(txn, anchor, direction, None, None)?,
-                    };
-                    for row in rows {
-                        let edge = row?;
-                        scanned += 1;
-                        if scanned > MAX_ROWS {
-                            return Err(Error::IndexOverflow("weave link rows"));
-                        }
-                        if !kinds.contains(&edge.kind) || !weave_edge_live(edge.provenance) {
-                            continue;
-                        }
-                        let (source, target) = match direction {
-                            EdgeDirection::Out => (*anchor, edge.target),
-                            EdgeDirection::In => (edge.target, *anchor),
-                            EdgeDirection::Both => unreachable!("only directed scans"),
-                        };
-                        add(source, edge.kind, target)?;
-                    }
-                }
-            }
-        } else {
-            // Owner-only global view. A canonical edge cursor, bounded before
-            // filtering, prevents a truncated report from claiming completeness.
-            // Session overlays have no global edge cursor; refuse instead of
-            // silently showing edges that the overlay removed.
-            if self.session_view.is_some() {
-                return Err(Error::InvalidConfig(
-                    "owner weave links need a canonical read".into(),
-                ));
-            }
-            for row in self.vault.store.edges_out.iter(txn)? {
-                let (key, value) = row?;
-                scanned += 1;
-                if scanned > MAX_ROWS {
-                    return Err(Error::IndexOverflow("weave link rows"));
-                }
-                let edge = crate::edge::parse_strict_edge_record(&key, &value)?;
-                if kinds.contains(&edge.kind) && weave_edge_live(edge.decoded.provenance) {
-                    add(edge.source, edge.kind, edge.target)?;
-                }
             }
         }
         Ok(links.into_values().collect())
@@ -419,7 +442,7 @@ impl ScopedRead<'_> {
         source: EntityId,
         kind: crate::EdgeKind,
         target: EntityId,
-    ) -> Result<bool> {
+    ) -> Result<Option<crate::EdgeInfo>> {
         let mut count = 0;
         for edge in self.out_edges_in(txn, &source, Some(kind))? {
             count += 1;
@@ -428,10 +451,10 @@ impl ScopedRead<'_> {
             }
             let edge = edge?;
             if edge.target == target {
-                return Ok(weave_edge_live(edge.provenance));
+                return Ok(weave_edge_live(edge.provenance).then_some(edge));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }
 

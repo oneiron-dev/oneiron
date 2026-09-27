@@ -55,6 +55,9 @@ pub struct ScopedRead<'a> {
 }
 
 mod admission;
+mod edge_admission;
+pub(crate) use admission::{ReadAdmission, ScopedDiaryCandidates};
+pub(crate) use edge_admission::admit_stored_edge_in;
 mod context_filter;
 mod diagnostics;
 mod search;

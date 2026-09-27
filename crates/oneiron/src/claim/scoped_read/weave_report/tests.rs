@@ -637,3 +637,76 @@ fn authenticated_wrong_link_tap_persists_label_and_rejects_unknown_link() -> Res
     ));
     Ok(())
 }
+
+#[test]
+fn weave_exact_pair_admission_keeps_independent_link_to_same_target() -> Result<()> {
+    use crate::edge::EdgeActorClass;
+    use crate::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let a = vault.ensure_embedded_owner_actor().unwrap();
+    let b = entity(0xC7);
+    vault.put_entity(
+        &b,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"resident",
+    )?;
+    let am = vault.memory(a, EdgeActorClass::Human);
+    let bm = vault.memory(b, EdgeActorClass::Human);
+    let diary = |memory: &crate::memory::Memory<'_>, owner: EntityId| -> Result<EntityId> {
+        let receipt = memory
+            .author_note(&NoteWriteEnvelope {
+                kind: NoteKind::Diary,
+                scope: NoteScope::ActorPrivate { owner_ref: owner },
+                markdown: "weave private notebook".into(),
+                source_revision_ref: [0xC8; 16],
+                mask: None,
+            })
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        EntityId::from_hex(&receipt.id_hex)
+    };
+    let a1 = diary(&am, a)?;
+    let a2 = diary(&am, a)?;
+    let b_note = diary(&bm, b)?;
+    am.link_diary_coreference(a1, b_note).unwrap();
+    am.grant_diary_coreference(a1, b_note).unwrap();
+    bm.grant_diary_coreference(a1, b_note).unwrap();
+    am.link_diary_coreference(a2, b_note).unwrap(); // Empty relation
+    vault
+        .batch()
+        .edge(&a2, EdgeKind::BlockedBy, &b_note, 1.0)
+        .commit()?;
+    crate::test_util::authorize_readers(&vault, &[&a.to_hex()]);
+    let read =
+        vault.scoped_read(ScopedReadActorKey::with_actor_class(a.to_hex(), "human").unwrap());
+    let owner =
+        vault.authenticate_owner(a, &a.to_hex(), true, crate::store::GateDecisionId::now())?;
+    let mut recipe = [section(WeaveSectionKind::Links, &[])];
+    recipe[0].edge_kinds = vec![EdgeKind::SameAs, EdgeKind::BlockedBy];
+    let report = || {
+        read.weave_report(WeaveReader::Owner(&owner), &recipe)
+            .unwrap()
+    };
+    let links = &report().value.sections[0].items;
+    let hidden = WeaveItem::Link {
+        source: a2,
+        kind: EdgeKind::SameAs,
+        target: b_note,
+    };
+    let independent = WeaveItem::Link {
+        source: a2,
+        kind: EdgeKind::BlockedBy,
+        target: b_note,
+    };
+    assert!(!links.contains(&hidden));
+    assert!(links.contains(&independent));
+    am.grant_diary_coreference(a2, b_note).unwrap();
+    let b_grant = bm.grant_diary_coreference(a2, b_note).unwrap();
+    assert!(report().value.sections[0].items.contains(&hidden));
+    bm.revoke_diary_coreference_grant(b_grant).unwrap();
+    let restored = &report().value.sections[0].items;
+    assert!(!restored.contains(&hidden));
+    assert!(restored.contains(&independent));
+    Ok(())
+}
