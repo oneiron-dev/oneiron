@@ -5,7 +5,7 @@ use crate::write_envelope::carry_forward::{
     CARE_CONFIDENCE_FLOOR, CarryForwardClaim, CarryForwardKind, FORWARD_CONFIDENCE_FLOOR,
 };
 
-fn forward_envelope(
+pub(super) fn forward_envelope(
     vault: &Vault,
     approval: ClaimApprovalStatus,
 ) -> Result<(EntityId, WriteEnvelope)> {
@@ -217,7 +217,12 @@ fn generic_and_raw_doors_cannot_auto_commit_low_confidence_care() -> Result<()> 
 }
 
 /// Park a real Dreamer proposal with a run binding and resolvable evidence.
-fn park_forward_care(vault: &Vault, id: EntityId, subject: EntityId, run: &str) -> Result<()> {
+pub(super) fn park_forward_care(
+    vault: &Vault,
+    id: EntityId,
+    subject: EntityId,
+    run: &str,
+) -> Result<()> {
     let mut body = ClaimBody::new(
         CarryForwardKind::CareCheckIn.predicate(),
         ClaimSubject::Entity(subject),
@@ -379,5 +384,61 @@ fn admitted_auto_care_can_decay_and_weaken_below_floor() -> Result<()> {
         crate::claim::ClaimDemotionRung::Stale
     );
     assert!(vault.get_claim(&id)?.expect("stale claim").stale);
+    vault.retract_claim(&id, 13)?;
+    let closed = vault.get_claim(&id)?.expect("retracted below-floor head");
+    assert_eq!(closed.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(closed.confidence, 0.8);
+    assert_eq!(closed.lifecycle, crate::ClaimLifecycleStatus::Retracted);
+    assert_eq!(closed.valid_to, Some(13));
+    Ok(())
+}
+
+#[test]
+fn weakened_auto_care_can_be_superseded() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let mut policy = encode_policy_manifest(vec![]);
+    trust_human_candidate_actor(&mut policy);
+    put_policy_manifest_bytes(&vault, test_id(0x70), &policy)?;
+    let (subject, envelope) = forward_envelope(&vault, ClaimApprovalStatus::Auto)?;
+    let old = test_id(0x30);
+    let replacement = test_id(0x31);
+    for (id, detail) in [(old, "initial care"), (replacement, "newer care")] {
+        vault.put_carry_forward_claim(
+            &id,
+            CarryForwardClaim {
+                kind: CarryForwardKind::CareCheckIn,
+                subject,
+                detail: detail.into(),
+                confidence: CARE_CONFIDENCE_FLOOR,
+            },
+            &envelope,
+            test_time(3),
+            3,
+        )?;
+    }
+    vault.apply_claim_demotion(
+        &old,
+        crate::claim::ClaimDemotionAction::Decay {
+            new_claim_of_weight: 0.1,
+        },
+        10,
+    )?;
+    vault.apply_claim_demotion(
+        &old,
+        crate::claim::ClaimDemotionAction::Weaken {
+            new_confidence: 0.8,
+        },
+        11,
+    )?;
+    vault.supersede_claim(&replacement, &old, 12)?;
+    let closed = vault.get_claim(&old)?.expect("superseded below-floor head");
+    assert_eq!(closed.approval, ClaimApprovalStatus::Auto);
+    assert_eq!(closed.confidence, 0.8);
+    assert_eq!(closed.lifecycle, crate::ClaimLifecycleStatus::Superseded);
+    assert_eq!(closed.valid_to, Some(12));
+    assert_eq!(
+        vault.get_claim(&replacement)?.expect("new head").lifecycle,
+        crate::ClaimLifecycleStatus::Active
+    );
     Ok(())
 }

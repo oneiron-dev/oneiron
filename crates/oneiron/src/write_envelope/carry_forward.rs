@@ -120,9 +120,10 @@ pub(crate) fn validate_claim(body: &ClaimBody) -> Result<()> {
     Ok(())
 }
 
-/// Enforce the floor at the shared put admission (including replay). A stored
-/// low-confidence Auto claim can only come from a verified monotonic demotion,
-/// never from a new generic/raw claim with a forged approval.
+/// Enforce the floor on local put admission. Replay validates the claim shape,
+/// but receives final CRDT heads without their local transition history. A
+/// locally authored below-floor Auto head must follow a monotonic demotion or
+/// an exact lifecycle closure; new generic/raw Auto claims are refused.
 pub(crate) fn validate_admission(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -139,7 +140,7 @@ pub(crate) fn validate_admission(
     let valid = match body.approval {
         ClaimApprovalStatus::Auto => prior
             .as_ref()
-            .is_some_and(|prior| monotonic_demotion(prior, body)),
+            .is_some_and(|prior| valid_auto_transition(prior, body)),
         ClaimApprovalStatus::Approved => prior.as_ref().is_some_and(|prior| {
             matches!(
                 prior.approval,
@@ -166,9 +167,8 @@ pub(crate) fn validate_admission(
     }
 }
 
-/// The Gate can preserve a previously admitted Auto head only for the exact
-/// confidence-weakening lifecycle delta. The common put admission repeats the
-/// same check on replay where policy re-gating is intentionally absent.
+/// The Gate can preserve a prior Auto head for exact confidence weakening or
+/// lifecycle closure, without treating either as a new automatic admission.
 pub(crate) fn allows_auto_demotion(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -177,7 +177,7 @@ pub(crate) fn allows_auto_demotion(
 ) -> Result<bool> {
     Ok(prior_claim(store, txn, id)?
         .as_ref()
-        .is_some_and(|prior| monotonic_demotion(prior, body)))
+        .is_some_and(|prior| valid_auto_transition(prior, body)))
 }
 
 fn prior_claim(
@@ -197,15 +197,26 @@ fn prior_claim(
     crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
 }
 
-/// Match the exact body delta of the canonical demotion writer. A raw caller
-/// cannot create a new low-confidence Auto head by only stamping a rung.
-fn monotonic_demotion(prior: &ClaimBody, next: &ClaimBody) -> bool {
+/// Match canonical demotion deltas or the exact terminal lifecycle closure.
+/// A raw caller cannot create a new low-confidence Auto head by stamping a rung.
+fn valid_auto_transition(prior: &ClaimBody, next: &ClaimBody) -> bool {
     use crate::claim::{CLAIM_SCOPE_DEMOTION_RUNG_KEY, ClaimDemotionRung, claim_demotion_rung};
     if prior.approval != ClaimApprovalStatus::Auto
         || prior.lifecycle != crate::claim::ClaimLifecycleStatus::Active
         || next.confidence > prior.confidence
     {
         return false;
+    }
+    if matches!(
+        next.lifecycle,
+        crate::claim::ClaimLifecycleStatus::Retracted
+            | crate::claim::ClaimLifecycleStatus::Superseded
+    ) && let Some(valid_to) = next.valid_to
+    {
+        let mut expected = prior.clone();
+        expected.lifecycle = next.lifecycle;
+        expected.valid_to = Some(valid_to);
+        return expected == *next;
     }
     let Ok(before) = claim_demotion_rung(prior) else {
         return false;

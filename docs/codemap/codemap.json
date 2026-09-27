@@ -16988,6 +16988,16 @@
      "notable": [],
      "path": "src/gate/tests/carry_forward.rs",
      "purpose": "ONE-2032: four forward kinds round-trip the shared claim Gate",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/carry_forward_sync.rs",
+     "purpose": "Current-head CRDT replay does not depend on a receiver's local lifecycle history",
      "surface": {}
     },
     {
@@ -35399,7 +35409,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36088,7 +36098,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2130,
-   "test_files": 726
+   "test_files": 727
   },
   "oneiron-android": {
    "files": [
