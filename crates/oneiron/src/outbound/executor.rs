@@ -171,6 +171,9 @@ impl Vault {
             if task.human_explicit_instant {
                 request = request.delivery_window_human_explicit_instant();
             }
+            if let Some(party) = task.counterparty_ref.as_deref() {
+                request = request.counterparty_ref(party);
+            }
             if let Some(session_ref) = originating_session_ref {
                 request = request.originating_session(session_ref);
             }
@@ -223,6 +226,17 @@ impl Vault {
             match result.outcome {
                 OutboundDispatchOutcome::DeliveredToChannel => {
                     append_connector_task_window_receipt(&mut result.receipt, &task);
+                    // Provider receipt fields cannot claim a PERSON binding the
+                    // scheduler did not freeze on the TASK. Only that binding
+                    // may feed the comm projector after durable delivery.
+                    if let Some(party) = task.counterparty_ref.as_ref() {
+                        result
+                            .receipt
+                            .fields
+                            .insert("counterparty_ref".to_owned(), party.clone());
+                    } else {
+                        result.receipt.fields.remove("counterparty_ref");
+                    }
                     let delivered_idempotency =
                         idempotency_key.as_deref().map(|key| (task.actor_ref, key));
                     if persist_send_receipt(
