@@ -14964,6 +14964,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/judgment_cells.rs",
+     "purpose": "Independent OOXML reads for typed sheet answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -14988,6 +14998,7 @@
      "path": "src/edit_roundtrip/mod.rs",
      "purpose": "ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline",
      "surface": {
+      "crate-vis": 1,
       "re-export": 7
      }
     },
@@ -15078,7 +15089,7 @@
      "path": "src/edit_roundtrip/xml.rs",
      "purpose": "Namespace-aware OPC and worksheet XML reads for the edit gate",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -35039,7 +35050,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35818,7 +35829,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2114,
+   "source_files": 2115,
    "test_files": 722
   },
   "oneiron-android": {

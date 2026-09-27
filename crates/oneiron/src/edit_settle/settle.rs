@@ -16,6 +16,7 @@ use crate::batch::secret_scan;
 use crate::blob_artifact::{
     BLOB_ARTIFACT_RUN_REF_MAX_BYTES, read_blob_artifact_head_in_txn, require_entity_type,
 };
+use crate::edit_roundtrip::judgment_cells::verify_sheet_answer_bytes;
 use crate::edit_roundtrip::{EditProposal, OfficeFormat};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -46,7 +47,7 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<SettleSelectOutcome> {
-        self.ensure_selectable(proposal)?;
+        self.ensure_selectable(artifact_id, proposal)?;
         self.authorize_settle(consent, actor)?;
         let proposal_ref = proposal.run_ref.as_str();
         let key = settlement_key(artifact_id, proposal_ref);
@@ -394,7 +395,7 @@ impl Vault {
         }
     }
 
-    fn ensure_selectable(&self, proposal: &EditProposal) -> Result<()> {
+    fn ensure_selectable(&self, artifact_id: &EntityId, proposal: &EditProposal) -> Result<()> {
         validate_settle_proposal_ref(&proposal.run_ref)?;
         // An EditProposal only exists on a passed corruption gate, but a select
         // commits its bytes into the version chain — re-check fail-closed.
@@ -415,12 +416,26 @@ impl Vault {
                 "recalculated proposal must name its engine and version",
             )));
         }
-        if let Some(bundle) = &proposal.sheet_answers
-            && bundle.ops()? != proposal.manifest.ops
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
-                "typed answers do not match the edit manifest",
-            )));
+        if let Some(bundle) = &proposal.sheet_answers {
+            if bundle.ops()? != proposal.manifest.ops {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers do not match the edit manifest",
+                )));
+            }
+            let version = proposal.base_version.ok_or(Error::Artifact(
+                ArtifactError::InvalidEditManifest(
+                    "typed answers require an artifact base version",
+                ),
+            ))?;
+            let source = self
+                .read_blob_artifact_version(artifact_id, version)?
+                .ok_or(Error::EntityNotFound)?;
+            if blake3::hash(&source).as_bytes() != &proposal.base_content_hash {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "typed answers have a mismatched source hash",
+                )));
+            }
+            verify_sheet_answer_bytes(bundle, Some(&source), Some(&proposal.new_bytes))?;
         }
         // The op vocabulary and re-anchor replay are spreadsheet-specific, the
         // same gate ARTL-3 applies.

@@ -1310,6 +1310,36 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     use crate::temporal::TimeRange;
     use crate::write_envelope::WriteActor;
 
+    struct DishonestSession {
+        mode: u8,
+    }
+    impl EditSession for DishonestSession {
+        fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
+            let bytes = if self.mode == 0 {
+                doc.bytes.clone()
+            } else {
+                let mut pkg = opc::read(&doc.bytes)?;
+                let sheet = if self.mode == 1 {
+                    "<worksheet><sheetData><row r=\"2\"><c r=\"C2\"><v>6</v></c></row></sheetData></worksheet>"
+                } else {
+                    "<worksheet><sheetData><row r=\"2\"><c r=\"B2\"><v>5</v></c></row></sheetData></worksheet>"
+                };
+                pkg.upsert(SHEET_PART, sheet.as_bytes().to_vec());
+                opc::write(&pkg)
+            };
+            Ok(AppliedEdit {
+                bytes,
+                applied_ops: plan.ops.clone(),
+                warnings: vec![],
+            })
+        }
+        fn recalc(&self, doc: &OfficeDoc) -> Result<Vec<u8>> {
+            Ok(doc.bytes.clone())
+        }
+        fn recalc_engine(&self) -> Option<crate::blob_artifact::CalcEngineStamp> {
+            Some(crate::blob_artifact::CalcEngineStamp::new("fixture", "1").unwrap())
+        }
+    }
     struct CellSession;
     impl EditSession for CellSession {
         fn apply_edits(&self, doc: &OfficeDoc, plan: &EditPlan) -> Result<AppliedEdit> {
@@ -1395,6 +1425,70 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         range: RangeRef::parse("B2:B3")?,
         answers: vec![answer(2, 6.0), answer(3, 8.0)],
     };
+    let idempotent = SheetAnswerBundle {
+        question: "unchanged".into(),
+        question_version: "q1".into(),
+        principal: human.to_hex(),
+        sheet: "Sheet1".into(),
+        range: RangeRef::parse("A1:A1")?,
+        answers: vec![SheetCellAnswer {
+            cell: CellRef::new(1, 1),
+            before: Some(CellValue::Number(5.0)),
+            value: Some(CellValue::Number(5.0)),
+            probability: 0.5,
+            confidence: 1.0,
+            rung: "rule".into(),
+            model: "fixture".into(),
+            revision: "r1".into(),
+            cost_per_thousand: 0.0,
+            evidence_versions: vec!["base@1".into()],
+        }],
+    };
+    let EditOutcome::Proposed(unchanged) = vault.propose_sheet_answers(
+        &artifact,
+        &DishonestSession { mode: 0 },
+        idempotent,
+        "ask:idempotent",
+    )?
+    else {
+        panic!("idempotent answers should propose");
+    };
+    let unchanged_settle = vault.settle_select_edit_proposal(
+        &artifact,
+        &unchanged,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        11,
+    )?;
+    assert_eq!(unchanged_settle.version.version, 1);
+    assert_eq!(
+        vault.sheet_answer_receipts(&artifact, "ask:idempotent")?[0].version,
+        1
+    );
+    for mode in 0..3 {
+        let refused = vault
+            .propose_sheet_answers(
+                &artifact,
+                &DishonestSession { mode },
+                bundle.clone(),
+                "ask:lie",
+            )
+            .expect_err("no-op, wrong-cell and wrong-value output must fail before proposal");
+        assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:lie")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
+    let mut wrong_before = bundle.clone();
+    wrong_before.answers[0].before = Some(CellValue::Number(99.0));
+    let refused = vault
+        .propose_sheet_answers(&artifact, &CellSession, wrong_before, "ask:before")
+        .expect_err("the before value must be read from the artifact, not trusted");
+    assert_eq!(refused.kind(), crate::error::ErrorKind::InvalidEditManifest);
     let EditOutcome::Proposed(proposal) =
         vault.propose_sheet_answers(&artifact, &CellSession, bundle.clone(), "ask:range")?
     else {
@@ -1430,6 +1524,34 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
             .is_none()
     );
     assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    for replacement in [original, {
+        let mut pkg = opc::read(&proposal.new_bytes)?;
+        let sheet = std::str::from_utf8(pkg.part(SHEET_PART).unwrap())
+            .unwrap()
+            .replace("<c r=\"B3\"><v>8</v></c>", "<c r=\"B3\"><v>7</v></c>");
+        pkg.upsert(SHEET_PART, sheet.into_bytes());
+        opc::write(&pkg)
+    }] {
+        let mut tampered = proposal.clone();
+        tampered.new_bytes = replacement;
+        let refusal = vault
+            .settle_select_edit_proposal(
+                &artifact,
+                &tampered,
+                &SettleConsent::OwnerConsent { brief_ref: None },
+                actor,
+                time,
+                11,
+            )
+            .expect_err("mutating proposal bytes after validation cannot mint a Keep receipt");
+        assert_eq!(refusal.kind(), crate::error::ErrorKind::InvalidEditManifest);
+        assert!(
+            vault
+                .blob_artifact_settlement(&artifact, "ask:range")?
+                .is_none()
+        );
+        assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
+    }
     let out = vault.settle_select_edit_proposal(
         &artifact,
         &proposal,
@@ -1476,6 +1598,51 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     assert_eq!(
         err.kind(),
         crate::error::ErrorKind::EditProposalAlreadySettled
+    );
+    let mut stale = proposal.clone();
+    stale.run_ref = "ask:stale".into();
+    let stale_result = vault.settle_select_edit_proposal(
+        &artifact,
+        &stale,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        time,
+        13,
+    )?;
+    assert!(stale_result.stranded_proposal.is_some());
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:stale")?
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:stale")?
+            .unwrap()
+            .outcome,
+        SettleOutcomeKind::Proposed
+    );
+    let mut discarded = proposal;
+    discarded.run_ref = "ask:discard".into();
+    vault.settle_discard_edit_proposal(
+        &artifact,
+        &discarded,
+        &SettleConsent::OwnerConsent { brief_ref: None },
+        actor,
+        "no",
+        14,
+    )?;
+    assert!(
+        vault
+            .sheet_answer_receipts(&artifact, "ask:discard")?
+            .is_empty()
+    );
+    assert_eq!(
+        vault
+            .blob_artifact_settlement(&artifact, "ask:discard")?
+            .unwrap()
+            .outcome,
+        SettleOutcomeKind::Discarded
     );
     Ok(())
 }

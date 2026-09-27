@@ -59,6 +59,7 @@ mod address;
 mod formula;
 mod inspect;
 mod judgment;
+pub(crate) mod judgment_cells;
 mod manifest;
 mod opc;
 mod ops;

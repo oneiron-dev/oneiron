@@ -4,6 +4,7 @@
 //! grants access or sends unit text to a provider. Its only job is to bind
 //! answers to cells on a copy and carry their provenance through Keep.
 
+use super::judgment_cells::verify_sheet_answer_bytes;
 use super::{
     CellRef, CellValue, EditOp, EditOutcome, EditPlan, EditProposal, EditSession, RangeRef,
 };
@@ -113,6 +114,15 @@ impl Vault {
         run_ref: &str,
     ) -> Result<EditOutcome> {
         let ops = bundle.ops()?;
+        let head = self
+            .blob_artifact_head(artifact_id)?
+            .ok_or(Error::EntityNotFound)?;
+        let source = self
+            .read_blob_artifact_version(artifact_id, head.version)?
+            .ok_or(Error::EntityNotFound)?;
+        // Verify the source independently of the edit session, including any
+        // caller-supplied before values, before the agent edits a copy.
+        verify_sheet_answer_bytes(&bundle, Some(&source), None)?;
         let outcome = self.propose_blob_artifact_edit(
             artifact_id,
             session,
@@ -128,6 +138,9 @@ impl Vault {
                         "session applied ops differ from typed answers",
                     )));
                 }
+                // Applied ops are a writer promise; check the actual OPC bytes.
+                // A concurrent head move is handled as stale by ARTL-4.
+                verify_sheet_answer_bytes(&bundle, None, Some(&proposal.new_bytes))?;
                 proposal.sheet_answers = Some(Box::new(bundle));
                 EditOutcome::Proposed(proposal)
             }
