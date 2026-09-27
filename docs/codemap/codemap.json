@@ -20114,7 +20114,7 @@
      "purpose": "Vault-owned description routing above the raw LLM call seam",
      "surface": {
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 11,
       "trait": 1
      }

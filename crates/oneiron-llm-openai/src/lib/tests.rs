@@ -407,6 +407,7 @@ fn routed_seat(effort: oneiron::llm::ReasoningEffort) -> oneiron::llm::routing::
         id: "pinned".into(),
         role: "writer".into(),
         model: ModelId::new("openai/gpt-4.1@2026-07-02").unwrap(),
+        wire: oneiron::llm::registry::ModelWireFormat::OpenaiCompat,
         locality: ModelLocality::ThirdParty,
         effort,
         tier: ModelTierRef("cheap".into()),

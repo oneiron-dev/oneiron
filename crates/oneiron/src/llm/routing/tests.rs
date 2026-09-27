@@ -23,6 +23,7 @@ fn policy() -> DescriptionPolicy {
         models: vec![
             ModelDescription {
                 model: model("test/cheap@r1"),
+                wire: ModelWireFormat::OpenaiCompat,
                 locality: ModelLocality::OnDevice,
                 owner: Some(OwnerModelLine {
                     model: model("test/cheap@r1"),
@@ -35,6 +36,7 @@ fn policy() -> DescriptionPolicy {
             },
             ModelDescription {
                 model: model("test/strong@r1"),
+                wire: ModelWireFormat::OpenaiCompat,
                 locality: ModelLocality::OwnServer,
                 owner: Some(OwnerModelLine {
                     model: model("test/strong@r1"),
@@ -619,6 +621,7 @@ fn verdict_controls_reject_shadowing_provider_options_and_reserved_overrides() {
     assert!(
         apply_controls(
             &mut request,
+            ModelWireFormat::OpenaiCompat,
             ReasoningEffort::Low,
             &BTreeMap::from([("temperature".into(), json!(0.2))])
         )
@@ -635,6 +638,7 @@ fn verdict_controls_reject_shadowing_provider_options_and_reserved_overrides() {
         assert!(
             apply_controls(
                 &mut request,
+                ModelWireFormat::OpenaiCompat,
                 ReasoningEffort::Low,
                 &BTreeMap::from([(reserved.into(), json!("override"))])
             )

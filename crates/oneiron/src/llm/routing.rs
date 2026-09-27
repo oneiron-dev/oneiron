@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::registry::ModelWireFormat;
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -42,6 +43,7 @@ pub struct OwnerModelLine {
 #[serde(deny_unknown_fields)]
 pub struct ModelDescription {
     pub model: ModelId,
+    pub wire: ModelWireFormat,
     pub locality: ModelLocality,
     pub owner: Option<OwnerModelLine>,
     pub public_benchmark: Option<String>,
@@ -162,6 +164,7 @@ pub struct RoutedSeat {
     pub id: String,
     pub role: String,
     pub model: ModelId,
+    pub wire: ModelWireFormat,
     pub locality: ModelLocality,
     pub effort: ReasoningEffort,
     pub tier: ModelTierRef,
@@ -173,7 +176,7 @@ impl RoutedSeat {
     /// Rebind every generative call from the persisted seat. Provider options
     /// that could shadow its effective controls are refused before mutation.
     pub fn bind(&self, request: &mut LlmRequest) -> Result<()> {
-        apply_controls(request, self.effort, &self.inference_overrides)?;
+        apply_controls(request, self.wire, self.effort, &self.inference_overrides)?;
         request.model = self.model.clone();
         request.envelope.locality = self.locality;
         request.envelope.tier.per_seat = Some(self.tier.clone());
@@ -272,6 +275,9 @@ fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result
                     | "tools"
                     | "provider_options"
                     | "output_config"
+                    | "cachedContent"
+                    | "thinkingConfig"
+                    | "thinking_config"
             )
     }) {
         return Err(invalid("invalid routed inference override"));
@@ -284,6 +290,7 @@ fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result
 /// routed inference setting or carry a competing reasoning dial.
 fn apply_controls(
     request: &mut LlmRequest,
+    wire: ModelWireFormat,
     effort: ReasoningEffort,
     overrides: &BTreeMap<String, serde_json::Value>,
 ) -> Result<()> {
@@ -296,28 +303,64 @@ fn apply_controls(
             overrides.contains_key(key)
                 || matches!(
                     key.as_str(),
-                    "reasoning_effort" | "reasoning" | "thinking" | "output_config" | "model"
+                    "reasoning_effort"
+                        | "reasoning"
+                        | "thinking"
+                        | "thinkingConfig"
+                        | "thinking_config"
+                        | "output_config"
+                        | "model"
                 )
         }) {
             return Err(invalid("provider options shadow routed inference controls"));
         }
+    }
+    // The Anthropic adapter merges output_config into its final wire JSON.
+    // Preserve independent format/limits, but never the call's effort.
+    let mut output_config = match request.params.get("output_config") {
+        Some(serde_json::Value::Object(fields)) if wire == ModelWireFormat::AnthropicMessages => {
+            Some(fields.clone())
+        }
+        Some(_) => return Err(invalid("invalid routed output_config")),
+        None => None,
+    };
+    // Gemini has no effort enum mapping without an owner-supplied budget.
+    // Refuse an unsupported non-None setting instead of misreporting it.
+    if effort != ReasoningEffort::None && wire == ModelWireFormat::Gemini {
+        return Err(invalid(
+            "Gemini effort requires an explicit provider policy",
+        ));
     }
     for (key, value) in overrides {
         request.params.insert(key.clone(), value.clone());
     }
     request.params.remove("reasoning");
     request.params.remove("thinking");
+    request.params.remove("thinkingConfig");
+    request.params.remove("thinking_config");
     request.params.remove("reasoning_effort");
-    // None is a seat/receipt choice, not a provider reasoning control. A
-    // non-reasoning catalog model must still pass adapter admission.
+    request.params.remove("output_config");
+    if let Some(fields) = output_config.as_mut() {
+        fields.remove("effort");
+    }
     if effort != ReasoningEffort::None {
+        if wire == ModelWireFormat::AnthropicMessages {
+            output_config
+                .get_or_insert_with(serde_json::Map::new)
+                .insert("effort".into(), serde_json::json!(effort));
+        } else {
+            request
+                .params
+                .insert("reasoning_effort".into(), serde_json::json!(effort));
+        }
+    }
+    if let Some(fields) = output_config.filter(|fields| !fields.is_empty()) {
         request
             .params
-            .insert("reasoning_effort".into(), serde_json::json!(effort));
+            .insert("output_config".into(), serde_json::Value::Object(fields));
     }
     Ok(())
 }
-
 fn effort_for(
     policy: &DescriptionPolicy,
     chosen: &ModelDescription,
@@ -561,6 +604,7 @@ impl Vault {
             id: id.into(),
             role: role.into(),
             model: chosen.model.clone(),
+            wire: chosen.wire,
             locality: chosen.locality,
             effort,
             tier: tier.resolved().clone(),
@@ -610,24 +654,21 @@ impl Vault {
             .transpose()
             .map(Option::unwrap_or_default)
     }
-    /// Each schema verdict is routed independently. Only the current call's
-    /// messages are sent: no cached generative seat prefix is copied or mutated.
-    pub async fn call_routed_verdict(
+    /// Build the one current verdict request before durable hashing. Generative
+    /// history and provider cache references cannot cross this boundary.
+    pub fn routed_verdict_request(
         &self,
         task: &str,
         judge: &dyn DescriptionJudge,
         settings: &SeatSettings,
         mut request: LlmRequest,
         payload: VerdictPayload,
-        execution: VerdictExecution<'_>,
-    ) -> DurableStepResult<StepOutcome> {
+    ) -> Result<LlmRequest> {
         if !matches!(
             request.envelope.response_format,
             ResponseFormat::Json { .. }
         ) {
-            return Err(crate::llm::DurableStepError::Engine(invalid(
-                "schema verdict requires JSON schema",
-            )));
+            return Err(invalid("schema verdict requires JSON schema"));
         }
         let policy = self
             .description_policy()?
@@ -644,8 +685,38 @@ impl Vault {
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;
         request.envelope.tier.per_seat = None;
-        apply_controls(&mut request, effort, &settings.inference_overrides)?;
+        // A Gemini cachedContent ref carries a prior seat's prefix even when
+        // the visible messages are fresh. Remove it before any backend call or
+        // durable step hash. Keep unrelated current-call provider options.
+        request.params.remove("cachedContent");
+        for options in request.provider_options.values_mut() {
+            let fields = options
+                .as_object_mut()
+                .ok_or_else(|| invalid("invalid provider options"))?;
+            fields.remove("cachedContent");
+        }
+        apply_controls(
+            &mut request,
+            chosen.wire,
+            effort,
+            &settings.inference_overrides,
+        )?;
         request.messages = payload.messages()?;
+        Ok(request)
+    }
+
+    /// Route every schema verdict independently without changing a pinned
+    /// generative seat. Native structured output and the step shim stay below.
+    pub async fn call_routed_verdict(
+        &self,
+        task: &str,
+        judge: &dyn DescriptionJudge,
+        settings: &SeatSettings,
+        request: LlmRequest,
+        payload: VerdictPayload,
+        execution: VerdictExecution<'_>,
+    ) -> DurableStepResult<StepOutcome> {
+        let request = self.routed_verdict_request(task, judge, settings, request, payload)?;
         call_as_step(
             execution.context,
             execution.backend,

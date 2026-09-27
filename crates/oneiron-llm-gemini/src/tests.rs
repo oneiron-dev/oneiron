@@ -411,3 +411,143 @@ fn parameterless_gemini_tools_default_only_missing_args() {
         ));
     }
 }
+
+#[test]
+fn routed_gemini_verdict_omits_cached_prefix_in_final_wire() {
+    use oneiron::llm::routing::{
+        DescriptionJudge, DescriptionJudgment, DescriptionPolicy, ModelDescription, OwnerModelLine,
+        SeatSettings, VerdictPayload,
+    };
+    struct Judge;
+    impl DescriptionJudge for Judge {
+        fn judge(
+            &self,
+            _: &str,
+            _: &ModelId,
+            _: &str,
+            _: oneiron::llm::ReasoningEffort,
+        ) -> DescriptionJudgment {
+            DescriptionJudgment {
+                fitness: 1,
+                reason: "fixture".into(),
+            }
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let model = ModelId::new("google/gemini-model@r1").unwrap();
+    vault
+        .set_description_policy(&DescriptionPolicy {
+            models: vec![ModelDescription {
+                model: model.clone(),
+                wire: ModelWireFormat::Gemini,
+                locality: ModelLocality::ThirdParty,
+                owner: Some(OwnerModelLine {
+                    model: model.clone(),
+                    text: "fixture".into(),
+                    expected_quality: 500_000,
+                }),
+                public_benchmark: None,
+                vendor: None,
+                effort_ladder: vec![oneiron::llm::ReasoningEffort::None],
+            }],
+            contradiction_margin_millionths: 100_000,
+            vault_effort: None,
+            purpose_effort: Default::default(),
+            global_effort: None,
+        })
+        .unwrap();
+    let catalog = LlmCatalogEntry {
+        model,
+        display_name: "Gemini".into(),
+        locality: ModelLocality::ThirdParty,
+        context_window_tokens: 8192,
+        max_output_tokens: None,
+        cost: None,
+        capabilities: vec![LlmCapability::JsonResponse],
+        metadata: Default::default(),
+    };
+    let request = LlmRequest {
+        model: ModelId::new("google/old-model@r1").unwrap(),
+        envelope: CallEnvelope {
+            scope: Default::default(),
+            purpose: CallPurpose::AutoCheck,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AutoCheck,
+                ModelTierRef("default".into()),
+            ),
+            response_format: ResponseFormat::Json {
+                schema: json!({"type":"object"}),
+            },
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text {
+                    text: "old seat prefix".into(),
+                }],
+            },
+            LlmMessage {
+                role: LlmMessageRole::User,
+                content: vec![ContentPart::Text {
+                    text: "old user turn".into(),
+                }],
+            },
+        ],
+        tools: vec![],
+        params: std::collections::BTreeMap::from([
+            ("cachedContent".into(), json!("cachedContents/old")),
+            ("thinkingConfig".into(), json!({"thinkingBudget":4096})),
+        ]),
+        provider_options: std::collections::BTreeMap::from([(
+            "gemini".into(),
+            json!({
+                "cachedContent":"cachedContents/seat-prefix", "safetySettings": []
+            }),
+        )]),
+    };
+    let routed = vault
+        .routed_verdict_request(
+            "schema check",
+            &Judge,
+            &SeatSettings::default(),
+            request,
+            VerdictPayload {
+                instructions: Some("current instructions".into()),
+                input: vec![ContentPart::Text {
+                    text: "current verdict".into(),
+                }],
+            },
+        )
+        .unwrap();
+    let wire = super::wire::build_request(&catalog, &routed, false).unwrap();
+    assert!(wire.body.get("cachedContent").is_none());
+    assert!(wire.body["generationConfig"].get("cachedContent").is_none());
+    assert!(
+        wire.body["generationConfig"]
+            .get("thinkingConfig")
+            .is_none()
+    );
+    assert_eq!(wire.body["safetySettings"], json!([]));
+    assert_eq!(
+        wire.body["systemInstruction"]["parts"][0]["text"],
+        json!("current instructions")
+    );
+    assert_eq!(
+        wire.body["contents"][0]["parts"][0]["text"],
+        json!("current verdict")
+    );
+    assert_eq!(
+        wire.body["generationConfig"]["responseMimeType"],
+        json!("application/json")
+    );
+    assert_eq!(
+        wire.body["generationConfig"]["responseJsonSchema"],
+        json!({"type":"object"})
+    );
+    assert!(!wire.body.to_string().contains("old seat prefix"));
+    assert!(!wire.body.to_string().contains("old user turn"));
+    assert!(!wire.body.to_string().contains("cachedContents/seat-prefix"));
+}

@@ -408,3 +408,161 @@ fn tool_json_is_validated_at_block_stop_and_cancel_discards_incomplete_input() {
         );
     }
 }
+
+fn routed_anthropic_seat(
+    effort: oneiron::llm::ReasoningEffort,
+) -> oneiron::llm::routing::RoutedSeat {
+    oneiron::llm::routing::RoutedSeat {
+        id: "anthropic-seat".into(),
+        role: "writer".into(),
+        model: ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap(),
+        wire: oneiron::llm::registry::ModelWireFormat::AnthropicMessages,
+        locality: ModelLocality::ThirdParty,
+        effort,
+        tier: ModelTierRef("configured".into()),
+        inference_overrides: BTreeMap::new(),
+        receipt: "anthropic fixture".into(),
+    }
+}
+
+#[test]
+fn routed_anthropic_seat_replaces_native_effort_in_final_wire() {
+    for effort in [
+        oneiron::llm::ReasoningEffort::None,
+        oneiron::llm::ReasoningEffort::Low,
+    ] {
+        let config = AnthropicMessagesConfig::new(catalog_with([
+            LlmCapability::JsonResponse,
+            LlmCapability::Reasoning,
+        ]));
+        let mut request = sample_request();
+        request.envelope.response_format = ResponseFormat::Text;
+        request.params.insert(
+            "output_config".into(),
+            json!({"effort":"high","max_tokens":17}),
+        );
+        routed_anthropic_seat(effort).bind(&mut request).unwrap();
+        let wire = build_anthropic_messages_request(&config, &request, false).unwrap();
+        assert_eq!(wire.body["output_config"]["max_tokens"], json!(17));
+        assert!(wire.body.get("reasoning_effort").is_none());
+        if effort == oneiron::llm::ReasoningEffort::None {
+            assert!(wire.body["output_config"].get("effort").is_none());
+        } else {
+            assert_eq!(wire.body["output_config"]["effort"], json!("low"));
+        }
+    }
+}
+
+#[test]
+fn routed_anthropic_verdict_projects_native_effort_and_retains_schema() {
+    use oneiron::llm::routing::{
+        DescriptionJudge, DescriptionJudgment, DescriptionPolicy, ModelDescription, OwnerModelLine,
+        SeatSettings, VerdictPayload,
+    };
+    struct Judge;
+    impl DescriptionJudge for Judge {
+        fn judge(
+            &self,
+            _: &str,
+            _: &ModelId,
+            _: &str,
+            _: oneiron::llm::ReasoningEffort,
+        ) -> DescriptionJudgment {
+            DescriptionJudgment {
+                fitness: 1,
+                reason: "fixture".into(),
+            }
+        }
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "oneiron-2621-anthropic-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let vault = oneiron::Vault::open(&dir, oneiron::VaultConfig::device()).unwrap();
+    let model = ModelId::new("anthropic/claude-sonnet@2026-07-02").unwrap();
+    vault
+        .set_description_policy(&DescriptionPolicy {
+            models: vec![ModelDescription {
+                model: model.clone(),
+                wire: oneiron::llm::registry::ModelWireFormat::AnthropicMessages,
+                locality: ModelLocality::ThirdParty,
+                owner: Some(OwnerModelLine {
+                    model,
+                    text: "fixture".into(),
+                    expected_quality: 500_000,
+                }),
+                public_benchmark: None,
+                vendor: None,
+                effort_ladder: vec![
+                    oneiron::llm::ReasoningEffort::None,
+                    oneiron::llm::ReasoningEffort::Low,
+                ],
+            }],
+            contradiction_margin_millionths: 100_000,
+            vault_effort: None,
+            purpose_effort: BTreeMap::new(),
+            global_effort: None,
+        })
+        .unwrap();
+    let config = AnthropicMessagesConfig::new(catalog_with([
+        LlmCapability::JsonResponse,
+        LlmCapability::Reasoning,
+    ]));
+    for effort in [
+        oneiron::llm::ReasoningEffort::None,
+        oneiron::llm::ReasoningEffort::Low,
+    ] {
+        let mut request = sample_request();
+        request.params.insert(
+            "output_config".into(),
+            json!({"effort":"high","max_tokens":17}),
+        );
+        request.messages.push(LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: "old user turn".into(),
+            }],
+        });
+        let routed = vault
+            .routed_verdict_request(
+                "schema check",
+                &Judge,
+                &SeatSettings {
+                    allowed_models: None,
+                    effort: Some(effort),
+                    inference_overrides: BTreeMap::new(),
+                },
+                request,
+                VerdictPayload {
+                    instructions: Some("current verdict instructions".into()),
+                    input: vec![ContentPart::Text {
+                        text: "current verdict input".into(),
+                    }],
+                },
+            )
+            .unwrap();
+        let wire = build_anthropic_messages_request(&config, &routed, false).unwrap();
+        assert_eq!(wire.body["system"], json!("current verdict instructions"));
+        assert_eq!(
+            wire.body["messages"][0]["content"][0]["text"],
+            json!("current verdict input")
+        );
+        assert_eq!(wire.body["output_config"]["max_tokens"], json!(17));
+        assert_eq!(
+            wire.body["output_config"]["format"]["type"],
+            json!("json_schema")
+        );
+        assert!(wire.body.get("reasoning_effort").is_none());
+        if effort == oneiron::llm::ReasoningEffort::None {
+            assert!(wire.body["output_config"].get("effort").is_none());
+        } else {
+            assert_eq!(wire.body["output_config"]["effort"], json!("low"));
+        }
+    }
+    drop(vault);
+    std::fs::remove_dir_all(dir).unwrap();
+}
