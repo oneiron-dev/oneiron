@@ -112,7 +112,8 @@ mod tests;
 mod project;
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange,
+    PROJECT_TYPE_BYTE, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt, ProjectRecord,
+    ProjectRole, ProjectRoom, ProjectRoomChange,
 };
 pub(crate) use project::{
     GoalLimits, HUB_BELONGS_TO_LAMBDA, deindex_project_room, guard_goal_claim_put,

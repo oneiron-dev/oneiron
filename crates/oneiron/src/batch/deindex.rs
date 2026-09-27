@@ -151,6 +151,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     store.clear_pending_embedding(wtxn, id)?;
     had_vector |= store.vectors.delete(wtxn, id.as_bytes())?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
+    crate::conversation_dag::invalidate_thread_meta_for_turn_put(store, wtxn, *id)?;
     let related_neighbors = delete_related_edges(store, wtxn, id)?;
     had_graph_mutation |= !related_neighbors.is_empty();
     neighbors.extend(related_neighbors);

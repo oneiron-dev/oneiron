@@ -254,7 +254,7 @@ impl Vault {
     }
 
     /// Read the project's current goal, never the leader's instructions.
-    pub fn project_goal_record(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
+    pub fn project_intake_goal(&self, project_id: EntityId) -> Result<Option<GoalRecord>> {
         let txn = self.store.env.read_txn()?;
         let Some(project): Option<ProjectRecord> =
             super::record(&self.store, &txn, project_id, self.project_type_byte()?)?

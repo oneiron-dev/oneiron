@@ -135,7 +135,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
         Some(initial),
         7,
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
 
     // First human answer omits required axes: even a confirmation cannot
     // turn an incomplete witnessed answer into an admitted goal.
@@ -187,7 +187,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
             )
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
 
     let expected = crate::workspace_roster::project::goal::tests::transcript_record();
     let answer_json = serde_json::to_string(&expected).unwrap();
@@ -216,7 +216,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
             )
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     assert!(
         agent_memory
             .rooms_messages(room)
@@ -234,7 +234,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
         Some(answer),
         16,
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     assert!(
         vault
             .write_project_goal_from_room_intake(
@@ -251,7 +251,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
             )
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     let confirmation = speak(
         &vault,
         room,
@@ -286,7 +286,7 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
             )
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     let id = vault.write_project_goal_from_room_intake(
         &owner,
         project,
@@ -387,10 +387,10 @@ fn loaded_skill_agent_asks_and_witnessed_human_confirmation_commits_goal() -> Re
             .write_project_goal_from_room_intake(&owner, project, attempt, first, 28)
             .is_err()
     );
-    assert_eq!(vault.project_goal_record(project)?, Some(next.clone()));
+    assert_eq!(vault.project_intake_goal(project)?, Some(next.clone()));
     assert_eq!(vault.project(project)?.unwrap().goal, Some(second.to_hex()));
     drop(vault);
     let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(reopened.project_goal_record(project)?, Some(next));
+    assert_eq!(reopened.project_intake_goal(project)?, Some(next));
     Ok(())
 }

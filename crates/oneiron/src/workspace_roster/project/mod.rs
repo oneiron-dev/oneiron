@@ -3,6 +3,8 @@
 mod deletion;
 mod edges;
 mod goal;
+mod mint;
+pub use mint::{ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt};
 mod projection;
 pub(crate) use deletion::deindex_project_room;
 pub(crate) use edges::{
@@ -60,7 +62,15 @@ pub struct ProjectRecord {
     pub branches: Vec<String>,
     pub skill_forks: Vec<String>,
     pub goal: Option<String>,
+    #[serde(default)]
+    pub goal_record: Option<ProjectGoalRecord>,
+    #[serde(default)]
+    pub why: Option<String>,
+    #[serde(default)]
+    pub born_from: Option<String>,
     pub budget: Option<String>,
+    #[serde(default)]
+    pub budget_share: Option<ProjectBudgetShare>,
     pub asks: Vec<String>,
     pub home_room: String,
 }
@@ -84,7 +94,11 @@ impl ProjectRecord {
             branches: vec![],
             skill_forks: vec![],
             goal: None,
+            goal_record: None,
+            why: None,
+            born_from: None,
             budget: None,
+            budget_share: None,
             asks: vec![],
             home_room: home_room_id(id).to_hex(),
         }

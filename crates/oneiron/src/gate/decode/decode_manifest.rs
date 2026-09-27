@@ -4,6 +4,7 @@ use std::io::Cursor;
 
 use rmpv::Value;
 
+use crate::gate::PackInstallPolicy;
 use crate::gate::ceiling::{
     ActorCeiling, DelegationGrantRecord, PolicyOwnerPatternRow, PolicyOwnerPolicyRow, PolicyPack,
     PolicySignature, SourceTrustCeiling,
@@ -17,9 +18,12 @@ use crate::gate::constants::{
     POLICY_OWNER_POLICY_PATTERNS_KEY, POLICY_OWNER_POLICY_ROWS_KEY, POLICY_PACK_ID_KEY,
     POLICY_PACK_VERSION_KEY, POLICY_RULES_KEY, POLICY_SCHEMA_VERSION, POLICY_SCHEMA_VERSION_KEY,
     POLICY_SCOPED_GRANTS_KEY, POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
+    POLICY_WEAVE_CORRECTION_POLICY_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
 use crate::gate::hosted_tts_policy::HostedTtsPolicy;
+use crate::gate::pack_install_policy::KEY as PACK_INSTALL_POLICY_KEY;
+
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
@@ -57,10 +61,13 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     /// names one.
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
+    pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
+
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) goal_limits: Option<crate::workspace_roster::GoalLimits>,
+    pub(in crate::gate) weave_correction_policy: Option<crate::gate::WeaveCorrectionPolicy>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -104,10 +111,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_COMM_OPT_OUT_POSTURE_KEY
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
+                | PACK_INSTALL_POLICY_KEY
                 | POLICY_HOSTED_TTS_KEY
+
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
                 | "goal_limits"
+                | POLICY_WEAVE_CORRECTION_POLICY_KEY
         ) {
             return None;
         }
@@ -224,6 +234,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(nonblank_bounded_string(value, AUTO_CHECKER_REF_MAX_LEN)?),
     };
+    let pack_install_policy = match single_map_value(&entries, PACK_INSTALL_POLICY_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(PackInstallPolicy::decode(value.clone())?),
+    };
     let budget_policy = match single_map_value(&entries, POLICY_BUDGET_POLICY_KEY) {
         MapValue::Missing => BudgetPolicyTable::default(),
         MapValue::Duplicate => return None,
@@ -253,6 +268,12 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::workspace_roster::GoalLimits::decode(value)?),
     };
+    let weave_correction_policy =
+        match single_map_value(&entries, POLICY_WEAVE_CORRECTION_POLICY_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => Some(crate::gate::WeaveCorrectionPolicy::parse(value)?),
+        };
 
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
@@ -282,10 +303,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         comm_opt_out_posture,
         auto_checker,
         budget_policy,
+        pack_install_policy,
         hosted_tts,
+
         diagnostic_bounds,
         proposal_check_threshold,
         goal_limits,
+        weave_correction_policy,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

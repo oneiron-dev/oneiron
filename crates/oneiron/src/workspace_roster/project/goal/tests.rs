@@ -66,13 +66,13 @@ fn scripted_human_interview_commits_valid_typed_goal_and_revisions() -> Result<(
         crate::store::GateDecisionId::now(),
     )?;
     let record = transcript_record();
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     let id = vault.write_project_goal_from_intake(&owner, project, &record, 2)?;
     assert_eq!(
         vault.project(project)?.unwrap().goal.as_deref(),
         Some(id.to_hex().as_str())
     );
-    assert_eq!(vault.project_goal_record(project)?, Some(record.clone()));
+    assert_eq!(vault.project_intake_goal(project)?, Some(record.clone()));
     let mut revision = record;
     revision.primary_axes[0].bound = ">= 95".into();
     let new_id = vault.write_project_goal_from_intake(&owner, project, &revision, 3)?;
@@ -81,10 +81,10 @@ fn scripted_human_interview_commits_valid_typed_goal_and_revisions() -> Result<(
         vault.get_claim(&id)?.unwrap().lifecycle,
         ClaimLifecycleStatus::Superseded
     );
-    assert_eq!(vault.project_goal_record(project)?, Some(revision.clone()));
+    assert_eq!(vault.project_intake_goal(project)?, Some(revision.clone()));
     drop(vault);
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
-    assert_eq!(vault.project_goal_record(project)?, Some(revision));
+    assert_eq!(vault.project_intake_goal(project)?, Some(revision));
     Ok(())
 }
 
@@ -149,7 +149,7 @@ fn incomplete_answers_and_unauthenticated_agent_cannot_commit_goal() -> Result<(
             .write_project_goal_from_intake(&owner, project, &draft, 2)
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     // A loop can propose a replacement, but its ordinary generated claim
     // cannot impersonate a confirmed interview through the normal claim gate.
     let leader = EntityId::from_hex(&agent)?;
@@ -179,7 +179,7 @@ fn incomplete_answers_and_unauthenticated_agent_cannot_commit_goal() -> Result<(
             .is_err()
     );
     assert!(vault.get_claim(&candidate_id)?.is_none());
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
     Ok(())
 }
 
@@ -252,7 +252,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
             .commit()
             .is_err()
     );
-    assert!(vault.project_goal_record(project)?.is_none());
+    assert!(vault.project_intake_goal(project)?.is_none());
 
     let owner = vault.authenticate_owner(
         human,
@@ -323,7 +323,7 @@ fn forged_human_claim_and_generic_or_replicated_project_changes_are_refused() ->
         Some(admitted.to_hex())
     );
     assert_eq!(
-        vault.project_goal_record(project)?,
+        vault.project_intake_goal(project)?,
         Some(transcript_record())
     );
     Ok(())
@@ -463,7 +463,7 @@ fn goal_limits_are_policy_rows_and_narrow_only_at_admission() -> Result<()> {
         1
     );
     // A narrowed rule cannot unwrite a historically admitted goal.
-    assert_eq!(vault.project_goal_record(project)?, Some(record.clone()));
+    assert_eq!(vault.project_intake_goal(project)?, Some(record.clone()));
     let mut too_many = record.clone();
     too_many.preferences.push(GoalPreference {
         prefer: "speed".into(),
@@ -475,7 +475,7 @@ fn goal_limits_are_policy_rows_and_narrow_only_at_admission() -> Result<()> {
             .write_project_goal_from_intake(&owner, project, &too_many, 3)
             .is_err()
     );
-    assert_eq!(vault.project_goal_record(project)?, Some(record));
+    assert_eq!(vault.project_intake_goal(project)?, Some(record));
     Ok(())
 }
 
@@ -524,7 +524,7 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
                 .delete_entity_with_reason(&current, crate::DeleteReason::UserHardDelete)
                 .is_err()
         );
-        assert_eq!(vault.project_goal_record(project)?, Some(revised));
+        assert_eq!(vault.project_intake_goal(project)?, Some(revised));
         let result = vault
             .memory(human, EdgeActorClass::Human)
             .safe_delete(
@@ -546,7 +546,7 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
                 crate::batch::ENTITY_METADATA_HEADER_LEN
             );
         }
-        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project_intake_goal(project)?.is_none());
         assert!(vault.project(project)?.unwrap().goal.is_none());
         let mut edited = vault.project(project)?.unwrap();
         edited.budget = Some(EntityId::now().to_hex());
@@ -556,10 +556,10 @@ fn goal_owner_delete_uses_soft_and_hard_rails_without_stranding_project() -> Res
             .memory(human, EdgeActorClass::Human)
             .safe_delete(&first.to_hex(), SafeDeleteReason::UserDelete)
             .map_err(|_| invalid())?;
-        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project_intake_goal(project)?.is_none());
         drop(vault);
         let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
-        assert!(reopened.project_goal_record(project)?.is_none());
+        assert!(reopened.project_intake_goal(project)?.is_none());
     }
     Ok(())
 }
@@ -596,10 +596,10 @@ fn replayed_goal_tombstone_retains_no_dangling_pointer() -> Result<()> {
         }
         .encode();
         vault.apply_replayed_tombstone(&goal, &tombstone)?;
-        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project_intake_goal(project)?.is_none());
         assert!(vault.project(project)?.unwrap().goal.is_none());
         vault.apply_replayed_tombstone(&goal, &tombstone)?;
-        assert!(vault.project_goal_record(project)?.is_none());
+        assert!(vault.project_intake_goal(project)?.is_none());
     }
     Ok(())
 }
@@ -647,11 +647,11 @@ fn receiving_vault_keeps_unverified_goal_out_of_authority() -> Result<()> {
     assert!(receiver.get_claim(&goal)?.is_none());
     assert!(
         receiver
-            .project_goal_record(receiver.root_project()?)?
+            .project_intake_goal(receiver.root_project()?)?
             .is_none()
     );
     assert_eq!(
-        origin.project_goal_record(project)?,
+        origin.project_intake_goal(project)?,
         Some(transcript_record())
     );
     Ok(())

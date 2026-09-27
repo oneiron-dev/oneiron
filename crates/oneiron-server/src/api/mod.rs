@@ -205,6 +205,10 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/conversations/{conversation_id}/records/{record}/thread",
             post(reply_in_thread),
         )
+        .route(
+            "/conversations/{conversation_id}/records/{record}/thread/summary",
+            post(summarize_thread),
+        )
         .route("/sessions/{id}", axum::routing::patch(sessions::mode))
         .route("/sessions/{id}/presence", post(sessions::presence))
         .route(
@@ -313,6 +317,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             idempotency_middleware,
         ));
     let companion_routes = Router::new()
+        .route("/personas", get(list_personas))
+        .route("/personas/access-requests", get(list_access_requests))
         .route(
             "/profiles/{persona_ref}",
             get(get_companion_profile).post(refresh_companion_profile),

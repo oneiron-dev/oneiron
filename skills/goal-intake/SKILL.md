@@ -54,7 +54,7 @@ confirmation). The engine reads those stored turns, checks the skill load,
 answer, draft and confirmation, and writes the typed record. The host must not
 infer authentication from transcript text. Do not use `put_project`, a raw
 claim or a generic batch to write the goal.
-On success, read `Vault::project_goal_record(project_id)` and return the goal
+On success, read `Vault::project_intake_goal(project_id)` and return the goal
 claim ID, project ID, confirmed fields and next useful task. Make a separate
 bounded task brief with acceptance, constraints, responsible person, evidence
 references, dependencies and open questions through the normal task door.
