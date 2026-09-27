@@ -138,7 +138,6 @@ pub(super) fn validate_workspace_references(
         minted.extend([
             (companion.person_ref, ENTITY_TYPE_PERSON),
             (companion.actor_ref, ENTITY_TYPE_AGENT_DEF),
-            (companion.companion_record_ref, ENTITY_TYPE_FACET),
             (
                 companion.profile_grant_ref,
                 crate::registry::ENTITY_TYPE_ACCESS_GRANT,
@@ -264,7 +263,7 @@ pub(super) fn grant_member_bundle(
 
 /// Step 4: a companion is a full someone, not a mode of the member.
 ///
-/// PERSON, substrate, actor, anchor, work facet, register record, and exactly
+/// PERSON, substrate, actor, anchor, work facet, and exactly
 /// the one companion-profile read grant the intent named — nothing wider.
 pub(super) fn birth_companion(
     vault: &Vault,
@@ -300,7 +299,7 @@ pub(super) fn birth_companion(
         companion.work_facet_ref,
         writer,
     )?;
-    ensure_companion_record(vault, intent, companion, writer)?;
+    ensure_persona_baseline(vault, intent, companion, writer)?;
     ensure_companion_profile_grant(vault, intent, companion, writer)
 }
 
@@ -599,74 +598,21 @@ pub(super) fn ensure_work_facet_edge(
     })
 }
 
-/// Writes the companion-register persona record if it is absent.
-pub(super) fn ensure_companion_record(
+/// Seeds persona identity on PERSON in the same authorized write transaction.
+pub(super) fn ensure_persona_baseline(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     companion: &CompanionBirthIntent,
     writer: &WriteActor,
 ) -> Result<()> {
-    let provenance = CompanionProvenance::new(
-        writer.entity_ref(),
-        writer.actor_class(),
-        ClaimSource::Observed,
-        ClaimApprovalStatus::Auto,
-        Value::Map(vec![
-            (
-                Value::from("workspace_ref"),
-                Value::from(intent.workspace.workspace_ref.as_str()),
-            ),
-            (
-                Value::from("onboarding_id"),
-                Value::from(intent.onboarding_id.as_str()),
-            ),
-        ]),
-    );
-    let record = CompanionRecord::persona(
-        CompanionScope::personal(intent.person_ref),
-        companion.person_ref,
-        Value::Map(vec![
-            (
-                Value::from("schema_version"),
-                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
-            ),
-            (
-                Value::from("display_name"),
-                Value::from(companion.display_name.as_str()),
-            ),
-            (
-                Value::from("work_facet_ref"),
-                Value::from(companion.work_facet_ref.to_hex()),
-            ),
-        ]),
-        provenance,
-        crate::federation::Sensitivity::Restricted,
-    );
+    let baseline = serde_json::json!({
+        "display_name": companion.display_name,
+    });
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
-        if let Some(raw) = vault
-            .store
-            .port_entity_record(txn, &companion.companion_record_ref)?
-        {
-            if raw.entity_type != ENTITY_TYPE_FACET {
-                return Err(Error::InvalidEntityType(raw.entity_type));
-            }
-            let existing = crate::companion::decode_companion_record_body(&raw.body)?;
-            if existing.scope != record.scope
-                || existing.subject != record.subject
-                || existing.value != record.value
-                || existing.lifecycle != record.lifecycle
-                || existing.sensitivity != record.sensitivity
-            {
-                return Err(invalid(
-                    "companion_record_ref is already bound to a different companion",
-                ));
-            }
-            return Ok(());
-        }
-        vault.create_companion_record_in_txn(
+        vault.ensure_persona_baseline_in_txn(
             txn,
-            &companion.companion_record_ref,
-            &record,
+            &companion.person_ref,
+            &baseline,
             intent.occurred_at,
         )
     })

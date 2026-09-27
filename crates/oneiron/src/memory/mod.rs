@@ -97,9 +97,8 @@ pub use recall::{
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub use structural::{
-    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CompanionRecordInput,
-    EntityRefReceipt, EntityView, HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput,
-    TextIndexField,
+    AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, EntityRefReceipt, EntityView,
+    HabitCheckinInput, StructuralEdgeSpec, StructuralPutInput, TextIndexField,
 };
 pub use support::{Memory, parse_actor_key, resolve_entity_ref};
 pub(crate) use witness::MessageStreamRuntime;

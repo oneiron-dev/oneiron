@@ -856,7 +856,15 @@ pub(super) fn seed_disclosure_scope(
     contact_id: oneiron::EntityId,
     entities: Vec<oneiron::EntityId>,
 ) {
-    let scope = oneiron::disclosure::DisclosureScope::task_scoped("party planning", entities, 100)
+    // The current Scope clearance has no per-entity allowlist. Preserve the
+    // empty/non-empty fixture boundary; entity-specific expectations belong to
+    // the disclosure tests' separate migration to scope-axis fixtures.
+    let clearance = if entities.is_empty() {
+        oneiron::federation::Scope::default()
+    } else {
+        oneiron::federation::Scope::top()
+    };
+    let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
         .vault
