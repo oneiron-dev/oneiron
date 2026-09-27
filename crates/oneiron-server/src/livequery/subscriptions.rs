@@ -126,8 +126,65 @@ struct Subscription {
     budget: Reservation,
     ring: VecDeque<Push>,
     bytes: usize,
+    /// Cursors already issued whose payloads were coalesced away. Bodies
+    /// never live here, but a delayed cumulative ACK still names a real push.
+    coalesced: VecDeque<Cursor>,
+    coalesced_bytes: usize,
     acked: Option<Cursor>,
     needs_resync: bool,
+}
+
+impl Subscription {
+    /// Retire owner-feed payloads without retiring the exact cursors that
+    /// named them. Capacity/budget overflow becomes an explicit gap, never a
+    /// silent loss of ACK eligibility.
+    fn coalesce_owner_ring(&mut self) -> Result<bool, AppError> {
+        let mut added = Vec::new();
+        let mut added_bytes = 0usize;
+        for push in &self.ring {
+            let cursor = &push.cursor;
+            if self.acked.as_ref() == Some(cursor)
+                || self.coalesced.back() == Some(cursor)
+                || added.last() == Some(cursor)
+            {
+                continue;
+            }
+            added_bytes = added_bytes.saturating_add(cursor_size(cursor)?);
+            added.push(cursor.clone());
+        }
+        let total = self.coalesced_bytes.saturating_add(added_bytes);
+        if self.coalesced.len().saturating_add(added.len()) > LIVEQUERY_RING_CAPACITY
+            || total > MAX_RING_BYTES
+            || self
+                .budget
+                .resize(self.metadata_bytes + total.max(4096))
+                .is_err()
+        {
+            self.coalesced.clear();
+            self.coalesced_bytes = 0;
+            self.ring.clear();
+            self.bytes = 0;
+            return Ok(false);
+        }
+        self.coalesced.extend(added);
+        self.coalesced_bytes = total;
+        self.ring.clear();
+        self.bytes = 0;
+        Ok(true)
+    }
+
+    fn recalculate_coalesced_bytes(&mut self) -> Result<(), AppError> {
+        self.coalesced_bytes = self.coalesced.iter().try_fold(0usize, |total, cursor| {
+            Ok::<usize, AppError>(total.saturating_add(cursor_size(cursor)?))
+        })?;
+        Ok(())
+    }
+}
+
+fn cursor_size(cursor: &Cursor) -> Result<usize, AppError> {
+    serde_json::to_vec(cursor)
+        .map(|bytes| bytes.len())
+        .map_err(|_| state_error())
 }
 
 /// Owned by one bound logical session; keep this owner across socket
@@ -376,6 +433,8 @@ impl LiveQueries {
                         budget,
                         ring: replay.iter().cloned().collect(),
                         bytes,
+                        coalesced: VecDeque::new(),
+                        coalesced_bytes: 0,
                         acked: Some(cursor.clone()),
                         needs_resync: false,
                     },
@@ -437,6 +496,8 @@ impl LiveQueries {
                 budget,
                 ring: pushes.iter().cloned().collect(),
                 bytes,
+                coalesced: VecDeque::new(),
+                coalesced_bytes: 0,
                 acked: None,
                 needs_resync: false,
             },
@@ -456,15 +517,28 @@ impl LiveQueries {
         if sub.acked.as_ref() == Some(cursor) {
             return Ok(());
         }
+        if let Some(position) = sub.coalesced.iter().position(|issued| issued == cursor) {
+            // The old body is gone, but this exact cursor was issued. ACK it
+            // cumulatively without consuming the newer pending ring payload.
+            sub.coalesced.drain(..=position);
+            sub.recalculate_coalesced_bytes()?;
+            sub.budget
+                .resize(sub.metadata_bytes + (sub.bytes + sub.coalesced_bytes).max(4096))?;
+            sub.acked = Some(cursor.clone());
+            return Ok(());
+        }
         let position = sub
             .ring
             .iter()
             .rposition(|p| &p.cursor == cursor)
             .ok_or_else(|| AppError::bad_request("unknown ack cursor", Some("cursor")))?;
         sub.ring.drain(..=position);
+        // ACK of a newer ring cursor also consumes earlier coalesced cursors.
+        sub.coalesced.retain(|issued| issued.batch > cursor.batch);
+        sub.recalculate_coalesced_bytes()?;
         sub.bytes = push_bytes(sub.ring.make_contiguous())?;
         sub.budget
-            .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
+            .resize(sub.metadata_bytes + (sub.bytes + sub.coalesced_bytes).max(4096))?;
         sub.acked = Some(cursor.clone());
         Ok(())
     }
@@ -514,18 +588,21 @@ impl LiveQueries {
                 // drops old bodies after either a local edit OR a policy
                 // narrowing, then emits only the newly authorized value.
                 // Neither transition requires the client to resubscribe.
-                if bytes <= MAX_RING_BYTES
+                let retained = sub.coalesce_owner_ring()?;
+                if retained
+                    && bytes.saturating_add(sub.coalesced_bytes) <= MAX_RING_BYTES
                     && sub
                         .budget
-                        .resize(sub.metadata_bytes + bytes.max(4096))
+                        .resize(sub.metadata_bytes + (bytes + sub.coalesced_bytes).max(4096))
                         .is_ok()
                 {
-                    sub.ring.clear();
                     sub.ring.push_back(push);
                     sub.bytes = bytes;
                 } else {
-                    // Only a true payload/budget overflow needs a gap.
+                    // Only a true payload/cursor/budget overflow needs a gap.
                     sub.ring.clear();
+                    sub.coalesced.clear();
+                    sub.coalesced_bytes = 0;
                     sub.ring.push_back(Push {
                         subscription_id: id,
                         cursor,
@@ -628,20 +705,30 @@ impl LiveQueries {
             self.source
                 .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
             let bytes = push_bytes(std::slice::from_ref(&push))?;
-            if sub.channel == Channel::OwnerFeed {
-                // Keep only the newest authorized owner projection. Older
-                // snapshots are not safe to ship after an authority change.
-                sub.ring.clear();
-                sub.bytes = 0;
-            }
-            if sub.ring.len() >= LIVEQUERY_RING_CAPACITY
-                || sub.bytes.saturating_add(bytes) > MAX_RING_BYTES
+            let retained = if sub.channel == Channel::OwnerFeed {
+                // Retire the old body, not its issued cursor. A delayed ACK
+                // remains valid until an explicit bounded-retention gap.
+                sub.coalesce_owner_ring()?
+            } else {
+                true
+            };
+            if !retained
+                || sub.ring.len() >= LIVEQUERY_RING_CAPACITY
+                || sub
+                    .bytes
+                    .saturating_add(bytes)
+                    .saturating_add(sub.coalesced_bytes)
+                    > MAX_RING_BYTES
                 || sub
                     .budget
-                    .resize(sub.metadata_bytes + (sub.bytes + bytes).max(4096))
+                    .resize(
+                        sub.metadata_bytes + (sub.bytes + bytes + sub.coalesced_bytes).max(4096),
+                    )
                     .is_err()
             {
                 sub.ring.clear();
+                sub.coalesced.clear();
+                sub.coalesced_bytes = 0;
                 let gap = Push {
                     subscription_id: id,
                     cursor,
@@ -733,6 +820,8 @@ impl LiveQueries {
                     .or_else(|| sub.acked.clone())
                 {
                     sub.ring.clear();
+                    sub.coalesced.clear();
+                    sub.coalesced_bytes = 0;
                     sub.ring.push_back(Push {
                         subscription_id: *id,
                         cursor,

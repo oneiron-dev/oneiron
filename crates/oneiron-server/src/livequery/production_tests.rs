@@ -1065,6 +1065,52 @@ async fn owner_feed_socket_delivers_two_local_changes_without_reopen_or_poll() {
         "Second name"
     );
 
+    // C1's body was coalesced away by C2, but its delayed ACK is still
+    // valid and must not consume C2. Replay after transport lag is the
+    // observable proof that C2 remains pending.
+    let c1: Cursor = serde_json::from_value(first["cursor"].clone()).unwrap();
+    let c2: Cursor = serde_json::from_value(second["cursor"].clone()).unwrap();
+    assert!(
+        socket
+            .control(
+                &owner,
+                SubRequest::Ack {
+                    subscription_id: 9,
+                    cursor: c1,
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    socket.replay_after_lag();
+    let pending = test_wire::reply(&socket.delivery().unwrap());
+    assert_eq!(pending["cursor"], second["cursor"]);
+    assert_eq!(pending["result"], second["result"]);
+    assert!(
+        socket
+            .control(
+                &owner,
+                SubRequest::Ack {
+                    subscription_id: 9,
+                    cursor: c2.clone(),
+                }
+            )
+            .unwrap()
+            .is_empty()
+    );
+    let mut invented = c2;
+    invented.batch += 1_000;
+    let refused = socket
+        .control(
+            &owner,
+            SubRequest::Ack {
+                subscription_id: 9,
+                cursor: invented,
+            },
+        )
+        .unwrap();
+    assert_eq!(test_wire::reply(&refused)["error"]["code"], "BAD_REQUEST");
+
     let next = EntityId::now();
     changed.value = rmpv::Value::from("Third name");
     server

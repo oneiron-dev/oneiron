@@ -541,3 +541,36 @@ fn owner_feed_poll_never_rederives_unrelated_subscriptions() {
             .all(|push| push.subscription_id != 1)
     );
 }
+
+#[test]
+fn owner_feed_poll_keeps_delayed_ack_after_body_coalescing() {
+    let source = Arc::new(Source::default());
+    let tier = LiveQueries::new(1, source.clone());
+    let initial = tier
+        .open(4, ScopedView::default(), Channel::OwnerFeed, None, None)
+        .unwrap();
+    tier.ack(4, &initial.last().unwrap().cursor).unwrap();
+    source.write("base", 1);
+    tier.owner_feed_poll_now();
+    tier.refresh().unwrap();
+    let c1 = tier.buffered().unwrap().last().unwrap().cursor.clone();
+    source.write("base", 2);
+    tier.owner_feed_poll_now();
+    tier.refresh().unwrap();
+    let pending = tier.buffered().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].result, Some(json!(2)));
+    let c2 = pending[0].cursor.clone();
+    tier.ack(4, &c1).expect("issued C1 remains ACKable");
+    let pending = tier.buffered().unwrap();
+    assert_eq!(pending.len(), 1, "ACK C1 cannot discard C2");
+    assert_eq!(pending[0].cursor, c2);
+    tier.ack(4, &c2).expect("latest C2 ACK");
+    assert!(tier.buffered().unwrap().is_empty());
+    let mut invented = c2;
+    invented.batch += 1_000;
+    assert_eq!(
+        serde_json::to_value(tier.ack(4, &invented).unwrap_err()).unwrap()["code"],
+        "BAD_REQUEST"
+    );
+}
