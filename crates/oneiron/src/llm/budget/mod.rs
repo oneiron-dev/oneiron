@@ -47,5 +47,5 @@ use crate::write_envelope::WriteActor;
 
 pub use rsi::{
     RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiSettlement, RsiSpendPurpose,
+    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose,
 };
