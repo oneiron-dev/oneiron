@@ -414,6 +414,37 @@ fn acroform_xfa_is_rejected_as_active_content() {
 }
 
 #[test]
+fn security_scan_resolves_multi_hop_names_and_rejects_broken_links() {
+    let (mut doc, _) = doc_with_page(&[], &[]);
+    let mut names = Dictionary::new();
+    names.set("JavaScript", Object::Dictionary(Dictionary::new()));
+    let terminal = doc.add_object(Object::Dictionary(names));
+    let middle = doc.add_object(Object::Reference(terminal));
+    let catalog_id = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    doc.get_object_mut(catalog_id)
+        .unwrap()
+        .as_dict_mut()
+        .unwrap()
+        .set("Names", Object::Reference(middle));
+    for gate in [true, false] {
+        let err = analyze_security(&doc, gate).unwrap_err();
+        assert!(matches!(
+            err,
+            SealError::InputInvalid {
+                code: InputInvalidCode::ActiveContentPresent
+            }
+        ));
+    }
+    doc.objects.insert(middle, Object::Reference((900_000, 0)));
+    assert!(matches!(
+        analyze_security(&doc, true),
+        Err(SealError::InputInvalid {
+            code: InputInvalidCode::ActiveContentPresent
+        })
+    ));
+}
+
+#[test]
 fn dts_revision_registers_a_signature_field_in_acroform() {
     let p = prepared(&classic_pdf());
     let signed = sign_revision(&p, 1024);
