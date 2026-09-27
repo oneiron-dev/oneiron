@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use loro::{LoroDoc, LoroMap};
 
 use super::companion_identity::{
-    CompanionCrdtScrub, companion_register_blob_is_local_only, companion_register_sync_admitted,
-    ensure_companion_register_kind_for_entity_delta,
+    CompanionCrdtScrub, companion_register_blob_is_local_only,
     ingest_replicated_identity_topology_event_in_txn, scrub_local_only_companions_from_crdt,
 };
 use super::tombstones::quarantine_and_neutralize_protected_tombstone_in_txn;
@@ -50,8 +49,7 @@ pub(super) fn materialize_entities_from_delta(
     // the full list to flag retry markers.
     let mut applied_ops: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let mut pending_companion_scrubs = Vec::new();
-    let result = ensure_companion_register_kind_for_entity_delta(vault, delta).and_then(|()| {
-        vault.with_write_txn(|wtxn| {
+    let result = vault.with_write_txn(|wtxn| {
         for (key, new_val) in &delta.updated {
             match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -244,7 +242,6 @@ pub(super) fn materialize_entities_from_delta(
             )));
         }
         Ok(())
-        })
     });
 
     if result.is_ok()
@@ -472,10 +469,7 @@ pub(super) fn materialize_entity_blob_in_txn(
         &[]
     };
 
-    if header.entity_type == crate::registry::ENTITY_TYPE_FACET
-        && crate::companion::is_identity_facet_body(data)
-        && !companion_register_sync_admitted(data)?
-    {
+    if crate::companion::is_retired_identity_carrier(header.entity_type, data) {
         tracing::warn!(
             entity = %key,
             "observer-b: refused local-only companion register materialization"
