@@ -29,6 +29,7 @@ fn stamp_body(
     actor: crate::WriteActor,
     session: Option<EntityId>,
     thread: bool,
+    project_scope: Option<EntityId>,
 ) -> Result<Vec<u8>> {
     let mut input = body;
     let decoded = rmpv::decode::read_value(&mut input)
@@ -57,6 +58,7 @@ fn stamp_body(
                 | "summary"
                 | "dag_session_ref"
                 | "dag_kind"
+                | "scope_project_id"
         ) {
             return Err(invalid("record body contains door-owned fields"));
         }
@@ -77,6 +79,12 @@ fn stamp_body(
         entries.push((
             Value::from("dag_session_ref"),
             Value::from(session.to_hex()),
+        ));
+    }
+    if let Some(project) = project_scope {
+        entries.push((
+            Value::from("scope_project_id"),
+            Value::from(project.to_hex()),
         ));
     }
     let mut bytes = Vec::new();
@@ -106,6 +114,13 @@ pub(crate) fn append_in_txn(
         txn,
         &input.conversation,
         ENTITY_TYPE_CONVERSATION,
+    )?;
+    let project_scope = crate::workspace_roster::admit_leader_chat_turn(
+        vault,
+        txn,
+        input.conversation,
+        input.actor.entity_ref(),
+        false,
     )?;
     migrate_in_txn(vault, txn, &input.conversation)?;
     let old_head = graph::canonical_chain(&vault.store, txn, &input.conversation)?
@@ -173,7 +188,13 @@ pub(crate) fn append_in_txn(
             return Err(invalid("nonempty conversation requires a Parent"));
         }
     }
-    let mut body = stamp_body(&input.body, input.actor, input.session, thread)?;
+    let mut body = stamp_body(
+        &input.body,
+        input.actor,
+        input.session,
+        thread,
+        project_scope,
+    )?;
     if let Some(asking) = input.reply_to {
         require_member(&vault.store, txn, &input.conversation, &asking)?;
         let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;

@@ -11742,7 +11742,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConversationBody",
@@ -11751,7 +11751,7 @@
      "path": "src/conversation/body.rs",
      "purpose": "Forward-compatible room body codec and the all-writer membership guard",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 8,
       "struct": 1
@@ -31238,7 +31238,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6
      }
     },
@@ -33259,6 +33259,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LeaderChat"
+     ],
+     "path": "src/workspace_roster/project/leader_chat.rs",
+     "purpose": "Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope",
+     "surface": {
+      "const": 1,
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ProjectRecord",
       "ProjectRoom",
       "ProjectRoomChange"
@@ -33267,8 +33282,9 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 12,
       "fn": 7,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -33283,12 +33299,27 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/project/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProjectWidenAsk",
+      "ProjectWidenAxis"
+     ],
+     "path": "src/workspace_roster/project/widen.rs",
+     "purpose": "Cross-project widening routes to an ordinary ask on the common board",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -35456,7 +35487,7 @@
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
     "workspace_roster": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35472,7 +35503,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
+   "source_files": 2096,
    "test_files": 718
   },
   "oneiron-android": {

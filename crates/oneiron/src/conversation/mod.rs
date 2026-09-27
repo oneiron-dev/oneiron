@@ -4,11 +4,11 @@ mod membership;
 mod session;
 mod visibility;
 
-pub(crate) use body::validate_put_in_txn;
 pub use body::{ConversationBody, ConversationKind};
+pub(crate) use body::{body_in, create_in_txn, validate_put_in_txn};
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
-pub(crate) use visibility::AudienceCache;
+pub(crate) use visibility::{AudienceCache, room_for_record_in};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{RecordError, Result};

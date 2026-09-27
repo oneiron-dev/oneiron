@@ -213,6 +213,15 @@ impl Memory<'_> {
                 turn,
                 &message_ids,
             )?;
+            crate::workspace_roster::admit_leader_chat_witness(
+                self.vault,
+                wtxn,
+                conversation_id,
+                self.actor,
+                turn.messages
+                    .iter()
+                    .any(|m| m.author == super::WitnessAuthor::System),
+            )?;
             let mut batch = self.vault.batch_in();
             if conversation_is_new {
                 batch = batch.put(

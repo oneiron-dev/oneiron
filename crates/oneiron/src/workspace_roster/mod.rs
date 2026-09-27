@@ -112,10 +112,14 @@ pub use self::records::{
 mod tests;
 
 mod project;
-pub use project::{PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom, ProjectRoomChange};
 pub(crate) use project::{
-    deindex_project_room, is_project_type, reconcile_project_rooms, seed_root_project,
-    validate_project_body, validate_room_body,
+    LEADER_CHAT_FIELD, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
+    is_project_type, reconcile_project_rooms, seed_root_project, validate_project_body,
+    validate_room_body,
+};
+pub use project::{
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom,
+    ProjectRoomChange, ProjectWidenAsk, ProjectWidenAxis,
 };
 
 mod rooms;

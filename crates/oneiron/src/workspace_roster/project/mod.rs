@@ -1,8 +1,16 @@
 //! Project responsibility records and their derived home-room membership.
 //! PROJECT uses the compiled-pack registration door, not a new core kind.
 mod deletion;
+mod leader_chat;
 mod projection;
+mod widen;
 pub(crate) use deletion::deindex_project_room;
+pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
+pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
+pub(crate) use leader_chat::{
+    admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
+};
+pub use widen::{ProjectWidenAsk, ProjectWidenAxis};
 #[cfg(test)]
 mod tests;
 pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
@@ -217,7 +225,11 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
             return Ok(());
         }
         let id = EntityId::now();
-        let body = ProjectRecord::new(id, None, id, leader);
+        let mut body = ProjectRecord::new(id, None, id, leader);
+        // The owner already exists at this point in vault open. A fresh root
+        // board must be able to receive the first cross-project widen ask.
+        body.board
+            .push(crate::vault::embedded_owner_actor_id()?.to_hex());
         vault
             .batch_in()
             .put(
