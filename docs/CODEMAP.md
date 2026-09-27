@@ -55,7 +55,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `artifact_hosting` | file+dir | 3 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 37 | m | — | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 64 | m | yes | AUTHORITY_LOG record substrate |
-| `autoreason_campaign` | file+dir | 9 | m | — | Engine-side AR-3 autoreason campaign configuration and report join |
+| `autoreason_campaign` | file+dir | 11 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 89 | m | yes | — |
 | `blob_artifact` | dir | 42 | m | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 9 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
