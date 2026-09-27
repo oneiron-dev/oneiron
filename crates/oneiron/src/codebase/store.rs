@@ -591,7 +591,7 @@ fn retained_asset_hashes_in_other_snapshots(
         for file in &prior.files {
             if excluded_hashes.contains(&file.content_hash)
                 && (prior.project_id != current.project_id
-                    || prior.repo_ref != current.repo_ref
+                    || !prior.repo_ref.same_repository(&current.repo_ref)
                     || !excluded_paths.contains(file.path.as_str()))
             {
                 referenced.insert(file.content_hash);

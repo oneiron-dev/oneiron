@@ -1355,6 +1355,88 @@ fn local_repo_ingest_reclaims_an_old_unfiltered_excluded_asset() -> Result<()> {
 }
 
 #[test]
+fn local_repo_ingest_reclaims_excluded_asset_from_older_commit() -> Result<()> {
+    let repo_dir = create_test_repo()?;
+    let residue = b"pub fn legacy_excluded_symbol() -> u8 { 9 }\n";
+    commit_test_file(
+        repo_dir.path(),
+        "src/legacy.rs",
+        residue,
+        "add legacy source",
+    )?;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let config = RepoIngestConfig::new(repo_dir.path(), ["src/lib.rs"])?;
+    let first = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 10, end: 10 },
+        11,
+    )?;
+    let asset_id = codebase_asset_entity_id(blake3::hash(residue).as_bytes())?;
+    assert_eq!(vault.get_entity_type(&asset_id)?, Some(ENTITY_TYPE_ASSET));
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")?,
+        Some(residue.to_vec()),
+    );
+
+    vault.register_secret(SecretCustodyRecord {
+        schema_version: crate::secret_custody::SECRET_CUSTODY_SCHEMA_VERSION,
+        name: "legacy-commit-source".to_owned(),
+        class: CustodyClass::CustodyPortable,
+        device_only: false,
+        value_bytes: b"legacy declared fixture".to_vec(),
+        status: SecretCustodyStatus::Active,
+        registered_at: 1,
+        rotated_at: None,
+        rotation_generation: 0,
+        bindings: vec![],
+        manifest_ref: "secrets.toml".to_owned(),
+        declared_paths: vec!["src/legacy.rs".to_owned()],
+        policy_floor_snapshot: SecretCustodyFloor::default(),
+    })?;
+    commit_test_file(
+        repo_dir.path(),
+        "Cargo.toml",
+        b"[package]\nname = \"updated\"\n",
+        "change other file",
+    )?;
+    let second = vault.ingest_local_repo_at_commit(
+        "project.alpha",
+        &config,
+        "HEAD",
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?;
+    assert_ne!(first.snapshot.repo_ref, second.snapshot.repo_ref);
+    assert!(
+        second
+            .snapshot
+            .files
+            .iter()
+            .all(|file| file.path != "src/legacy.rs")
+    );
+    let report = vault
+        .get_codebase_snapshot_custody_report(&second.snapshot.fork_hash)?
+        .expect("filtered report");
+    assert_eq!(report.excluded_secret_paths, ["src/legacy.rs"]);
+    assert_eq!(vault.get_entity_type(&asset_id)?, None);
+    assert_eq!(
+        vault
+            .mount_codebase_snapshot(&first.code_artifact_id)?
+            .expect("older snapshot")
+            .read_file("src/legacy.rs")
+            .expect_err("excluded old body cannot be read")
+            .kind(),
+        ErrorKind::EntityNotFound,
+    );
+    Ok(())
+}
+
+#[test]
 fn local_repo_ingest_keeps_excluded_hash_used_by_another_snapshot() -> Result<()> {
     let repo_dir = create_test_repo()?;
     let shared = b"pub fn shared_safe_source() -> u8 { 7 }\n";

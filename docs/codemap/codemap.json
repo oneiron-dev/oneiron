@@ -9138,7 +9138,7 @@
      "purpose": "RepoRef identity: local-folder and GitHub-at-commit references with parsing and commit-hash normalization",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4
      }
