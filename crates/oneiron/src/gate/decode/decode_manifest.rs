@@ -62,6 +62,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) pack_install_policy: Option<PackInstallPolicy>,
+    pub(in crate::gate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
 
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
@@ -113,6 +114,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | PACK_INSTALL_POLICY_KEY
+                | "room_thread"
                 | POLICY_HOSTED_TTS_KEY
 
                 | "diagnostic_bounds"
@@ -245,6 +247,11 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => parse_budget_policy(value)?,
     };
+    let room_thread = match single_map_value(&entries, "room_thread") {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(crate::gate::RoomThreadManifest::decode(value)?),
+    };
     let hosted_tts = match single_map_value(&entries, POLICY_HOSTED_TTS_KEY) {
         MapValue::Missing => HostedTtsPolicy::default(),
         MapValue::Duplicate => return None,
@@ -309,6 +316,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         pack_install_policy,
+        room_thread,
         hosted_tts,
 
         diagnostic_bounds,
