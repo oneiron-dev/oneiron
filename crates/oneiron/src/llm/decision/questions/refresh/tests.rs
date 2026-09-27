@@ -47,6 +47,7 @@ fn definition(unit: EntityId) -> QuestionDefinition {
             ceiling: DecisionRung::Big,
             band: DecisionBand::default(),
         },
+        activation: QuestionActivation::Standing,
         refresh: RefreshPolicy {
             on_arrival: true,
             every_seconds: Some(10),

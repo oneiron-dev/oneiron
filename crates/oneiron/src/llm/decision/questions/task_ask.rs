@@ -63,6 +63,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 ceiling: DecisionRung::Human,
                 band,
             },
+            activation: QuestionActivation::OneOff,
             refresh: RefreshPolicy {
                 on_arrival: false,
                 every_seconds: None,
