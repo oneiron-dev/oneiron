@@ -266,7 +266,7 @@ impl LinearChangeSource for LinearPort {
         // Persist the GraphQL cursor after a successful page. A stopped worker
         // resumes from that position; echo suppression lives in the TASK link.
         let data = self.0.query(
-            &format!("query($team:ID!,$after:String,$first:Int!){{ issues(filter:{{team:{{id:{{eq:$team}}}}}},orderBy:updatedAt,after:$after,first:$first){{nodes{{{ISSUE_FIELDS}}} pageInfo{{endCursor}}}}}}"),
+            &format!("query($team:ID!,$after:String,$first:Int!){{ issues(filter:{{team:{{id:{{eq:$team}}}}}},sort:[{{updatedAt:{{order:Ascending}}}}],after:$after,first:$first){{nodes{{{ISSUE_FIELDS}}} pageInfo{{endCursor}}}}}}"),
             json!({"team":&*self.0.team_id,"after":cursor,"first":PAGE_SIZE}),
         )?;
         let nodes = data

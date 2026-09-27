@@ -69,6 +69,10 @@ fn authenticated_page_has_stable_identity_and_carries_cursor() {
             || wire.contains("authorization: fixture-private-key")
     );
     assert!(wire.contains("before-page"));
+    assert!(
+        wire.contains("Ascending"),
+        "poll cursor must advance oldest-first"
+    );
 }
 #[test]
 fn unknown_tracker_state_refuses_page_before_advancing_cursor() {
