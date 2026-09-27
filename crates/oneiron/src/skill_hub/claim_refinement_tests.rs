@@ -354,7 +354,12 @@ fn explicit_delete_erases_pending_rejected_and_admitted_claim_branch_bytes_even_
             );
         }
         assert!(
-            f.vault.delete_entity(&candidate)?,
+            f.vault
+                .delete_entity_with_reason(
+                    &candidate,
+                    crate::deletion::DeleteReason::UserHardDelete,
+                )?
+                .existed,
             "{state} must count as real delete scope"
         );
         assert!(f.vault.local_claim_refinement(candidate)?.is_none());
@@ -382,7 +387,11 @@ fn explicit_delete_erases_pending_rejected_and_admitted_claim_branch_bytes_even_
         ClaimRefinementMergeDisposition::Ruled(receipt) if receipt.accepted)
     );
     assert!(f.vault.local_claim_refinement(candidate)?.is_some());
-    assert!(f.vault.delete_entity(&candidate)?);
+    assert!(
+        f.vault
+            .delete_entity_with_reason(&candidate, crate::deletion::DeleteReason::UserHardDelete,)?
+            .existed
+    );
     assert!(f.vault.local_claim_refinement(candidate)?.is_none());
     assert!(f.vault.claim_refinement_merge_receipt(candidate)?.is_none());
     assert!(f.vault.get_claim(&candidate)?.is_none());
