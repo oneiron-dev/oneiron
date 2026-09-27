@@ -954,6 +954,7 @@ fn ask_peek_round_trips_word_companion_and_silent_unknown_with_distinct_attribut
                 result_ref: fixture.owner,
                 option: Some(TaskAskOptionId::new("no")?),
                 inform_for: Some(fixture.people[1]),
+                companion_for: None,
                 provenance_refs: Default::default(),
             },
         )?;

@@ -114,6 +114,7 @@ fn answer_header_mismatch_is_refused_on_birth_and_identical_body_reput()
             source: TaskAskSource::Human,
             word,
             order: 1,
+            delegation_grant_ref: None,
             at: 42,
         },
     )?;
