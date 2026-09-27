@@ -161,6 +161,9 @@ pub(crate) fn admitted_authored_claim(
     id: &EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
+    if actor.actor_class() != EdgeActorClass::Agent || actor == vault.dreamer_authority()? {
+        return Ok(false);
+    }
     let Some(body) = vault.get_claim(id)? else {
         return Ok(false);
     };

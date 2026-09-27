@@ -202,6 +202,31 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
             .is_err()
     );
     assert!(vault.get_claim(&forged)?.is_none());
+    // The system Dreamer executes partitions but cannot impersonate the
+    // resident who authors this policy, even through the first-party call.
+    let dreamer = vault.dreamer_authority()?;
+    super::prior_heads::policy(&vault, dreamer.entity_ref(), true)?;
+    let dreamer_claim = EntityId::from_bytes([0x6c; 16])?;
+    assert!(
+        HostSelfDispatcher::new(&vault, dreamer, "system-dreamer-rule")?
+            .dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
+                dreamer_claim,
+                ClaimCandidate::new(
+                    crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
+                    ClaimSubject::Entity(dreamer.entity_ref()),
+                    super::super::value_projection::json_to_rmpv(&authored),
+                    1.0,
+                ),
+                occurred(1),
+                1,
+            )))
+            .is_err()
+    );
+    assert!(!crate::dreamer_consolidation::admitted_authored_claim(
+        &vault,
+        &dreamer_claim,
+        dreamer
+    )?);
     assert!(super::super::failure_rules::load(&vault)?.is_none());
     Ok(())
 }
