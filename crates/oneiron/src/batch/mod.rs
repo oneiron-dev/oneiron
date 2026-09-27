@@ -38,6 +38,8 @@ mod tests;
 pub use self::builder::BatchBuilder;
 pub use self::txn_builder::TxnBatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
+#[cfg(feature = "sync")]
+pub(crate) use self::vad_postcommit::queue_proactivity_change;
 
 pub(crate) use self::authority_log::validate_replicated_authority_log_for_local_vault;
 use self::base_apply::apply_ops_with_origin;
