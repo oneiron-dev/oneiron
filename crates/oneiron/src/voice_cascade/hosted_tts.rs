@@ -4,14 +4,14 @@
 //! The host owns HTTP, response streaming and cancellation. It must frame raw
 //! PCM16 across arbitrary HTTP chunk boundaries and recheck the epoch at playback.
 
+use std::collections::VecDeque;
+
 use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession};
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
 };
 
-const MAX_TEXT_BYTES: usize = 8 * 1024;
-const MAX_PCM_BYTES: usize = 2 * 1024 * 1024;
 pub const PCM_RATE: u32 = 24_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,15 +72,19 @@ fn invalid(message: &str) -> Error {
 /// Bind a banked identity to ONE pre-provisioned voice on ONE hosted target.
 /// `vault` remains the authority: an unknown or withdrawn pack cannot bind.
 /// This adapter does not retain the cloned reference audio.
-pub struct HostedTtsAdapter<T> {
+pub struct HostedTtsAdapter<'v, T> {
+    vault: &'v Vault,
+    source_revision: [u8; 16],
     transport: T,
     binding: HostedBinding,
     generation: Option<GenerationEpoch>,
     phase: Phase,
     buffer: String,
-    text_bytes: usize,
     next_submission: u64,
-    in_flight: Option<u64>,
+    pending: VecDeque<PendingResponse>,
+}
+struct PendingResponse {
+    submission: u64,
     next_chunk: u64,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,9 +96,9 @@ enum Phase {
     Cancelled,
 }
 
-impl<T: HostedTransport> HostedTtsAdapter<T> {
+impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
     pub fn bind(
-        vault: &Vault,
+        vault: &'v Vault,
         pack_id: &str,
         provider: HostedProvider,
         voice_id: &str,
@@ -109,8 +113,19 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
         {
             return Err(invalid("invalid pre-provisioned voice id"));
         }
+        let before = vault
+            .owner_voice_ref_revision(pack_id)?
+            .ok_or_else(|| invalid("source pack has no live revision"))?;
         let target = vault.clone_voice_refs_into(pack_id, provider.target())?;
+        // Read twice around the clone: withdrawal/recreation cannot pair the
+        // old banked audio with a new incarnation's provider locator.
+        let after = vault.owner_voice_ref_revision(pack_id)?;
+        if after != Some(before) {
+            return Err(invalid("source pack changed during binding"));
+        }
         Ok(Self {
+            vault,
+            source_revision: before,
             transport,
             binding: HostedBinding {
                 provider,
@@ -121,10 +136,8 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
             generation: None,
             phase: Phase::Fresh,
             buffer: String::new(),
-            text_bytes: 0,
             next_submission: 0,
-            in_flight: None,
-            next_chunk: 0,
+            pending: VecDeque::new(),
         })
     }
 
@@ -163,22 +176,93 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
         }
     }
 
+    fn revoke(&mut self, generation: GenerationEpoch) {
+        self.phase = Phase::CancelPending;
+        self.buffer.clear();
+        self.pending.clear();
+        // The caller still sees a refusal. A failed cancellation remains
+        // retryable, while all local output and future admissions are closed.
+        if self
+            .transport
+            .try_submit(HostedWork::Cancel { generation })
+            .is_ok()
+        {
+            self.phase = Phase::Cancelled;
+        }
+    }
+
+    fn ensure_live(&mut self, generation: GenerationEpoch) -> Result<crate::gate::HostedTtsLimits> {
+        let live = self
+            .vault
+            .owner_voice_ref_revision(&self.binding.source_pack);
+        if !matches!(live, Ok(Some(revision)) if revision == self.source_revision) {
+            self.revoke(generation);
+            return Err(invalid("source pack withdrawn, replaced or unreadable"));
+        }
+        match self
+            .vault
+            .hosted_tts_limits(self.binding.provider.target(), self.binding.owner)
+        {
+            Ok(limits) => Ok(limits),
+            Err(error) => {
+                self.revoke(generation);
+                Err(error)
+            }
+        }
+    }
+
     fn flush(&mut self, generation: GenerationEpoch) -> Result<()> {
         if self.buffer.is_empty() {
             return Ok(());
-        }
-        if self.in_flight.is_some() {
-            return Err(invalid("response still in flight"));
         }
         let next = self
             .next_submission
             .checked_add(1)
             .ok_or_else(|| invalid("submission exhausted"))?;
         let request = self.request(generation, self.next_submission);
-        self.transport.try_submit(HostedWork::Render(request))?;
-        self.in_flight = Some(self.next_submission);
+        // Serialize against the vault withdrawal writer through FIFO queue
+        // admission; an LMDB read snapshot alone cannot do this.
+        let admitted = self.vault.with_live_voice_ref(
+            &self.binding.source_pack,
+            self.source_revision,
+            |txn| {
+                let limits = crate::gate::resolve_hosted_tts_limits(
+                    self.vault,
+                    txn,
+                    self.binding.provider.target(),
+                    self.binding.owner,
+                )?;
+                if self.buffer.len() > limits.max_text_bytes {
+                    return Err(invalid("policy text limit exceeded"));
+                }
+                self.transport.try_submit(HostedWork::Render(request))
+            },
+        );
+        let admitted = match admitted {
+            Ok(value) => value,
+            Err(error) => {
+                // A queue refusal admits nothing and retains the buffer for retry.
+                // A missing/malformed policy, however, cannot authorize another
+                // request; close output rather than guessing a budget.
+                if self
+                    .vault
+                    .hosted_tts_limits(self.binding.provider.target(), self.binding.owner)
+                    .is_err()
+                {
+                    self.revoke(generation);
+                }
+                return Err(error);
+            }
+        };
+        if admitted.is_none() {
+            self.revoke(generation);
+            return Err(invalid("source pack withdrawn or replaced"));
+        }
+        self.pending.push_back(PendingResponse {
+            submission: self.next_submission,
+            next_chunk: 0,
+        });
         self.next_submission = next;
-        self.next_chunk = 0;
         self.buffer.clear();
         Ok(())
     }
@@ -193,17 +277,24 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
         chunk: u64,
         bytes: &[u8],
     ) -> Result<PcmFrame> {
-        if self.generation != Some(generation)
-            || !matches!(self.phase, Phase::Open | Phase::Ended)
-            || self.in_flight != Some(submission)
-            || self.next_chunk != chunk
+        if self.generation != Some(generation) || !matches!(self.phase, Phase::Open | Phase::Ended)
         {
+            return Err(invalid("stale or cancelled response"));
+        }
+        let limits = self.ensure_live(generation)?;
+        let Some(front) = self.pending.front() else {
+            return Err(invalid("unsolicited response"));
+        };
+        if front.submission != submission || front.next_chunk != chunk {
             return Err(invalid("stale or out-of-order response"));
         }
-        if bytes.is_empty() || bytes.len() > MAX_PCM_BYTES || !bytes.len().is_multiple_of(2) {
+        if bytes.is_empty()
+            || bytes.len() > limits.max_pcm_fragment_bytes
+            || !bytes.len().is_multiple_of(2)
+        {
             return Err(invalid("invalid raw PCM16 fragment"));
         }
-        let next = self
+        let next = front
             .next_chunk
             .checked_add(1)
             .ok_or_else(|| invalid("PCM sequence exhausted"))?;
@@ -211,7 +302,10 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
             .chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]]))
             .collect();
-        self.next_chunk = next;
+        self.pending
+            .front_mut()
+            .expect("validated pending response")
+            .next_chunk = next;
         Ok(PcmFrame {
             generation,
             sample_rate: PCM_RATE,
@@ -220,13 +314,15 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
     }
 
     pub fn finish_response(&mut self, generation: GenerationEpoch, submission: u64) -> Result<()> {
-        if self.generation != Some(generation)
-            || !matches!(self.phase, Phase::Open | Phase::Ended)
-            || self.in_flight != Some(submission)
+        if self.generation != Some(generation) || !matches!(self.phase, Phase::Open | Phase::Ended)
         {
+            return Err(invalid("stale or cancelled completion"));
+        }
+        self.ensure_live(generation)?;
+        if self.pending.front().map(|response| response.submission) != Some(submission) {
             return Err(invalid("unmatched response completion"));
         }
-        self.in_flight = None;
+        self.pending.pop_front();
         Ok(())
     }
 
@@ -236,7 +332,7 @@ impl<T: HostedTransport> HostedTtsAdapter<T> {
     }
 }
 
-impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<T> {
+impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<'_, T> {
     fn submit(&mut self, command: TtsCommand) -> Result<()> {
         let generation = match &command {
             TtsCommand::Start { generation }
@@ -250,6 +346,7 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<T> {
                 return Err(invalid("adapter is single-generation"));
             }
             self.generation = Some(generation);
+            self.ensure_live(generation)?;
             self.phase = Phase::Open;
             return Ok(());
         }
@@ -263,7 +360,7 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<T> {
             if self.phase != Phase::Cancelled {
                 self.phase = Phase::CancelPending; // fail closed even if dispatch fails
                 self.buffer.clear();
-                self.in_flight = None;
+                self.pending.clear();
                 self.transport
                     .try_submit(HostedWork::Cancel { generation })?;
                 self.phase = Phase::Cancelled;
@@ -272,6 +369,9 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<T> {
         }
         if self.generation != Some(generation) {
             return Err(invalid("unmatched generation"));
+        }
+        if matches!(self.phase, Phase::Open | Phase::Ended) {
+            self.ensure_live(generation)?;
         }
         if self.phase == Phase::Ended
             && matches!(command, TtsCommand::End { .. } | TtsCommand::Flush { .. })
@@ -283,10 +383,12 @@ impl<T: HostedTransport> TtsSeamClient for HostedTtsAdapter<T> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                if text.is_empty() || text.len() > MAX_TEXT_BYTES - self.text_bytes {
-                    return Err(invalid("text limit exceeded"));
+                let limits = self.ensure_live(generation)?;
+                if text.is_empty()
+                    || text.len() > limits.max_text_bytes.saturating_sub(self.buffer.len())
+                {
+                    return Err(invalid("policy text limit exceeded"));
                 }
-                self.text_bytes += text.len();
                 self.buffer.push_str(&text);
             }
             TtsCommand::Flush { .. } => self.flush(generation)?,

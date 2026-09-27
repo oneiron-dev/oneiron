@@ -6,6 +6,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PREFIX: &[u8] = b"voice:owner_ref:v1:";
+const REVISION_PREFIX: &[u8] = b"voice:owner_ref_revision:v1:";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceRefOrigin {
@@ -91,6 +92,8 @@ pub(super) fn delete_owner_refs(
         if store.vault_meta.delete(txn, &key)? {
             deleted += 1;
         }
+        let revision_key = [REVISION_PREFIX, &key[PREFIX.len()..]].concat();
+        store.vault_meta.delete(txn, &revision_key)?;
         store.vault_meta.delete(txn, &index)?;
     }
     Ok(deleted)
@@ -110,6 +113,12 @@ impl Vault {
             }
         } else {
             self.store.vault_meta.put(&mut txn, &key, &bytes)?;
+            // One incarnation per insert: a withdrawn/recreated pack with the
+            // same ID and bytes cannot revive a bound provider locator.
+            let revision_key = [REVISION_PREFIX, pack.id.as_bytes()].concat();
+            self.store
+                .vault_meta
+                .put(&mut txn, &revision_key, uuid::Uuid::new_v4().as_bytes())?;
             let index = [OWNER_PREFIX, pack.owner.as_bytes(), pack.id.as_bytes()].concat();
             self.store.vault_meta.put(&mut txn, &index, &key)?;
         }
@@ -129,6 +138,46 @@ impl Vault {
             return Err(invalid("voice reference key mismatch"));
         }
         Ok(Some(pack))
+    }
+    /// A vault-scoped incarnation marker; withdrawal removes it atomically
+    /// with the ref. No hosted target ID or reference audio is stored here.
+    pub(crate) fn owner_voice_ref_revision(&self, id: &str) -> Result<Option<[u8; 16]>> {
+        key(id)?;
+        let txn = self.store.env.read_txn()?;
+        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
+        let Some(revision) = self.store.vault_meta.get(&txn, &revision_key)? else {
+            return Ok(None);
+        };
+        if self.store.vault_meta.get(&txn, &key(id)?)?.is_none() {
+            return Err(invalid("orphaned voice reference revision"));
+        }
+        Ok(Some(revision.as_ref().try_into().map_err(|_| {
+            invalid("corrupt voice reference revision")
+        })?))
+    }
+
+    /// Serialize the bank check and nonblocking queue admission against the
+    /// withdrawal writer, including writers in other processes. An LMDB read
+    /// snapshot alone would NOT prevent a concurrent withdrawal commit.
+    pub(crate) fn with_live_voice_ref<R>(
+        &self,
+        id: &str,
+        revision: [u8; 16],
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<R>,
+    ) -> Result<Option<R>> {
+        let pack_key = key(id)?;
+        let txn = self.store.env.write_txn()?;
+        let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
+        if self.store.vault_meta.get(&txn, &pack_key)?.is_none()
+            || !self
+                .store
+                .vault_meta
+                .get(&txn, &revision_key)?
+                .is_some_and(|current| current.as_ref() == revision.as_slice())
+        {
+            return Ok(None);
+        }
+        Ok(Some(admit(&txn)?))
     }
     /// Each target receives its own owned copy. No target id can be written back
     /// as the identity's origin. Raw refs remain private, never retrieval entities.

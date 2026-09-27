@@ -16643,7 +16643,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -16886,6 +16886,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/hosted_tts_policy.rs",
+     "purpose": "DEC-0005 hosted TTS resource rows",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -16916,7 +16926,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 3
      }
     },
@@ -16961,7 +16971,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17192,6 +17202,14 @@
      "notable": [],
      "path": "src/gate/tests/gate_door.rs",
      "purpose": "Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/hosted_tts_policy.rs",
+     "purpose": "Hosted TTS policy rows: defaults, scope, precedence and strict decoding",
      "surface": {}
     },
     {
@@ -33486,7 +33504,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/hosted_tts/tests.rs",
@@ -33827,7 +33845,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault owner reference bank",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -35596,7 +35614,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36284,8 +36302,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 732
+   "source_files": 2141,
+   "test_files": 733
   },
   "oneiron-android": {
    "files": [
