@@ -50,6 +50,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     let mut refs = vec![&body.claims_scope_ref, &body.leader, &body.home_room];
     refs.extend(body.parent.iter());
     refs.extend(body.goal.iter());
+    refs.extend(body.born_from.iter());
     refs.extend(body.budget.iter());
     for list in [
         &body.board,
@@ -74,6 +75,21 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         ids.push(id);
     }
     if !body.roster.contains(&body.leader) {
+        return Err(invalid());
+    }
+    if body.goal_record.as_ref().is_some_and(|goal| {
+        goal.project_id != id.to_hex()
+            || goal.goal.trim().is_empty()
+            || goal.why.trim().is_empty()
+            || goal.axes.is_empty()
+            || goal.axes.len() > 128
+            || goal.axes.iter().any(|axis| axis.trim().is_empty())
+            || body.why.as_deref() != Some(goal.why.as_str())
+    }) || body.budget_share.as_ref().is_some_and(|budget| {
+        budget.project_id != id.to_hex()
+            || body.parent.as_deref() != Some(budget.parent_id.as_str())
+            || budget.share_bps > 10_000
+    }) {
         return Err(invalid());
     }
     Ok(ids)
