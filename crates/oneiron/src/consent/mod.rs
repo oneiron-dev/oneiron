@@ -54,6 +54,7 @@ mod codec;
 mod doors;
 mod effect;
 mod grant;
+mod owner_reason;
 mod registry;
 mod support;
 pub mod widen;
@@ -86,6 +87,10 @@ pub use self::grant::{
     CONSENT_REASON_REVOKED, CONSENT_REASON_STANDING_CREATED, CONSENT_REASON_STANDING_USED,
     ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp,
     ConsentProposal, ConsentReceipt, DisclosureGrant, StandingConsentGrant,
+};
+pub use self::owner_reason::{
+    OWNER_REASON_UNDO_COMMAND, OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo,
+    OwnerReasonVerdict, ReasonMatchConfidence,
 };
 pub use self::registry::{
     CONSENT_REVOKE_COMMAND, ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow,
