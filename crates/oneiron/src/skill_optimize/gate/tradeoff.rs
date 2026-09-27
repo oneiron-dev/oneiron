@@ -234,6 +234,49 @@ pub(super) fn carry_goal_in_txn(
     Ok(())
 }
 
+/// The gap between admission and supersession is another write window. A
+/// later owner edit or human pick on the old Active revision must not vanish
+/// behind the admission-time copy when that revision is finally frozen.
+/// Independent, conflicting same-version edits fail closed rather than pick
+/// a winner by whichever door happened to run last.
+pub(crate) fn reconcile_goal_on_supersession_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    old: &EntityId,
+    new: &EntityId,
+) -> Result<()> {
+    let source = goal_in_txn(vault, txn, old)?;
+    let destination = goal_in_txn(vault, txn, new)?;
+    let winning = match (source, destination) {
+        (None, None) => return Ok(()),
+        (None, Some(_)) => return Ok(()),
+        (Some(source), None) => source,
+        (Some(source), Some(dest)) if source == dest => return Ok(()),
+        (Some(source), Some(dest)) if source.version > dest.version => source,
+        (Some(source), Some(dest)) if dest.version > source.version => dest,
+        (Some(source), Some(dest)) => {
+            if source.goal_ref != dest.goal_ref
+                || source.responsible != dest.responsible
+                || source.axes != dest.axes
+                || source.rules != dest.rules
+                || source.jev_band != dest.jev_band
+            {
+                return Err(invalid(
+                    "conflicting same-version skill goals at supersession",
+                ));
+            }
+            if source.learned.starts_with(&dest.learned) {
+                source
+            } else if dest.learned.starts_with(&source.learned) {
+                dest
+            } else {
+                return Err(invalid("conflicting learned skill picks at supersession"));
+            }
+        }
+    };
+    save(vault, txn, &key(GOAL_PREFIX, new), &winning)
+}
+
 /// A pending ask is reusable only while its exact scored question is still
 /// present. Called with the gate's snapshot; do not open a nested read txn.
 pub(super) fn ask_matches_verdict_in_txn(

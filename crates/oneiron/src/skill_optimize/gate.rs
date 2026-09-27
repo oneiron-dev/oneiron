@@ -170,6 +170,7 @@ pub(crate) use admission::{
     with_optimized_skill_admission,
 };
 pub(crate) use ledger::skill_edit_verdict_receipts;
+pub(crate) use tradeoff::reconcile_goal_on_supersession_in_txn;
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;

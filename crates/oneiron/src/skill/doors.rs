@@ -268,7 +268,8 @@ impl Vault {
                 old_id,
                 EdgeKind::Supersedes.default_weight().unwrap_or(0.3),
             )
-            .apply(wtxn)
+            .apply(wtxn)?;
+        crate::skill_optimize::reconcile_goal_on_supersession_in_txn(self, wtxn, old_id, new_id)
     }
 
     /// Typed SKILL update door. Rejects transitions INTO `superseded`:

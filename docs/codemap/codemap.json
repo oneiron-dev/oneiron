@@ -29516,7 +29516,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -29605,7 +29605,7 @@
      "path": "src/skill_optimize/gate/tradeoff.rs",
      "purpose": "Goal-axis tradeoff policy for optimizer admissions",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 4,
       "struct": 6

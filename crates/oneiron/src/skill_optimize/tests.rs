@@ -5593,3 +5593,77 @@ fn floor_conflicting_candidate_rule_rejects_without_retrying() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn owner_goal_edit_between_admission_and_supersession_reaches_successor() -> Result<()> {
+    const NEXT_DESC: &str = "A new instruction tested after owner goal revision.";
+    let (tmp, vault) = temp_vault();
+    let (old, successor) = losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.goal-window");
+    let owner = tradeoff_owner(&vault);
+    let mut goal = tradeoff_goal(&owner);
+    goal.rules.push(TradeoffRule {
+        gains: ["quality".into()].into(),
+        losses: ["human_minutes".into()].into(),
+        choice: TradeoffChoice::Candidate,
+    });
+    set_skill_tradeoff_goal(&vault, &owner, &old, goal.clone())?;
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &successor,
+            &TradeoffScorer::new(None),
+            wake(&vault, "goal-window-admit", 10),
+            900
+        )?
+        .disposition,
+        SkillEditDisposition::Accepted
+    );
+    admit_optimized_skill_revision(&vault, &successor, t(901), 901)?;
+    // The predecessor remains Active until supersession. This is a lawful
+    // owner update AFTER admission's initial carry and before its final freeze.
+    goal.version = 2;
+    goal.axes
+        .insert("human_minutes".into(), TradeoffAxis::FloorLower);
+    goal.rules.clear();
+    set_skill_tradeoff_goal(&vault, &owner, &old, goal)?;
+    vault.supersede_skill_record(&old, &successor, t(902), 902)?;
+    drop(vault);
+    let reopened = Vault::open(tmp.path(), VaultConfig::default())?;
+    let version = stored(&reopened, &successor).version;
+    for index in 0..60 {
+        let at = 1000 + index * 10;
+        let receipt = stamped_receipt_version(
+            &reopened,
+            "oneiron.skill.tradeoff.goal-window",
+            &version,
+            at,
+        );
+        record_skill_contributing_win(&reopened, &successor, &receipt, at + 5)?;
+        if !held_out_receipts(&reopened, &successor)?.is_empty() {
+            break;
+        }
+    }
+    assert!(!held_out_receipts(&reopened, &successor)?.is_empty());
+    let proposal = EntityId::now();
+    let mut draft = optimizer_proposal_record_citing(
+        &reopened,
+        &successor,
+        Value::Array(vec![]),
+        HAND_CRAFTED_CYCLE,
+    );
+    draft.version = "goal-window-next".into();
+    draft.desc = NEXT_DESC.into();
+    reopened.put_skill_record(&proposal, &draft, t(903), 903)?;
+    let scorer = TradeoffScorer::new(Some((0.95, false))).against(DRAFTED_DESC);
+    let verdict = score_gate_skill_edit_in_cycle(
+        &reopened,
+        &proposal,
+        &scorer,
+        wake(&reopened, "goal-window-next", 20),
+        904,
+    )?;
+    assert_eq!(verdict.disposition, SkillEditDisposition::Rejected);
+    assert_eq!(verdict.goal_binding.unwrap().version, 2);
+    assert_eq!(*scorer.calls.borrow(), 0, "new floor refuses before Jev");
+    Ok(())
+}
