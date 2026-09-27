@@ -123,16 +123,13 @@ impl ScopedRead<'_> {
                 })
                 .then_with(|| a.id.cmp(&b.id))
         });
-        // The projection reads only summary bodies. A fresh scoped point read
-        // rechecks authority, and a withdrawn hit is removed rather than leaked.
-        let summary_ids = rows
-            .iter()
-            .filter(|row| ranks[&row.id].0 == ENTITY_TYPE_SUMMARY)
-            .map(|row| row.id)
-            .collect::<Vec<_>>();
-        let bodies = self.get_entities_parts_with_receipt(&summary_ids, Some(&requested))?;
+        // Both kind bytes are shared with unrelated producers. Read each
+        // candidate through the scoped point door before applying the page
+        // limit. Only summary text, never chunk text, enters the response.
+        let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+        let bodies = self.get_entities_parts_with_receipt(&ids, Some(&requested))?;
         receipt.restrict_with(&bodies.receipt);
-        let mut summaries = summary_ids
+        let mut parts = ids
             .into_iter()
             .zip(bodies.value)
             .filter_map(|(id, part)| part.map(|part| (id, part)))
@@ -140,16 +137,16 @@ impl ScopedRead<'_> {
         let mut value = Vec::new();
         for row in rows {
             let kind = ranks[&row.id].0;
+            let Some((actual_kind, _, body)) = parts.remove(&row.id) else {
+                continue;
+            };
+            if actual_kind != kind {
+                continue;
+            }
+            let decoded = crate::batch::export::redacted_memory_body(&body);
             let summary = if kind == ENTITY_TYPE_SUMMARY {
-                let Some((actual_kind, _, body)) = summaries.remove(&row.id) else {
-                    continue;
-                };
-                if actual_kind != kind {
-                    continue;
-                }
-                let decoded = crate::batch::export::redacted_memory_body(&body);
-                // Type 5 is shared: neither a session summary's `content` nor
-                // a DAG scope summary's `text` belongs to a docs ladder.
+                // Session `content` and DAG scope `text` are valid SUMMARY
+                // rows, but not derived document units.
                 if decoded["derivation"]["derived_kind"] != "summary"
                     || decoded["derivation"]["source"] != "imported"
                     || decoded["derivation"]["source_ref"].as_str().is_none()
@@ -161,6 +158,19 @@ impl ScopedRead<'_> {
                 };
                 Some(text.to_owned())
             } else {
+                // OCR and other ASSET_TEXT producers have no document
+                // asset/section ref. Do not offer a ref the ladder cannot open.
+                if decoded["source"] != "imported"
+                    || decoded["text"].as_str().is_none()
+                    || decoded["asset_ref"]
+                        .as_str()
+                        .is_none_or(|asset| EntityId::from_hex(asset).is_err())
+                    || decoded["section"]
+                        .as_str()
+                        .is_none_or(|section| section.parse::<usize>().is_err())
+                {
+                    continue;
+                }
                 None
             };
             if value.len() == limit {

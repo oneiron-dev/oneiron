@@ -370,6 +370,61 @@ fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> 
 }
 
 #[test]
+fn ocr_asset_text_cannot_fill_document_result_or_offer_an_unopenable_ref() -> Result<()> {
+    let (_dir, vault, docs, _) = searchable_docs(&document())?;
+    let ocr = EntityId::now();
+    let raw = NormalizedIngestEntity {
+        entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        body: "[PROVENANCE recognizer_locality=1]\n[OCR]\nGravity attraction\n".into(),
+        recognizer_locality: Some(LocalityRung::HostLocal),
+    };
+    admit_imported_entity(&vault, &ocr, &raw, TimeRange { start: 3, end: 3 }, 3)?;
+    vault
+        .batch()
+        .text(&ocr, &[("text", raw.body.as_str())])
+        .commit()?;
+    vault.put_vector(&ocr, &[1.0, 0.0, 0.0, 0.0])?;
+    assert_eq!(vault.get(&ocr)?, Some(raw.body.into_bytes()));
+    let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
+    for (query, expected_kind) in [
+        ("Gravity", crate::registry::ENTITY_TYPE_SUMMARY),
+        ("attraction", crate::registry::ENTITY_TYPE_ASSET_TEXT),
+    ] {
+        let hits =
+            reader.search_docs_summaries_with_vector(query, Some(&[1.0, 0.0, 0.0, 0.0]), 1)?;
+        assert_eq!(hits.value.len(), 1, "OCR must not starve {query}");
+        let hit = &hits.value[0];
+        assert_ne!(hit.reference, ocr.to_hex());
+        assert_eq!(hit.entity_type, expected_kind);
+        let expanded = reader.expand_doc_ladder_ref(&hit.reference)?.value.unwrap();
+        assert_eq!(
+            expanded.level,
+            if expected_kind == crate::registry::ENTITY_TYPE_SUMMARY {
+                DocsExpansionLevel::Summary
+            } else {
+                DocsExpansionLevel::Span
+            }
+        );
+        assert!(expanded.next_ref.is_some());
+        if expected_kind == crate::registry::ENTITY_TYPE_ASSET_TEXT {
+            assert!(docs.chunk_refs.contains(&hit.reference));
+            assert!(hit.summary.is_none());
+        }
+    }
+    assert!(
+        reader
+            .search_docs_summaries_with_vector(
+                "unmatched_query_xyz",
+                Some(&[1.0, 0.0, 0.0, 0.0]),
+                1,
+            )?
+            .value
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
 fn fused_receipt_adds_disjoint_lexical_and_vector_exclusions() -> Result<()> {
     let mut pages = document();
     pages.pages.push(DocsPage {
