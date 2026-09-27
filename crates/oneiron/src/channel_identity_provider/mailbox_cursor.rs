@@ -84,7 +84,7 @@ impl MailboxCursor {
 /// # Errors
 ///
 /// [`Error::InvalidConfig`] for a blank or overlong token.
-pub fn validate_mailbox_cursor(cursor: &str) -> Result<()> {
+pub(super) fn validate_mailbox_cursor(cursor: &str) -> Result<()> {
     if cursor.trim().is_empty() || cursor.len() > MAX_CURSOR_BYTES {
         return Err(Error::InvalidConfig(
             "gmail page cursor must be non-empty and at most 256 bytes".to_owned(),

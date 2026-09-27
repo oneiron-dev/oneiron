@@ -6918,6 +6918,7 @@
      "surface": {
       "const": 5,
       "fn": 20,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
      }
@@ -6925,11 +6926,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "GmailReadAuthority"
+     ],
      "path": "src/channel_identity_provider/gmail/run.rs",
      "purpose": "Page admission and persisted mailbox progress for a delegated read",
      "surface": {
-      "fn": 2
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -6992,8 +6997,8 @@
      "path": "src/channel_identity_provider/mailbox_cursor.rs",
      "purpose": "Node-local Gmail mailbox progress, keyed by delegated identity",
      "surface": {
-      "crate-vis": 1,
-      "fn": 6,
+      "crate-vis": 2,
+      "fn": 5,
       "struct": 2
      }
     },

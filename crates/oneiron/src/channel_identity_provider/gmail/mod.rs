@@ -22,11 +22,10 @@
 //!   modify method, and [`delegated_scope_for_google_oauth_scope`] maps only the
 //!   two read scopes. A caller cannot widen this by passing a different string;
 //!   there is no variant for a write scope to land in.
-//! * **No credential in a signature.** The wire is handed a `secret_ref` (a
-//!   custody record NAME) and resolves the value at its own egress door.
-//!   In-crate, [`GmailDelegatedAdapter::with_delegated_token_at_door`] is the
-//!   only path to the bytes, and it is the SECRET-02 T0 door under the
-//!   `connector:gmail` effector binding.
+//! * **No credential in a signature.** The read wire receives an opaque
+//!   [`GmailReadAuthority`] bound to the live identity, not a bare custody
+//!   name. Its token callback rechecks the row at credential egress; token
+//!   bytes are never persisted or returned in a page.
 //! * **No new dependency.** The protocol lives behind the wire trait, so the
 //!   dependency graph and lockfile are untouched.
 //!
@@ -35,6 +34,7 @@
 //! to step into.
 
 mod run;
+pub use self::run::GmailReadAuthority;
 
 use serde::{Deserialize, Serialize};
 
@@ -237,10 +237,11 @@ impl GmailInboxPage {
 
 /// The Gmail read protocol seam.
 ///
-/// Implementations own the REST calls, pagination, and the OAuth refresh, and
-/// resolve `secret_ref` at their own egress door. No credential crosses these
-/// signatures, and there is exactly one method: reading. A send or delete verb
-/// would have to be added here to exist, which is the point.
+/// Implementations own the REST calls and pagination. They MUST resolve the
+/// OAuth token through `authority.with_token_at_door`, and perform the provider
+/// request inside its callback. The returned page is refused if the wire did
+/// not use that identity-aware door. No credential crosses this trait's
+/// signature, and there is exactly one method: reading.
 pub trait GmailReadWire {
     /// Reads one page of the granted mailbox after `cursor`.
     ///
@@ -250,7 +251,7 @@ pub trait GmailReadWire {
     /// interpretation beyond page-shape validation.
     fn fetch_inbox_page(
         &self,
-        secret_ref: &str,
+        authority: &GmailReadAuthority<'_>,
         mailbox_address: &str,
         policy: PlacementPolicy,
         cursor: Option<&MailboxPageToken>,
@@ -762,6 +763,8 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
         let (_, sender_domain) = split_email_address(&email.envelope_from)?;
         let normalized_from = super::normalize_email_address(&email.envelope_from, &sender_domain)?;
 
+        let correlation_id =
+            run::delivery_correlation_id(&self.config.mailbox_address, &email.provider_event_id);
         let mut input = InboundSurfaceEventInput::new(
             email.provider_event_id,
             EMAIL_CHANNEL,
@@ -769,7 +772,8 @@ impl ChannelIdentityProviderAdapter for GmailDelegatedAdapter {
             SurfaceCounterpartyStamp::unknown(format!("email:{normalized_from}")),
             email.received_at,
             true,
-        );
+        )
+        .with_correlation_id(correlation_id);
         input.payload_ref = email.payload_ref;
         Ok(input)
     }
