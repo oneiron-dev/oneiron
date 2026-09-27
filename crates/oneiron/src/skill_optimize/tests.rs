@@ -5785,3 +5785,104 @@ fn second_generation_materializes_after_both_predecessors_were_erased() -> Resul
     set_skill_edit_goal_axes(&receiver, &receiver_owner, &c, vector_axes())?;
     Ok(())
 }
+
+#[test]
+fn orphaned_replay_checks_erased_parent_origin_before_accepting_a_goal() -> Result<()> {
+    for erase_root in [false, true] {
+        let (_tmp, vault) = temp_vault();
+        let (a, b) = losing_skill_with_proposal(&vault, "oneiron.skill.retained_parent_goal");
+        let owner = vector_owner(&vault);
+        set_skill_edit_goal_axes(&vault, &owner, &a, vector_axes())?;
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &b,
+            &VectorScorer::new((0.4, 0.8), (0.8, 0.8), (0.5, 0.6)),
+            wake(&vault, "retained-parent", 10),
+            900,
+        )?;
+        admit_optimized_skill_revision(&vault, &b, t(400), 401)?;
+        let c = EntityId::now();
+        let mut settled = optimizer_proposal_record_citing(
+            &vault,
+            &b,
+            Value::Array(Vec::new()),
+            HAND_CRAFTED_CYCLE,
+        );
+        settled.approval_status = ClaimApprovalStatus::Approved;
+        settled.lifecycle_status = SkillLifecycle::Active;
+        assert!(vault.delete_entity(&b)?);
+        if erase_root {
+            assert!(vault.delete_entity(&a)?);
+        }
+        let mut contradictory = settled.clone();
+        let Value::Map(entries) = &mut contradictory.provenance else {
+            panic!("provenance map")
+        };
+        for (name, value) in entries {
+            if name.as_str() == Some(GOAL_ID_KEY) {
+                *value = Value::from(EntityId::now().to_hex());
+            }
+        }
+        let bad_body = crate::skill::encode_skill_record(&contradictory)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(402), 403, &bad_body)
+                .commit()
+                .expect_err("retained B origin knows C's proposed ruler is wrong")
+                .kind(),
+            ErrorKind::InvalidSkillBody
+        );
+        assert!(vault.get_skill_record(&c)?.is_none());
+        let marker_key = gate::optimizer_origin_marker_key(&b);
+        let retained = {
+            let txn = vault.store.env.read_txn()?;
+            vault
+                .store
+                .vault_meta
+                .get(&txn, &marker_key)?
+                .expect("B retains a birth marker")
+                .to_vec()
+        };
+        vault.with_write_txn(|txn| {
+            vault
+                .store
+                .vault_meta
+                .put(txn, &marker_key, b"invalid retained origin")?;
+            Ok(())
+        })?;
+        let good_body = crate::skill::encode_skill_record(&settled)?;
+        assert_eq!(
+            vault
+                .batch()
+                .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+                .commit()
+                .expect_err("malformed retained parent fact fails closed")
+                .kind(),
+            ErrorKind::CorruptedIndex
+        );
+        assert!(vault.get_skill_record(&c)?.is_none());
+        vault.with_write_txn(|txn| {
+            vault.store.vault_meta.put(txn, &marker_key, &retained)?;
+            Ok(())
+        })?;
+        // The same new id with the correct portable goal still materializes.
+        vault
+            .batch()
+            .put_replicated(&c, ENTITY_TYPE_SKILL, t(404), 405, &good_body)
+            .commit()?;
+        assert_eq!(SkillGoalId::of(&c, &stored(&vault, &c))?.entity(), a);
+        seed_successor_outcome(&vault, &c)?;
+        let d = successor_goal_proposal(&vault, &c);
+        let floor_loss = score_gate_skill_edit_in_cycle(
+            &vault,
+            &d,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.7), (0.5, 0.6)).with_baseline(DRAFTED_DESC),
+            wake(&vault, "retained-child", 20),
+            901,
+        )?;
+        assert_eq!(floor_loss.disposition, SkillEditDisposition::Rejected);
+        assert!(floor_loss.goal_axes["safety"].after < floor_loss.goal_axes["safety"].before);
+    }
+    Ok(())
+}

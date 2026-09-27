@@ -48,6 +48,15 @@ impl SkillGoalId {
     pub(in crate::skill_optimize) fn entity(self) -> EntityId {
         self.0
     }
+
+    pub(in crate::skill_optimize) fn from_hex(hex: &str) -> Result<Self> {
+        let parsed = EntityId::from_hex(hex)
+            .map_err(|_| invalid("malformed retained optimizer goal identity"))?;
+        if parsed.to_hex() != hex {
+            return Err(invalid("non-canonical retained optimizer goal identity"));
+        }
+        Ok(Self(parsed))
+    }
 }
 
 fn unique_string(entries: &[(Value, Value)], key: &str) -> Result<Option<String>> {
@@ -93,11 +102,20 @@ pub(crate) fn validate_goal_birth_in_txn(
         return Err(invalid("optimizer skill cannot revise itself"));
     }
     let Some(raw) = store.entities.get(txn, parent.as_bytes())? else {
-        return if replicated {
-            Ok(())
-        } else {
-            Err(invalid("local optimizer predecessor is missing"))
-        };
+        if !replicated {
+            return Err(invalid("local optimizer predecessor is missing"));
+        }
+        // Erasure removes instruction bytes, not the parent's immutable birth
+        // marker. A first rematerialized child cannot contradict a goal fact
+        // the receiver retained even though the parent body is absent.
+        if super::gate::retained_optimizer_parent_goal_in_txn(store, txn, &parent)?.is_some_and(
+            |(known_goal, known_skill_id)| known_goal != goal || known_skill_id != created.skill_id,
+        ) {
+            return Err(invalid(
+                "orphaned optimizer goal conflicts with retained parent origin",
+            ));
+        }
+        return Ok(());
     };
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("skill goal predecessor header"))?;

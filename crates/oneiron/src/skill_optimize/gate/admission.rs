@@ -536,6 +536,34 @@ pub(crate) fn optimizer_birth_marker_for_create_in_txn(
     Ok(None)
 }
 
+/// Read the immutable origin fact of an erased optimizer parent. This is not
+/// an ancestry walk: one exact parent id, one retained marker, no instruction
+/// body required. Missing marker means the receiver has no fact to compare.
+pub(in crate::skill_optimize) fn retained_optimizer_parent_goal_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    parent: &EntityId,
+) -> Result<Option<(SkillGoalId, String)>> {
+    let Some(raw) = store
+        .vault_meta
+        .get(txn, &optimizer_origin_marker_key(parent))?
+    else {
+        return Ok(None);
+    };
+    let values = decode_origin_marker(&raw)?;
+    let corrupt = || Error::CorruptedIndex(ORIGIN_MARKER_LABEL);
+    if values[0].as_deref() != Some(SKILL_OPTIMIZE_BIRTH_PATH) {
+        return Err(corrupt());
+    }
+    let skill_id = values[1]
+        .clone()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(corrupt)?;
+    let hex = values[5].as_deref().ok_or_else(corrupt)?;
+    let goal = SkillGoalId::from_hex(hex).map_err(|_| corrupt())?;
+    Ok(Some((goal, skill_id)))
+}
+
 /// The chokepoint rule, in two halves: an optimizer-born candidate never
 /// becomes canon by a bare state flip, and it never stops being optimizer-born.
 ///
