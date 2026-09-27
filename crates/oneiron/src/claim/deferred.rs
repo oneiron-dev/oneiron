@@ -219,11 +219,12 @@ impl Vault {
             let decision = crate::batch::ClaimMaterialization::apply_deferred_auto_grant(
                 self, txn, id, checker,
             )?;
-            self.complete_deferred_claim_in_txn(txn, id, false, now)?;
-            Ok(decision)
+            let closure_decision =
+                self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            Ok((decision, closure_decision))
         })?;
-        if let Some(decision) = decision {
-            decision.record_metrics(&self.store.diagnostics.gate);
+        for receipt in [decision.0, decision.1].into_iter().flatten() {
+            receipt.record_metrics(&self.store.diagnostics.gate);
         }
         Ok(())
     }
@@ -236,8 +237,20 @@ impl Vault {
         critical_confirmed: bool,
         now: u64,
     ) -> Result<()> {
+        self.complete_deferred_claim_with_checker_in_txn(txn, id, critical_confirmed, now, None)
+            .map(|_| ())
+    }
+
+    fn complete_deferred_claim_with_checker_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        critical_confirmed: bool,
+        now: u64,
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         let Some(proposal) = load(self, txn, id)? else {
-            return Ok(());
+            return Ok(None);
         };
         let body = self
             .get_claim_in_txn(txn, id)?
@@ -270,7 +283,7 @@ impl Vault {
                 reason_codes: vec![GateReasonCode::PendingCriticalityFloor.as_str()],
             }));
         }
-        match proposal.action {
+        let closure_decision = match proposal.action {
             DeferredAction::Supersede { old, old_hash } => {
                 let old = EntityId::from_bytes(old)?;
                 let old_body = self.require_named_claim_target_active_in(txn, &old)?;
@@ -285,7 +298,8 @@ impl Vault {
                 ) {
                     return Err(Error::InvalidClaimBody("closure has no approval grant"));
                 }
-                self.supersede_granted_deferred_claim_in_txn(txn, id, &old, now)?;
+                let decision =
+                    self.supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker)?;
                 self.store.close_pending_gate_consent_in_txn(
                     txn,
                     id,
@@ -298,6 +312,7 @@ impl Vault {
                 super::supersession_provenance::write_companion(
                     self, txn, id, &old, &body, &old_body, &envelope, now,
                 )?;
+                decision
             }
             action => {
                 let action = match action {
@@ -311,10 +326,11 @@ impl Vault {
                     DeferredAction::Supersede { .. } => unreachable!(),
                 };
                 self.apply_claim_demotion_in_txn(txn, id, action, now)?;
+                None
             }
-        }
+        };
         self.store.vault_meta.delete(txn, &key(id))?;
-        Ok(())
+        Ok(closure_decision)
     }
 }
 

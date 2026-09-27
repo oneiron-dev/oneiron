@@ -1449,7 +1449,11 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
             fixture.run.now_ms + 1,
             Some(&closure_checker),
         );
-        assert_eq!(closure_host.calls(), 1);
+        assert_eq!(
+            closure_host.calls(),
+            if hold { 1 } else { 2 },
+            "an allowed closure checks both the replacement and its old head"
+        );
         if hold {
             assert_eq!(
                 result.expect_err("checker holds the closure").kind(),
@@ -1488,6 +1492,128 @@ fn deferred_dreamer_grant_consults_checker_and_closes_only_on_allow() -> Result<
                     .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn verdict_bound_deferred_closure_keeps_prior_until_calibrated_auto_grant() -> Result<()> {
+    use crate::llm::manifest::{
+        CalibratedVerdict, ConfidenceBand, MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot,
+        VerdictBasis, VerdictBinding, VerdictMode,
+    };
+    use crate::llm::{ModelId, ModelLocality, ModelTierRef};
+    for mode in [VerdictMode::Shadow, VerdictMode::Enforce] {
+        let (_dir, vault) = open_auto_checker_vault();
+        let model = ModelId::new("test/deferred-verdict@1").expect("model");
+        vault.set_model_manifest(&ModelManifest {
+            version: 2,
+            roles: MODEL_ROLES
+                .into_iter()
+                .map(|role| {
+                    (
+                        role,
+                        ModelBinding {
+                            model: model.clone(),
+                            slot: ModelSlot::Llm,
+                            tier: ModelTierRef("test".into()),
+                            route_models: std::collections::BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+                .into_iter()
+                .map(|slot| (slot, ModelLocality::OnDevice))
+                .collect(),
+            verdict: Some(VerdictBinding {
+                model: model.clone(),
+                slot: ModelSlot::Llm,
+                floor: ConfidenceBand::High,
+                mode,
+            }),
+        })?;
+        let fx = fixture(&vault)?;
+        let allow = CountingAutoChecker::new(AutoCheckOutcome::Verdict(CalibratedVerdict {
+            model,
+            allow: true,
+            confidence_millionths: 950_000,
+            band: ConfidenceBand::High,
+            basis: VerdictBasis::CalibratedModel,
+        }));
+        let checker = BoundedAutoChecker::new(allow.clone());
+        let first = candidate(&fx, "profile.name", "Ada", vec![fx.turn]);
+        let old = first.claim_id;
+        assert_eq!(
+            promote_consolidated_claims_with_checker(&vault, &fx.run, vec![first], Some(&checker))?
+                .landed,
+            vec![old],
+        );
+        let mut second = candidate(&fx, "profile.name", "Ada Lovelace", vec![fx.turn]);
+        second.supersedes = Some(old);
+        let new = second.claim_id;
+        assert_eq!(
+            promote_consolidated_claims_with_checker(
+                &vault,
+                &fx.run,
+                vec![second],
+                Some(&checker)
+            )?
+            .pended,
+            vec![new],
+        );
+        assert_eq!(
+            allow.calls(),
+            1,
+            "the Proposed write does not consume an Auto verdict"
+        );
+        assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+        assert!(
+            vault
+                .grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, None)
+                .is_err()
+        );
+        let hold_host = CountingAutoChecker::new(AutoCheckOutcome::Hold {
+            reasons: vec!["checker: hedged verdict".to_owned()],
+        });
+        let hold = BoundedAutoChecker::new(hold_host.clone());
+        assert!(
+            vault
+                .grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, Some(&hold))
+                .is_err()
+        );
+        assert_eq!(hold_host.calls(), 1);
+        assert_eq!(
+            vault.get_claim(&new)?.expect("proposed").approval,
+            ClaimApprovalStatus::Proposed
+        );
+        assert_eq!(
+            vault.get_claim(&old)?.expect("active").lifecycle,
+            crate::ClaimLifecycleStatus::Active
+        );
+        assert_eq!(vault.pending_claim_supersession(&new)?, Some(old));
+        assert!(
+            !vault
+                .edges_out(&new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes)
+        );
+        vault.grant_deferred_claim_auto_with_checker(&new, fx.run.now_ms + 1, Some(&checker))?;
+        assert_eq!(
+            vault.get_claim(&new)?.expect("Auto").approval,
+            ClaimApprovalStatus::Auto
+        );
+        assert_eq!(
+            vault.get_claim(&old)?.expect("closed").lifecycle,
+            crate::ClaimLifecycleStatus::Superseded
+        );
+        assert_eq!(vault.pending_claim_supersession(&new)?, None);
+        assert!(
+            vault
+                .edges_out(&new)?
+                .iter()
+                .any(|edge| edge.kind == EdgeKind::Supersedes && edge.target == old)
+        );
     }
     Ok(())
 }

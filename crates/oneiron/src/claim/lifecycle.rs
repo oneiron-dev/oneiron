@@ -387,7 +387,8 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, false)
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, false, None)
+            .map(|_| ())
     }
 
     /// Only the validated deferred settlement may invoke this variant.
@@ -397,8 +398,9 @@ impl Vault {
         new_id: &EntityId,
         old_id: &EntityId,
         now: u64,
-    ) -> Result<()> {
-        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, true)
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, true, checker)
     }
 
     fn supersede_claim_with_closure_grant_in_txn(
@@ -408,7 +410,8 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
         closure_granted: bool,
-    ) -> Result<()> {
+        checker: Option<&crate::llm::BoundedAutoChecker>,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
@@ -483,8 +486,15 @@ impl Vault {
             },
         ];
         let binding = crate::batch::ClaimMaterialization::lifecycle(&self.store, &*wtxn, &ops[0])?;
-        self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
-        Ok(())
+        match (closure_granted, checker, binding) {
+            (true, Some(checker), Some(binding)) => {
+                self.apply_checked_deferred_closure_in_txn(wtxn, ops, binding, &old_body, checker)
+            }
+            (_, _, binding) => {
+                self.apply_lifecycle_materialization(wtxn, ops, binding, true)?;
+                Ok(None)
+            }
+        }
     }
 
     /// Supersedes an engine-owned `skill.*` / `actor.*` Claim inside the
@@ -672,6 +682,65 @@ impl Vault {
 }
 
 impl Vault {
+    /// Recheck the closing old head with the same bounded checker in the
+    /// closure transaction. Its preflight receipt binds the exact old-row Put;
+    /// phase-2 repeats the policy check without another checker consult.
+    fn apply_checked_deferred_closure_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ops: Vec<BatchOp>,
+        binding: crate::batch::ClaimMaterialization,
+        old_body: &ClaimBody,
+        checker: &crate::llm::BoundedAutoChecker,
+    ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
+        let BatchOp::Put { id, .. } = &ops[0] else {
+            return Err(Error::InvariantViolation(
+                "deferred closure has no old-head Put",
+            ));
+        };
+        let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
+        let mut decision = None;
+        crate::gate::check_claim_policy_for_write_with_record(
+            &self.store,
+            txn,
+            id,
+            crate::gate::ClaimGateWrite {
+                body: old_body,
+                envelope: Some(binding.envelope()),
+                auto_checker: Some(checker),
+                defer_metrics_until_commit: true,
+            },
+            &policy,
+            crate::gate::GateWriteMode {
+                record_decision: true,
+                persist_pending_consent: false,
+                resolve_pending: false,
+                can_resolve_pending_consent: true,
+                include_source_in_gate_input: false,
+            },
+            &mut decision,
+        )?;
+        let ids = std::collections::HashMap::from([(
+            *id,
+            std::collections::VecDeque::from([decision
+                .as_ref()
+                .map(crate::gate::RecordedClaimGateDecision::decision_id)]),
+        )]);
+        crate::batch::apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            ops,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            crate::batch::ApplyOpsGateMode::new(false, true)
+                .with_claim_materializations(vec![binding])
+                .with_preflight_gate_decision_ids(ids),
+        )?;
+        Ok(decision)
+    }
+
     fn apply_lifecycle_materialization(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
