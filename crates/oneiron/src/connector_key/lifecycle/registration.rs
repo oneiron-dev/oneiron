@@ -118,6 +118,14 @@ impl Vault {
         if record.status != ConnectorKeyStatus::Active {
             return Err(invalid_body("registration requires status active"));
         }
+        if record.retained_manifest.is_some()
+            || record.pending_manifest.is_some()
+            || record.negotiated_protocol_revision.is_some()
+        {
+            return Err(invalid_body(
+                "manifest must enter through qualified staging",
+            ));
+        }
         if record.charter.is_some() || record.pending_charter.is_some() {
             return Err(invalid_body("registration must not carry a charter"));
         }

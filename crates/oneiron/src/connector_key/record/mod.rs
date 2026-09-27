@@ -12,9 +12,11 @@ pub(super) use self::budgets::{
 pub(crate) use self::key_record::invalid_body;
 #[cfg(test)]
 pub(super) use self::key_record::validate_compiled_policy;
+pub(in crate::connector_key) use self::key_record::validate_protocol_revision;
 pub use self::key_record::{
     CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry, ConnectorCharterBlock,
     ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus, PendingConnectorCharter,
+    PendingConnectorManifest,
 };
 pub(super) use self::key_record::{validate_connector_token, validate_secret_ref};
 pub(super) use self::scoped::{

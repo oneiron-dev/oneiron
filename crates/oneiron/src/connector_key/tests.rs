@@ -2807,7 +2807,14 @@ fn secret_ref_round_trip_additive() -> Result<()> {
     entries.retain(|(key, _)| {
         !matches!(
             key.as_str(),
-            Some("secret_ref" | "key_generation" | "catalog")
+            Some(
+                "secret_ref"
+                    | "key_generation"
+                    | "catalog"
+                    | "negotiated_protocol_revision"
+                    | "retained_manifest"
+                    | "pending_manifest"
+            )
         )
     });
     assert_eq!(entries.len(), 11);
@@ -3536,5 +3543,99 @@ fn refusal_does_not_poison_replay() -> Result<()> {
         ConnectorKeyStatus::Active
     );
     assert_eq!(send_admit_row_count(&vault, &refuse_id)?, 1);
+    Ok(())
+}
+
+#[test]
+fn manifest_stage_retains_prior_and_revision_halts_until_owner() -> Result<()> {
+    use serde_json::json;
+    use std::collections::BTreeSet;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+            assert_eq!(manifest.tools().len(), 1);
+            assert!(!revision.is_empty());
+            Ok("a".repeat(64))
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    let id = test_id(0xB9);
+    vault.register_connector_key(
+        &id,
+        ConnectorKeyRecord::active("mcp", None, Vec::new(), 100),
+    )?;
+    let source = || {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read".into(), permissions: ["read".into()].into(),
+        triggers: BTreeSet::new(), input_schema: json!({"type":"object","properties":{"limit":{"type":"integer","default":10}}}),
+    }]).unwrap()
+    };
+    let first = vault
+        .stage_connector_manifest(&id, source(), "2026-07-28", &Suite, 101)?
+        .unwrap();
+    assert!(first.kinds.contains(&ConnectorDriftKind::Permission));
+    assert!(vault.connector_tool_requires_confirmation(&id, "read")?);
+    let initial = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(initial.status, ConnectorKeyStatus::Pending);
+    assert!(initial.retained_manifest.is_none());
+    assert!(initial.pending_manifest.is_some());
+    let mut staged = initial;
+    staged.retained_manifest = Some(source());
+    assert!(staged.validate().is_err());
+    let owner = test_id(0xB8);
+    vault.put_entity(
+        &owner,
+        crate::registry::ENTITY_TYPE_PERSON,
+        crate::TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let auth = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        crate::store::GateDecisionId::from_bytes(*test_id(0xBA).as_bytes()),
+    )?;
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, source().hash()?, &"f".repeat(64), 102)
+            .is_err()
+    );
+    assert!(
+        vault
+            .approve_connector_manifest(&auth, &id, [0; 32], &"a".repeat(64), 102)
+            .is_err()
+    );
+    let approved =
+        vault.approve_connector_manifest(&auth, &id, source().hash()?, &"a".repeat(64), 102)?;
+    assert_eq!(approved.status, ConnectorKeyStatus::Active);
+    assert_eq!(vault.get_connector_key(&id)?, Some(approved));
+    assert!(!vault.connector_tool_requires_confirmation(&id, "read")?);
+    let revision = vault
+        .stage_connector_manifest(&id, source(), "2026-09-01", &Suite, 102)?
+        .unwrap();
+    assert!(revision.requires_reregistration);
+    let pending = vault.get_connector_key(&id)?.unwrap();
+    assert_eq!(pending.status, ConnectorKeyStatus::Suspended);
+    assert_eq!(
+        pending.negotiated_protocol_revision.as_deref(),
+        Some("2026-07-28")
+    );
+    assert_eq!(pending.retained_manifest.as_ref(), Some(&source()));
+    assert!(vault.connector_tool_requires_confirmation(&id, "read")?);
+    assert!(vault.resume_connector_key(&id, 103).is_err());
+    let mut changed = source().tools()[0].clone();
+    changed.input_schema["properties"]["limit"]["default"] = json!(20);
+    let new_manifest = ResolvedConnectorManifest::resolve(vec![changed])?;
+    assert!(
+        vault
+            .stage_connector_manifest(&id, new_manifest.clone(), "2026-07-28", &Suite, 104)
+            .is_err()
+    );
+    let change = vault
+        .stage_connector_manifest(&id, new_manifest, "2026-09-01", &Suite, 104)?
+        .unwrap();
+    assert!(change.kinds.contains(&ConnectorDriftKind::ParameterDefault));
+    assert!(change.requires_reregistration);
     Ok(())
 }

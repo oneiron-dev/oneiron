@@ -10115,11 +10115,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ConnectorManifestQualifier"
+     ],
+     "path": "src/connector_key/lifecycle/manifest_ops.rs",
+     "purpose": "Manifest updates: qualify immutable resolved input, retain the approved snapshot, and bind an owner stamp to…",
+     "surface": {
+      "fn": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/connector_key/lifecycle/mod.rs",
      "purpose": "—",
      "surface": {
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -10141,6 +10154,24 @@
      "purpose": "Key state machine: suspend/resume, terminal revoke/remove, custody rotation and generation log",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectorDriftKind",
+      "ConnectorManifestDrift",
+      "ConnectorToolSchema",
+      "ResolvedConnectorManifest"
+     ],
+     "path": "src/connector_key/manifest_drift.rs",
+     "purpose": "Resolved connector-schema snapshots and conservative, typed drift classification",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -10170,7 +10201,7 @@
      "surface": {
       "crate-vis": 7,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -10205,15 +10236,16 @@
       "ConnectorKeyRecord",
       "ConnectorKeySpec",
       "ConnectorKeyStatus",
-      "PendingConnectorCharter"
+      "PendingConnectorCharter",
+      "PendingConnectorManifest"
      ],
      "path": "src/connector_key/record/key_record.rs",
      "purpose": "Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
-      "fn": 9,
-      "struct": 6
+      "fn": 10,
+      "struct": 7
      }
     },
     {
@@ -10223,7 +10255,7 @@
      "path": "src/connector_key/record/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 2
      }
     },
@@ -17001,7 +17033,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/gate/tests/connector_budget.rs",
@@ -35074,7 +35106,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 20,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36049,7 +36081,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2128,
+   "source_files": 2130,
    "test_files": 725
   },
   "oneiron-android": {

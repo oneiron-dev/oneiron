@@ -719,3 +719,66 @@ fn definition_ceiling_blocks_external_effect_auto() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn resolved_manifest_drift_holds_scoped_tool_at_gate() -> Result<()> {
+    use crate::connector_key::{
+        ConnectorManifestQualifier, ConnectorToolSchema, ResolvedConnectorManifest,
+    };
+    use serde_json::json;
+    struct Suite;
+    impl ConnectorManifestQualifier for Suite {
+        fn qualify(&self, _: &ResolvedConnectorManifest, _: &str) -> Result<String> {
+            Ok("b".repeat(64))
+        }
+    }
+    let (_tmp, vault) = temp_vault();
+    put_policy_manifest_bytes(&vault, test_id(0xC6), &encode_policy_manifest(vec![]))?;
+    let principal = test_id(0xE5);
+    let grant_id = test_id(0xE6);
+    vault.mint_scoped_mcp_outbound_grant(
+        &grant_id,
+        &scoped_mcp_grant_intent(&principal.to_hex(), "files"),
+        10,
+    )?;
+    let key_id = test_id(0xE7);
+    vault.register_connector_key(
+        &key_id,
+        crate::connector_key::ConnectorKeyRecord::active(
+            scoped_capability_connector("files", &grant_id),
+            None,
+            Vec::new(),
+            10,
+        ),
+    )?;
+    let manifest = |default| {
+        ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
+        name: "read_file".into(), permissions: ["read".into()].into(), triggers: Default::default(),
+        input_schema: json!({"type":"object", "properties":{"path":{"type":"string","default":default}}}),
+    }]).unwrap()
+    };
+    let mut record = vault.get_connector_key(&key_id)?.unwrap();
+    record.retained_manifest = Some(manifest("safe"));
+    record.negotiated_protocol_revision = Some("r1".into());
+    vault.with_write_txn(|txn| {
+        crate::connector_key::rewrite_connector_key_in_txn(&vault.store, txn, &key_id, &record)
+    })?;
+    let policy = resolve(&vault)?;
+    let effect = scoped_mcp_effect(principal, "files");
+    let (before, _) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(before.outcome(), GateOutcome::Allow);
+    vault.stage_connector_manifest(&key_id, manifest("changed"), "r1", &Suite, 11)?;
+    let (after, charge) = check_effect(&vault, &effect, &policy)?;
+    assert_eq!(after.outcome(), GateOutcome::Pending);
+    assert_eq!(
+        gate_reason_strs(&after),
+        vec!["gate.pending.connector_manifest_drift"]
+    );
+    assert!(
+        after
+            .receipt_reasons()
+            .contains(&"connector_manifest_drift")
+    );
+    assert!(charge.is_none());
+    Ok(())
+}

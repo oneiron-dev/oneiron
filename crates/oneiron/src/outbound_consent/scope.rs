@@ -113,6 +113,7 @@ pub enum ScopedMcpEscalationReason {
     ConnectorKeySuspended,
     ConnectorKeyRevoked,
     ConnectorKeyCharterDrift,
+    ConnectorManifestDrift,
     ConnectorKeyCharterNeverList,
     ConnectorKeyBudgetExhausted,
 }

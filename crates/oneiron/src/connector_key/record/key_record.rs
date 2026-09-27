@@ -1,5 +1,6 @@
 //! Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter data shapes.
 
+use crate::connector_key::manifest_drift::{ConnectorManifestDrift, ResolvedConnectorManifest};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -211,6 +212,21 @@ pub struct ConnectorKeyRecord {
     /// so the executor keeps the ARCH-0054 default (scoped-MCP tool calls
     /// unbudgeted). Only the composed registration door mints one.
     pub catalog: Option<ConnectorCatalogEntry>,
+    /// Negotiated admission revision, pinned alongside schema_version on disk.
+    pub negotiated_protocol_revision: Option<String>,
+    /// Last approved fully resolved manifest; never overwritten by a proposal.
+    pub retained_manifest: Option<ResolvedConnectorManifest>,
+    /// Candidate awaiting qualification and graded owner re-consent.
+    pub pending_manifest: Option<PendingConnectorManifest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingConnectorManifest {
+    pub manifest: ResolvedConnectorManifest,
+    pub protocol_revision: String,
+    pub drift: ConnectorManifestDrift,
+    pub qualification_report_hash: Option<String>,
 }
 
 impl ConnectorKeyRecord {
@@ -236,7 +252,33 @@ impl ConnectorKeyRecord {
             secret_ref: None,
             key_generation: 0,
             catalog: None,
+            negotiated_protocol_revision: None,
+            retained_manifest: None,
+            pending_manifest: None,
         }
+    }
+
+    /// Fail-closed per-tool drift wall shared by admission and recovery.
+    /// Legacy unmanifested keys retain their existing connector-key behavior;
+    /// once a manifest is staged or pinned, unknown tools cannot auto-fire.
+    #[must_use]
+    pub fn tool_requires_confirmation(&self, tool: &str) -> bool {
+        if self
+            .pending_manifest
+            .as_ref()
+            .is_some_and(|pending| pending.drift.requires_reregistration)
+        {
+            return true;
+        }
+        let Some(approved) = self.retained_manifest.as_ref() else {
+            return self.pending_manifest.is_some();
+        };
+        if !approved.tools().iter().any(|entry| entry.name == tool) {
+            return true;
+        }
+        self.pending_manifest
+            .as_ref()
+            .is_some_and(|pending| pending.drift.affected_tools.contains(tool))
     }
 
     /// Validates structural invariants shared by encode, decode, and register.
@@ -288,6 +330,44 @@ impl ConnectorKeyRecord {
         }
         if let Some(secret_ref) = self.secret_ref.as_deref() {
             validate_secret_ref(secret_ref)?;
+        }
+        if self.retained_manifest.is_some() != self.negotiated_protocol_revision.is_some() {
+            return Err(invalid_body("manifest and protocol pin must be paired"));
+        }
+        if let Some(revision) = self.negotiated_protocol_revision.as_deref() {
+            validate_protocol_revision(revision)?;
+        }
+        if let Some(manifest) = &self.retained_manifest {
+            manifest.validate_snapshot()?;
+        }
+        if let Some(pending) = &self.pending_manifest {
+            validate_protocol_revision(&pending.protocol_revision)?;
+            pending.manifest.validate_snapshot()?;
+            let expected = match (&self.retained_manifest, &self.negotiated_protocol_revision) {
+                (Some(old), Some(revision)) => ConnectorManifestDrift::between(
+                    old,
+                    &pending.manifest,
+                    revision,
+                    &pending.protocol_revision,
+                ),
+                (None, None) => ConnectorManifestDrift::first_registration(&pending.manifest),
+                _ => return Err(invalid_body("manifest pin incomplete")),
+            };
+            if pending.drift != expected
+                || !pending.drift.needs_reconsent()
+                || pending
+                    .qualification_report_hash
+                    .as_ref()
+                    .is_some_and(|hash| {
+                        hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+            {
+                return Err(invalid_body("manifest drift is inconsistent"));
+            }
+            if pending.drift.requires_reregistration && self.status != ConnectorKeyStatus::Suspended
+            {
+                return Err(invalid_body("revision drift must suspend key"));
+            }
         }
         if let Some(catalog) = self.catalog.as_ref() {
             catalog.validate()?;
@@ -425,4 +505,17 @@ pub(in crate::connector_key) fn validate_compiled_policy(
 
 pub(crate) fn invalid_body(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidConnectorKeyBody(reason))
+}
+
+/// Protocol revisions are bounded transport tokens, not caller-authored prose.
+pub(in crate::connector_key) fn validate_protocol_revision(value: &str) -> Result<()> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return Err(invalid_body("invalid negotiated protocol revision"));
+    }
+    Ok(())
 }

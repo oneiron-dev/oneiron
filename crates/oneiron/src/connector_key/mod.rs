@@ -15,6 +15,7 @@ mod charter;
 mod codec;
 pub mod events;
 mod lifecycle;
+mod manifest_drift;
 mod meter;
 mod record;
 mod slate;
@@ -31,7 +32,7 @@ pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
     encode_connector_key_body,
 };
-pub use self::lifecycle::{ConnectorCallRoute, ConnectorDescription};
+pub use self::lifecycle::{ConnectorCallRoute, ConnectorDescription, ConnectorManifestQualifier};
 pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -43,6 +44,7 @@ pub use self::record::{
     ConnectorCatalogEntry, ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec,
     ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
     EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter,
+    PendingConnectorManifest,
 };
 pub use self::txn::{
     CONNECTOR_CATALOG_NAME_INDEX_PREFIX, CONNECTOR_KEY_GENERATION_LOG_PREFIX,
@@ -99,4 +101,8 @@ pub(crate) use self::txn::rebuild_checkpoint_connector_index;
 pub use slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateDraftRow, SlateOwnerOverride,
     SlateRow, SlateToolManifest, draft_connector_slate,
+};
+
+pub use manifest_drift::{
+    ConnectorDriftKind, ConnectorManifestDrift, ConnectorToolSchema, ResolvedConnectorManifest,
 };

@@ -296,6 +296,9 @@ pub(super) fn recovery_governance(
         }
         ConnectorKeyStatus::Active => {}
     }
+    if key.tool_requires_confirmation(&record.tool) {
+        return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
+    }
     if let Some(charter) = key.charter.as_ref() {
         if connector_key::charter_block_drifted(charter)? {
             return Ok(RecoveryGovernance::Block("charter_drift"));

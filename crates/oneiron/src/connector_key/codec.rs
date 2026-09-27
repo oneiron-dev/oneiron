@@ -9,7 +9,7 @@ use super::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
     EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
-    EffectorBudgetWindow, PendingConnectorCharter, invalid_body,
+    EffectorBudgetWindow, PendingConnectorCharter, PendingConnectorManifest, invalid_body,
 };
 
 /// Current ConnectorKeyRecord body schema version.
@@ -27,7 +27,7 @@ pub const CONNECTOR_KEY_SCHEMA_VERSION: u64 = 3;
 /// APPEND-ONLY and position-addressed by the `KEY_*` consts below: an existing
 /// index must never move, or every stored body silently re-reads as a
 /// different field.
-pub const CONNECTOR_KEY_BODY_KEYS: [&str; 14] = [
+pub const CONNECTOR_KEY_BODY_KEYS: [&str; 17] = [
     "schema_version",
     "connector",
     "actor_entity_ref",
@@ -42,6 +42,9 @@ pub const CONNECTOR_KEY_BODY_KEYS: [&str; 14] = [
     "secret_ref",
     "key_generation",
     "catalog",
+    "negotiated_protocol_revision",
+    "retained_manifest",
+    "pending_manifest",
 ];
 
 const KEY_SCHEMA_VERSION: &str = CONNECTOR_KEY_BODY_KEYS[0];
@@ -58,11 +61,17 @@ const KEY_SUGGESTED_BUDGETS: &str = CONNECTOR_KEY_BODY_KEYS[10];
 const KEY_SECRET_REF: &str = CONNECTOR_KEY_BODY_KEYS[11];
 const KEY_KEY_GENERATION: &str = CONNECTOR_KEY_BODY_KEYS[12];
 const KEY_CATALOG: &str = CONNECTOR_KEY_BODY_KEYS[13];
-const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 4] = [
+const KEY_PROTOCOL_REVISION: &str = CONNECTOR_KEY_BODY_KEYS[14];
+const KEY_RETAINED_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[15];
+const KEY_PENDING_MANIFEST: &str = CONNECTOR_KEY_BODY_KEYS[16];
+const OPTIONAL_CONNECTOR_KEY_BODY_KEYS: [&str; 7] = [
     KEY_SUGGESTED_BUDGETS,
     KEY_SECRET_REF,
     KEY_KEY_GENERATION,
     KEY_CATALOG,
+    KEY_PROTOCOL_REVISION,
+    KEY_RETAINED_MANIFEST,
+    KEY_PENDING_MANIFEST,
 ];
 
 const CATALOG_ENTRY_KEYS: [&str; 6] = [
@@ -182,6 +191,18 @@ pub fn encode_connector_key_body(record: &ConnectorKeyRecord) -> Result<Vec<u8>>
                 .catalog
                 .as_ref()
                 .map_or(Value::Nil, encode_catalog_entry),
+        ),
+        (
+            Value::from(KEY_PROTOCOL_REVISION),
+            option_string_value(record.negotiated_protocol_revision.as_deref()),
+        ),
+        (
+            Value::from(KEY_RETAINED_MANIFEST),
+            encode_json_option(record.retained_manifest.as_ref())?,
+        ),
+        (
+            Value::from(KEY_PENDING_MANIFEST),
+            encode_json_option(record.pending_manifest.as_ref())?,
         ),
     ]);
 
@@ -426,6 +447,12 @@ fn decode_connector_key_value(value: &Value) -> Result<ConnectorKeyRecord> {
             .map_or_else(|| Ok(0), decode_key_generation)?,
         catalog: optional_value(entries, KEY_CATALOG)
             .map_or_else(|| Ok(None), decode_optional_catalog_entry)?,
+        negotiated_protocol_revision: optional_value(entries, KEY_PROTOCOL_REVISION)
+            .map_or_else(|| Ok(None), decode_optional_string)?,
+        retained_manifest: optional_value(entries, KEY_RETAINED_MANIFEST)
+            .map_or_else(|| Ok(None), decode_json_option)?,
+        pending_manifest: optional_value(entries, KEY_PENDING_MANIFEST)
+            .map_or_else(|| Ok(None), decode_json_option::<PendingConnectorManifest>)?,
     };
     record.validate()?;
     Ok(record)
@@ -690,4 +717,29 @@ fn decode_hash32(value: &Value) -> Result<[u8; 32]> {
 
 fn option_string_value(value: Option<&str>) -> Value {
     value.map_or(Value::Nil, Value::from)
+}
+
+fn encode_json_option<T: serde::Serialize>(value: Option<&T>) -> Result<Value> {
+    value
+        .map(|item| {
+            serde_json::to_vec(item)
+                .map(Value::Binary)
+                .map_err(|_| malformed())
+        })
+        .transpose()
+        .map(|v| v.unwrap_or(Value::Nil))
+}
+fn decode_json_option<T: serde::de::DeserializeOwned>(value: &Value) -> Result<Option<T>> {
+    if *value == Value::Nil {
+        return Ok(None);
+    }
+    let Value::Binary(bytes) = value else {
+        return Err(malformed());
+    };
+    if bytes.len() > 16_777_216 {
+        return Err(malformed());
+    }
+    serde_json::from_slice(bytes)
+        .map(Some)
+        .map_err(|_| malformed())
 }

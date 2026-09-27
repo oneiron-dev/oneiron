@@ -209,6 +209,7 @@ pub(crate) enum GateReasonCode {
     DenyConnectorKeySuspended,
     DenyCharterNeverList,
     PendingCharterDrift,
+    PendingConnectorManifestDrift,
     /// DEC-0006 invariant 1: the operation is irreversible in effect and no
     /// approve-once receipt or covering standing grant authorizes it.
     PendingConsentIrreversibleEffect,
@@ -302,6 +303,7 @@ impl GateReasonCode {
             Self::DenyConnectorKeySuspended => "gate.deny.connector_key_suspended",
             Self::DenyCharterNeverList => "gate.deny.charter_never_list",
             Self::PendingCharterDrift => "gate.pending.charter_drift",
+            Self::PendingConnectorManifestDrift => "gate.pending.connector_manifest_drift",
             Self::PendingConsentIrreversibleEffect => "gate.pending.consent.irreversible_effect",
             Self::PendingConsentBoundExceeded => "gate.pending.consent.bound_exceeded",
             Self::PendingConsentCatastropheFloor => "gate.pending.consent.catastrophe_floor",
@@ -340,9 +342,9 @@ impl GateReasonCode {
             Self::PendingSourceTrust => GateMetricReasonClass::SourceTrust,
             Self::PendingCriticalityFloor => GateMetricReasonClass::CriticalityFloor,
             Self::PendingPolicyManifestAuthority => GateMetricReasonClass::PolicyManifestAuthority,
-            Self::PendingExternalEffectAuthority | Self::PendingConnectorKeyUnregistered => {
-                GateMetricReasonClass::ExternalEffectAuthority
-            }
+            Self::PendingExternalEffectAuthority
+            | Self::PendingConnectorKeyUnregistered
+            | Self::PendingConnectorManifestDrift => GateMetricReasonClass::ExternalEffectAuthority,
             // The consequence moved from deny to pending-escalation; the METRIC
             // class did not. Both reason codes count as one opt-out class so
             // dashboards keep their series across the cutover.

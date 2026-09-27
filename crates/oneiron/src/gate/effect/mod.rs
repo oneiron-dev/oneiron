@@ -360,6 +360,19 @@ pub(crate) fn evaluate_external_effect_policy(
             }
         }
 
+        // Retained resolved schemas are the only auto-fire surface. A staged
+        // change downgrades just the affected tool; other rows remain live.
+        let manifest_verb = hydrated_effect
+            .scoped_mcp_call
+            .as_ref()
+            .map_or(hydrated_effect.verb.as_str(), |call| call.tool.as_str());
+        if charter_wall.is_none() && key.tool_requires_confirmation(manifest_verb) {
+            charter_wall = Some(
+                GateDecision::pending(vec![GateReasonCode::PendingConnectorManifestDrift])
+                    .with_receipt_reasons(["connector_manifest_drift"]),
+            );
+        }
+
         if key.status != ConnectorKeyStatus::Active {
             let status_reason = match key.status {
                 ConnectorKeyStatus::Suspended => "connector_key_suspended",

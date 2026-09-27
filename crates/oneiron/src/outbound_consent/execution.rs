@@ -165,6 +165,9 @@ fn scoped_decision_after_effect(
                 "connector_key_suspended" => Some(ScopedMcpEscalationReason::ConnectorKeySuspended),
                 "connector_key_revoked" => Some(ScopedMcpEscalationReason::ConnectorKeyRevoked),
                 "charter_drift" => Some(ScopedMcpEscalationReason::ConnectorKeyCharterDrift),
+                "connector_manifest_drift" => {
+                    Some(ScopedMcpEscalationReason::ConnectorManifestDrift)
+                }
                 "charter_never_list" => {
                     Some(ScopedMcpEscalationReason::ConnectorKeyCharterNeverList)
                 }
