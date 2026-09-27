@@ -9,7 +9,7 @@ use super::validation::{
     validate_existing_witness_turn,
 };
 use super::{distinct_message_orders, witness_message_envelope};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -85,7 +85,14 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         before_txn: impl FnOnce(),
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()))
+        self.witness_authorized(
+            turn,
+            session_route,
+            false,
+            before_txn,
+            |_| Ok(()),
+            |_| Ok(()),
+        )
     }
 
     pub(crate) fn witness_host_executor(
@@ -93,7 +100,7 @@ impl Memory<'_> {
         turn: &WitnessTurn,
         session_route: Option<&SessionWriteRoute>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()))
+        self.witness_authorized(turn, session_route, true, || {}, |_| Ok(()), |_| Ok(()))
     }
 
     /// Stream terminal sidecars and EntityDoc birth share the canonical witness
@@ -105,7 +112,18 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
-        self.witness_authorized(turn, session_route, false, before_txn, effect)
+        self.witness_authorized(turn, session_route, false, before_txn, |_| Ok(()), effect)
+    }
+
+    /// Assemble a room before the witness gate inside its own transaction.
+    /// This is used by project birth so the first witnessed trunk message,
+    /// room, project, skill forks and owner Grant all commit together.
+    pub(crate) fn witness_with_room_birth(
+        &self,
+        turn: &WitnessTurn,
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    ) -> MemoryResult<WitnessReceipt> {
+        self.witness_authorized(turn, None, false, || {}, prepare, |_| Ok(()))
     }
 
     fn witness_authorized(
@@ -114,6 +132,7 @@ impl Memory<'_> {
         session_route: Option<&SessionWriteRoute>,
         host_executor: bool,
         before_txn: impl FnOnce(),
+        prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         super::validate_witness_origin(turn, host_executor)?;
@@ -203,6 +222,46 @@ impl Memory<'_> {
                     return Ok(Some(*id));
                 }
             }
+            prepare(wtxn)?;
+            // Container resolution before the writer was advisory. A concurrent
+            // writer may have claimed this ID, or a prepared project birth may
+            // have created its home room. Never attach a turn to a non-room or
+            // to an erased/hidden room just because an entity now exists here.
+            let current_conversation = self
+                .vault
+                .store
+                .entities
+                .get(wtxn, conversation_id.as_bytes())?;
+            match current_conversation.as_deref() {
+                Some(raw) => {
+                    let header = EntityMetadataHeader::parse(raw)
+                        .ok_or(Error::CorruptedIndex("conversation header"))?;
+                    if header.entity_type != ENTITY_TYPE_CONVERSATION {
+                        return Err(MemoryError::bad_request(
+                            "the witnessed conversation ref resolves to a non-CONVERSATION entity",
+                        ));
+                    }
+                    let visibility = self
+                        .vault
+                        .store
+                        .port_deletion_state(wtxn, &conversation_id)?;
+                    if raw.len() == ENTITY_METADATA_HEADER_LEN
+                        || visibility.deleted
+                        || visibility.stale
+                    {
+                        return Err(MemoryError::not_found(
+                            "the witnessed conversation is no longer live",
+                        ));
+                    }
+                }
+                None if !conversation_is_new => {
+                    return Err(MemoryError::not_found(
+                        "the witnessed conversation no longer exists",
+                    ));
+                }
+                None => {}
+            }
+            let conversation_is_absent = current_conversation.is_none();
             let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
             super::reject_erased_person_in_txn(self.vault, wtxn, conversation_id, person_author)?;
             crate::workspace_roster::admit_room_witness(
@@ -216,7 +275,7 @@ impl Memory<'_> {
                 &message_ids,
             )?;
             let mut batch = self.vault.batch_in();
-            if conversation_is_new {
+            if conversation_is_absent {
                 batch = batch.put(
                     &conversation_id,
                     ENTITY_TYPE_CONVERSATION,

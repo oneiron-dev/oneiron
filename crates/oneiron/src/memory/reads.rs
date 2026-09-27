@@ -17,6 +17,7 @@ fn companion_value_to_json(value: &rmpv::Value) -> serde_json::Value {
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
 const SNIPPET_MAX_CHARS: usize = 160;
@@ -350,41 +351,70 @@ impl Memory<'_> {
             None => None,
         };
         let id = self.resolve_ref(entity_ref)?;
-        if self.entity_view(&id)?.is_none() {
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        if self
+            .entity_view_with_mode_in_txn(&txn, &id, crate::vault::ReadMode::Live)?
+            .is_none()
+        {
             return Ok(Vec::new());
         }
         let mut hits = Vec::new();
-        // Push kind/min_weight/limit into the LMDB prefix walk per direction
-        // so a high-degree node stops after `limit` matches instead of
-        // materializing its full edge set (which errors with IndexOverflow
-        // past MAX_EDGE_QUERY_RESULTS).
+        // Scan inside the ONE read snapshot. Hidden edges are not results:
+        // count only edges admitted by both endpoint and exact-pair gates.
         for (direction, outbound) in [("out", true), ("in", false)] {
-            let remaining = opts.limit - hits.len();
-            if remaining == 0 {
-                break;
-            }
-            let edges = self.vault.neighbor_edges_bounded(
-                &id,
-                outbound,
-                kind_filter,
-                opts.min_weight,
-                remaining,
-            )?;
-            for edge in edges {
-                if self.entity_view(&edge.target)?.is_none() {
+            let edge_direction = if outbound {
+                crate::ports::EdgeDirection::Out
+            } else {
+                crate::ports::EdgeDirection::In
+            };
+            for entry in
+                self.vault
+                    .store
+                    .port_edges(&txn, &id, edge_direction, kind_filter, None)?
+            {
+                let edge = entry?;
+                if opts.min_weight.is_some_and(|min| edge.weight < min) {
                     continue;
                 }
+                // The same typed edge door used by scoped graph projections
+                // binds the exact relation and this facade's endpoint reads.
+                let peer = edge.target;
+                let (src, tgt) = if outbound { (id, peer) } else { (peer, id) };
+                let admitted = crate::claim::admit_stored_edge_in(
+                    self.vault,
+                    &txn,
+                    src,
+                    tgt,
+                    edge,
+                    || Ok::<_, MemoryError>(crate::claim::ReadAdmission::Visible(())),
+                    || {
+                        self.entity_view_with_mode_in_txn(&txn, &peer, crate::vault::ReadMode::Live)
+                            .map(|row| match row {
+                                Some(_) => crate::claim::ReadAdmission::Visible(()),
+                                None => crate::claim::ReadAdmission::OpaqueAbsent,
+                            })
+                    },
+                )?;
+                let Some(row) = admitted.into_option() else {
+                    continue;
+                };
+                let edge = row.info();
                 let kind = self
                     .vault
-                    .get_entity_type(&edge.target)?
+                    .get_entity_type_in_txn(&txn, &edge.target)?
                     .map_or_else(|| "UNKNOWN".to_owned(), kind_string_for_type);
                 hits.push(NeighborHit {
-                    short_id: self.short_ref_or_hex(&edge.target)?,
+                    short_id: self
+                        .short_ref_of_in_txn(&txn, &edge.target)?
+                        .unwrap_or_else(|| edge.target.to_hex()),
                     kind,
                     edge_kind: edge_kind_name(edge.kind).to_owned(),
                     weight: edge.weight,
                     direction: direction.to_owned(),
                 });
+                if hits.len() >= opts.limit {
+                    return Ok(hits);
+                }
             }
         }
         Ok(hits)
@@ -400,8 +430,17 @@ impl Memory<'_> {
         mode: crate::vault::ReadMode,
     ) -> MemoryResult<Option<EntityView>> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.entity_view_with_mode_in_txn(&txn, id, mode)
+    }
+
+    fn entity_view_with_mode_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        mode: crate::vault::ReadMode,
+    ) -> MemoryResult<Option<EntityView>> {
         let Some(raw) =
-            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, &txn, id, mode)?
+            crate::vault::entity_revision::read_entity_revision_in_txn(self.vault, txn, id, mode)?
         else {
             return Ok(None);
         };
@@ -423,26 +462,40 @@ impl Memory<'_> {
                 return Ok(None);
             }
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            && !crate::access_grant::decode_access_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )
+            .is_ok_and(|grant| {
+                !matches!(
+                    grant.scope,
+                    crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                )
+            })
+        {
+            return Ok(None);
+        }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+            verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
             if !crate::note::note_body_readable(
                 &self.vault.store,
-                &txn,
+                txn,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 Some(&self.actor),
-            )? {
+            )? && !crate::note::readable_through_link(self.vault, txn, *id, self.actor)?
+            {
                 return Ok(None);
             }
         }
         let projected = crate::note::live_body_in_txn(
             &self.vault.store,
-            &txn,
+            txn,
             id,
             header.entity_type,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         )?;
         let body = decode_body_json(&projected);
-        let short_ref = self.short_ref_of_in_txn(&txn, id)?.map(|reference| {
+        let short_ref = self.short_ref_of_in_txn(txn, id)?.map(|reference| {
             let short = reference.split(':').next().unwrap_or(&reference);
             let hash =
                 (xxhash_rust::xxh32::xxh32(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], 0)
