@@ -99,6 +99,32 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(len(rows), len(runner.ALL))
             self.assertTrue(all(row[4] == "unavailable" for row in rows))
 
+    def test_pdfium_missing_coverage_is_unavailable_not_a_complete_pass(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            pdf = root / "sample.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+            wrapper = root / "pdfium-wrapper"
+            for outcome, expected_status, expected_exit in (
+                ("not_established", "unavailable", 77),
+                ("rejected", "fail", 1),
+                (None, "unavailable", 77),
+            ):
+                with self.subTest(outcome=outcome):
+                    payload = {"reader": "pdfium", "version": "4.30.0", "mode": "parse",
+                               "status": "pass", "detail": "fixture"}
+                    if outcome is not None:
+                        payload["coverage_outcome"] = outcome
+                    wrapper.write_text("#!/usr/bin/env python3\nimport json\n"
+                                       f"print(json.dumps({payload!r}))\n")
+                    wrapper.chmod(0o755)
+                    env = isolated_env(root)
+                    env["SEAL_PDFIUM_BIN"] = str(wrapper)
+                    run = subprocess.run([sys.executable, str(RUNNER), "--reader", "pdfium",
+                                          str(pdf)], env=env, text=True, capture_output=True)
+                    self.assertEqual(run.returncode, expected_exit, run.stdout)
+                    self.assertEqual(run.stdout.strip().split("\t")[4], expected_status)
+
     def test_partial_matrix_is_explicit_not_full_coverage(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
