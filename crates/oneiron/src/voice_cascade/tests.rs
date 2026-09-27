@@ -18,6 +18,7 @@ mod preparation;
 mod retrieval;
 mod safeguard;
 mod session;
+mod stream;
 
 fn vault() -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().expect("temporary vault");
