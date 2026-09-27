@@ -181,6 +181,7 @@ type SelectionResult<T> = std::result::Result<T, SelectionError>;
 /// # Errors
 ///
 /// Refuses missing/malformed policy, storage errors and ungrounded evidence.
+#[expect(clippy::too_many_arguments)]
 pub fn decide_experiment_for(
     vault: &crate::Vault,
     campaign_id: &str,
