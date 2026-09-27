@@ -32964,7 +32964,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/workspace_roster/tests/onboarding_replay.rs",

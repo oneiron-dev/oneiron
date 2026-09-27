@@ -536,7 +536,21 @@ pub(super) fn ensure_companion_person(
             if header.entity_type != ENTITY_TYPE_PERSON {
                 return Err(Error::InvalidEntityType(header.entity_type));
             }
-            if &raw[ENTITY_METADATA_HEADER_LEN..] != body.as_slice() {
+            // A prior attempt may have committed the PERSON baseline before its
+            // CompanionBorn journal write. Check the roster-owned identity
+            // fields, not the entire body: a matching baseline and unrelated
+            // PERSON identity fields must survive an interrupted retry.
+            let fields = decode_map(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            let mut keys = std::collections::BTreeSet::new();
+            let unique_keys = fields
+                .iter()
+                .all(|(key, _)| key.as_str().is_some_and(|name| keys.insert(name)));
+            if !unique_keys
+                || required(&fields, "schema_version")?.as_u64()
+                    != Some(WORKSPACE_ROSTER_SCHEMA_VERSION)
+                || required(&fields, "display_name")?.as_str()
+                    != Some(companion.display_name.as_str())
+            {
                 return Err(invalid(
                     "companion person_ref is already bound to a different person",
                 ));
