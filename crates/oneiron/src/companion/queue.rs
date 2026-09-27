@@ -8,7 +8,7 @@ use super::keys::{
     COMPANION_TASK_PAYLOAD_SCHEMA_VERSION, ERR_INVALID_COMPANION_TASK_PAYLOAD, KEY_TASK,
     KEY_TASK_SCHEMA_VERSION, KEY_TASK_SCOPE, KEY_TASK_SUBJECT,
 };
-use super::model::{CompanionRecord, CompanionRecordKey, CompanionScope, CompanionSubject};
+use super::model::{CompanionRecordKey, CompanionScope, CompanionSubject};
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
@@ -56,22 +56,6 @@ impl CompanionTaskKind {
             _ => None,
         }
     }
-}
-
-/// Inputs controlling relationship-ending teardown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EndCompanionRelationship {
-    pub ended_at: u64,
-    pub ended_badly: bool,
-    pub run_id: Option<String>,
-}
-
-/// Result of relationship-ending teardown.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EndCompanionRelationshipOutcome {
-    pub record: CompanionRecord,
-    pub goodbye_artifact: Option<EnqueueCompanionTaskOutcome>,
-    pub already_ended: bool,
 }
 
 /// Typed payload stored on durable companion task attempt rows.
@@ -193,6 +177,7 @@ pub enum RetryCompanionTaskOutcome {
 
 /// Companion-specific facade over the generic durable AttemptQueue.
 pub struct CompanionQueue<'a> {
+    vault: &'a Vault,
     attempts: AttemptQueue<'a>,
 }
 
@@ -201,6 +186,7 @@ impl<'a> CompanionQueue<'a> {
     #[must_use]
     pub fn new(vault: &'a Vault) -> Self {
         Self {
+            vault,
             attempts: AttemptQueue::new(vault),
         }
     }
@@ -208,12 +194,18 @@ impl<'a> CompanionQueue<'a> {
     /// Enqueues a companion task as a generic durable attempt row.
     pub fn enqueue(&self, input: EnqueueCompanionTask) -> Result<EnqueueCompanionTaskOutcome> {
         let payload = encode_companion_task_payload(&input.task)?;
-        let outcome = self.attempts.enqueue(EnqueueAttempt {
-            kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(input.task.dedupe_key()),
-            run_id: input.run_id,
-            now: input.now,
+        let outcome = self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                self.vault,
+                txn,
+                EnqueueAttempt {
+                    kind: COMPANION_TASK_ATTEMPT_KIND.to_owned(),
+                    payload,
+                    dedupe_key: Some(input.task.dedupe_key()),
+                    run_id: input.run_id,
+                    now: input.now,
+                },
+            )
         })?;
         match outcome {
             EnqueueOutcome::Enqueued(record) => {
@@ -228,13 +220,17 @@ impl<'a> CompanionQueue<'a> {
     /// Claims the oldest queued companion task without leasing unrelated attempts.
     pub fn claim(&self, input: ClaimCompanionTask) -> Result<ClaimCompanionTaskOutcome> {
         loop {
-            match self.attempts.claim_kind(
-                COMPANION_TASK_ATTEMPT_KIND,
-                ClaimAttempt {
-                    lease_owner: input.lease_owner.clone(),
-                    now: input.now,
-                },
-            )? {
+            match self.vault.with_write_txn(|txn| {
+                crate::ports::JobQueue::port_job_claim(
+                    self.vault,
+                    txn,
+                    Some(COMPANION_TASK_ATTEMPT_KIND),
+                    ClaimAttempt {
+                        lease_owner: input.lease_owner.clone(),
+                        now: input.now,
+                    },
+                )
+            })? {
                 ClaimOutcome::Empty => return Ok(ClaimCompanionTaskOutcome::Empty),
                 ClaimOutcome::Claimed(record) => match decode_companion_task_status(record.clone())
                 {
@@ -250,11 +246,17 @@ impl<'a> CompanionQueue<'a> {
     /// Completes a leased companion task through the generic AttemptQueue.
     pub fn complete(&self, input: CompleteCompanionTask) -> Result<CompleteCompanionTaskOutcome> {
         self.ensure_companion_attempt_id(input.id)?;
-        let outcome = self.attempts.complete(CompleteAttempt {
-            id: input.id,
-            lease_owner: input.lease_owner,
-            attempt_count: input.attempt_count,
-            now: input.now,
+        let outcome = self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_complete(
+                self.vault,
+                txn,
+                CompleteAttempt {
+                    id: input.id,
+                    lease_owner: input.lease_owner,
+                    attempt_count: input.attempt_count,
+                    now: input.now,
+                },
+            )
         })?;
         match outcome {
             CompleteOutcome::Completed(record) => {
@@ -268,12 +270,18 @@ impl<'a> CompanionQueue<'a> {
     /// Terminally fails a leased companion task through the generic AttemptQueue.
     pub fn fail(&self, input: FailCompanionTask) -> Result<FailCompanionTaskOutcome> {
         self.ensure_companion_attempt_id(input.id)?;
-        let outcome = self.attempts.fail(FailAttempt {
-            id: input.id,
-            lease_owner: input.lease_owner,
-            attempt_count: input.attempt_count,
-            reason: input.reason,
-            now: input.now,
+        let outcome = self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_fail(
+                self.vault,
+                txn,
+                FailAttempt {
+                    id: input.id,
+                    lease_owner: input.lease_owner,
+                    attempt_count: input.attempt_count,
+                    reason: input.reason,
+                    now: input.now,
+                },
+            )
         })?;
         match outcome {
             FailOutcome::Failed(record) => {
@@ -322,12 +330,18 @@ impl<'a> CompanionQueue<'a> {
         lease_owner: &str,
         now: u64,
     ) -> Result<()> {
-        match self.attempts.fail(FailAttempt {
-            id: record.id,
-            lease_owner: lease_owner.to_owned(),
-            attempt_count: record.attempt_count,
-            reason: ERR_INVALID_COMPANION_TASK_PAYLOAD.to_owned(),
-            now,
+        match self.vault.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_fail(
+                self.vault,
+                txn,
+                FailAttempt {
+                    id: record.id,
+                    lease_owner: lease_owner.to_owned(),
+                    attempt_count: record.attempt_count,
+                    reason: ERR_INVALID_COMPANION_TASK_PAYLOAD.to_owned(),
+                    now,
+                },
+            )
         })? {
             FailOutcome::Failed(_) | FailOutcome::AlreadyFailed(_) => Ok(()),
         }

@@ -1,4 +1,4 @@
-//! Transaction-owner handoff for explicit Dreamer consent approvals.
+//! Transaction-owner handoff for Dreamer VAD approvals and digest invalidation.
 //!
 //! `batch_in` receives a bare heed transaction, not its owner. Keep its pending
 //! work scoped to that exact transaction and vault on the synchronous caller's
@@ -16,8 +16,14 @@ use crate::{EntityId, Result, Vault};
 
 type TransactionKey = (usize, usize);
 
+#[derive(Default)]
+pub(crate) struct PostcommitWork {
+    pub(crate) vad_ids: BTreeSet<EntityId>,
+    pub(crate) proactivity_changed: bool,
+}
+
 thread_local! {
-    static PENDING_VAD: RefCell<BTreeMap<TransactionKey, BTreeSet<EntityId>>> =
+    static PENDING_VAD: RefCell<BTreeMap<TransactionKey, PostcommitWork>> =
         const { RefCell::new(BTreeMap::new()) };
 }
 
@@ -37,13 +43,13 @@ impl VadPostcommitScope {
     pub(crate) fn new(vault: &Vault, txn: &RwTxn<'_>) -> Self {
         let key = transaction_key(vault, txn);
         PENDING_VAD.with(|pending| {
-            let previous = pending.borrow_mut().insert(key, BTreeSet::new());
+            let previous = pending.borrow_mut().insert(key, PostcommitWork::default());
             assert!(previous.is_none(), "duplicate VAD transaction owner");
         });
         Self { key }
     }
 
-    pub(crate) fn finish(self) -> BTreeSet<EntityId> {
+    pub(crate) fn finish(self) -> PostcommitWork {
         PENDING_VAD.with(|pending| pending.borrow_mut().remove(&self.key).unwrap_or_default())
     }
 }
@@ -63,9 +69,33 @@ pub(super) fn has_vad_postcommit_owner(vault: &Vault, txn: &RwTxn<'_>) -> bool {
 pub(super) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: Vec<EntityId>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
-            queued.extend(ids);
+            queued.vad_ids.extend(ids);
         }
     });
+}
+
+/// Mark transaction-owned claim writes for the owner's post-commit watch.
+/// A rolled-back scope drops the marker without signaling the timer.
+pub(crate) fn queue_proactivity_change(vault: &Vault, txn: &RwTxn<'_>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.proactivity_changed = true;
+        }
+    });
+}
+
+pub(super) fn ops_change_proactivity(ops: &[BatchOp]) -> bool {
+    ops.iter().any(|op| {
+        matches!(
+            op,
+            BatchOp::ClaimCandidate { .. }
+                | BatchOp::Put {
+                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    ..
+                }
+                | BatchOp::Delete { .. }
+        )
+    })
 }
 
 pub(super) fn pending_dreamer_vad_approvals(
