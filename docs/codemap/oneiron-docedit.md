@@ -13,5 +13,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/emit_revision.rs` | src | s | — | — | Produce one deterministic tracked-change sample for the external Word oracle |
 | `examples/resolve_docx.rs` | src | s | — | — | Resolve a DOCX revision in the pinned fork for an application oracle case |
-| `src/lib.rs` | src | s | 1 enum · 2 fn · 3 re-export | DoceditError | Native Word revisions over a pinned, Apache-2.0-selected stemma fork |
+| `src/lib.rs` | src | s | 1 enum · 3 fn · 3 re-export | DoceditError | Native Word revisions over a pinned, Apache-2.0-selected stemma fork |
 | `tests/revisions.rs` | test | s | — | — | — |

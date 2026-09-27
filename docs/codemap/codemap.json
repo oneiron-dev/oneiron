@@ -37083,7 +37083,7 @@
      "purpose": "Native Word revisions over a pinned, Apache-2.0-selected stemma fork",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 3
      }
     },

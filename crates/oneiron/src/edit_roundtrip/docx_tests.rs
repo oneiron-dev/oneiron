@@ -130,3 +130,78 @@ fn docx_artifact_proposal_settles_through_the_receipted_version_door() -> crate:
     assert_eq!(out.receipt.outcome, "selected");
     Ok(())
 }
+
+#[test]
+fn docx_artifact_refuses_direct_mode_over_another_authors_pending_edit() -> crate::error::Result<()>
+{
+    use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
+    use crate::edge::EdgeActorClass;
+    use crate::entity_id::EntityId;
+    use crate::registry::ENTITY_TYPE_PERSON;
+    use crate::temporal::TimeRange;
+    use crate::test_util::embedding_test_config;
+    use crate::write_envelope::WriteActor;
+
+    let original = Document::parse(DOCX).unwrap();
+    let first = &original.read().blocks[0];
+    let earlier = serde_json::json!({
+        "ops": [{"op": "replace", "target": first.id, "guard": first.guard,
+            "content": {"type": "paragraph", "content": [
+                {"type": "text", "text": "Earlier author's pending edit."}
+            ]}}],
+        "revision": {"author": "Earlier Author"}
+    })
+    .to_string();
+    let pending = oneiron_docedit::revise(DOCX, &earlier).unwrap();
+    let doc = Document::parse(&pending).unwrap();
+    let block = &doc.read().blocks[0];
+    let direct = serde_json::json!({
+        "ops": [{"op": "replace", "target": block.id, "guard": block.guard,
+            "content": {"type": "paragraph", "content": [
+                {"type": "text", "text": "Untracked overwrite."}
+            ]}}],
+        "materialization_mode": "direct",
+        "revision": {"author": "New Editor"}
+    })
+    .to_string();
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let at = TimeRange { start: 10, end: 10 };
+    let actor_id = EntityId::now();
+    vault.put_entity(&actor_id, ENTITY_TYPE_PERSON, at, 10, b"owner")?;
+    let actor = WriteActor::new(actor_id, EdgeActorClass::Human);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "pending.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        at,
+        10,
+    )?;
+    vault.append_blob_artifact_version(
+        &artifact,
+        &pending,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        at,
+        10,
+    )?;
+    assert!(
+        vault
+            .propose_blob_artifact_docx_revision(&artifact, &direct, "run:direct")
+            .is_err()
+    );
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    assert_eq!(
+        vault.read_blob_artifact_version(&artifact, 1)?.as_deref(),
+        Some(pending.as_slice())
+    );
+    assert_eq!(vault.read_blob_artifact_version(&artifact, 2)?, None);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, "run:direct")?
+            .is_none()
+    );
+    Ok(())
+}

@@ -1,6 +1,6 @@
 //! ARTL-4 settle tests. Proposals are constructed directly (the ARTL-3 pipeline
-//! and its `opc` fixtures are covered in `edit_roundtrip`); settle only reads a
-//! proposal's bytes, manifest, and validation flag, never re-parsing the bytes.
+//! and its `opc` fixtures are covered in `edit_roundtrip`); settlement
+//! independently validates native DOCX package bytes and transaction manifests.
 
 use std::collections::BTreeSet;
 
@@ -891,5 +891,116 @@ fn settlement_rechecks_native_docx_bytes_and_refuses_cross_format_ops() -> Resul
         Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
     ));
     assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    Ok(())
+}
+
+/// The raw proposal fields are public: settlement must not trust a caller's
+/// format, manifest, validation flag, or transaction self-report.
+const WORD_BASE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../oneiron-docedit/vendor/stemma-engine/testdata/simple-text/before.docx"
+));
+
+fn word_revision_transaction() -> String {
+    let doc = oneiron_docedit::Document::parse(WORD_BASE).unwrap();
+    let block = &doc.read().blocks[0];
+    serde_json::json!({
+        "ops": [{"op": "replace", "target": block.id, "guard": block.guard,
+            "content": {"type": "paragraph", "content": [
+                {"type": "text", "text": "An attributed revision."}
+            ]}}],
+        "revision": {"author": "Editor"}
+    })
+    .to_string()
+}
+
+#[test]
+fn valid_word_bytes_cannot_settle_into_spreadsheet_media_type() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = put_workbook(&vault, actor, 10);
+    let txn = word_revision_transaction();
+    let edited = oneiron_docedit::revise(WORD_BASE, &txn).unwrap();
+    let mut forged = proposal(
+        "run:word-into-sheet",
+        &edited,
+        vec![EditOp::DocxRevision { transaction: txn }],
+    );
+    forged.format = OfficeFormat::Docx;
+    forged.manifest.format = OfficeFormat::Docx;
+    // proposal() bound itself to the workbook's actual v1 head hash/version.
+    assert!(oneiron_docedit::validate_blocking(&forged.new_bytes).is_ok());
+    assert!(matches!(
+        vault.settle_select_edit_proposal(&artifact, &forged, &owner(), actor, test_time(11), 11),
+        Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+    ));
+    assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    assert!(
+        vault
+            .blob_artifact_settlement(&artifact, &forged.run_ref)?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn valid_word_bytes_cannot_settle_with_invalid_or_direct_manifest() -> Result<()> {
+    use crate::edit_roundtrip::{EditOutcome, run_docx_revision};
+    let (_dir, vault) = crate::test_util::open_test_vault_with(embedding_test_config());
+    let actor = put_actor(&vault, 10);
+    let artifact = EntityId::now();
+    vault.put_blob_artifact(
+        &artifact,
+        &BlobArtifactBody::new(
+            "revisions.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        test_time(10),
+        10,
+    )?;
+    vault.append_blob_artifact_version(
+        &artifact,
+        WORD_BASE,
+        &BlobVersionProvenance::UserUpload,
+        actor,
+        test_time(10),
+        10,
+    )?;
+    let txn = word_revision_transaction();
+    let EditOutcome::Proposed(mut genuine) = run_docx_revision(WORD_BASE, &txn, "run:manifest")?
+    else {
+        panic!("tracked edit must propose")
+    };
+    genuine.base_version = Some(1);
+    assert!(oneiron_docedit::validate_blocking(&genuine.new_bytes).is_ok());
+    for (index, bad) in [
+        "{}".to_owned(),
+        "{not-json}".to_owned(),
+        serde_json::json!({
+            "ops": [{"op": "replace",
+                "target": oneiron_docedit::Document::parse(WORD_BASE).unwrap().read().blocks[0].id,
+                "guard": oneiron_docedit::Document::parse(WORD_BASE).unwrap().read().blocks[0].guard,
+                "content": {"type": "paragraph", "content": [
+                    {"type": "text", "text": "Direct overwrite."}
+                ]}}],
+            "revision": {"author": "Editor"},
+            "materialization_mode": "direct"
+        }).to_string(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut forged = genuine.clone();
+        forged.run_ref = format!("run:bad-manifest:{index}");
+        forged.manifest.ops = vec![EditOp::DocxRevision { transaction: bad }];
+        assert!(matches!(
+            vault.settle_select_edit_proposal(
+                &artifact, &forged, &owner(), actor, test_time(11), 11
+            ),
+            Err(Error::Artifact(ArtifactError::InvalidEditManifest(_)))
+        ));
+        assert!(vault.blob_artifact_settlement(&artifact, &forged.run_ref)?.is_none());
+        assert_eq!(vault.blob_artifact_versions(&artifact)?.len(), 1);
+    }
     Ok(())
 }

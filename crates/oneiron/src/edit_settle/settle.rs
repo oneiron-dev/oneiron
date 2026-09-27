@@ -68,6 +68,19 @@ impl Vault {
             // Standing-grant authorization resolves INSIDE this txn (TOCTOU):
             // a revocation serialized before this commit makes it fail here.
             self.authorize_settle_in_txn(wtxn, consent, actor)?;
+            // The target's type is read under the same write lock as the head
+            // and append. Public proposal fields cannot substitute DOCX bytes
+            // into an XLSX-declared artifact (or vice versa), even when both
+            // the proposal and its manifest agree with each other.
+            let target = self
+                .get_blob_artifact_in_txn(wtxn, artifact_id)?
+                .ok_or(Error::EntityNotFound)?;
+            let target_format = OfficeFormat::from_media_type(&target.media_type)?;
+            if target_format != proposal.format || target_format != proposal.manifest.format {
+                return Err(Error::Artifact(ArtifactError::InvalidEditManifest(
+                    "proposal format does not match the target artifact media type",
+                )));
+            }
             // Ledger acquisition BEFORE any side effect.
             if let Some(raw) = self.store.vault_meta.get(wtxn, &key)? {
                 return Err(already_settled(&decode_settlement_record(&raw)?));
@@ -391,7 +404,8 @@ impl Vault {
                     .any(|op| matches!(op, EditOp::DocxRevision { .. })),
                 OfficeFormat::Docx => !matches!(
                     proposal.manifest.ops.as_slice(),
-                    [EditOp::DocxRevision { transaction }] if !transaction.trim().is_empty()
+                    [EditOp::DocxRevision { transaction }]
+                        if oneiron_docedit::validate_revision_transaction(transaction).is_ok()
                 ),
                 OfficeFormat::Pptx => true,
             }

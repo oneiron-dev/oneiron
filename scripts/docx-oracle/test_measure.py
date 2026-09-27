@@ -53,8 +53,17 @@ class MeasureTests(unittest.TestCase):
                 self.assertEqual(result["document_xml_sha256"], xml_hash)
 
     def test_word_requires_real_mac(self):
-        with self.assertRaises(RuntimeError):
-            measure.word_receipt(Path("a"), Path("b"), Path("receipt.json"), "no")
+        from unittest.mock import patch
+        with patch.object(measure.platform, "system", return_value="Linux"):
+            with self.assertRaisesRegex(RuntimeError, "Word oracle must run"):
+                measure.word_receipt(Path("a"), Path("b"), Path("receipt.json"), "no")
+
+    def test_mac_requires_a_separate_saved_copy(self):
+        from unittest.mock import patch
+        with patch.object(measure.platform, "system", return_value="Darwin"):
+            with self.assertRaisesRegex(ValueError, "separate staged copy"):
+                measure.word_receipt(Path("a"), Path("b"), Path("receipt.json"), "no")
+
     def test_no_libreoffice_never_scores(self):
         with tempfile.TemporaryDirectory() as temporary:
             from unittest.mock import patch
