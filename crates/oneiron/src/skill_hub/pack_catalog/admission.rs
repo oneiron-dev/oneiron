@@ -92,8 +92,8 @@ impl Vault {
             }
             // The source receipt is an install outcome, not the intermediate
             // import step. Both its state and the pack verdict commit together.
-            for (skill_id, skill_ref, hash) in &skill_sources {
-                let skill = self.read_skill_record_in_txn(txn, skill_id)?;
+            for source in &skill_sources {
+                let skill = self.read_skill_record_in_txn(txn, &source.entity)?;
                 let outcome = match (status, skill.lifecycle_status, candidate_reason) {
                     (PackInstallStatus::Active, crate::skill::SkillLifecycle::Active, _) => "pack_bundled_installed",
                     (PackInstallStatus::Candidate, crate::skill::SkillLifecycle::Candidate, Some(PackCandidateReason::RulesHit)) => "pack_bundled_rules_hit",
@@ -102,7 +102,7 @@ impl Vault {
                     _ => return Err(invalid("pack skill lifecycle differs from install verdict")),
                 };
                 self.write_hub_import_receipt_in_txn(
-                    txn, skill_id, *hash, skill_ref,
+                    txn, &source.entity, source.hash, &source.reference,
                     Some((&ask.publisher, outcome, "")), at,
                 )?;
             }

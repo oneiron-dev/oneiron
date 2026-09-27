@@ -10,6 +10,14 @@ use crate::{
     temporal::TimeRange,
 };
 use std::collections::BTreeMap;
+
+/// Exact per-skill source held until the pack install verdict commits.
+pub(super) struct ImportedPackSkillSource {
+    pub(super) entity: EntityId,
+    pub(super) reference: HubRef,
+    pub(super) hash: SkillContentHash,
+}
+
 impl Vault {
     pub(super) fn import_pack_skills_in_txn(
         &self,
@@ -17,7 +25,7 @@ impl Vault {
         source: &PackSource,
         hub: &HubRef,
         at: u64,
-    ) -> Result<(Vec<EntityId>, Vec<(EntityId, HubRef, SkillContentHash)>)> {
+    ) -> Result<(Vec<EntityId>, Vec<ImportedPackSkillSource>)> {
         let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
         for file in &source.files {
             let Some(path) = file.path.strip_prefix("skills/") else {
@@ -51,7 +59,11 @@ impl Vault {
             )?;
             // The final install/Candidate decision follows later in this same
             // transaction. Do not publish an intermediate Candidate receipt.
-            skill_sources.push((id, skill_ref.clone(), hash));
+            skill_sources.push(ImportedPackSkillSource {
+                entity: id,
+                reference: skill_ref.clone(),
+                hash,
+            });
             self.store.vault_meta.put(
                 txn,
                 &pack_skill_alias_key(&id, &skill_ref)?,
