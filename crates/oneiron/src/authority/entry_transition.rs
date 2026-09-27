@@ -76,8 +76,6 @@ pub(super) fn fold_entry_state(
             tier_floor_events: BTreeMap::from([(hash, (*tier_floor, BTreeSet::new()))]),
             pending_widen_delay_secs: *pending_widen_delay_secs,
             pending_widens: BTreeMap::new(),
-            vetoed_widens: context.vetoed_widens.clone(),
-            delayed_rotation_veto_revocations: BTreeMap::new(),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -128,33 +126,6 @@ pub(super) fn fold_entry_state(
         .is_some_and(|device| !tier_meets_floor(device.tier, state.tier_floor))
     {
         return EntryFold::Invalid(AuthorityFoldIssue::SignerBelowTierFloor(hash));
-    }
-    if let AuthorityOp::VetoPendingWiden { pending_widen_hash } = &entry.op {
-        if !context.vetoed_widens.contains(pending_widen_hash) {
-            let Some(target_state) = states.get(pending_widen_hash) else {
-                return EntryFold::Waiting;
-            };
-            if !target_state.pending_widens.contains_key(pending_widen_hash) {
-                return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
-            }
-        }
-        let participants = match veto_participant_keys(&state, entry, *pending_widen_hash, context)
-        {
-            Ok(participants) => participants,
-            Err(issue) => return EntryFold::Invalid(issue),
-        };
-        if !has_veto_authority_consent(&state, &participants, *pending_widen_hash, context) {
-            return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
-        }
-        if let Some(prior_seq) = state.seqs.get(&signer).copied()
-            && entry.seq <= prior_seq
-        {
-            return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
-        }
-        state.vetoed_widens.insert(*pending_widen_hash);
-        state.pending_widens.remove(pending_widen_hash);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
     }
     if context.enforce_seen_time_delay
         && !state.pending_widens.is_empty()
@@ -264,24 +235,15 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    if context.vetoed_widens.contains(&hash)
-        && op_is_delayable_widen(&state, &entry.op, &participants)
-    {
-        state.pending_widens.remove(&hash);
-        state.seqs.insert(signer, entry.seq);
-        return EntryFold::Ready(state);
-    }
     if let Some(pending_widen) =
         pending_widen_for_entry(&state, entry, hash, &participants, context)
     {
         let mut eventual_state = state.clone();
-        apply_op(&mut eventual_state, &entry.op, hash, true, &signer);
+        apply_op(&mut eventual_state, &entry.op, hash, &signer);
         if !state_has_authority_consent(&eventual_state, context) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
-        // Record eligibility before a later veto (or fixed-point pass) can
-        // remove this pending row from the final fold. Cache expiry must still
-        // revisit whether that veto is valid at the target's deadline.
+        // Remember the earliest eligibility to invalidate a cached fold.
         if let (Some(observer), Some(deadline)) =
             (context.deadline_observer, pending_widen.eligible_at_secs)
         {
@@ -293,38 +255,12 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
     }
-    let applied_delayed_widen =
-        context.enforce_seen_time_delay && op_is_delayable_widen(&state, &entry.op, &participants);
-    apply_op(&mut state, &entry.op, hash, applied_delayed_widen, &signer);
+    apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     state.seqs.insert(signer, entry.seq);
     EntryFold::Ready(state)
-}
-
-fn veto_participant_keys(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
-    let mut participants = BTreeSet::new();
-    for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
-        let key = &signature.public_key;
-        let active_member = state
-            .roster
-            .get(key)
-            .is_some_and(|device| !device.revoked && device.roles != 0);
-        if !active_member && !delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
-        {
-            return Err(AuthorityFoldIssue::SignerNotInAncestry(
-                authority_entry_hash(entry).unwrap_or([0; 32]),
-            ));
-        }
-        participants.insert(key.clone());
-    }
-    Ok(participants)
 }
 
 pub(super) fn active_participant_keys(
@@ -359,40 +295,6 @@ pub(super) fn has_authority_consent(
             .get(key)
             .is_some_and(|device| context.device_can_consent(device))
     })
-}
-
-fn has_veto_authority_consent(
-    state: &FoldState,
-    participants: &BTreeSet<AuthorityKey>,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> bool {
-    participants.iter().any(|key| {
-        state.roster.get(key).is_some_and(|device| {
-            context.device_can_consent(device) && device.roles & ROLE_OWNER != 0
-        }) || delayed_rotation_veto_allowed(state, key, pending_widen_hash, context)
-    })
-}
-
-fn delayed_rotation_veto_allowed(
-    state: &FoldState,
-    key: &AuthorityKey,
-    pending_widen_hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> bool {
-    let Some(revocations) = state.delayed_rotation_veto_revocations.get(key) else {
-        return false;
-    };
-    let Some(entry_ancestors) = context.entry_ancestors else {
-        return false;
-    };
-    let Some(target_ancestors) = entry_ancestors.get(&pending_widen_hash) else {
-        return false;
-    };
-
-    revocations
-        .iter()
-        .all(|revocation| !target_ancestors.contains(revocation))
 }
 
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
@@ -457,9 +359,9 @@ fn op_is_delayable_widen(
 /// Whether `op` still folds while an UNRELATED widen is pending.
 ///
 /// A pending widen freezes the log: every later entry waits, because the widen
-/// may yet be vetoed and folding on a roster that might change would decide the
+/// has not yet landed; folding on a roster that might change would decide the
 /// entry against the wrong state. That is the right default for anything that
-/// GRANTS — the grant can afford to wait out the veto window, and waiting is the
+/// GRANTS — the grant can afford to wait out the widen delay, and waiting is the
 /// conservative direction.
 ///
 /// It is the wrong default for `RevokeActor`. A revocation is the operator's
@@ -502,7 +404,6 @@ pub(super) fn op_applies_despite_pending_widen(op: &AuthorityOp) -> bool {
         | AuthorityOp::ReRoot { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. } => false,
@@ -523,9 +424,8 @@ fn op_can_be_pending_widen(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::RetiredCeiling { .. }
         | AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke {..} | AuthorityOp::SlipConsume {..}
         | AuthorityOp::FederationConfirm(_) | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
-        // Bind ops are instant, never delayed-vetoable widens: the widen
+        // Bind ops are instant, never delayed widens: the widen
         // ceremony already ran when the KEY was enrolled, and a human-class
         // bind additionally demands an owner-capable signer AND an
         // owner-capable bound key, so no authority widens at bind time.
@@ -553,7 +453,6 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SetTierFloor { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::VetoPendingWiden { .. }
         | AuthorityOp::FederationLifecycle(_)
         | AuthorityOp::BindActor { .. }
         | AuthorityOp::RebindActor { .. }
@@ -565,7 +464,6 @@ fn entry_requires_peer_cosign(entry: &AuthorityLogEntry) -> bool {
     !matches!(
         entry.op,
         AuthorityOp::Genesis { .. }
-            | AuthorityOp::VetoPendingWiden { .. }
             | AuthorityOp::SlipMint(_)
             | AuthorityOp::SlipRevoke { .. }
             | AuthorityOp::SlipConsume { .. }

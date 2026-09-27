@@ -31,7 +31,7 @@ mod readonly_fold;
 mod revoke_freeze_bypass;
 mod support;
 mod tier_floor;
-mod widen_veto;
+mod widen_delay;
 
 mod causal_claim;
 mod checkpoint;

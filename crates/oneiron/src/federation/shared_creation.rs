@@ -7,7 +7,7 @@ use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::{EntityId, TimeRange, Vault};
-const CREATION_KEY: &[u8] = b"shared-vault:creation:v1";
+pub(super) const CREATION_KEY: &[u8] = b"shared-vault:creation:v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -172,6 +172,9 @@ impl Vault {
             false,
             true,
         )?;
+        if let Some(preset) = preset {
+            self.seed_act_policy(&mut txn, preset)?;
+        }
         let bytes = serde_json::to_vec(&creation).map_err(|_| invalid("shared creation encode"))?;
         self.store.vault_meta.put(&mut txn, CREATION_KEY, &bytes)?;
         txn.commit()?;

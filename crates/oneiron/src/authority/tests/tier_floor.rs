@@ -116,7 +116,7 @@ fn hardware_floor_rejects_software_signer_under_every_arrival_order() {
 }
 
 #[test]
-fn floor_softening_is_delayed_vetoable_and_causal() {
+fn floor_softening_is_delayed_and_causal() {
     let hardware = p256_key(92);
     let key = authority_key_from_p256(&hardware);
     let delay = DEFAULT_PENDING_WIDEN_DELAY_SECS;
@@ -165,23 +165,6 @@ fn floor_softening_is_delayed_vetoable_and_causal() {
     let mature = fold_authority_log_with_seen_times(&entries, &seen, 10 + delay);
     assert_eq!(mature.tier_floor, Some(AuthorityTier::Software));
     assert!(mature.pending_widens.is_empty());
-    let veto = sign_p256(
-        unsigned_entry(
-            Some(vault),
-            2,
-            vec![genesis_hash],
-            AuthorityOp::VetoPendingWiden {
-                pending_widen_hash: soften_hash,
-            },
-            key.clone(),
-            3,
-        ),
-        &hardware,
-    );
-    let vetoed =
-        fold_authority_log_with_seen_times(&[genesis.clone(), soften.clone(), veto], &seen, 20);
-    assert_eq!(vetoed.tier_floor, Some(AuthorityTier::Hardware));
-    assert!(vetoed.vetoed_widens.contains(&soften_hash));
     let concurrent = sign_p256(
         unsigned_entry(
             Some(vault),

@@ -13,7 +13,6 @@ pub(super) fn apply_op(
     state: &mut FoldState,
     op: &AuthorityOp,
     entry_hash: AuthorityEntryHash,
-    applied_delayed_widen: bool,
     signer: &AuthorityKey,
 ) {
     match op {
@@ -62,21 +61,6 @@ pub(super) fn apply_op(
             old_key,
             new_device,
         } => {
-            // Vetoes signed during a delayed rotation can be parented after the
-            // pending rotation entry; keep the old key as veto-only authority
-            // once that delayed rotation lands and revokes it.
-            if applied_delayed_widen
-                && state
-                    .roster
-                    .get(old_key)
-                    .is_some_and(folded_device_can_owner_veto)
-            {
-                state
-                    .delayed_rotation_veto_revocations
-                    .entry(old_key.clone())
-                    .or_default()
-                    .insert(entry_hash);
-            }
             revoke_key(state, old_key);
             upsert_device(state, new_device);
         }
@@ -90,10 +74,6 @@ pub(super) fn apply_op(
             state.migrated_roots.insert(new_device.key.clone());
             upsert_device(state, new_device);
         }
-        AuthorityOp::VetoPendingWiden { .. } => {}
-        // The VetoPendingWiden precedent: `apply_op` returns `()` and cannot
-        // emit rejections; all lifecycle validation and state transitions
-        // live in `fold_entry_state`'s lifecycle arm.
         AuthorityOp::FederationLifecycle(_) => {}
         // Same precedent: the binding arm in `fold_entry_state` returns before
         // reaching here, so these are unreachable for Ready entries.

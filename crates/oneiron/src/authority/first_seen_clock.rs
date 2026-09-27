@@ -40,7 +40,7 @@ pub(crate) fn authority_first_seen_clock_sync_key() -> &'static str {
 /// row: the delay clock for the affected entry is unrecoverable in place. A
 /// fold cannot then decide whether a delayable widen — a rotation, a recovery
 /// reboot — has elapsed, and BOTH guesses are unsafe (assume elapsed and a
-/// widen skips its veto window; assume pending and a rotation's RETIRED key
+/// widen skips its widen delay; assume pending and a rotation's RETIRED key
 /// stays live). The only sound answer is to refuse the fold and let the caller
 /// suspend whatever it was about to authorize.
 pub(super) const AUTHORITY_FIRST_SEEN_SIDECAR_CORRUPT: &str =
@@ -61,7 +61,7 @@ pub(crate) fn is_corrupt_first_seen_sidecar(err: &Error) -> bool {
 /// by whoever shipped the row. A legacy `EnrollDevice` carrying `learned_at =
 /// 0` would otherwise read as first seen in 1970, i.e. matured before it
 /// arrived, and a child `BindActor` on the newly owner-capable key would fold
-/// ACTIVE with no veto window at all.
+/// ACTIVE with no widen delay at all.
 ///
 /// So the fold assumes the safe end — first seen NOW, the maximum remaining
 /// delay — and that leaves every affected delayable widen pending. Pending is
@@ -90,7 +90,7 @@ pub(crate) fn is_indeterminate_first_seen(err: &Error) -> bool {
 /// 09:00:00.9 each measure zero elapsed WHOLE seconds. Advancing the anchor on
 /// every call would bank those zeros and discard the 0.4 s and 0.5 s remainders
 /// forever — a caller folding faster than 1 Hz would freeze `now_secs` at its
-/// first observation, so no veto delay would ever mature and every owner verb
+/// first observation, so no widen delay would ever mature and every owner verb
 /// resting on a delayable widen would wedge (fail-safe, but an availability
 /// hole). Keeping the anchor fixed makes each call measure real elapsed time
 /// from ONE origin, so the sub-second remainders accumulate and the second

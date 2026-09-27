@@ -71,11 +71,6 @@ pub enum AuthorityOp {
     /// Federation confirm that travels with authority fold verification.
     FederationConfirm(AuthorityConfirmAction),
     CriticalWriteConfirm(CriticalWriteConfirmAction),
-    /// Owner veto for a software-tier widen that is still pending.
-    VetoPendingWiden {
-        /// Target authority entry hash to suppress under most-restrictive-wins.
-        pending_widen_hash: AuthorityEntryHash,
-    },
     /// Federation relationship lifecycle op (OF-156, option B).
     FederationLifecycle(FederationLifecycleAction),
     /// Binds a roster authority key to a store actor entity at an EXACT actor
@@ -377,12 +372,6 @@ pub(super) fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ReRoot { new_device } => {
             new_device.validate()?;
             if !new_device.can_authority_consent() {
-                return Err(invalid_authority());
-            }
-            Ok(())
-        }
-        AuthorityOp::VetoPendingWiden { pending_widen_hash } => {
-            if pending_widen_hash.iter().all(|byte| *byte == 0) {
                 return Err(invalid_authority());
             }
             Ok(())

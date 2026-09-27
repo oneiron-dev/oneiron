@@ -257,7 +257,6 @@ fn critical_write_confirm_three_sibling_nonce_collision_keeps_provenance_associa
                 CriticalWriteConfirmMethod::TokenReauth,
             )),
             [hash; 32],
-            false,
             &owner_key,
         );
         state

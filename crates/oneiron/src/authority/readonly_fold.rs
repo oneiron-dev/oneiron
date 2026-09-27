@@ -172,7 +172,7 @@ fn cache_fold_if_committed(
 /// [`Vault::authority_fold`] uses: the persisted floor read through `txn`,
 /// raised through [`authority_observation_secs`]. On the raw
 /// wall clock a forward jump would mature a pending owner enrollment early
-/// and expose an Active human binding INSIDE the veto window, while a jump
+/// and expose an Active human binding INSIDE the widen delay, while a jump
 /// backward below the persisted floor would un-apply an elapsed rotation
 /// and resurrect the retired key's binding. The derived value is not
 /// written back — the floor advances only on write paths, and a lagging
@@ -253,7 +253,7 @@ pub(super) fn authority_view_readonly_for_store_in_txn(
     // grant. Refuse there rather than authorize against a roster still
     // holding a key a matured rotation may already have retired. Rows whose
     // first-seen time the fold never consults (every non-delayable op, and
-    // widens a veto already killed) are unaffected, so a legacy vault whose
+    // widens already resolved without consulting first-seen time) are unaffected, so a legacy vault whose
     // log carries no live delayable widen keeps working untouched.
     if fold
         .pending_widens

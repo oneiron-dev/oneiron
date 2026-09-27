@@ -197,16 +197,6 @@ pub(super) fn op_value_with_genesis_delay(op: &AuthorityOp, include_genesis_dela
             (Value::from("epoch"), Value::from(action.epoch)),
             (Value::from("nonce"), binary_value_16(action.nonce)),
         ]),
-        AuthorityOp::VetoPendingWiden { pending_widen_hash } => Value::Map(vec![
-            (
-                Value::from(OP_KEY_KIND),
-                Value::from(OP_KIND_VETO_PENDING_WIDEN),
-            ),
-            (
-                Value::from("pending_widen_hash"),
-                binary_value(*pending_widen_hash),
-            ),
-        ]),
         AuthorityOp::FederationLifecycle(action) => {
             let mut fields = vec![
                 (

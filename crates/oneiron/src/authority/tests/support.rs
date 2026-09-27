@@ -288,57 +288,6 @@ pub(super) fn set_ceiling_entry(
     )
 }
 
-pub(super) fn rotate_entry(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    old_key: AuthorityKey,
-    new_seed: u8,
-    seq: u64,
-) -> AuthorityLogEntry {
-    let signer_key = authority_key_from_ed(signer);
-    let new = ed_key(new_seed);
-    sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            seq,
-            vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::RotateKey {
-                old_key,
-                new_device: device(
-                    authority_key_from_ed(&new),
-                    ROLE_OWNER | ROLE_ADMIN,
-                    AuthorityTier::Software,
-                ),
-            },
-            signer_key,
-            889,
-        ),
-        signer,
-    )
-}
-
-pub(super) fn veto_entry(
-    vault_id: AuthorityVaultId,
-    parent: &AuthorityLogEntry,
-    signer: &SigningKey,
-    pending_widen_hash: AuthorityEntryHash,
-    seq: u64,
-) -> AuthorityLogEntry {
-    let signer_key = authority_key_from_ed(signer);
-    sign_ed(
-        unsigned_entry(
-            Some(vault_id),
-            seq,
-            vec![authority_entry_hash(parent).unwrap()],
-            AuthorityOp::VetoPendingWiden { pending_widen_hash },
-            signer_key,
-            999,
-        ),
-        signer,
-    )
-}
-
 /// Owned backing store for a default LOCAL [`FoldContext`]: no
 /// seen-time delay and no admitted peers.
 ///
@@ -348,7 +297,6 @@ pub(super) fn veto_entry(
 #[derive(Default)]
 pub(super) struct LocalFoldContext {
     pub(super) first_seen_at_secs: BTreeMap<AuthorityEntryHash, u64>,
-    pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
     pub(super) peer_consent_roots: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 }
 
@@ -360,8 +308,6 @@ impl LocalFoldContext {
             now_secs: None,
             deadline_observer: None,
             enforce_seen_time_delay: false,
-            vetoed_widens: &self.vetoed_widens,
-            entry_ancestors: None,
             peer_consent_roots: &self.peer_consent_roots,
             consent_arm: folded_device_can_authority_consent,
         }
@@ -403,8 +349,6 @@ pub(super) fn single_owner_state(
         tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -757,8 +701,6 @@ pub(super) fn fold_state_with_pact(
         tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),

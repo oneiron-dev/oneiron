@@ -75,7 +75,6 @@ pub(super) const OP_KIND_SET_TIER_FLOOR: &str = "set_tier_floor";
 pub(super) const OP_KIND_RE_ROOT: &str = "re_root";
 pub(super) const OP_KIND_FEDERATION_CONFIRM: &str = "federation_confirm";
 pub(super) const OP_KIND_CRITICAL_WRITE_CONFIRM: &str = "critical_write_confirm";
-pub(super) const OP_KIND_VETO_PENDING_WIDEN: &str = "veto_pending_widen";
 pub(super) const OP_KIND_FEDERATION_LIFECYCLE: &str = "federation_lifecycle";
 pub(super) const OP_KIND_BIND_ACTOR: &str = "bind_actor";
 pub(super) const OP_KIND_REBIND_ACTOR: &str = "rebind_actor";

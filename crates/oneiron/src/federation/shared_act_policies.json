@@ -1,0 +1,26 @@
+{
+  "delete_vault": {
+    "wait_secs": 604800,
+    "objector_roles": [
+      "owner"
+    ]
+  },
+  "erase": {
+    "wait_secs": 604800,
+    "objector_roles": [
+      "owner"
+    ]
+  },
+  "transfer_ownership": {
+    "wait_secs": 604800,
+    "objector_roles": [
+      "owner"
+    ]
+  },
+  "remove_owner": {
+    "wait_secs": 604800,
+    "objector_roles": [
+      "owner"
+    ]
+  }
+}

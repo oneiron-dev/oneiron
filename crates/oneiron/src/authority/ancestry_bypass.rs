@@ -148,7 +148,6 @@ pub(in crate::authority) fn entry_folds_on_available_ancestry(
         return false;
     }
     let first_seen_at_secs = BTreeMap::new();
-    let vetoed_widens = BTreeSet::new();
     let mut states = BTreeMap::<AuthorityEntryHash, FoldState>::new();
     let mut pending = target_ancestors.clone();
     pending.insert(target_hash);
@@ -171,8 +170,6 @@ pub(in crate::authority) fn entry_folds_on_available_ancestry(
                     first_seen_at_secs: &first_seen_at_secs,
                     now_secs: None,
                     enforce_seen_time_delay: false,
-                    vetoed_widens: &vetoed_widens,
-                    entry_ancestors: Some(ancestors),
                     ..context
                 },
             ) {

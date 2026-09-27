@@ -127,8 +127,6 @@ pub struct AuthorityFold {
     pub genesis_fragile: bool,
     /// Software-tier widens that are valid but not yet locally eligible.
     pub pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
-    /// Pending widen hashes killed by a valid owner veto.
-    pub vetoed_widens: BTreeSet<AuthorityEntryHash>,
     /// Fold-derived federation pact states keyed by pact id.
     pub federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     /// Consumed federation confirmation ids and nonces, bound to signed entries.
@@ -251,13 +249,6 @@ pub(super) struct FoldState {
         BTreeMap<AuthorityEntryHash, (AuthorityTier, BTreeSet<AuthorityEntryHash>)>,
     pub(super) pending_widen_delay_secs: u64,
     pub(super) pending_widens: BTreeMap<AuthorityEntryHash, AuthorityPendingWiden>,
-    pub(super) vetoed_widens: BTreeSet<AuthorityEntryHash>,
-    /// Delayed software rotations that revoked old owner/admin keys.
-    ///
-    /// These keys are retained only to validate vetoes against widens that were
-    /// concurrent with, or older than, the delayed rotation that revoked them.
-    pub(super) delayed_rotation_veto_revocations:
-        BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,
     pub(super) federation_pacts: BTreeMap<[u8; 32], FederationPactState>,
     pub(super) federation_confirms: BTreeMap<AuthorityEntryHash, AuthorityConfirmAction>,
     pub(super) critical_write_confirms: BTreeMap<[u8; 32], CriticalWriteConfirmState>,
@@ -441,19 +432,6 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .iter()
             .map(|(hash, pending)| (*hash, pending.clone())),
     );
-    merged
-        .vetoed_widens
-        .extend(right.vetoed_widens.iter().copied());
-    for (key, revocations) in &right.delayed_rotation_veto_revocations {
-        merged
-            .delayed_rotation_veto_revocations
-            .entry(key.clone())
-            .or_default()
-            .extend(revocations.iter().copied());
-    }
-    for vetoed in &merged.vetoed_widens {
-        merged.pending_widens.remove(vetoed);
-    }
     for (pact_id, right_pact) in &right.federation_pacts {
         match merged.federation_pacts.get_mut(pact_id) {
             Some(left_pact) => {

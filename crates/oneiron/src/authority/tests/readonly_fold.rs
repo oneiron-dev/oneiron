@@ -236,7 +236,7 @@ fn readonly_fold_injected_clock_behind_real_time_keeps_owner_enrollment_pending(
     assert!(!readonly.roster.contains_key(&second_key));
     assert!(
         !actor_binding_is_active(&readonly, &actor, "human"),
-        "an injected clock behind real time must not expose an owner binding inside the veto window",
+        "an injected clock behind real time must not expose an owner binding inside the widen delay",
     );
     assert_eq!(
         sync_state_snapshot(&vault),
@@ -685,7 +685,7 @@ fn zero_learned_at_enrollment_cannot_instantly_authorize_a_child_bind() {
     );
     assert!(
         !actor_binding_is_active(&full, &attacker, "human"),
-        "the child bind must not authorize inside the enrollment's veto window",
+        "the child bind must not authorize inside the enrollment's widen delay",
     );
     let rtxn = vault.store.env.read_txn().unwrap();
     let readonly = vault.authority_fold_readonly_in_txn(&rtxn).unwrap();
@@ -791,7 +791,7 @@ fn readonly_observation_secs(vault: &crate::Vault) -> u64 {
 /// the migration WOULD write. Once the marker is set the migration will never
 /// visit that row again, so a re-synthesized `learned_at.min(now)` would silently
 /// disagree with every sidecar its peers kept — and both available guesses are
-/// unsafe (mature early = skipped veto window; stay pending = live retired key).
+/// unsafe (mature early = skipped widen delay; stay pending = live retired key).
 /// An undecodable row is the same state and takes the same door.
 #[test]
 fn readonly_fold_rejects_sidecar_lost_after_backfill() {
@@ -954,11 +954,10 @@ fn matured_rotation_with_corrupt_sidecar_refuses_public_and_snapshot_folds() {
     }
 }
 
-/// A veto erases its target from the final pending map, but the target's
-/// eligibility still decides whether the veto remains valid at the deadline.
+/// The cached view must mature the pending widen when only the local clock advances.
 /// Advance only the vault's local clock: no authority row or generation changes.
 #[test]
-fn warm_vetoed_widen_rechecks_enrollment_and_rotation_at_eligibility() {
+fn warm_pending_widen_rechecks_enrollment_and_rotation_at_eligibility() {
     for rotation in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let observed_at = 1_000_000;
@@ -1002,13 +1001,10 @@ fn warm_vetoed_widen_rechecks_enrollment_and_rotation_at_eligibility() {
             )
         };
         let target_hash = authority_entry_hash(&target).unwrap();
-        let veto = veto_entry(vault_id, &genesis, &owner, target_hash, 2);
-        let veto_hash = authority_entry_hash(&veto).unwrap();
         vault
             .put_authority_log_entries(&[
                 (genesis, TimeRange { start: 1, end: 1 }, 1),
                 (target, TimeRange { start: 2, end: 2 }, 2),
-                (veto, TimeRange { start: 3, end: 3 }, 3),
             ])
             .unwrap();
         // Establish sidecars, then warm the exact cached view before maturity.
@@ -1017,9 +1013,7 @@ fn warm_vetoed_widen_rechecks_enrollment_and_rotation_at_eligibility() {
         let warm = vault.authority_view_readonly_in_txn(&txn).unwrap();
         let before = uncached_reference_fold(&vault, &txn);
         assert_eq!(warm.roster, before.roster);
-        assert!(warm.vetoed_widens.contains(&target_hash));
-        assert!(warm.valid_entries.contains(&veto_hash));
-        assert!(warm.pending_widens.is_empty());
+        assert!(warm.pending_widens.contains_key(&target_hash));
         assert!(!warm.roster.contains_key(&new_key));
         assert!(
             warm.roster
@@ -1035,8 +1029,7 @@ fn warm_vetoed_widen_rechecks_enrollment_and_rotation_at_eligibility() {
         let reference = uncached_reference_fold(&vault, &txn);
         assert_eq!(after.roster, reference.roster, "rotation={rotation}");
         assert!(after.roster.contains_key(&new_key));
-        assert!(!after.valid_entries.contains(&veto_hash));
-        assert!(!after.vetoed_widens.contains(&target_hash));
+        assert!(after.pending_widens.is_empty());
         if rotation {
             assert!(
                 !after

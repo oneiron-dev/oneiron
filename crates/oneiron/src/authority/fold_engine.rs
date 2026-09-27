@@ -14,13 +14,10 @@ pub(super) struct FoldContext<'a> {
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: Option<u64>,
     /// Minimum future eligibility observed during ANY fold pass, including a
-    /// pending widen subsequently removed by an accepted veto.
+    /// a pending widen whose eligibility changes the fold.
     pub(super) deadline_observer: Option<&'a Cell<Option<u64>>>,
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     pub(super) enforce_seen_time_delay: bool,
-    pub(super) vetoed_widens: &'a BTreeSet<AuthorityEntryHash>,
-    pub(super) entry_ancestors:
-        Option<&'a BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>>,
     /// Consent roots of every ADMITTED PEER roster, keyed by peer vault id.
     ///
     /// EVIDENCE for FED-01 gesture acceptance, never a local consent
@@ -178,8 +175,6 @@ pub fn fold_peer_authority_log(entries: &[AuthorityLogEntry]) -> AuthorityFold {
 
 /// Return the same reference fold plus the earliest future eligibility
 /// observed in its fixed-point passes. This is cache metadata, not fold output.
-/// A veto can erase its target from the final pending map even though that
-/// target's eligibility still changes whether the veto is valid later.
 pub(super) fn fold_authority_log_with_local_observations_and_posture_with_deadline(
     entries: &[AuthorityLogEntry],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -218,7 +213,6 @@ fn fold_authority_log_inner(
     consent_arm: fn(&FoldedDevice) -> bool,
     local: FoldLocalInputs<'_>,
 ) -> AuthorityFold {
-    let mut vetoed_widens = BTreeSet::new();
     let sequence_floors = local
         .observations
         .map(|observations| &observations.sequence_floors);
@@ -227,7 +221,7 @@ fn fold_authority_log_inner(
         .map_or(DEFAULT_STALE_ROSTER_WINDOW_SECS, |local| {
             local.policy.stale_roster_window_secs
         });
-    let mut fold = fold_authority_log_once(
+    let fold = fold_authority_log_once(
         entries,
         FoldContext {
             first_seen_at_secs,
@@ -235,32 +229,10 @@ fn fold_authority_log_inner(
             deadline_observer: local.deadline_observer,
             sequence_floors,
             enforce_seen_time_delay,
-            vetoed_widens: &vetoed_widens,
-            entry_ancestors: None,
             peer_consent_roots,
             consent_arm,
         },
     );
-    for _ in 0..=entries.len() {
-        if fold.vetoed_widens == vetoed_widens {
-            break;
-        }
-        vetoed_widens = fold.vetoed_widens.clone();
-        fold = fold_authority_log_once(
-            entries,
-            FoldContext {
-                first_seen_at_secs,
-                now_secs,
-                deadline_observer: local.deadline_observer,
-                sequence_floors,
-                enforce_seen_time_delay,
-                vetoed_widens: &vetoed_widens,
-                entry_ancestors: None,
-                peer_consent_roots,
-                consent_arm,
-            },
-        );
-    }
     let mut fold = apply_stale_roster_window(
         entries,
         fold,
@@ -305,7 +277,6 @@ fn fold_authority_log_once(
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
-        entry_ancestors: Some(&entry_ancestors),
         ..context
     };
 
@@ -405,7 +376,6 @@ fn fold_authority_log_once(
             tier_floor: None,
             genesis_fragile: false,
             pending_widens: BTreeMap::new(),
-            vetoed_widens: BTreeSet::new(),
             federation_pacts: BTreeMap::new(),
             federation_confirms: BTreeMap::new(),
             critical_write_confirms: BTreeMap::new(),
@@ -475,9 +445,6 @@ fn fold_authority_log_once(
         pending_widens: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.pending_widens.clone()),
-        vetoed_widens: merged
-            .as_ref()
-            .map_or_else(BTreeSet::new, |state| state.vetoed_widens.clone()),
         federation_pacts: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.federation_pacts.clone()),

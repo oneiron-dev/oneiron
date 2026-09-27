@@ -207,7 +207,7 @@ impl Vault {
                     // field is entity metadata written by whichever peer
                     // shipped the row, so trusting it lets a legacy
                     // sidecar-less `EnrollDevice(learned_at = 0)` claim it was
-                    // first seen in 1970 — instantly past its veto delay, with
+                    // first seen in 1970 — instantly past its widen delay, with
                     // a child `BindActor` on the freshly owner-capable key
                     // folding ACTIVE on arrival. `observed_floor` clamps
                     // FUTURE claims only; the whole past is unclamped, and the

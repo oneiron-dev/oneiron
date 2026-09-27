@@ -1720,7 +1720,7 @@
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
       "const": 14,
-      "crate-vis": 72,
+      "crate-vis": 71,
       "type": 2
      }
     },
@@ -1752,7 +1752,7 @@
      "path": "src/authority/device.rs",
      "purpose": "Device authority material and the folded-device consent predicates",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "struct": 1
      }
     },
@@ -2242,7 +2242,7 @@
      "path": "src/authority/tests/support.rs",
      "purpose": "Shared fixtures and fold helpers for the authority tests",
      "surface": {
-      "crate-vis": 58
+      "crate-vis": 56
      }
     },
     {
@@ -2257,8 +2257,8 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
-     "path": "src/authority/tests/widen_veto.rs",
-     "purpose": "Tier-widen delay, owner veto, seen-time convergence and permutation",
+     "path": "src/authority/tests/widen_delay.rs",
+     "purpose": "Tier-widen delay, seen-time convergence and permutation",
      "surface": {}
     },
     {
@@ -16269,7 +16269,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 2,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -16322,6 +16322,30 @@
       "crate-vis": 2,
       "fn": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PendingActStarted",
+      "PendingAuthorityAct",
+      "SharedActPolicy"
+     ],
+     "path": "src/federation/pending_act.rs",
+     "purpose": "Row-driven shared-vault objection windows",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/federation/pending_act/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -16442,6 +16466,7 @@
      "path": "src/federation/shared_creation.rs",
      "purpose": "Creation-time membership defaults, materialized once as explicit grant/policy rows",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -35605,7 +35630,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 22,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36314,8 +36339,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2143,
-   "test_files": 732
+   "source_files": 2144,
+   "test_files": 733
   },
   "oneiron-android": {
    "files": [

@@ -99,7 +99,10 @@ impl FederationGrantScope {
 }
 
 /// Role assigned by a federation grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum FederationGrantRole {
     /// Full owner privileges for the shared vault.

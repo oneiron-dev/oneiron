@@ -267,7 +267,7 @@ fn reopened_authority_clock_rollback_does_not_freeze_elapsed_time() {
 /// `Duration::as_secs` truncates, so a per-call anchor reset banks a zero every
 /// time two folds land inside the same monotonic second. A sustained >1 Hz
 /// readonly fold would then freeze `now_secs` at its first observation and stall
-/// every veto delay. The anchor is stable, so elapsed time crosses the boundary.
+/// the full widen delay. The anchor is stable, so elapsed time crosses the boundary.
 #[test]
 fn sub_second_readonly_folds_still_advance_the_observed_clock() {
     let mut clock = AuthorityLocalClock::default();
@@ -543,8 +543,6 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         tier_floor_events: BTreeMap::new(),
         pending_widen_delay_secs: DEFAULT_PENDING_WIDEN_DELAY_SECS,
         pending_widens: BTreeMap::new(),
-        vetoed_widens: BTreeSet::new(),
-        delayed_rotation_veto_revocations: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),

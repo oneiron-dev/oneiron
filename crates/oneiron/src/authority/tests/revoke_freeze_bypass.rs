@@ -5,7 +5,7 @@ use super::*;
 
 /// The pending-widen freeze that a `RevokeActor` builds its fixture from: a
 /// two-key roster, a live human binding, and a cosigned `EnrollDevice` that is
-/// still inside its veto delay, so `state.pending_widens` is non-empty for every
+/// still inside its widen delay, so `state.pending_widens` is non-empty for every
 /// entry that follows.
 struct PendingWidenFreeze {
     fixture: BindFixture,
@@ -69,7 +69,7 @@ fn pending_widen_freeze(seed: u8) -> PendingWidenFreeze {
 ///
 /// A pending widen freezes the log: `fold_entry_state` returned `Waiting` for
 /// every entry that followed one, so a revocation filed while any enrollment sat
-/// inside its veto window did not take effect until that enrollment matured. The
+/// inside its widen delay did not take effect until that enrollment matured. The
 /// consequences run the wrong way on every axis. The revocation is the response
 /// to a compromise, so the window it is deferred across is exactly the window the
 /// compromised key keeps every owner verb — up to
@@ -105,7 +105,7 @@ fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
         fold_authority_log_with_seen_times(&freeze.entries, &freeze.first_seen, freeze.now_secs);
     assert!(
         before.pending_widens.contains_key(&freeze.widen_hash),
-        "fixture: the widen must start inside its veto delay"
+        "fixture: the widen must start inside its widen delay"
     );
     assert!(
         actor_binding_is_active(&before, &freeze.fixture.actor, "human"),
@@ -137,7 +137,7 @@ fn revoke_actor_applies_immediately_despite_an_unrelated_pending_widen() {
         "a revoked actor must lose its authority immediately, not when an \
          unrelated enrollment matures"
     );
-    // The widen keeps its OWN clock: the revocation neither matures nor vetoes it.
+    // The widen keeps its OWN clock: the revocation neither matures nor changes it.
     assert!(
         after.pending_widens.contains_key(&freeze.widen_hash),
         "the pending widen must still mature on its own clock"
@@ -229,9 +229,9 @@ fn bind_and_rebind_still_defer_behind_a_pending_widen() {
 ///
 /// Note what C needs to build the lever: only the ability to author a
 /// `BindActor`, which asks for ordinary authority consent and never inspects the
-/// signer's own actor binding. A key already stripped down to veto-only can
+/// signer's own actor binding. A key already stripped down to revoked can
 /// still do it, so "C cannot mature its own widen" does not close the hole —
-/// the stall is the veto WINDOW, not the widen.
+/// the stall is the widen delay, not the widen.
 ///
 /// MUTATION PROBE: drop the `RevokeActor` arm from
 /// `unstick_stalled_revocation` (or restore the unconditional
@@ -314,7 +314,7 @@ fn revoke_actor_folds_past_a_grant_frozen_in_its_own_ancestry() {
 /// bypass to step over that grant, the classifier says the parent is not frozen,
 /// `nearest_unfrozen_ancestor_state` refuses the whole walk, and the revocation
 /// falls out as `InvalidAncestry` while the compromised key keeps every owner
-/// verb for the widen's full veto window. Multi-parent entries are ordinary in
+/// verb for the widen's full widen delay. Multi-parent entries are ordinary in
 /// this log — the merge loop above exists for them — so this is not an exotic
 /// shape, it is the same lever with one more edge drawn.
 ///
@@ -373,7 +373,7 @@ fn revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents() {
     assert!(
         fold.valid_entries.contains(&revoke_hash),
         "the revocation must fold past a parent the fold froze through ONE of its \
-         parents: a branch with no widen must not veto the freeze classification"
+         parents: a branch with no widen must not override the freeze classification"
     );
     assert_eq!(
         folded_status(&fold, &key),
@@ -383,7 +383,7 @@ fn revoke_actor_folds_past_a_grant_frozen_through_only_one_of_its_parents() {
     assert!(
         !actor_binding_is_active(&fold, &freeze.fixture.actor, "human"),
         "adding one innocuous second parent to the stall grant must not buy the \
-         compromised key another veto window of owner authority"
+         compromised key an additional widen delay of owner authority"
     );
     // The narrowings hold: the grant itself is not dragged along, and the widen
     // keeps its own clock.
@@ -471,79 +471,6 @@ fn the_bypass_does_not_walk_past_a_rejected_parent() {
     );
 }
 
-/// The `RevokeActor`-only gate on the fix-12 bypass, probed where it actually
-/// bites: `VetoPendingWiden`.
-///
-/// Most ops are held back a second time by the freeze check inside
-/// `fold_entry_state`, so opening the bypass to them changes nothing
-/// observable. A veto is the exception — `fold_entry_state` resolves it BEFORE
-/// the freeze, since a veto's whole job is to kill a pending widen. So a veto
-/// is the one op that would really travel through an ancestry bypass, and it is
-/// the one that must not: a veto folded against a state from before the frozen
-/// entry is a veto evaluated against a roster the vault has not settled, decided
-/// on `has_veto_authority_consent` from stale ancestry.
-///
-/// Here C parents a veto of the widen on its own frozen grant. The veto must
-/// stay stuck. It carries the same shape as the revocation that DOES get
-/// through in the test above, so what separates them is only the op gate.
-///
-/// MUTATION PROBE: drop the `matches!(entry.op, AuthorityOp::RevokeActor {..})`
-/// guard from `revocation_bypass_states` and this test fails — the veto folds
-/// valid and the pending widen dies without ever being weighed against a
-/// settled roster.
-#[test]
-fn a_veto_may_not_ride_the_revocation_ancestry_bypass() {
-    let freeze = pending_widen_freeze(236);
-    let stall = cosigned_entry(
-        &freeze.fixture,
-        vec![freeze.widen_hash],
-        4,
-        bind_op(&freeze.fixture.agent_key, scope_entity(0x75), "agent", 1),
-        104,
-    );
-    let stall_hash = authority_entry_hash(&stall).unwrap();
-    let veto = veto_entry(
-        freeze.fixture.vault_id,
-        &stall,
-        &freeze.fixture.owner,
-        freeze.widen_hash,
-        5,
-    );
-    let veto_hash = authority_entry_hash(&veto).unwrap();
-
-    let mut entries = freeze.entries.clone();
-    entries.push(stall);
-    entries.push(veto);
-    let mut first_seen = freeze.first_seen.clone();
-    first_seen.insert(stall_hash, freeze.now_secs);
-    first_seen.insert(veto_hash, freeze.now_secs);
-    let fold = fold_authority_log_with_seen_times(&entries, &first_seen, freeze.now_secs);
-
-    assert!(
-        !fold.valid_entries.contains(&veto_hash),
-        "a veto must NOT travel the revocation bypass: it is resolved before the \
-         freeze check, so an ancestry bypass would let it kill a widen from a \
-         roster the fold has not settled"
-    );
-    assert!(
-        !fold.vetoed_widens.contains(&freeze.widen_hash),
-        "the widen must not be vetoed by an entry that never folded"
-    );
-    assert!(
-        fold.pending_widens.contains_key(&freeze.widen_hash),
-        "the widen must still be pending on its own clock"
-    );
-}
-
-/// The other half of the fix-12 ruling: a revocation folded past the freeze must
-/// stay in force once the widen it bypassed matures.
-///
-/// The bypass resolves the revocation against an ancestry state that predates
-/// the frozen grant, so the obvious failure mode is a stranded watermark: the
-/// widen matures, the grant folds for real, the revocation re-folds on the
-/// now-available parent, and some ordering loses the raised
-/// `actor_binding_revocations` entry. Merge is monotone by max, so this should
-/// fall out — pinned so it stays true.
 #[test]
 fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
     let freeze = pending_widen_freeze(252);
@@ -616,7 +543,7 @@ fn revocation_folded_past_a_freeze_survives_the_widen_maturing() {
 /// enrollment reverts to pending — so a legitimately matured owner enrollment
 /// silently loses its authority. That is fail-CLOSED but wrong, and it is
 /// indistinguishable from the feature simply not working: the operator waited out
-/// the veto window, and a reboot took it back.
+/// the widen delay, and a reboot took it back.
 ///
 /// MUTATION PROBE: drop the floor `put` from `Vault::authority_fold`'s write txn
 /// and this test fails at the post-reopen assertions.
@@ -674,7 +601,7 @@ fn matured_enrollment_survives_a_restart_under_a_rolled_back_wall_clock() {
     let before = vault.authority_fold().unwrap();
     assert!(
         before.pending_widens.contains_key(&enroll_hash),
-        "the enrollment starts inside its veto delay"
+        "the enrollment starts inside its widen delay"
     );
     assert!(
         !actor_binding_is_active(&before, &actor, "human"),

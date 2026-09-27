@@ -225,12 +225,6 @@ pub(super) fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 nonce: decode_16(required(entries, "nonce")?)?,
             }))
         }
-        OP_KIND_VETO_PENDING_WIDEN => {
-            validate_keys(entries, &[OP_KEY_KIND, "pending_widen_hash"])?;
-            Ok(AuthorityOp::VetoPendingWiden {
-                pending_widen_hash: decode_hash(required(entries, "pending_widen_hash")?)?,
-            })
-        }
         OP_KIND_FEDERATION_LIFECYCLE => decode_federation_lifecycle_op(entries),
         OP_KIND_BIND_ACTOR | OP_KIND_REBIND_ACTOR => {
             let (authority_key, actor_ref, actor_class, epoch) = decode_actor_binding_op(entries)?;
