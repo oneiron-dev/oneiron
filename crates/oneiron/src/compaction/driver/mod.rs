@@ -11,8 +11,10 @@ use crate::error::{Error, Result};
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
+mod integration;
+
 use super::epoch::{
-    mint_epoch_summary, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
+    mint_epoch_summary_with, prior_epoch_in_txn, validate_epoch_boundary, validate_window_span,
 };
 
 /// Registered class of a compaction backend.
@@ -650,56 +652,6 @@ impl CompactionDriver {
     /// typed backend error.
     pub fn abandon(&mut self) {
         self.state = CompactionState::Idle;
-    }
-
-    /// Integrates a finished compaction: mints the epoch summary and returns
-    /// the swap plan.
-    ///
-    /// THIS is the moment the epoch increments — integration, when the
-    /// compaction result is used, not when the work began (owner unification
-    /// line). `request` is authoritative for the covered TURN ids and the turn
-    /// range; backend-returned range metadata is never accepted.
-    ///
-    /// One vault write transaction carries the H-S3 probe, the epoch
-    /// derivation, the SUMMARY put, its pending-embedding marker and the
-    /// capped `DerivedFrom` edge set. The session's message-log splice
-    /// (prefix out, summary in, `accumulated` replayed on top) is the caller's
-    /// in-memory step: the engine never holds the session's log.
-    pub fn integrate(
-        &mut self,
-        vault: &Vault,
-        session_ref: &EntityId,
-        byline: WriteActor,
-        request: &CompactionRequest,
-        product: CompactionProduct,
-        accumulated: &[CompactionWindowMessage],
-    ) -> Result<SwapPlan> {
-        let CompactionState::Compacting {
-            request: active, ..
-        } = &self.state
-        else {
-            return Err(Error::InvariantViolation(
-                "integrate is legal only while compacting",
-            ));
-        };
-        // Compare both the unique job identity and the sealed input. A stale,
-        // duplicate, foreign-driver, or edited request cannot mint or clear
-        // the current flight, nor feed its latency into the margin law.
-        if active.as_deref() != Some(request) {
-            return Err(Error::InvariantViolation(
-                "compaction result does not match the active request",
-            ));
-        }
-        let (epoch, summary_id) =
-            mint_epoch_summary(vault, session_ref, byline, request, &product)?;
-        self.margin.observe_latency(product.latency);
-        self.completed_watermark = Some(request.watermark);
-        self.state = CompactionState::Idle;
-        Ok(SwapPlan {
-            epoch,
-            summary_id,
-            retained_tail: accumulated.to_vec(),
-        })
     }
 }
 
