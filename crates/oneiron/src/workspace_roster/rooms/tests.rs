@@ -52,6 +52,9 @@ fn mention_claim_speech_scope_and_thread_head() -> Result<()> {
     spec.roster.extend([a.to_hex(), b.to_hex()]);
     vault.put_project(project, &spec, 1)?;
     let room = EntityId::from_hex(&spec.home_room)?;
+    assert_eq!(vault.room_audience_members(room)?, vec![owner, a, b]);
+    // The ordinary Conversation ledger is not the PROJECT roster source.
+    assert!(vault.members(room)?.is_empty());
     vault.bind_room_handle(room, "@companion", a)?;
     let user = vault.memory(owner, EdgeActorClass::Human);
     let first = vault.memory(a, EdgeActorClass::Agent);
@@ -418,5 +421,60 @@ fn consult_question_turn_projects_an_open_wait_without_a_room_state_row() -> Res
     assert_eq!(projection.waiting.rows[0].waits[0].kind, RoomWaitKind::Ask);
     assert_eq!(projection.waiting.rows[0].waits[0].since, 4);
     assert_eq!(projection.waiting.rows[0].waits[0].next_nudge, None);
+    Ok(())
+}
+
+#[test]
+fn exact_project_and_room_batch_still_has_a_roster_audience() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let leader = EntityId::now();
+    let peer = EntityId::now();
+    for person in [leader, peer] {
+        vault.put_entity(
+            &person,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )?;
+    }
+    let project = EntityId::now();
+    let root = vault.root_project()?;
+    let mut record = ProjectRecord::new(project, Some(root), root, leader);
+    record.roster.push(peer.to_hex());
+    let room = EntityId::from_hex(&record.home_room)?;
+    let room_body = crate::workspace_roster::ProjectRoom {
+        schema_version: 1,
+        kind: "channel".into(),
+        project_id: project.to_hex(),
+        member_ids: record.roster.clone(),
+        claims_scope_ref: record.claims_scope_ref.clone(),
+    };
+    vault
+        .batch()
+        .put(
+            &project,
+            vault.project_type_byte()?,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&record).expect("project encode"),
+        )
+        .put(
+            &room,
+            crate::registry::ENTITY_TYPE_CONVERSATION,
+            TimeRange { start: 2, end: 2 },
+            2,
+            &rmp_serde::to_vec_named(&room_body).expect("room encode"),
+        )
+        .commit()?;
+    assert_eq!(vault.room_audience_members(room)?, vec![leader, peer]);
+    // The stored derived body identifies the substrate even if the auxiliary
+    // marker is absent. Losing it cannot reinterpret this room as empty.
+    let key = [super::super::project::ROOM_PROJECT, room.as_bytes()].concat();
+    let mut txn = vault.store.env.write_txn()?;
+    vault.store.vault_meta.delete(&mut txn, &key)?;
+    txn.commit()?;
+    assert_eq!(vault.room_audience_members(room)?, vec![leader, peer]);
     Ok(())
 }
