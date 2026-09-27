@@ -73,7 +73,13 @@ fn turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
     Ok(id)
 }
 fn bare_turn(vault: &Vault, text: &str) -> crate::Result<crate::EntityId> {
-    let id = crate::EntityId::now();
+    bare_turn_at_id(vault, crate::EntityId::now(), text)
+}
+fn bare_turn_at_id(
+    vault: &Vault,
+    id: crate::EntityId,
+    text: &str,
+) -> crate::Result<crate::EntityId> {
     let mut body = vec![];
     rmpv::encode::write_value(
         &mut body,
@@ -323,5 +329,162 @@ fn bare_turn_body_is_not_a_transcript_candidate() -> crate::Result<()> {
     let id = bare_turn(&vault, "Ada email ada@example.invalid")?;
     assert!(capture_tier2_samples(&vault, &[id], &Unknown, &[])?.is_empty());
     assert!(read_tier2_samples(&vault)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn ineligible_ids_do_not_starve_the_last_weekly_slot() -> crate::Result<()> {
+    let (_dir, vault, _) = vault();
+    let ids = (0..49)
+        .map(|_| turn(&vault, "safe transcript"))
+        .collect::<crate::Result<Vec<_>>>()?;
+    assert_eq!(
+        capture_tier2_samples(&vault, &ids, &FixtureNer, &[])?.len(),
+        49
+    );
+    let bare = bare_turn(&vault, "not a transcript")?;
+    let valid = turn(&vault, "Ada is here")?;
+    let candidates = [valid, bare]; // reversed input still sorts bare first
+    assert!(bare < valid);
+    let selected = capture_tier2_samples(&vault, &candidates, &FixtureNer, &[])?;
+    assert_eq!(selected.len(), 1);
+    assert!(selected[0].text.starts_with("[PERSON]"));
+    assert!(capture_tier2_samples(&vault, &candidates, &Unknown, &[])?.is_empty());
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+fn streamed_message(
+    vault: &Vault,
+    content: &str,
+) -> (crate::EntityId, crate::EntityId, crate::memory::WitnessTurn) {
+    use crate::{
+        edge::EdgeActorClass,
+        memory::{MessageWriteMode, WitnessAuthor, WitnessMessage, WitnessTurn},
+        registry::ENTITY_TYPE_PERSON,
+    };
+    let actor = crate::EntityId::from_bytes([0x61; 16]).expect("actor id");
+    if vault
+        .get_entity_type(&actor)
+        .expect("actor lookup")
+        .is_none()
+    {
+        vault
+            .put_entity(
+                &actor,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"actor",
+            )
+            .expect("put actor");
+    }
+    let id = crate::EntityId::now();
+    let message = crate::EntityId::now();
+    let request = WitnessTurn {
+        conversation_ref: crate::EntityId::now().to_hex(),
+        turn_ref: Some(id.to_hex()),
+        occurred_at: 10,
+        messages: vec![WitnessMessage {
+            id: Some(message.to_hex()),
+            author: WitnessAuthor::User,
+            message_type: "dialogue".into(),
+            content: String::new(),
+            metadata: None,
+            is_visible: true,
+            order: 0,
+        }],
+    };
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let stream = memory
+        .begin_message_stream(&request, Some(MessageWriteMode::Atomic))
+        .expect("begin stream");
+    memory
+        .append_to_stream(stream, content)
+        .expect("append stream");
+    memory.finalize_stream(stream).expect("finalize stream");
+    assert!(
+        crate::entity_doc::has_record_head(
+            &vault.store,
+            &vault.store.env.read_txn().expect("read txn"),
+            &message
+        )
+        .expect("document head")
+    );
+    (actor, message, request)
+}
+
+#[cfg(feature = "sync")]
+fn continue_stream(
+    vault: &Vault,
+    actor: crate::EntityId,
+    request: &crate::memory::WitnessTurn,
+    text: &str,
+) {
+    use crate::{edge::EdgeActorClass, memory::MessageWriteMode};
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let stream = memory
+        .begin_message_stream(request, Some(MessageWriteMode::Atomic))
+        .expect("begin continuation");
+    memory
+        .append_to_stream(stream, text)
+        .expect("append continuation");
+    memory
+        .finalize_stream(stream)
+        .expect("finalize continuation");
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn streamed_document_message_capture_and_read_time_edit_revocation() -> crate::Result<()> {
+    let (_dir, vault, _) = vault();
+    let (actor, _message, request) = streamed_message(&vault, "safe stream");
+    let turn = crate::EntityId::from_hex(request.turn_ref.as_deref().expect("turn"))?;
+    let initial = capture_tier2_samples(&vault, &[turn], &FixtureNer, &[])?;
+    assert_eq!(initial.len(), 1);
+    assert_eq!(initial[0].text, "safe stream");
+    continue_stream(&vault, actor, &request, " updated");
+    assert!(read_tier2_samples(&vault)?.is_empty());
+    let updated = capture_tier2_samples(&vault, &[turn], &FixtureNer, &[])?;
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].text, "safe stream updated");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn document_edit_or_erase_during_redaction_cannot_publish_stale_sample() -> crate::Result<()> {
+    use crate::memory::WitnessTurn;
+    struct Change<'a> {
+        vault: &'a Vault,
+        actor: crate::EntityId,
+        message: crate::EntityId,
+        request: &'a WitnessTurn,
+        erase: bool,
+    }
+    impl Tier2Redactor for Change<'_> {
+        fn detect(&self, _: &str) -> crate::Result<Option<Vec<RedactionSpan>>> {
+            if self.erase {
+                assert!(self.vault.delete_entity(&self.message)?);
+            } else {
+                continue_stream(self.vault, self.actor, self.request, " changed");
+            }
+            Ok(Some(Vec::new()))
+        }
+    }
+    for erase in [false, true] {
+        let (_dir, vault, _) = vault();
+        let (actor, message, request) = streamed_message(&vault, "safe stream");
+        let turn = crate::EntityId::from_hex(request.turn_ref.as_deref().expect("turn"))?;
+        let redactor = Change {
+            vault: &vault,
+            actor,
+            message,
+            request: &request,
+            erase,
+        };
+        assert!(capture_tier2_samples(&vault, &[turn], &redactor, &[])?.is_empty());
+        assert!(read_tier2_samples(&vault)?.is_empty());
+    }
     Ok(())
 }

@@ -6,10 +6,9 @@ use crate::{
     EntityId, Vault,
     edge::EdgeKind,
     error::{Error, Result},
-    ports::EdgeStoreRead,
+    ports::{EdgeStoreRead, EntityStore},
     registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN},
     store::Store,
-    vault::{LiveEntityRow, live_entity_row_in_txn},
 };
 
 const PREFIX: &[u8] = b"failure_signals:tier2:sample:";
@@ -226,7 +225,8 @@ fn count_for_week(vault: &Vault, txn: &heed::RoTxn<'_>, week: u64) -> Result<u64
         None => Ok(0),
     }
 }
-fn sources_live(store: &Store, txn: &heed::RoTxn<'_>, sources: &[SourceProof]) -> Result<bool> {
+fn sources_live(vault: &Vault, txn: &heed::RoTxn<'_>, sources: &[SourceProof]) -> Result<bool> {
+    let store = &vault.store;
     let Some(turn) = sources.first() else {
         return Err(Error::CorruptedIndex("tier-2 sources"));
     };
@@ -241,10 +241,13 @@ fn sources_live(store: &Store, txn: &heed::RoTxn<'_>, sources: &[SourceProof]) -
         if store.off_record_sessions.contains_entity(&id)? {
             return Ok(false);
         }
-        match live_entity_row_in_txn(store, txn, &id)? {
-            LiveEntityRow::Live { entity_type, body }
-                if entity_type == expected
-                    && blake3::hash(&body).as_bytes() == &proof.body_hash => {}
+        // The exact port used by Vault::get resolves EntityDoc content in
+        // this transaction. Comparing the raw pointer would falsely reject
+        // stream/edit MESSAGEs and miss later document-only edits.
+        match vault.port_entity_get(txn, &id)? {
+            Some(row)
+                if row.entity_type == expected
+                    && blake3::hash(&row.body).as_bytes() == &proof.body_hash => {}
             _ => return Ok(false),
         }
         if index != 0
@@ -319,18 +322,18 @@ pub fn capture_tier2_samples(
     ordered.dedup();
     // Advisory preflight avoids paying for the host-local model when quota is
     // already full. The final write transaction rechecks the count and sources.
-    let to_prepare = {
+    let (to_prepare, remaining) = {
         let txn = vault.store.env.read_txn()?;
         let week = vault.store.clock.now_recorded_at() / WEEK;
         let count = count_for_week(vault, &txn, week)?;
         if count > CAP as u64 {
             return Err(Error::CorruptedIndex("tier-2 week"));
         }
+        if count == CAP as u64 {
+            return Ok(Vec::new());
+        }
         let mut chosen = Vec::new();
         for id in ordered {
-            if chosen.len() == CAP - count as usize {
-                break;
-            }
             if vault
                 .store
                 .vault_meta
@@ -340,10 +343,13 @@ pub fn capture_tier2_samples(
                 chosen.push(id);
             }
         }
-        chosen
+        (chosen, CAP - count as usize)
     };
     let mut prepared = Vec::new();
     for id in to_prepare {
+        if prepared.len() == remaining {
+            break;
+        }
         if vault.store.off_record_sessions.contains_entity(&id)? {
             continue;
         }
@@ -376,7 +382,7 @@ pub fn capture_tier2_samples(
             if vault.store.vault_meta.get(&*txn, &key)?.is_some() {
                 continue;
             }
-            if !sources_live(&vault.store, &*txn, &row.sources)? {
+            if !sources_live(vault, &*txn, &row.sources)? {
                 continue;
             }
             let sample = Tier2Sample {
@@ -423,9 +429,7 @@ pub fn read_tier2_samples(vault: &Vault) -> Result<Vec<Tier2Sample>> {
         for entry in vault.store.vault_meta.prefix_iter(&*txn, PREFIX)? {
             let (key, raw) = entry?;
             let stored = decode(&raw)?;
-            if stored.sample.expires_at <= now
-                || !sources_live(&vault.store, &*txn, &stored.sources)?
-            {
+            if stored.sample.expires_at <= now || !sources_live(vault, &*txn, &stored.sources)? {
                 stale.push((key.to_vec(), stored));
             } else {
                 live.push(stored.sample);
