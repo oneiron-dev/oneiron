@@ -275,7 +275,10 @@ pub(super) fn owner_rubric_rows(
         return Vec::new();
     }
     policy
-        .active_owner_policy_rows(request.world_ref.as_deref())
+        .active_owner_policy_rows_for_scope(
+            request.world_ref.as_deref(),
+            request.project_ref.as_deref(),
+        )
         .into_iter()
         .map(|row| PolicyRubricRow {
             row_ref: row.row_ref.clone(),

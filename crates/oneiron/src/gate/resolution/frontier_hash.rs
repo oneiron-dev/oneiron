@@ -203,6 +203,12 @@ fn hash_owner_policy_row(hasher: &mut Sha256, row: &PolicyOwnerPolicyRow) {
     hash_str(hasher, &row.text);
     hash_bool(hasher, row.active);
     hash_opt_str(hasher, row.world_ref.as_deref());
+    // Preserve the existing no-project frontier, while binding each new
+    // project scope to its exact bytes (and a distinct field domain).
+    if let Some(project_ref) = row.project_ref.as_deref() {
+        hash_str(hasher, "project_ref");
+        hash_str(hasher, project_ref);
+    }
     hash_str(hasher, row.action.as_str());
     hash_opt_str(hasher, row.human.as_deref());
 }

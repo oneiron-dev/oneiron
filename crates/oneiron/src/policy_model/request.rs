@@ -29,6 +29,7 @@ pub struct PolicyClassifyRequest {
     pub subject: PolicyClassifySubject,
     pub content: String,
     pub world_ref: Option<String>,
+    pub project_ref: Option<String>,
     pub caller_ref: Option<String>,
 }
 
@@ -39,6 +40,7 @@ impl PolicyClassifyRequest {
             subject: PolicyClassifySubject::OutboundContent,
             content: content.into(),
             world_ref: None,
+            project_ref: None,
             caller_ref: None,
         }
     }
@@ -49,6 +51,7 @@ impl PolicyClassifyRequest {
             subject: PolicyClassifySubject::Action,
             content: content.into(),
             world_ref: None,
+            project_ref: None,
             caller_ref: None,
         }
     }
@@ -56,6 +59,12 @@ impl PolicyClassifyRequest {
     #[must_use]
     pub fn with_world_ref(mut self, world_ref: impl Into<String>) -> Self {
         self.world_ref = Some(world_ref.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_project_ref(mut self, project_ref: impl Into<String>) -> Self {
+        self.project_ref = Some(project_ref.into());
         self
     }
 

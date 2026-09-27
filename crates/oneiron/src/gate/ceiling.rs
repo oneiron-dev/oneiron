@@ -268,6 +268,7 @@ pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) text: String,
     pub(crate) active: bool,
     pub(crate) world_ref: Option<String>,
+    pub(crate) project_ref: Option<String>,
     pub(crate) human: Option<String>,
     pub(crate) action: OwnerRowAction,
 }

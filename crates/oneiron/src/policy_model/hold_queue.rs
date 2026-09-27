@@ -60,7 +60,10 @@ impl Vault {
             unreachable!("validated above")
         };
         let human = policy
-            .active_owner_policy_rows(request.world_ref.as_deref())
+            .active_owner_policy_rows_for_scope(
+                request.world_ref.as_deref(),
+                request.project_ref.as_deref(),
+            )
             .into_iter()
             .find(|row| row.row_ref == *row_ref)
             .and_then(|row| row.human.clone())

@@ -1,5 +1,7 @@
 //! Read-only resolved-field accessors plus the frontier-hash entry.
 
+use std::collections::BTreeMap;
+
 use sha2::{Digest, Sha256};
 
 use crate::error::Result;
@@ -129,34 +131,52 @@ impl PolicyManifestResolution {
         !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
+    /// Legacy world-only selection. Project rows never answer this call.
     #[must_use]
     pub(crate) fn active_owner_policy_rows(
         &self,
         world_ref: Option<&str>,
     ) -> Vec<&PolicyOwnerPolicyRow> {
+        self.active_owner_policy_rows_for_scope(world_ref, None)
+    }
+
+    /// One effective row per `row_ref`. A matching project row overrides the
+    /// world row, which overrides the vault row. A row naming both scopes only
+    /// answers when both match and overrides a project-only row of the same ref.
+    #[must_use]
+    pub(crate) fn active_owner_policy_rows_for_scope(
+        &self,
+        world_ref: Option<&str>,
+        project_ref: Option<&str>,
+    ) -> Vec<&PolicyOwnerPolicyRow> {
         if self.diagnostics.loaded_manifest_forces_fail_closed() || self.owner_policy_rows_dropped {
             return Vec::new();
         }
 
-        let scoped_refs: Vec<&str> = match world_ref {
-            Some(world_ref) => self
-                .owner_policy_rows
-                .iter()
-                .filter(|row| row.active && row.world_ref.as_deref() == Some(world_ref))
-                .map(|row| row.row_ref.as_str())
-                .collect(),
-            None => Vec::new(),
+        let eligible = |row: &&PolicyOwnerPolicyRow| {
+            row.active
+                && row
+                    .world_ref
+                    .as_deref()
+                    .is_none_or(|world| Some(world) == world_ref)
+                && row
+                    .project_ref
+                    .as_deref()
+                    .is_none_or(|project| Some(project) == project_ref)
         };
-
+        let specificity = |row: &PolicyOwnerPolicyRow| {
+            (u8::from(row.project_ref.is_some()) * 2) + u8::from(row.world_ref.is_some())
+        };
+        let mut best = BTreeMap::<&str, u8>::new();
+        for row in self.owner_policy_rows.iter().filter(eligible) {
+            best.entry(row.row_ref.as_str())
+                .and_modify(|score| *score = (*score).max(specificity(row)))
+                .or_insert_with(|| specificity(row));
+        }
         self.owner_policy_rows
             .iter()
-            .filter(|row| row.active)
-            .filter(|row| match (world_ref, row.world_ref.as_deref()) {
-                (Some(world_ref), Some(row_world)) => row_world == world_ref,
-                (Some(_), None) => !scoped_refs.contains(&row.row_ref.as_str()),
-                (None, None) => true,
-                (None, Some(_)) => false,
-            })
+            .filter(eligible)
+            .filter(|row| best.get(row.row_ref.as_str()) == Some(&specificity(row)))
             .collect()
     }
 
