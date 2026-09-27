@@ -53,6 +53,11 @@ pub struct ContextPackBuilder<'a> {
 }
 
 impl<'a> ContextPackBuilder<'a> {
+    /// Bind skill discovery to the model revision that will execute this pack.
+    pub fn skill_executor(mut self, model: impl Into<String>) -> crate::Result<Self> {
+        self.pipeline = self.pipeline.skill_executor(model)?;
+        Ok(self)
+    }
     pub fn retrieval_effort(mut self, effort: crate::memory::Effort, seeds: &[EntityId]) -> Self {
         self.pipeline = self.pipeline.retrieval_effort(effort, seeds);
         self

@@ -10,6 +10,10 @@ impl PipelineBuilder<'_> {
         self
     }
 
+    pub(crate) fn skill_executor_id(&self) -> Option<&str> {
+        self.skill_executor.as_deref()
+    }
+
     pub(crate) fn captures_replay(&self) -> bool {
         self.capture_retrieval_trace && self.vault.store.retrieval_telemetry_capture_enabled()
     }

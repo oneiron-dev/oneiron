@@ -158,9 +158,11 @@ pub use self::job::{
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, PROVENANCE_OPTIMIZE_OF_KEY,
     PROVENANCE_OPTIMIZE_OF_VERSION_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY,
     PROVENANCE_OPTIMIZE_RECEIPTS_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeOutcome,
-    run_skill_optimize, run_skill_optimize_as,
+    run_skill_optimize, run_skill_optimize_as, run_skill_optimize_for_resident,
 };
-pub use self::selection::{SkillOptimizeCandidate, optimize_candidates};
+pub use self::selection::{
+    SkillOptimizeCandidate, optimize_candidates, optimize_candidates_for_resident,
+};
 pub use self::tier::{SkillTierVerdict, skill_governance_tier};
 pub use gate::{
     AuditPair, BlindPreference, DEFAULT_SKILL_EDIT_CYCLE_CAP, HELD_OUT_REPLAY_SCORER,
@@ -172,11 +174,12 @@ pub use gate::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
     set_skill_edit_cycle_cap, skill_body_binding_digest, skill_edit_cycle_cap,
     skill_edit_score_call_purpose, skill_edit_verdict, skill_edit_verdicts,
-    skill_edit_verdicts_for_proposal,
+    skill_edit_verdicts_for_proposal, supersede_skill_edit_judge,
 };
 pub(crate) use gate::{
-    check_optimizer_admission_in_txn, optimizer_birth_marker_for_create_in_txn,
-    skill_edit_verdict_receipts, with_optimized_skill_admission,
+    check_optimizer_admission_in_txn, displaced_judge_revision_in_txn, ensure_current_judge_in_txn,
+    optimizer_birth_marker_for_create_in_txn, skill_edit_verdict_receipts, validate_judge_revision,
+    with_optimized_skill_admission,
 };
 
 pub(crate) use self::job::{SKILL_EDIT_CYCLE_RUN_PREFIX, proven_cycle};
