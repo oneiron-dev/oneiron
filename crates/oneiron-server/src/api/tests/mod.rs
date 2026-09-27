@@ -282,6 +282,8 @@ pub(super) fn ingest_artifact_snapshot(
         "c/app.js",
         "f/style.css",
         "b/next.html",
+        "_s/nested/app.js",
+        "_t/nested/style.css",
         "report#1.js",
         "report?2.js",
         "literal%20.js",
