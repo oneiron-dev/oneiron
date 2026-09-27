@@ -9,7 +9,7 @@ use super::validation::{
     validate_existing_witness_turn,
 };
 use super::{distinct_message_orders, witness_message_envelope};
-use crate::ports::EntityStoreRead;
+use crate::ports::{EntityStoreRead, TombstoneStoreRead};
 
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
@@ -223,6 +223,45 @@ impl Memory<'_> {
                 }
             }
             prepare(wtxn)?;
+            // Container resolution before the writer was advisory. A concurrent
+            // writer may have claimed this ID, or a prepared project birth may
+            // have created its home room. Never attach a turn to a non-room or
+            // to an erased/hidden room just because an entity now exists here.
+            let current_conversation = self
+                .vault
+                .store
+                .entities
+                .get(wtxn, conversation_id.as_bytes())?;
+            match current_conversation.as_deref() {
+                Some(raw) => {
+                    let header = EntityMetadataHeader::parse(raw)
+                        .ok_or(Error::CorruptedIndex("conversation header"))?;
+                    if header.entity_type != ENTITY_TYPE_CONVERSATION {
+                        return Err(MemoryError::bad_request(
+                            "the witnessed conversation ref resolves to a non-CONVERSATION entity",
+                        ));
+                    }
+                    let visibility = self
+                        .vault
+                        .store
+                        .port_deletion_state(wtxn, &conversation_id)?;
+                    if raw.len() == ENTITY_METADATA_HEADER_LEN
+                        || visibility.deleted
+                        || visibility.stale
+                    {
+                        return Err(MemoryError::not_found(
+                            "the witnessed conversation is no longer live",
+                        ));
+                    }
+                }
+                None if !conversation_is_new => {
+                    return Err(MemoryError::not_found(
+                        "the witnessed conversation no longer exists",
+                    ));
+                }
+                None => {}
+            }
+            let conversation_is_absent = current_conversation.is_none();
             crate::workspace_roster::admit_room_witness(
                 self.vault,
                 wtxn,
@@ -234,14 +273,7 @@ impl Memory<'_> {
                 &message_ids,
             )?;
             let mut batch = self.vault.batch_in();
-            if conversation_is_new
-                && self
-                    .vault
-                    .store
-                    .entities
-                    .get(wtxn, conversation_id.as_bytes())?
-                    .is_none()
-            {
+            if conversation_is_absent {
                 batch = batch.put(
                     &conversation_id,
                     ENTITY_TYPE_CONVERSATION,
