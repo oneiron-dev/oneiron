@@ -2,7 +2,7 @@
 
 use super::{Bridge, failure};
 use crate::code_run::{
-    SelfAskHumanCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
+    SelfAskCall, SelfCall, SelfDispatchOutcome, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall,
     SelfMemorySearchCall, SelfMemorySupersedeClaimCall, SelfSpeechCall,
     blocked::{BlockedCategory, SelfReportBlockedCall},
 };
@@ -45,6 +45,12 @@ struct Edge {
     kind: String,
     tgt: String,
     weight: Option<f32>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonValidation {
+    schema: Value,
+    value: Value,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -160,6 +166,11 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             )?)?;
             Ok(json!({"operation": result.operation().as_str(), "credentialHandle": result.credential().as_str()}).to_string())
         }
+        "self.json.validate" => {
+            let args: JsonValidation = parse(input)?;
+            let valid = crate::llm::validate_json_schema(&args.schema, &args.value).is_ok();
+            Ok(json!({"valid":valid}).to_string())
+        }
         "oneiron.clock.now_unix_ms" => {
             let _: Empty = parse(input)?;
             Ok(json!({"value":state.determinism.frozen_unix_ms}).to_string())
@@ -252,9 +263,7 @@ fn self_call(name: &str, input: &str, now: u64) -> Result<SelfCall> {
                 .map_err(|_| failure("invalid blocked category"))?;
             SelfCall::ReportBlocked(SelfReportBlockedCall::new(category, args.detail))
         }
-        "self.ask_human" | "self.askHuman" => {
-            SelfCall::AskHuman(SelfAskHumanCall::new(parse::<Ask>(input)?.prompt))
-        }
+        "ask" => SelfCall::Ask(SelfAskCall::new(parse::<Ask>(input)?.prompt)),
         "self.speak" => SelfCall::Speak(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
         "self.think" => SelfCall::Think(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
         "self.express" => SelfCall::Express(SelfSpeechCall::new(parse::<Speech>(input)?.text)),
