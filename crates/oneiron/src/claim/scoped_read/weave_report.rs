@@ -404,7 +404,7 @@ impl ScopedRead<'_> {
         Ok(links.into_values().collect())
     }
 
-    fn live_weave_edge_in(
+    pub(super) fn live_weave_edge_in(
         &self,
         txn: &heed::RoTxn<'_>,
         source: EntityId,

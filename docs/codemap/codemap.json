@@ -7518,7 +7518,7 @@
      "surface": {
       "crate-vis": 5,
       "fn": 14,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -7643,6 +7643,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveLinkCorrection"
+     ],
+     "path": "src/claim/scoped_read/weave_correction.rs",
+     "purpose": "Authenticated wrong-link labels emitted by the live weave report",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -7656,6 +7670,7 @@
      "path": "src/claim/scoped_read/weave_report.rs",
      "purpose": "Live weave data for a reader, not a saved digest or a rendered section recipe",
      "surface": {
+      "crate-vis": 1,
       "enum": 3,
       "fn": 1,
       "struct": 3
@@ -34784,7 +34799,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -35899,7 +35914,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2118,
+   "source_files": 2119,
    "test_files": 722
   },
   "oneiron-android": {
