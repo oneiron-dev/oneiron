@@ -37,8 +37,11 @@ fn corpus_bounded_vector_and_temporal_reuse_run_claim_body() -> Result<()> {
     assert_eq!(metadata.claim_body_loads, 1);
     assert_eq!(gate.decisions.len(), 1);
     assert_eq!(
-        crate::claim::claim_corpus_id(gate.decisions[&id].as_ref().expect("imported live body"))?,
-        Some(selected)
+        gate.decisions[&id]
+            .as_ref()
+            .expect("imported live body")
+            .scope_project,
+        selected
     );
 
     let temporal = builder.scoped_temporal_results(
