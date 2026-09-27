@@ -40,9 +40,18 @@ fn fixture_checkpoint_runs_probe_and_releases_only_a_passing_manifest() {
         ExitCode::SUCCESS
     );
     assert_eq!(
-        std::fs::read(output).unwrap(),
-        std::fs::read(manifest).unwrap()
+        std::fs::read(&output).unwrap(),
+        std::fs::read(&manifest).unwrap()
     );
+    let selected = ModelManifest::load(&output).unwrap();
+    let approval = TeacherProbeApproval::load(&approval_path(&output)).unwrap();
+    let vault =
+        oneiron::Vault::open(_dir.path().join("vault"), oneiron::VaultConfig::device()).unwrap();
+    assert!(vault.set_model_manifest(&selected).is_err());
+    vault
+        .set_model_manifest_with_teacher_approval(&selected, &approval)
+        .unwrap();
+    assert_eq!(vault.model_manifest().unwrap(), Some(selected));
 }
 #[test]
 fn below_bar_checkpoint_blocks_teacher_pin() {
@@ -67,6 +76,31 @@ fn below_bar_checkpoint_blocks_teacher_pin() {
     );
     assert_eq!(run(&cli(&bad, &manifest, &output)), ExitCode::FAILURE);
     assert!(!output.exists());
+    assert!(!approval_path(&output).exists());
+    let candidate = ModelManifest::load(&manifest).unwrap();
+    let vault =
+        oneiron::Vault::open(dir.path().join("vault"), oneiron::VaultConfig::device()).unwrap();
+    assert!(vault.set_model_manifest(&candidate).is_err());
+    assert!(vault.model_manifest().unwrap().is_none());
+}
+#[test]
+fn passing_base_with_unprobed_teacher_route_cannot_publish() {
+    let (_dir, manifest, output, checkpoint) = input();
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    for (role, binding) in raw["roles"].as_object_mut().unwrap() {
+        binding["route_models"] = serde_json::json!({
+            "on_device": format!("local/unprobed-{role}@r1")
+        });
+    }
+    std::fs::write(&manifest, serde_json::to_vec(&raw).unwrap()).unwrap();
+    assert!(ModelManifest::load(&manifest).is_ok());
+    assert_eq!(
+        run(&cli(&checkpoint, &manifest, &output)),
+        ExitCode::FAILURE
+    );
+    assert!(!output.exists());
+    assert!(!approval_path(&output).exists());
 }
 #[test]
 fn wrong_model_or_malformed_bio_fails_closed() {

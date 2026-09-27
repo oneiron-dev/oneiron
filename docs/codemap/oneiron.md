@@ -1612,7 +1612,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 3 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
 | `src/llm/image/tests.rs` | test | s | — | — | — |
-| `src/llm/manifest.rs` | src | m | 4 struct · 5 enum · 10 fn · 1 const · 2 crate-vis | CalibratedVerdict, ConfidenceBand, ModelBinding, ModelManifest, ModelRole, ModelSlot, VerdictBasis, VerdictBinding +1 | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
+| `src/llm/manifest.rs` | src | m | 4 struct · 5 enum · 11 fn · 1 const · 1 re-export · 2 crate-vis | CalibratedVerdict, ConfidenceBand, ModelBinding, ModelManifest, ModelRole, ModelSlot, VerdictBasis, VerdictBinding +1 | Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors |
+| `src/llm/manifest/teacher_probe.rs` | src | s | 1 struct · 3 fn · 2 const | TeacherProbeApproval | Pinned extraction-teacher probe approval for manifest publication |
 | `src/llm/manifest/tests.rs` | test | s | — | — | — |
 | `src/llm/mod.rs` | src | s | 7 mod · 18 re-export · 6 crate-vis | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 5 fn · 4 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |

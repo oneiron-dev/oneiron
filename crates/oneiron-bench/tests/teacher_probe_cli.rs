@@ -1,4 +1,6 @@
 //! Run the shipped binary, not only its Rust scoring function, against CI fixtures.
+use oneiron::llm::manifest::{ModelManifest, TeacherProbeApproval};
+use oneiron::{Vault, VaultConfig};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,9 +36,28 @@ fn checkpoint_gate_cli_releases_only_the_passing_candidate() {
         std::fs::read(&good).expect("teacher probe CLI fixture"),
         std::fs::read(&manifest).expect("teacher probe CLI fixture")
     );
+    let approval_path = PathBuf::from(format!("{}.approval.json", good.display()));
+    let selected = ModelManifest::load(&good).expect("approved manifest");
+    let approval = TeacherProbeApproval::load(&approval_path).expect("probe approval");
+    let vault = Vault::open(temp.path().join("accepted-vault"), VaultConfig::device())
+        .expect("accepted vault opens");
+    assert!(vault.set_model_manifest(&selected).is_err());
+    vault
+        .set_model_manifest_with_teacher_approval(&selected, &approval)
+        .expect("passing checkpoint pins");
+    assert_eq!(
+        vault.model_manifest().expect("manifest read"),
+        Some(selected)
+    );
     let bad = temp.path().join("bad-approved.json");
     let result = invoke(&fixtures.join("below_bar_checkpoint"), &manifest, &bad);
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("FAIL"));
     assert!(!bad.exists());
+    assert!(!PathBuf::from(format!("{}.approval.json", bad.display())).exists());
+    let rejected = Vault::open(temp.path().join("rejected-vault"), VaultConfig::device())
+        .expect("rejected vault opens");
+    let candidate = ModelManifest::load(&manifest).expect("candidate parses");
+    assert!(rejected.set_model_manifest(&candidate).is_err());
+    assert!(rejected.model_manifest().expect("manifest read").is_none());
 }

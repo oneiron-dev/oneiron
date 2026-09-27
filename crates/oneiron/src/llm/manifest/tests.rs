@@ -12,10 +12,14 @@ fn fixture() -> ModelManifest {
                         model: ModelId::new(format!("test/{role:?}@r1")).unwrap(),
                         slot: ModelSlot::Llm,
                         tier: ModelTierRef("configured".into()),
-                        route_models: BTreeMap::from([(
-                            ModelLocality::OnDevice,
-                            ModelId::new(format!("local/{role:?}@r1")).unwrap(),
-                        )]),
+                        route_models: if role == ModelRole::ExtractionTeacher {
+                            BTreeMap::new()
+                        } else {
+                            BTreeMap::from([(
+                                ModelLocality::OnDevice,
+                                ModelId::new(format!("local/{role:?}@r1")).unwrap(),
+                            )])
+                        },
                     },
                 )
             })
@@ -28,6 +32,72 @@ fn fixture() -> ModelManifest {
     }
 }
 #[test]
+fn teacher_pin_requires_matching_passing_probe_at_the_vault_write_door() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let original = fixture();
+    assert!(matches!(
+        vault.set_model_manifest(&original),
+        Err(Error::InvalidConfig(_))
+    ));
+    assert!(vault.model_manifest().unwrap().is_none());
+    assert!(TeacherProbeApproval::for_scored_checkpoint(&original, 799_999).is_err());
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&original, 800_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&original, &approval)
+        .unwrap();
+    assert_eq!(vault.model_manifest().unwrap(), Some(original.clone()));
+
+    let mut changed = original.clone();
+    changed
+        .roles
+        .get_mut(&ModelRole::ExtractionTeacher)
+        .unwrap()
+        .model = ModelId::new("new/untested@r2").unwrap();
+    assert!(vault.set_model_manifest(&changed).is_err());
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&changed, &approval)
+            .is_err()
+    );
+    assert_eq!(vault.model_manifest().unwrap(), Some(original));
+
+    let mut bad_score = approval;
+    bad_score.f1_millionths = 799_999;
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&changed, &bad_score)
+            .is_err()
+    );
+    let next = TeacherProbeApproval::for_scored_checkpoint(&changed, 900_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&changed, &next)
+        .unwrap();
+    assert_eq!(vault.model_manifest().unwrap(), Some(changed.clone()));
+
+    // Other role updates do not need another teacher probe.
+    changed.roles.get_mut(&ModelRole::Checker).unwrap().model =
+        ModelId::new("test/new-checker@r1").unwrap();
+    vault.set_model_manifest(&changed).unwrap();
+    assert_eq!(vault.model_manifest().unwrap(), Some(changed.clone()));
+
+    changed
+        .roles
+        .get_mut(&ModelRole::ExtractionTeacher)
+        .unwrap()
+        .route_models
+        .insert(
+            ModelLocality::OnDevice,
+            ModelId::new("local/untested@r1").unwrap(),
+        );
+    assert!(vault.set_model_manifest(&changed).is_err());
+    assert!(
+        vault
+            .set_model_manifest_with_teacher_approval(&changed, &next)
+            .is_err()
+    );
+}
+
+#[test]
 fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig::device());
     let fixture = fixture();
@@ -35,7 +105,11 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
     std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
     let loaded = ModelManifest::load(&path).unwrap();
     assert_eq!(loaded, fixture);
-    vault.set_model_manifest(&loaded).unwrap();
+    assert!(vault.set_model_manifest(&loaded).is_err());
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&loaded, 1_000_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&loaded, &approval)
+        .unwrap();
     vault
         .set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)
         .unwrap();
@@ -64,14 +138,20 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
             provider_options: BTreeMap::new(),
         };
         vault.bind_model_role(role, &mut request).unwrap();
-        assert_eq!(
-            &request.model,
+        let expected_model = if role == ModelRole::ExtractionTeacher {
+            &loaded.binding(role).unwrap().model
+        } else {
             &loaded.binding(role).unwrap().route_models[&ModelLocality::OnDevice]
-        );
+        };
+        assert_eq!(&request.model, expected_model);
         let catalog = crate::llm::LlmCatalogEntry {
             model: request.model.clone(),
             display_name: "local fixture".into(),
-            locality: ModelLocality::OnDevice,
+            locality: if role == ModelRole::ExtractionTeacher {
+                ModelLocality::OwnServer
+            } else {
+                ModelLocality::OnDevice
+            },
             context_window_tokens: 4096,
             max_output_tokens: Some(100),
             cost: None,
@@ -79,7 +159,7 @@ fn all_thirteen_roles_load_from_file_and_bind_with_narrow_vault_routes() {
             metadata: BTreeMap::new(),
         };
         catalog.admit(&request, false).unwrap();
-        assert_eq!(request.envelope.locality, ModelLocality::OnDevice);
+        assert_eq!(request.envelope.locality, catalog.locality);
         assert_eq!(request.envelope.tier.resolved().as_str(), "configured");
     }
     let mut unknown = serde_json::to_value(fixture).unwrap();
@@ -153,7 +233,10 @@ fn narrowing_without_a_distinct_model_is_refused_without_relabeling() {
         .unwrap()
         .route_models
         .clear();
-    vault.set_model_manifest(&manifest).unwrap();
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000).unwrap();
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
+        .unwrap();
     assert!(matches!(
         vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice),
         Err(Error::InvalidConfig(_))

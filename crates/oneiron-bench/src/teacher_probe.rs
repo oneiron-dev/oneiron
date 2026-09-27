@@ -4,16 +4,16 @@
 //! releases a candidate manifest file if the probe passes; it does not serve a teacher.
 use std::collections::BTreeSet;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use oneiron::llm::manifest::{ModelManifest, ModelRole};
+use oneiron::llm::manifest::{
+    ModelManifest, ModelRole, TEACHER_PROBE_ID, TEACHER_PROBE_MIN_F1, TeacherProbeApproval,
+};
 use serde::Deserialize;
 
 const GOLD: &str = include_str!("../fixtures/teacher_probe/conll_bio.v1.json");
-// Exact typed-entity span micro-F1, in millionths; not token accuracy.
-const MIN_F1: u64 = 800_000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -73,7 +73,7 @@ fn spans(sentences: &[Vec<String>]) -> Result<BTreeSet<Span>, String> {
 }
 
 fn evaluate(gold: &Probe, result: &RunnerOutput) -> Result<(u64, usize, usize, usize), String> {
-    if gold.name != "oneiron-conll-bio-v1"
+    if gold.name != TEACHER_PROBE_ID
         || gold.sentences.is_empty()
         || gold.sentences.len() != result.predictions.len()
     {
@@ -110,17 +110,25 @@ fn gate(
     manifest_path: &Path,
     out: &Path,
 ) -> Result<String, String> {
-    if out == manifest_path || out.exists() {
-        return Err("output must be a new file, distinct from candidate manifest".into());
+    let receipt_path = approval_path(out);
+    if out == manifest_path || out.exists() || receipt_path.exists() {
+        return Err(
+            "output and approval must be new files, distinct from candidate manifest".into(),
+        );
     }
     let gold: Probe = serde_json::from_str(GOLD).map_err(|e| e.to_string())?;
     let manifest_bytes = std::fs::read(manifest_path).map_err(|e| e.to_string())?;
     let manifest = ModelManifest::from_json(&manifest_bytes).map_err(|e| e.to_string())?;
-    let model = manifest
+    let teacher = manifest
         .binding(ModelRole::ExtractionTeacher)
-        .map_err(|e| e.to_string())?
-        .model
-        .to_string();
+        .map_err(|e| e.to_string())?;
+    if !teacher.route_models.is_empty() {
+        return Err(
+            "teacher route overrides require independent probes; this gate admits one checkpoint"
+                .into(),
+        );
+    }
+    let model = teacher.model.to_string();
     if !checkpoint.is_dir()
         || std::fs::read_to_string(checkpoint.join("model_id"))
             .map_err(|e| e.to_string())?
@@ -156,12 +164,16 @@ fn gate(
     let report = format!(
         "teacher probe: model={model} exact_span_micro_f1={:.6} correct={correct} predicted={predicted} gold={expected} bar={:.6}",
         f1 as f64 / 1_000_000.0,
-        MIN_F1 as f64 / 1_000_000.0
+        f64::from(TEACHER_PROBE_MIN_F1) / 1_000_000.0
     );
-    if f1 < MIN_F1 {
+    if f1 < u64::from(TEACHER_PROBE_MIN_F1) {
         return Err(format!("{report}: FAIL (manifest not released)"));
     }
-    // No manifest artifact exists before all checks pass. An existing artifact is never overwritten.
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, f1 as u32)
+        .map_err(|e| e.to_string())?;
+    let approval_bytes = serde_json::to_vec(&approval).map_err(|e| e.to_string())?;
+    // Nothing is published before a passing score. The vault requires BOTH
+    // artifacts and verifies the receipt against the exact teacher binding.
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -175,10 +187,35 @@ fn gate(
         let _ = std::fs::remove_file(out);
         return Err(format!("failed to release manifest: {e}"));
     }
+    let receipt_result = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&receipt_path)
+        .and_then(|mut receipt| {
+            receipt
+                .write_all(&approval_bytes)
+                .and_then(|()| receipt.sync_all())
+        });
+    if let Err(e) = receipt_result {
+        let _ = std::fs::remove_file(&receipt_path);
+        let _ = std::fs::remove_file(out);
+        return Err(format!("failed to release teacher approval: {e}"));
+    }
     Ok(format!(
-        "{report}: PASS (manifest released to {})",
-        out.display()
+        "{report}: PASS (manifest {}, approval {})",
+        out.display(),
+        receipt_path.display()
     ))
+}
+
+fn approval_path(out: &Path) -> PathBuf {
+    let mut path = out.as_os_str().to_os_string();
+    path.push(".approval.json");
+    PathBuf::from(path)
+}
+
+fn error_line(message: &str) {
+    let _ = writeln!(io::stderr(), "{message}");
 }
 
 pub(crate) fn run(args: &[String]) -> ExitCode {
@@ -193,8 +230,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         out,
     ] = args
     else {
-        eprintln!(
-            "usage: oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest CANDIDATE.json --out APPROVED.json"
+        error_line(
+            "usage: oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest CANDIDATE.json --out APPROVED.json",
         );
         return ExitCode::FAILURE;
     };
@@ -203,7 +240,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         || manifest_flag != "--manifest"
         || out_flag != "--out"
     {
-        eprintln!("teacher-probe: invalid options");
+        error_line("teacher-probe: invalid options");
         return ExitCode::FAILURE;
     }
     let (checkpoint, runner, manifest, out) = (
@@ -214,11 +251,11 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
     );
     match gate(&checkpoint, &runner, &manifest, &out) {
         Ok(report) => {
-            println!("{report}");
+            let _ = writeln!(io::stdout(), "{report}");
             ExitCode::SUCCESS
         }
         Err(reason) => {
-            eprintln!("teacher-probe: {reason}");
+            error_line(&format!("teacher-probe: {reason}"));
             ExitCode::FAILURE
         }
     }

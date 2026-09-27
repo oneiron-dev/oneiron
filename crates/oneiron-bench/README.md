@@ -2,13 +2,21 @@
 
 `oneiron-bench teacher-probe --checkpoint DIR --runner EXECUTABLE --manifest
 CANDIDATE.json --out APPROVED.json` gates a candidate `extraction_teacher`
-manifest file. Only publish/commit `APPROVED.json`, never the candidate input. The
-output is created **only** after a successful runner invocation, matching the
-manifest model ID and passing the fixed probe. Failure exits nonzero without creating an approved file. An existing output
-is never overwritten. This is a
-**checkpoint publication** door, not a new gate on `Vault::set_model_manifest`:
-hosts can still write model manifests directly, and must use this publication
-workflow when selecting a teacher.
+manifest. It creates **two** new artifacts on pass: `APPROVED.json` and
+`APPROVED.json.approval.json`. Publish both, then load the manifest and approval
+and call `Vault::set_model_manifest_with_teacher_approval(&manifest, &approval)`.
+`Vault::set_model_manifest` rejects an initial teacher pin and any teacher
+change without a saved matching approval. The vault validates the pinned probe
+identity, exact teacher-binding hash, model ID, and F1 bar, then stores the
+approval and manifest together. Subsequent writes can change other role rows
+without re-running the teacher. A failing probe emits no new approval and
+cannot pin the candidate at this public write door. A teacher route override
+requires a separate probe for that model and is refused by this single-checkpoint
+command and by the vault write. Resident route narrowing still works for
+served roles on the same slot; the offline teacher always keeps its approved
+base binding. The approval is an operator receipt, not a
+signature: the checkpoint runner and publishing host must be trusted; this
+mechanism prevents accidental bypass, not a malicious host forging a score.
 
 The bench pins `fixtures/teacher_probe/conll_bio.v1.json` (10 English CoNLL
 BIO-format sentences, PER/ORG/LOC/MISC, 24 gold spans). These are a deliberately

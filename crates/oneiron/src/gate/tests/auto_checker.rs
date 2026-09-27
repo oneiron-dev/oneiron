@@ -1287,7 +1287,7 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
             ClaimApprovalStatus::Proposed
         );
         let model = ModelId::new("test/verdict@1").expect("model");
-        vault.set_model_manifest(&ModelManifest {
+        let manifest = ModelManifest {
             version: 2,
             roles: MODEL_ROLES
                 .into_iter()
@@ -1313,7 +1313,9 @@ fn manifest_verdict_floor_enforces_proposed_or_logs_shadow_on_real_write() -> Re
                 floor: ConfidenceBand::High,
                 mode,
             }),
-        })?;
+        };
+        let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, 1_000_000)?;
+        vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
         let checker = bounded(RecordingAutoChecker::new(AutoCheckOutcome::Verdict(
             CalibratedVerdict {
                 model,

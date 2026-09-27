@@ -20209,8 +20209,23 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 5,
-      "fn": 10,
+      "fn": 11,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TeacherProbeApproval"
+     ],
+     "path": "src/llm/manifest/teacher_probe.rs",
+     "purpose": "Pinned extraction-teacher probe approval for manifest publication",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -34892,7 +34907,7 @@
      "purpose": "Deterministic LinkedIn entity resolution and explicit runtime-path corpus preload"
     },
     "llm": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35447,7 +35462,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2093,
+   "source_files": 2094,
    "test_files": 717
   },
   "oneiron-android": {
