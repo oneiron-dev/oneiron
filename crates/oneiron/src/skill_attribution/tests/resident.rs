@@ -21,7 +21,7 @@ fn resident_receipt(
     else {
         panic!("new attempt")
     };
-    vault.load_resident_skill_pack(row.id, resident, skill, 11)?;
+
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
         "resident.skill.test",
         ClaimAttempt {
@@ -32,6 +32,15 @@ fn resident_receipt(
     else {
         panic!("claim")
     };
+    vault.load_resident_skill_pack(
+        row.id,
+        resident,
+        skill,
+        "resident-test",
+        leased.attempt_count,
+        "fixture/model@1",
+        11,
+    )?;
     if failed {
         queue.fail(crate::attempt_queue::FailAttempt {
             id: row.id,
@@ -71,9 +80,7 @@ fn scoped_receipt(
     if let Some(resident) = resident {
         vault.bind_actor_attempt(row.id, resident)?;
     }
-    if let Some(skill) = shared {
-        vault.load_attempt_skill_pack(row.id, skill, 31)?;
-    } else if resident.is_none() {
+    if shared.is_none() && resident.is_none() {
         // An unbound but stamped receipt: negative tests must not pass only
         // because the citation never existed.
         queue.append_manifest_entry(
@@ -91,6 +98,16 @@ fn scoped_receipt(
     else {
         panic!("claim")
     };
+    if let Some(skill) = shared {
+        vault.load_attempt_skill_pack(
+            row.id,
+            skill,
+            "resident-shared",
+            leased.attempt_count,
+            "fixture/model@1",
+            31,
+        )?;
+    }
     if failed {
         queue.fail(crate::attempt_queue::FailAttempt {
             id: row.id,
