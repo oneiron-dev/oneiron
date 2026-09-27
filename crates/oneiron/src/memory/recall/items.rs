@@ -9,11 +9,17 @@ impl Memory<'_> {
         id: &EntityId,
         facet_hint: Option<EntityId>,
         mode: crate::vault::ReadMode,
+        scoped_read: Option<&crate::claim::ScopedRead<'_>>,
     ) -> MemoryResult<Option<MemoryItem>> {
         let Some(entity_type) = self.vault.get_entity_type(id)? else {
             return Ok(None);
         };
-        let edges = self.vault.edges_out(id)?;
+        // The scored pack has already been filtered, but raw vault edges
+        // would reintroduce denied targets through provenance and facet hints.
+        let edges = match scoped_read {
+            Some(read) => read.edges_out(id)?.value.unwrap_or_default(),
+            None => self.vault.edges_out(id)?,
+        };
         let mut source_revision_ids = vec![id.to_hex()];
         source_revision_ids.extend(
             edges
