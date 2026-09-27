@@ -2,7 +2,9 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::EntityId;
 use crate::error::Result;
+use crate::gate::hosted_tts_policy::HostedTtsLimits;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
 use super::frontier_hash::hash_policy_frontier_v0;
@@ -36,6 +38,12 @@ impl PolicyManifestResolution {
         // A completely absent manifest preserves the existing bootstrap
         // behavior; any loaded malformed/unsupported manifest fails closed.
         self.diagnostics.manifest_count > 0 || self.diagnostics.loaded_manifest_forces_fail_closed()
+    }
+
+    #[must_use]
+    pub(crate) fn proposal_check_threshold(&self) -> u64 {
+        self.proposal_check_threshold
+            .unwrap_or(crate::gate::proposal_observation::DEFAULT_PROPOSAL_CHECK_THRESHOLD)
     }
 
     #[must_use]
@@ -74,6 +82,17 @@ impl PolicyManifestResolution {
         } else {
             Some(&self.budget_policy)
         }
+    }
+
+    pub(crate) fn hosted_tts_limits(
+        &self,
+        provider: &str,
+        holder: EntityId,
+    ) -> Option<HostedTtsLimits> {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return None;
+        }
+        self.hosted_tts.limits(provider, holder)
     }
 
     /// Rendering pins follow declared critical classes, not the fail-closed

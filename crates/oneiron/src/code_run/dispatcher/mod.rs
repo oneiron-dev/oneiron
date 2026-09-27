@@ -3,6 +3,7 @@ mod emission;
 mod envelope;
 mod human_speech;
 mod memory_verbs;
+mod wake_policy;
 
 use std::cell::Cell;
 
@@ -40,6 +41,9 @@ pub struct HostSelfDispatcher<'a> {
     pub(super) human_wait_target: Option<HumanWaitDispatchTarget>,
     pub(super) code_emission:
         Option<(consent::CodeEmissionContext, Option<consent::ReviewContext>)>,
+    /// Host-authenticated owner for a single governed agent action. No guest
+    /// call, transcript, or replay row can mint or carry this proof.
+    pub(super) owner_proof: Option<&'a crate::consent::AuthenticatedOwner>,
     /// ONE-1314. Whether this run's effect history is already known to carry
     /// an EXTERNAL effect, so the memory writes it seals afterwards must be
     /// stamped with tool-output lineage rather than bare `Generated`.
@@ -86,7 +90,7 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// Creates the canonical dispatcher for a workflow step waiting on a real,
     /// human-assigned TASK. The task body remains authoritative for responder
-    /// identity; dispatch resolves it when `self.ask_human` mints the wait.
+    /// identity; dispatch resolves it when `ask` mints the wait.
     ///
     /// # Errors
     ///
@@ -145,8 +149,19 @@ impl<'a> HostSelfDispatcher<'a> {
             run_ref,
             human_wait_target: None,
             code_emission: None,
+            owner_proof: None,
             external_effect_seen: Cell::new(false),
         })
+    }
+
+    /// Binds a host-authenticated owner proof to one agent action dispatch.
+    /// The guest payload has no field from which it could construct this.
+    pub(crate) fn with_authenticated_owner(
+        mut self,
+        owner: &'a crate::consent::AuthenticatedOwner,
+    ) -> Self {
+        self.owner_proof = Some(owner);
+        self
     }
 
     /// Records what this run's effect history already contains.
@@ -240,7 +255,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::MemoryPutClaim(call) => self.dispatch_memory_put_claim(call),
             SelfCall::MemorySupersedeClaim(call) => self.dispatch_memory_supersede_claim(call),
             SelfCall::MemoryPutEdge(call) => self.dispatch_memory_put_edge(call),
-            SelfCall::AskHuman(call) => self.dispatch_ask_human(call),
+            SelfCall::Ask(call) => self.dispatch_ask(call),
             SelfCall::DestructiveFixture(call) => Ok(self.durable_wait(
                 SelfEffect::DestructiveFixture,
                 SelfDurableWaitReason::DestructiveEffect,
@@ -256,6 +271,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Think(call) => self.dispatch_speech(SelfEffect::Think, call, run_id),
             SelfCall::Express(call) => self.dispatch_speech(SelfEffect::Express, call, run_id),
             SelfCall::ReportBlocked(call) => self.dispatch_report_blocked(call, run_id),
+            SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
         }
     }
 }

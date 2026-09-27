@@ -20,6 +20,7 @@ fn test_config() -> VaultConfig {
         store_clock: crate::ports::StoreClock::default(),
         ppr_vad_alpha: crate::config::PPR_VAD_ALPHA_DEFAULT,
         ppr_community: crate::config::PprCommunityConfig::default(),
+        retrieval_telemetry_capture: false,
         map_size: 16 * 1024 * 1024,
         dimensions: 4,
         fast_dims: None,
@@ -387,7 +388,12 @@ fn deindex_removes_from_search() -> Result<()> {
     let before = vault.search_text("deindex", 10)?;
     assert!(contains_id(&before, &id));
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     let after = vault.search_text("deindex", 10)?;
     assert!(!contains_id(&after, &id));
     Ok(())
@@ -754,7 +760,12 @@ fn normalized_overlay_persists_zero_field_length() -> Result<()> {
         assert_eq!(total_length, 0);
     }
 
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
     Ok(())
 }
 
@@ -1148,7 +1159,12 @@ fn deindex_decrements_per_field_stats() -> Result<()> {
     let vault = Vault::open(temp_dir.path(), test_config())?;
     let id = EntityId::now();
     put_text_doc(&vault, &id, "alpha beta")?;
-    assert!(vault.delete_entity(&id)?);
+    assert!(
+        vault.delete_entity_with_options(
+            &id,
+            crate::deletion::DeleteEntityOptions { purge: true }
+        )?
+    );
 
     let rtxn = vault.store.env.read_txn()?;
     let (doc_count, total_length) =
@@ -2028,7 +2044,10 @@ fn deindex_deletes_exactly_one_dup_item() -> Result<()> {
     let before = collect_posting_dups(&vault, b"shared")?;
     assert_eq!(before.len(), 3);
 
-    assert!(vault.delete_entity(&ids[1])?);
+    assert!(vault.delete_entity_with_options(
+        &ids[1],
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     let after = collect_posting_dups(&vault, b"shared")?;
     assert_eq!(after.len(), 2);
     assert_eq!(
@@ -2040,8 +2059,14 @@ fn deindex_deletes_exactly_one_dup_item() -> Result<()> {
         "untouched dup must stay byte-identical"
     );
 
-    assert!(vault.delete_entity(&ids[0])?);
-    assert!(vault.delete_entity(&ids[2])?);
+    assert!(vault.delete_entity_with_options(
+        &ids[0],
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
+    assert!(vault.delete_entity_with_options(
+        &ids[2],
+        crate::deletion::DeleteEntityOptions { purge: true }
+    )?);
     let rtxn = vault.store.env.read_txn()?;
     assert!(
         vault.store.text_postings.get(&rtxn, b"shared")?.is_none(),

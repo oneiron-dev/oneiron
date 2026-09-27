@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Full verify gate: code-map pin -> fmt (check-mode) -> all-feature and
-# featureless + server-production clippy -> strict rustdoc -> full all-feature
-# nextest tier -> featureless oneiron library tests -> doctests.
+# Full verify gate: fmt (check-mode) -> all-feature and featureless +
+# server-production clippy -> strict rustdoc -> full all-feature nextest tier ->
+# featureless oneiron library tests -> doctests. CODEMAP_CHECK=1 puts the
+# code-map pin in front of them.
 #
 # Markers are printed to stdout so they land INSIDE the tee'd log — the marker in
 # the log is the only verify truth; wrapper/ssh exit codes are not evidence.
@@ -17,7 +18,8 @@ set -uo pipefail
 usage() {
   printf '%s\n' \
     'Usage: scripts/verify.sh [--list | --help]' \
-    '  No arguments: run all 9 scripted stages; success prints VERIFY-OK.' \
+    '  No arguments: run all 8 scripted stages; success prints VERIFY-OK.' \
+    '  CODEMAP_CHECK=1 adds the code-map check as a first stage; main regenerates the map.' \
     '  --list: print stage names and commands without running them.' \
     '  --help: show this help without running any checks.' \
     '  ONEIRON_FEATURELESS_RUNNER may be unset or libtest; other values are rejected.' \
@@ -78,25 +80,30 @@ run_stage() {
   fi
 }
 
-# Generated code map first: cheap, and a stale map is a docs bug that must not
-# hide behind a long compile.
-run_stage codemap             scripts/codemap/check.sh
+# Build commands are --locked so a stale manifest cannot rewrite Cargo.lock during verification.
+# Code map: regenerated on main by .github/workflows/codemap.yml after every
+# push; PRs never touch it, so a branch's map is expected to lag. The check runs
+# only with CODEMAP_CHECK=1, and then first: it is cheap and must not hide
+# behind a long compile.
+if [ "${CODEMAP_CHECK-}" = 1 ]; then
+  run_stage codemap           scripts/codemap/check.sh
+fi
 # Honor the workspace's heed exclusion; --all also follows local path dependencies.
 run_stage fmt                 cargo fmt --check
-run_stage clippy              cargo clippy --workspace --all-targets --all-features -- -D warnings
-run_stage clippy-featureless  cargo clippy -p oneiron --all-targets --no-default-features -- -D warnings
+run_stage clippy              cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+run_stage clippy-featureless  cargo clippy --locked -p oneiron --all-targets --no-default-features -- -D warnings
 # The server's own feature selection of the engine (`sync` without `test-hooks`) is a
 # third combination neither row above compiles: `--workspace --all-targets` unifies the
 # dev-dependency features in, and `--no-default-features` drops `sync`. No `--all-targets`
 # here on purpose — that is what the release binary builds.
-run_stage clippy-server       cargo clippy -p oneiron-server --all-features -- -D warnings
+run_stage clippy-server       cargo clippy --locked -p oneiron-server --all-features -- -D warnings
 # Existing mandatory documentation policy belongs in the gate, not a manual step.
 # Encoded flags take precedence even when empty. Unset them for this child only;
 # do not change other stages' environments or compiler fingerprints globally.
-run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
-run_stage test                cargo nextest run --workspace --exclude oneiron-napi --all-features --profile full
-run_stage test-featureless    cargo test -p oneiron --lib --no-default-features
-run_stage doctest             cargo test --doc --workspace --exclude oneiron-bench --all-features
+run_stage rustdoc             env -u CARGO_ENCODED_RUSTDOCFLAGS RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --all-features --no-deps
+run_stage test                cargo nextest run --locked --workspace --all-features --profile full
+run_stage test-featureless    cargo test --locked -p oneiron --lib --no-default-features
+run_stage doctest             cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
 
 if [ "$LIST_ONLY" = false ]; then
   echo "VERIFY-OK"

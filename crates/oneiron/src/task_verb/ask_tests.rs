@@ -19,6 +19,8 @@ fn spec(vault: &Vault, owner: EntityId, key: &str) -> TaskAskSpec {
                 context_refs: Vec::new(),
                 label: None,
                 outcome_binding: None,
+                ladder_answer: None,
+                class_key: None,
             },
             Some(u64::MAX),
             crate::task_verb::TaskAskDefault::AskMe,
@@ -75,6 +77,10 @@ fn external_ask_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
         let answer = memory.tasks_answer(&receipt.handle, &TaskAskWord::new(owner))?;
         let result = settled(&memory, receipt.handle);
         assert_eq!(result.decision, TaskAskDecision::First(answer));
+        assert_eq!(
+            result.effect_authorization,
+            TaskAskEffectAuthorization::NotEvaluatedByAsk
+        );
         let expected = TaskAskWait::Ready(Box::new(result));
         for binding in [Some("step"), Some("step"), None] {
             assert_eq!(memory.tasks_wait(receipt.handle, binding)?, expected);
@@ -928,6 +934,77 @@ fn ask_three_replies_one_yes_all_has_coverage_but_no_decision_and_fallback() -> 
 }
 
 #[test]
+fn ask_peek_round_trips_word_companion_and_silent_unknown_with_distinct_attribution() -> Result<()>
+{
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.all();
+    spec.default = TaskAskDefault::Proceed;
+    let handle = fixture.ask(&spec)?;
+    let owner = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    fixture.word(handle, 0, "yes")?;
+    fixture.clock.set(1_010);
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Agent)
+        .tasks_answer(
+            &handle,
+            &TaskAskWord {
+                result_ref: fixture.owner,
+                option: Some(TaskAskOptionId::new("no")?),
+                inform_for: Some(fixture.people[1]),
+                provenance_refs: Default::default(),
+            },
+        )?;
+    let partial = owner.tasks_ask_peek(handle)?;
+    assert_eq!(partial.len(), 2);
+    let human = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[0])
+        .unwrap();
+    assert_eq!(human.kind, TaskAskPersonKind::Word);
+    assert_eq!(human.at, 1_000);
+    assert_eq!(human.source, Some(fixture.people[0]));
+    let companion = partial
+        .iter()
+        .find(|entry| entry.who == fixture.people[1])
+        .unwrap();
+    assert_eq!(companion.kind, TaskAskPersonKind::Companion);
+    assert_eq!(companion.at, 1_010);
+    assert_eq!(companion.source, Some(fixture.owner));
+    fixture.clock.set(1_101);
+    let result = fixture.result(handle)?;
+    assert_eq!(
+        result.coverage.unknown,
+        [fixture.people[1], fixture.people[2]].into()
+    );
+    assert_eq!(
+        result.fallback.as_ref().unwrap().branch,
+        TaskAskDefault::Proceed
+    );
+    let evidence = owner.tasks_ask_peek(handle)?;
+    assert_eq!(evidence.len(), 3);
+    let silent = evidence
+        .iter()
+        .find(|entry| entry.who == fixture.people[2])
+        .unwrap();
+    assert_eq!(silent.kind, TaskAskPersonKind::Unknown);
+    assert_eq!(silent.answer, None);
+    assert_eq!(silent.at, 1_101);
+    assert_eq!(silent.source, None);
+    assert!(
+        evidence
+            .iter()
+            .all(|entry| entry.kind != TaskAskPersonKind::Default)
+    );
+    let json = serde_json::to_string(&evidence)?;
+    assert_eq!(
+        serde_json::from_str::<Vec<TaskAskPersonEvidence>>(&json)?,
+        evidence
+    );
+    Ok(())
+}
+
+#[test]
 fn ask_silent_founder_is_unknown_and_default_is_one_aggregate_event() -> Result<()> {
     let fixture = RuledAskFixture::new(2)?;
     let mut spec = fixture.all();
@@ -1363,6 +1440,11 @@ fn omitted_task_ref_binds_the_class_of_the_callers_governed_task() -> Result<()>
     let (agent, class) = governed_agent(&fixture)?;
     let mut spec = fixture.all();
     spec.default = TaskAskDefault::Hold;
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::Rule,
+        probability: None,
+    });
     let receipt = fixture
         .vault
         .memory(agent, EdgeActorClass::Agent)
@@ -1370,7 +1452,29 @@ fn omitted_task_ref_binds_the_class_of_the_callers_governed_task() -> Result<()>
     let txn = fixture.vault.store.env.read_txn()?;
     let group = super::ask_record::read_group(&fixture.vault, &txn, receipt.handle.group_ref)?
         .ok_or("stored ask group")?;
-    assert_eq!(group.context_class, Some(class));
+    assert_eq!(group.context_class, Some(class.clone()));
+    assert_eq!(
+        group.effective.what.class_key.as_deref(),
+        Some(class.key.as_str())
+    );
+    drop(txn);
+    fixture.word(receipt.handle, 0, "yes")?;
+    fixture.word(receipt.handle, 1, "no")?;
+    let TaskAskWait::Ready(result) = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .tasks_wait(receipt.handle, None)?
+    else {
+        panic!("settled governed ask");
+    };
+    assert_eq!(
+        result
+            .evidence
+            .iter()
+            .map(|e| e.ladder_changed)
+            .collect::<Vec<_>>(),
+        vec![Some(false), Some(true)]
+    );
     Ok(())
 }
 
@@ -1403,5 +1507,361 @@ fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()
         .tasks_ask(&spec)
         .expect_err("two governed tasks cannot both bind one ask");
     assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
+fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Result<()> {
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let input = serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
+    });
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
+    );
+    // An own-auto agent may choose a foreign `owner_ref` at tasks.create,
+    // but that owner proof is not an authenticated human assignment.
+    let forged = agent_memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::from("agent-nominated owner"),
+            None,
+            Some(human),
+            None,
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(forged.effected);
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    // A genuine human assignment to B is not a principal binding for A,
+    // even if a public raw TASK rewrite later retargets its mutable body.
+    let other_agent = EntityId::now();
+    super::tests::support::put_person(&vault, other_agent);
+    let for_other = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("other agent"), None, None, None).with_assignee(
+            TaskAssignee::Peer {
+                actor_ref: other_agent,
+            },
+        ),
+    )?;
+    let other_task = for_other.task_ref.expect("human assignment for B");
+    let mut rewritten =
+        super::wire_decode::task_verb_body(&vault, other_task)?.expect("typed task body");
+    rewritten.assignee = Some(TaskAssignee::Peer { actor_ref: agent });
+    let rewritten_bytes = super::wire_encode::encode_task_verb_body(rewritten);
+    let now = crate::unix_seconds_now() + 5;
+    vault.put_entity(
+        &other_task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rewritten_bytes,
+    )?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, other_task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Peer { actor_ref: agent }),
+    );
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(assignment.effected);
+    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input)?;
+    let handle: TaskAskHandle = serde_json::from_value(receipt["handle"].clone())?;
+    let task: EntityId = serde_json::from_value(receipt["task_refs"][0].clone())?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Human { actor_ref: human })
+    );
+    let answer = vault
+        .memory(human, EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(human))?;
+    let result = settled(&agent_memory, handle);
+    assert_eq!(result.decision, TaskAskDecision::First(answer));
+    assert_eq!(result.coverage.responded, [human].into());
+    Ok(())
+}
+
+#[test]
+fn ask_receipt_labels_only_counted_human_words_against_pinned_ladder_option() -> Result<()> {
+    let fixture = RuledAskFixture::new(3)?;
+    let mut spec = fixture.all();
+    spec.what.class_key = Some("fixture-choice-class".into());
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::SystemOne,
+        probability: Some(0.6),
+    });
+    let handle = fixture.ask(&spec)?;
+    fixture.word(handle, 0, "yes")?;
+    fixture.word(handle, 1, "no")?;
+    fixture.word(handle, 2, "yes")?;
+    let receipt = fixture.result(handle)?;
+    assert_eq!(
+        receipt
+            .evidence
+            .iter()
+            .map(|e| e.ladder_changed)
+            .collect::<Vec<_>>(),
+        vec![Some(false), Some(true), Some(false)]
+    );
+    assert_eq!(
+        receipt.settlement.effective.what.class_key.as_deref(),
+        Some("fixture-choice-class")
+    );
+    assert_eq!(fixture.result(handle)?, receipt);
+
+    let mut invalid = fixture.spec();
+    invalid.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("missing")?,
+        rung: crate::llm::decision::DecisionRung::Rule,
+        probability: None,
+    });
+    assert!(fixture.ask(&invalid).is_err());
+    Ok(())
+}
+
+#[test]
+fn comparable_ask_without_question_class_is_refused_before_admission() -> Result<()> {
+    let fixture = RuledAskFixture::new(1)?;
+    let mut spec = fixture.spec();
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::SystemOne,
+        probability: Some(0.6),
+    });
+    let before = fixture
+        .vault
+        .entities_by_type(crate::registry::ENTITY_TYPE_TASK)?;
+    let refused = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .tasks_ask(&spec)
+        .expect_err("comparable prediction needs a question class");
+    assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        fixture
+            .vault
+            .entities_by_type(crate::registry::ENTITY_TYPE_TASK)?,
+        before
+    );
+    // An explicit, ungoverned learning class admits the same question.
+    spec.what.class_key = Some("ungoverned-choice".into());
+    let handle = fixture.ask(&spec)?;
+    fixture.word(handle, 0, "no")?;
+    assert_eq!(
+        fixture.result(handle)?.evidence[0].ladder_changed,
+        Some(true)
+    );
+    Ok(())
+}
+
+#[test]
+fn stale_question_receipt_is_evidence_but_never_trains_its_band() -> Result<()> {
+    use crate::llm::decision::DecisionBand;
+    use crate::skill_optimize::{AskBandLabel, AskBandPolicy};
+    struct Never;
+    impl AskBandPolicy for Never {
+        fn revise(&self, _: DecisionBand, _: &[AskBandLabel]) -> crate::Result<DecisionBand> {
+            panic!("stale comparison must not reach the optimizer");
+        }
+    }
+    let fixture = RuledAskFixture::new(1)?;
+    let mut spec = fixture.spec();
+    spec.what.class_key = Some("stale-choice".into());
+    spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+        option: TaskAskOptionId::new("yes")?,
+        rung: crate::llm::decision::DecisionRung::Rule,
+        probability: None,
+    });
+    let handle = fixture.ask(&spec)?;
+    let changed_question = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([(
+        "role",
+        "revised question",
+    )]))?;
+    fixture.vault.put_entity(
+        &fixture.question.entity_ref(),
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange {
+            start: 1_001,
+            end: 1_001,
+        },
+        1_001,
+        &changed_question,
+    )?;
+    fixture.word(handle, 0, "no")?;
+    let receipt = fixture.result(handle)?;
+    assert_eq!(receipt.settlement.reason, TaskAskSettlementReason::Stale);
+    assert_eq!(receipt.decision, TaskAskDecision::Unknown);
+    assert_eq!(receipt.evidence.len(), 1);
+    assert_eq!(receipt.evidence[0].ladder_changed, None);
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    assert_eq!(
+        memory.tasks_optimize_ask_band("stale-choice", &[handle], &Never)?,
+        DecisionBand::default()
+    );
+    assert_eq!(
+        memory.tasks_ask_band("stale-choice")?,
+        DecisionBand::default()
+    );
+    assert_eq!(fixture.result(handle)?, receipt);
+    Ok(())
+}
+
+#[test]
+fn ask_class_band_consumes_42_rubber_stamps_then_30_overrules_once() -> Result<()> {
+    use crate::llm::decision::DecisionBand;
+    use crate::skill_optimize::{AskBandLabel, AskBandPolicy};
+    struct Policy {
+        expected: usize,
+        changes: usize,
+        band: DecisionBand,
+    }
+    impl AskBandPolicy for Policy {
+        fn revise(&self, _: DecisionBand, labels: &[AskBandLabel]) -> crate::Result<DecisionBand> {
+            assert_eq!(labels.len(), self.expected);
+            assert_eq!(
+                labels.iter().filter(|label| label.changed).count(),
+                self.changes
+            );
+            Ok(self.band)
+        }
+    }
+    let fixture = RuledAskFixture::new(1)?;
+    let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let mut first = Vec::new();
+    for i in 0..42 {
+        let mut spec = fixture.spec();
+        spec.intent_key = format!("same-{i}");
+        spec.what.class_key = Some("one-question-class".into());
+        spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+            option: TaskAskOptionId::new("yes")?,
+            rung: crate::llm::decision::DecisionRung::SystemOne,
+            probability: Some(0.6),
+        });
+        let handle = fixture.ask(&spec)?;
+        fixture.word(handle, 0, if i < 40 { "yes" } else { "no" })?;
+        assert_eq!(
+            fixture.result(handle)?.evidence[0].ladder_changed,
+            Some(i >= 40)
+        );
+        first.push(handle);
+    }
+    // An invalid policy band rolls back both the band and consume markers.
+    assert!(
+        memory
+            .tasks_optimize_ask_band(
+                "one-question-class",
+                &first,
+                &Policy {
+                    expected: 42,
+                    changes: 2,
+                    band: DecisionBand {
+                        low: 0.9,
+                        high: 0.1
+                    }
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(
+        memory.tasks_ask_band("one-question-class")?,
+        DecisionBand::default()
+    );
+    first.push(first[0]); // repeated handle in the same optimization pass
+    let no_ask = DecisionBand {
+        low: 0.7,
+        high: 0.9,
+    };
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &first,
+            &Policy {
+                expected: 42,
+                changes: 2,
+                band: no_ask
+            }
+        )?,
+        no_ask
+    );
+    assert!(!memory.tasks_should_ask("one-question-class", 0.6)?);
+    // Re-reading a receipt cannot train the class twice, even with a
+    // different policy proposal.
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &first,
+            &Policy {
+                expected: 0,
+                changes: 0,
+                band: DecisionBand::default()
+            }
+        )?,
+        no_ask
+    );
+    let mut second = Vec::new();
+    for i in 0..30 {
+        let mut spec = fixture.spec();
+        spec.intent_key = format!("changed-{i}");
+        spec.what.class_key = Some("one-question-class".into());
+        spec.what.ladder_answer = Some(TaskAskLadderPrediction {
+            option: TaskAskOptionId::new("yes")?,
+            rung: crate::llm::decision::DecisionRung::Rule,
+            probability: Some(0.6),
+        });
+        let handle = fixture.ask(&spec)?;
+        fixture.word(handle, 0, "no")?;
+        assert_eq!(
+            fixture.result(handle)?.evidence[0].ladder_changed,
+            Some(true)
+        );
+        second.push(handle);
+    }
+    let earlier = DecisionBand {
+        low: 0.5,
+        high: 0.9,
+    };
+    assert_eq!(
+        memory.tasks_optimize_ask_band(
+            "one-question-class",
+            &second,
+            &Policy {
+                expected: 30,
+                changes: 30,
+                band: earlier
+            }
+        )?,
+        earlier
+    );
+    assert!(memory.tasks_should_ask("one-question-class", 0.6)?);
+    assert_eq!(
+        memory.tasks_ask_band("other-question-class")?,
+        DecisionBand::default()
+    );
     Ok(())
 }

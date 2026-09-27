@@ -17,6 +17,19 @@ use crate::store::{MODEL_ID_KEY, validate_embedding_model_id};
 #[cfg(feature = "sync")]
 const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
+/// Generic sync diagnostics may not edit the inputs to an authority fold.
+/// Authority-owned writers use their own validated doors and advance the
+/// snapshot generation in the same transaction as their row changes.
+#[cfg(feature = "sync")]
+fn check_generic_sync_state_key(key: &str) -> Result<()> {
+    if key.starts_with("authlog:") || key.starts_with("peerauth:") {
+        return Err(Error::InvalidConfig(
+            "authority-owned sync_state key requires its authority door".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 impl Vault {
     // NOTE (ONE-1133): the bare non-txn `purge_entity_active_store` wrapper
     // was removed — both sync replay surfaces now route through the
@@ -198,16 +211,19 @@ impl Vault {
         E: From<Error>,
     {
         let mut wtxn = self.store.env.write_txn().map_err(Error::from)?;
-        let (result, pending_vad_ids) = {
+        let (result, postcommit) = {
             let _active_write_txn = crate::store::active_write_txn_guard();
             let vad_scope = crate::batch::VadPostcommitScope::new(self, &wtxn);
             let result = f(&mut wtxn)?;
             (result, vad_scope.finish())
         };
         let approved_vad_ids =
-            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending_vad_ids)?;
+            self.resolved_dreamer_vad_approvals_in_txn(&wtxn, postcommit.vad_ids)?;
         wtxn.commit().map_err(Error::from)?;
         self.store.notify_attempt_observers();
+        if postcommit.proactivity_changed {
+            self.store.notify_proactivity_changes();
+        }
         // Approval is durable now. The canonical consolidator opens its own
         // writer; its failure is returned without rolling back Approved.
         let now = self.store.clock.now_recorded_at();
@@ -256,6 +272,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_put(&self, key: &str, value: &[u8]) -> Result<()> {
+        check_generic_sync_state_key(key)?;
         self.with_write_txn(|wtxn| {
             self.store.sync_state.put(wtxn, key, value)?;
             Ok(())
@@ -271,6 +288,7 @@ impl Vault {
         key: &str,
         value: &[u8],
     ) -> Result<()> {
+        check_generic_sync_state_key(key)?;
         self.store.sync_state.put(wtxn, key, value)?;
         Ok(())
     }
@@ -280,6 +298,7 @@ impl Vault {
     #[doc(hidden)]
     #[cfg(feature = "sync")]
     pub fn sync_state_delete(&self, key: &str) -> Result<bool> {
+        check_generic_sync_state_key(key)?;
         self.with_write_txn(|wtxn| self.store.sync_state.delete(wtxn, key))
     }
 

@@ -12,5 +12,6 @@ mod selfui_actions;
 mod support;
 mod surface_dispatch;
 mod versioning;
+mod weave_report;
 
 use support::*;

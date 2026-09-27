@@ -90,6 +90,15 @@ fn stamped_receipt(vault: &Vault, skill_id: &str) -> String {
 
 /// [`stamped_receipt`] with the manifest revision named explicitly.
 fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) -> String {
+    stamped_receipt_for_revision_as(vault, skill_id, version, None)
+}
+
+fn stamped_receipt_for_revision_as(
+    vault: &Vault,
+    skill_id: &str,
+    version: &str,
+    actor: Option<EntityId>,
+) -> String {
     let queue = AttemptQueue::new(vault);
     let EnqueueOutcome::Enqueued(attempt) = queue
         .enqueue(EnqueueAttempt {
@@ -103,6 +112,11 @@ fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) ->
     else {
         panic!("a fresh dedupe-free enqueue is never Existing");
     };
+    if let Some(actor) = actor {
+        vault
+            .bind_actor_attempt(attempt.id, &actor)
+            .expect("bind executor");
+    }
     queue
         .append_manifest_entry(
             attempt.id,
@@ -110,10 +124,13 @@ fn stamped_receipt_for_revision(vault: &Vault, skill_id: &str, version: &str) ->
         )
         .expect("manifest append");
     let ClaimOutcome::Claimed(leased) = queue
-        .claim(ClaimAttempt {
-            lease_owner: "sk05-worker".to_owned(),
-            now: 12,
-        })
+        .claim_kind(
+            "sk05.attempt",
+            ClaimAttempt {
+                lease_owner: "sk05-worker".to_owned(),
+                now: 12,
+            },
+        )
         .expect("claim")
     else {
         panic!("the enqueued attempt is claimable");
@@ -142,7 +159,7 @@ fn route(
     covered: bool,
     at: u64,
 ) -> (String, Vec<AttributionJudgment>) {
-    let receipt = stamped_receipt(vault, skill_id);
+    let receipt = stamped_receipt_for_revision_as(vault, skill_id, "1.0.0", Some(*actor));
     record_attribution_evidence(
         vault,
         &OutcomeEvidence::new(&receipt, *actor, AttemptOutcome::Failed, at)
@@ -575,7 +592,8 @@ fn a_routed_defect_outranks_the_default_win_credit_in_either_order() {
         put_active_import(&vault, &skill, "sk05.skill.order");
         put_actor(&vault, &actor);
 
-        let receipt = stamped_receipt(&vault, "sk05.skill.order");
+        let receipt =
+            stamped_receipt_for_revision_as(&vault, "sk05.skill.order", "1.0.0", Some(actor));
         let blame = |vault: &Vault| {
             record_attribution_evidence(
                 vault,
@@ -1340,3 +1358,44 @@ fn archived_reliability_does_not_seed_a_posterior_cache_or_local_projection() ->
     }
     Ok(())
 }
+
+#[test]
+fn shared_posterior_skill_contract_updates_samples_and_scores() {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut posterior =
+        SkillReliabilityPosterior::seeded_from_provenance(ProvenanceTrustClass::UnvettedImport);
+    posterior.update(true).unwrap();
+    posterior.update(false).unwrap();
+    assert_eq!((posterior.alpha, posterior.beta), (2.0, 2.0));
+    let mut first = StdRng::seed_from_u64(2012);
+    let mut second = StdRng::seed_from_u64(2012);
+    let draw = posterior.sample(&mut first).unwrap();
+    assert!((0.0..=1.0).contains(&draw));
+    assert_eq!(draw, posterior.sample(&mut second).unwrap());
+    let bonus = posterior.ucb_bonus(12, 0.25);
+    assert!(bonus > 0.0);
+    assert!((f64::from(posterior.ucb(12)) - (0.5 + bonus)).abs() < 1e-6);
+    assert!((posterior.lower_bound() - 0.132).abs() < 0.01);
+}
+
+#[test]
+fn skill_posterior_sample_rejects_invalid_public_parameters() {
+    use crate::posterior::Posterior;
+    use rand::{SeedableRng, rngs::StdRng};
+
+    let mut rng = StdRng::seed_from_u64(2012);
+    for alpha in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let posterior = SkillReliabilityPosterior { alpha, beta: 1.0 };
+        assert!(
+            matches!(
+                posterior.sample(&mut rng),
+                Err(crate::Error::InvalidConfig(_))
+            ),
+            "invalid alpha {alpha:?} must be rejected"
+        );
+    }
+}
+
+mod resident;

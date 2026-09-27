@@ -139,12 +139,22 @@ pub(crate) fn resolve_policy_manifest(
                 // order, then row order inside each manifest. Row indices in
                 // ladder events index this concatenation.
                 resolution.budget_policy.extend_rows(decoded.budget_policy);
+                resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
                         None => resolution.diagnostic_bounds = Some(bounds),
                         Some(existing) if existing == bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
+                }
+                // Advisory threshold composition is deterministic and never
+                // authorizes or refuses a write. The earliest question wins.
+                if let Some(threshold) = decoded.proposal_check_threshold {
+                    resolution.proposal_check_threshold = Some(
+                        resolution
+                            .proposal_check_threshold
+                            .map_or(threshold, |old| old.min(threshold)),
+                    );
                 }
                 resolution.packs.push(decoded.pack);
             }
@@ -177,6 +187,9 @@ pub(crate) fn resolve_policy_manifest(
     // resolution malformed, fail-closing the write gate exactly like any
     // malformed manifest and refusing the budget-policy accessor. Never wrap
     // or silently truncate a row index.
+    if resolution.hosted_tts.rows.len() > usize::from(u16::MAX) + 1 {
+        resolution.diagnostics.malformed_manifest_seen = true;
+    }
     if resolution.budget_policy.rows().len() > usize::from(u16::MAX) + 1 {
         resolution.diagnostics.malformed_manifest_seen = true;
     }

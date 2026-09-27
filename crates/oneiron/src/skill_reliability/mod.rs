@@ -37,16 +37,9 @@
 //! this ledger. That is why there is no companion special-case here: the input
 //! set is attributed outcomes, and companion surfaces produce none.
 //!
-//! **No shared Beta module exists yet, deliberately.** The OF-184 registry
-//! entry lists ONE-1248/1249/1250, but those tickets are PsychProfile storage,
-//! SKILL provenance fields and CompactionPacket validation — none of them mints
-//! shared posterior machinery. The only landed Beta/UCB code is
-//! [`crate::critic::CriticReliability`], which is lens-scoped and carries its
-//! own outcome-source policy. [`SkillReliabilityPosterior`] therefore MIRRORS
-//! that shape (α, β, apply, mean, UCB) in ~40 lines without importing it;
-//! extracting one shared trait is a job for whichever ticket actually owns
-//! OF-184, and should be done with both call sites in hand rather than by
-//! guessing a seam from one.
+//! The [`crate::posterior::Posterior`] interface shares sampling, bounds and
+//! update/bonus entry points with critic reliability. Attribution remains here:
+//! only receipt-backed wins and routed skill defects reach this posterior.
 
 mod codec;
 mod floor;
@@ -55,13 +48,17 @@ mod posterior;
 mod projector;
 mod provenance;
 mod read;
+mod resident;
 
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
     set_skill_reliability_floor, skill_reliability_floor,
 };
-pub use self::ledger::{SKILL_RELIABILITY_MAX_CITED_RECEIPTS, record_skill_contributing_win};
+pub use self::ledger::{
+    SKILL_RELIABILITY_MAX_CITED_RECEIPTS, record_resident_skill_contributing_win,
+    record_skill_contributing_win,
+};
 pub(crate) use self::ledger::{attributed_outcome_receipts, attributed_outcome_results};
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
@@ -73,6 +70,8 @@ pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior
 pub use self::read::{
     rebuild_skill_confidence_cache, skill_reliability_posterior, skill_selection_score,
 };
+pub(crate) use self::read::{selection_posterior_in_txn, skill_selection_score_from_posterior};
+pub use self::resident::rank_resident_skill_versions;
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One distributed verify leg. Select with LEG:
-#   LEG=fmt-clippy   code-map pin + fmt (check-mode) + workspace clippy
+#   LEG=fmt-clippy   fmt (check-mode) + workspace clippy; CODEMAP_CHECK=1 adds
+#                    the code-map pin first (main regenerates the map)
 #   LEG=tests:1/2    nextest full tier, partition hash:1/2, + doctests
 #   LEG=tests:2/2    nextest full tier, partition hash:2/2
 #
@@ -29,26 +30,22 @@ run_stage() {
 
 run_test_partition() {
   local partition="$1"
-  local -a packages=(--workspace)
-  # Linux cannot link napi tests off a Node host. Keep the existing macOS
-  # coverage, unlike verify.sh's unconditional exclusion for its reference lane.
-  if [ "$(uname -s)" = Linux ]; then
-    packages+=(--exclude oneiron-napi)
-  fi
-  run_stage test cargo nextest run "${packages[@]}" --all-features --profile full --partition "$partition"
+  run_stage test cargo nextest run --locked --workspace --all-features --profile full --partition "$partition"
 }
 
 case "$LEG" in
   fmt-clippy)
-    run_stage codemap scripts/codemap/check.sh
+    if [ "${CODEMAP_CHECK-}" = 1 ]; then
+      run_stage codemap scripts/codemap/check.sh
+    fi
     # Honor the workspace's heed exclusion; --all also follows local path dependencies.
     run_stage fmt    cargo fmt --check
-    run_stage clippy cargo clippy --workspace --all-targets --all-features -- -D warnings
+    run_stage clippy cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
     ;;
   tests:1/2)
     run_test_partition hash:1/2
     # Doctests ride the 1/2 leg (nextest doesn't run them; they're fast).
-    run_stage doctest cargo test --doc --workspace --exclude oneiron-bench --all-features
+    run_stage doctest cargo test --locked --doc --workspace --exclude oneiron-bench --all-features
     ;;
   tests:2/2)
     run_test_partition hash:2/2
