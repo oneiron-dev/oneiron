@@ -262,10 +262,13 @@ fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
     let parent =
         decode_federation_grant_body(&parent_raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
             .unwrap();
-    let bare = FederationGrant::attenuated_delegate(&parent, delegate_member, 2, 10).unwrap();
+    let now = vault.store.clock.now_recorded_at();
+    let expires = now + 60;
+    let bare =
+        FederationGrant::attenuated_delegate(&parent, delegate_member, now, expires).unwrap();
     assert!(bare.authority_scope.verbs.is_bottom());
     let id = vault
-        .create_federation_delegate(&admin_proof, parent_id, delegate_member, 2, 10)
+        .create_federation_delegate(&admin_proof, parent_id, delegate_member, now, expires)
         .unwrap();
     let raw = vault.get_raw(&id).unwrap().unwrap();
     let delegate =
@@ -281,4 +284,16 @@ fn default_delegate_does_not_inherit_parent_write_or_admin_verbs() {
             .contains(&"org:add-member".to_owned())
     );
     assert!(!delegate.is_admin());
+    #[cfg(feature = "sync")]
+    {
+        let selector = crate::sync::SyncSelector::new(
+            id,
+            delegate_member,
+            crate::sync::SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        crate::sync::authorize_sync_selector(&vault, FederationGrantScope::vault(42), &selector)
+            .expect("a manifest-selected live Delegate authorizes a read selector");
+    }
 }
