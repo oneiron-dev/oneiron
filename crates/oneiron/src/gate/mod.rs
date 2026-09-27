@@ -22,6 +22,7 @@ mod effect;
 mod foreign_agent;
 mod grants;
 mod input;
+mod operational_policy;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -92,6 +93,7 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+pub use self::operational_policy::{LinearMirrorPolicy, LinearSyncBudget, WaveHandoffPolicy};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
 pub use self::retrieval_filter::RetrievalFilter;

@@ -19,6 +19,10 @@ use crate::gate::constants::{
     POLICY_SIGNATURE_KEY, POLICY_SIGNATURES_KEY, POLICY_SOURCE_TRUST_KEY,
 };
 use crate::gate::grants::PolicyScopedGrant;
+use crate::gate::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, LinearMirrorPolicy, LinearSyncBudget, PRECEDENCE_KEY,
+    PolicyPrecedence, WAVE_HANDOFF_KEY, WaveHandoffPolicy,
+};
 use crate::gate::resolution::CommOptOutPosture;
 use crate::llm::{BudgetExhaustionPolicy, BudgetPolicyTable};
 
@@ -58,6 +62,10 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
+    pub(in crate::gate) linear_mirror: Option<LinearMirrorPolicy>,
+    pub(in crate::gate) linear_sync: Option<LinearSyncBudget>,
+    pub(in crate::gate) wave_handoff: Option<WaveHandoffPolicy>,
+    pub(in crate::gate) operational_precedence: Option<PolicyPrecedence>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
     pub(in crate::gate) unknown_axis_seen: bool,
@@ -103,6 +111,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
                 | "proposal_check_threshold"
+                | LINEAR_MIRROR_KEY
+                | LINEAR_SYNC_KEY
+                | WAVE_HANDOFF_KEY
+                | PRECEDENCE_KEY
         ) {
             return None;
         }
@@ -238,6 +250,27 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Present(value) => Some(value.as_u64().filter(|value| *value > 0)?),
     };
 
+    let linear_mirror = match single_map_value(&entries, LINEAR_MIRROR_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(LinearMirrorPolicy::decode(value)?),
+    };
+    let linear_sync = match single_map_value(&entries, LINEAR_SYNC_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(LinearSyncBudget::decode(value)?),
+    };
+    let wave_handoff = match single_map_value(&entries, WAVE_HANDOFF_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(WaveHandoffPolicy::decode(value)?),
+    };
+    let operational_precedence = match single_map_value(&entries, PRECEDENCE_KEY) {
+        MapValue::Missing => None,
+        MapValue::Duplicate => return None,
+        MapValue::Present(value) => Some(PolicyPrecedence::decode(value)?),
+    };
+
     let unknown_axis_seen =
         defaults.unknown_axis_seen || rules.iter().any(|rule| rule.axes.unknown_axis_seen);
 
@@ -268,6 +301,10 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         budget_policy,
         diagnostic_bounds,
         proposal_check_threshold,
+        linear_mirror,
+        linear_sync,
+        wave_handoff,
+        operational_precedence,
         unsupported_schema,
         engine_version_floor,
         unknown_axis_seen,

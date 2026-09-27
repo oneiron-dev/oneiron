@@ -17,6 +17,9 @@ use super::constants::{
     SOURCE_TRUST_RECEIPTED_KEY, SOURCE_TRUST_WARNED_KEY,
 };
 use super::definition_ceiling::first_party_connector_actor_ref;
+use super::operational_policy::{
+    LINEAR_MIRROR_KEY, LINEAR_SYNC_KEY, PRECEDENCE_KEY, WAVE_HANDOFF_KEY,
+};
 
 const DEFAULT_POLICY_MANIFEST_ID: [u8; ENTITY_ID_LEN] = [0xD7; ENTITY_ID_LEN];
 pub(crate) const DEFAULT_POLICY_MANIFEST_TIMESTAMP: u64 = 0;
@@ -355,6 +358,29 @@ pub(crate) fn default_policy_manifest() -> Vec<u8> {
                         (Value::from(SOURCE_TRUST_WARNED_KEY), Value::Boolean(true)),
                     ]),
                 ),
+            ]),
+        ),
+        (Value::from(PRECEDENCE_KEY), Value::from("nested_narrowing")),
+        (
+            Value::from(LINEAR_MIRROR_KEY),
+            Value::Map(vec![
+                (Value::from("poll_interval_secs"), Value::from(30_u64)),
+                (Value::from("request_timeout_secs"), Value::from(15_u64)),
+            ]),
+        ),
+        (
+            Value::from(LINEAR_SYNC_KEY),
+            Value::Map(vec![(
+                Value::from("max_pull_pages_per_pass"),
+                Value::from(64_u64),
+            )]),
+        ),
+        (
+            Value::from(WAVE_HANDOFF_KEY),
+            Value::Map(vec![
+                (Value::from("scan_limit"), Value::from(256_u64)),
+                (Value::from("retry_floor_ms"), Value::from(500_u64)),
+                (Value::from("retry_cap_ms"), Value::from(60_000_u64)),
             ]),
         ),
         (
