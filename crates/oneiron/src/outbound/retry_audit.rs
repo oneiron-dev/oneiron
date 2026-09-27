@@ -61,7 +61,8 @@ pub(super) fn persist_send_receipt_and_retry(
             transport_dispatched,
             None,
         )? {
-            queue.complete_in_txn(
+            crate::ports::JobQueue::port_job_complete(
+                vault,
                 wtxn,
                 CompleteAttempt {
                     id: attempt.id,

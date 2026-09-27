@@ -1,38 +1,37 @@
-//! O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner spine.
-use super::enrich_dispatch_channel_identity;
-use super::frozen_payload::FrozenOutboundPayload;
-use super::policy_risk::outbound_dispatch_policy_risk;
-use crate::Vault;
-use crate::campaign::send_hygiene::inject_campaign_email_hygiene_headers;
+//! O2 dispatch: shared request preparation, ledger replay, execution and receipts.
+use super::request_binding::{FrozenDispatchIdentity, PreparedOutboundDispatch};
 use crate::edge::EdgeActorClass;
-use crate::entity_id::EntityId;
-use crate::error::{Error, OffRecordError};
-use crate::gate::ExternalEffectPolicyRisk;
-use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
-use crate::outbound::capability::{OutboundRetryClass, normalize_key, outbound_verb_contract};
-use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
+use crate::error::Error;
 use crate::outbound::dispatch_types::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
+<<<<<<< HEAD
 use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
 use crate::ports::TombstoneStore;
 use std::collections::BTreeMap;
 /// Stateless O2 resolve -> gate -> window -> execute -> receipt pipeline.
+=======
+use crate::receipt::{DispatchObservationKey, read_dispatch_observation};
+use crate::{EntityId, Vault};
+
+>>>>>>> origin/main
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OutboundDispatchPipeline;
+
+pub(crate) struct RecordedDispatch {
+    pub(crate) result: OutboundDispatchResult,
+    pub(crate) identity: Option<FrozenDispatchIdentity>,
+    pub(crate) replayed: bool,
+}
 impl OutboundDispatchPipeline {
     pub fn dispatch<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,
         sink: &mut S,
-    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, None)
     }
-
-    /// Dispatches an outbound intent after validating the facade-bound actor
-    /// in the exact gate-decision transaction. The general dispatch API stays
-    /// available to engine-owned callers whose actor model is different.
     pub(in crate::outbound) fn dispatch_with_verified_actor<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
@@ -40,111 +39,141 @@ impl OutboundDispatchPipeline {
         sink: &mut S,
         actor: EntityId,
         actor_class: EdgeActorClass,
-    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
         self.dispatch_inner(vault, request, sink, Some((actor, actor_class)))
     }
-
     fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
-        mut request: OutboundDispatchRequest,
+        request: OutboundDispatchRequest,
         sink: &mut S,
         verified_actor: Option<(EntityId, EdgeActorClass)>,
-    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        crate::dreamer_runner::maintenance::representation::validate_dispatch(vault, &request)?;
-        // OF-326 talk-only (ONE-1546): an intent originating from a session
-        // currently in off-record mode is rejected before verb resolution —
-        // the typed error carries the exit-prompt semantics. Intents from a
-        // session flipped back on-record dispatch normally, and the OF-333
-        // floor below still classifies every real egress.
-        if let Some(session_ref) = request.originating_session_ref.as_deref()
-            && let Some(session) = vault.off_record_session(session_ref)?
-            && session.mode != crate::off_record::OffRecordMode::OnRecord
-        {
-            return Err(OutboundDispatchError::Engine(Error::OffRecord(
-                OffRecordError::OffRecordTalkOnly {
-                    session_ref: session_ref.to_owned(),
-                },
-            )));
+    ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
+        let prepared = PreparedOutboundDispatch::prepare(vault, request, verified_actor)?;
+        Ok(self.dispatch_prepared(vault, prepared, sink)?.result)
+    }
+    /// Observations are response evidence only. Even an exact stored success
+    /// must first pass the SAME replay-aware sender/frozen-payload validator
+    /// that ordinary dispatch uses. Only the OF-327 ledger's Done state may
+    /// turn that evidence into a completed result.
+    pub(crate) fn dispatch_with_recorded_observation<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        request: OutboundDispatchRequest,
+        sink: &mut S,
+        verified_actor: (EntityId, EdgeActorClass),
+        key: DispatchObservationKey,
+        preflight: impl FnOnce() -> Result<(), OutboundDispatchError>,
+    ) -> Result<RecordedDispatch, OutboundDispatchError> {
+        let mut prepared = PreparedOutboundDispatch::prepare(vault, request, Some(verified_actor))?;
+        if prepared.replay_done() {
+            prepared.freeze_and_validate(vault)?;
+            if let Some(observation) = read_dispatch_observation(vault, key)? {
+                let identity = prepared
+                    .identity()
+                    .ok_or(Error::InvariantViolation("missing frozen outbound replay"))?;
+                if observation.identity() != Some(&identity)
+                    || observation.receipt_id() != prepared.request.receipt_id
+                    || observation.occurred_at() != prepared.request.occurred_at
+                {
+                    return Err(super::request_binding::invalid_replay());
+                }
+                return Ok(RecordedDispatch {
+                    result: observation.result()?,
+                    identity: Some(identity),
+                    replayed: true,
+                });
+            }
         }
-
-        let verb_contract = outbound_verb_contract(&request.intent.channel, &request.intent.verb)?;
-        // Scheduled tasks cannot supply a seat snapshot today. Never let that
-        // optional request field turn a LinkedIn connect into an ungated send.
-        if request.intent.channel == LINKEDIN_CHANNEL
-            && verb_contract.kind == LINKEDIN_CONNECT_REQUEST_VERB
-            && request.linkedin_sandbox_policy.is_none()
-        {
-            return Err(OutboundDispatchError::Engine(Error::InvalidConfig(
-                "LinkedIn connect request requires current seat policy".to_owned(),
-            )));
+        if prepared.replay_done() {
+            return self.dispatch_completed_effect(vault, prepared, sink);
         }
-        let idempotency_supported = !matches!(
-            verb_contract.retry_class,
-            OutboundRetryClass::NonIdempotentInterrupt
-        );
-
-        // Find the logical attempt BEFORE consulting today's sender set. A
-        // stable ref is only a lookup key, never authority to replay a different
-        // request. The exact frozen binding is checked below and again by New
-        // at the chokepoint; Resume alone would skip that request check.
-        let ledger_identity_ref = request
-            .ledger_identity_ref
-            .as_deref()
-            .unwrap_or(&request.intent_ref);
-        let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
-        let replay = {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-            read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
-        };
-        request.channel_identity_ref = resolve_dispatch_sender(
+        preflight()?;
+        self.dispatch_prepared(vault, prepared, sink)
+    }
+    /// Recovery after the effect committed but before its observation did:
+    /// OF-327's validated Done record answers without consulting today's
+    /// window/seat or emitting a second gate decision or sink call.
+    fn dispatch_completed_effect<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        mut prepared: PreparedOutboundDispatch,
+        sink: &mut S,
+    ) -> Result<RecordedDispatch, OutboundDispatchError> {
+        prepared.freeze_and_validate(vault)?;
+        let identity = prepared.identity();
+        let PreparedOutboundDispatch {
+            request,
+            verb_contract,
+            attempt_id,
+            idempotency_supported,
+            verified_actor,
+            space_posting,
+            policy_risk,
+            payload,
+            ..
+        } = prepared;
+        let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
+            request: &request,
+            sink,
+            verb_contract,
+            effect,
+            payload: payload.ok_or(Error::InvariantViolation("missing replay payload"))?,
+            attempt_id,
+            idempotency_supported,
+            verified_actor,
+            suppression_receipt: None,
+        })?;
+        let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
-            replay
-                .as_ref()
-                .map(crate::outbound_intent_ledger::IntentLedgerRecord::payload),
-        )?;
-        let space_posting = {
-            let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            vault.outbound_space_posting_in_txn(
-                &txn,
-                request.channel_identity_ref,
-                &request.intent.target,
-            )?
-        };
-        let policy_risk = if space_posting
-            .as_ref()
-            .is_some_and(crate::channel_identity_autonomy::FrozenSpacePosting::policy_risk)
-        {
-            ExternalEffectPolicyRisk::HoldToProposal
-        } else {
-            outbound_dispatch_policy_risk(request.gate, verb_contract)
-        };
+            verb_contract,
+            policy_risk,
+            space_posting.as_ref(),
+            None,
+            verdict,
+        );
+        Ok(RecordedDispatch {
+            result,
+            identity,
+            replayed: false,
+        })
+    }
+    fn dispatch_prepared<S: OutboundExecutionSink>(
+        self,
+        vault: &Vault,
+        mut prepared: PreparedOutboundDispatch,
+        sink: &mut S,
+    ) -> Result<RecordedDispatch, OutboundDispatchError> {
+        let verb_contract = prepared.verb_contract;
         let window_resolution =
             crate::outbound::window_door::outbound_delivery_window_resolution_at_door(
                 vault,
-                &request,
+                &prepared.request,
                 verb_contract,
             )?;
         let window_decision =
             crate::outbound::window_door::outbound_delivery_window_decision_at_door(
-                &request,
+                &prepared.request,
                 &window_resolution,
             );
-        crate::outbound::window_door::apply_apns_window_cap(&mut request, &window_decision);
+        crate::outbound::window_door::apply_apns_window_cap(
+            &mut prepared.request,
+            &window_decision,
+        );
         let admission = super::admission::AdmissionStage::evaluate(
-            &request,
+            &prepared.request,
             verb_contract,
             window_resolution,
             window_decision,
         );
-        let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
-        // Only executable sends (or replays needing binding validation) freeze bytes.
-        let payload = if matches!(
+        if matches!(
             admission.decision,
             super::admission::DispatchAdmission::Execute
-        ) || replay.is_some()
+        ) || prepared.replay.is_some()
         {
+<<<<<<< HEAD
             let mut hygiene_headers = BTreeMap::new();
             inject_campaign_email_hygiene_headers(
                 &normalize_key(&request.intent.channel),
@@ -204,6 +233,23 @@ impl OutboundDispatchPipeline {
             None
         };
 
+=======
+            prepared.freeze_and_validate(vault)?;
+        }
+        let identity = prepared.identity();
+        let PreparedOutboundDispatch {
+            request,
+            verb_contract,
+            attempt_id,
+            idempotency_supported,
+            verified_actor,
+            space_posting,
+            policy_risk,
+            payload,
+            ..
+        } = prepared;
+        let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+>>>>>>> origin/main
         let verdict = match admission.decision {
             super::admission::DispatchAdmission::Execute => {
                 super::effect::execute_admitted(super::effect::EffectInput {
@@ -235,51 +281,18 @@ impl OutboundDispatchPipeline {
                 outcome,
             )?,
         };
-        Ok(crate::outbound::receipt_fields::dispatch_result_receipt(
+        let result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,
             policy_risk,
             space_posting.as_ref(),
-            &admission,
+            Some(&admission),
             verdict,
-        ))
-    }
-}
-
-fn invalid_replay() -> OutboundDispatchError {
-    OutboundDispatchError::Chokepoint(IntentLedgerError::InvalidRecord(
-        "outbound dispatch replay does not match its admitted binding",
-    ))
-}
-
-fn resolve_dispatch_sender(
-    vault: &Vault,
-    request: &OutboundDispatchRequest,
-    replay_payload: Option<&[u8]>,
-) -> std::result::Result<Option<EntityId>, OutboundDispatchError> {
-    if let Some(payload) = replay_payload {
-        let frozen: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
-        let sender = match frozen.get("channel_identity_ref") {
-            Some(serde_json::Value::Null) => None,
-            Some(serde_json::Value::String(value)) => {
-                Some(EntityId::from_hex(value).map_err(|_| invalid_replay())?)
-            }
-            _ => return Err(invalid_replay()),
-        };
-        if request.channel_identity_ref.is_some() && request.channel_identity_ref != sender {
-            return Err(invalid_replay());
-        }
-        Ok(sender)
-    } else {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        enrich_dispatch_channel_identity(
-            &vault.store,
-            &txn,
-            &request.intent.channel,
-            request.actor.actor_entity_ref.as_ref(),
-            request.channel_identity_ref,
-        )
-        .map_err(Into::into)
+        );
+        Ok(RecordedDispatch {
+            result,
+            identity,
+            replayed: false,
+        })
     }
 }

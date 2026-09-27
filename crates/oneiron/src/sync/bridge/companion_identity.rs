@@ -1,4 +1,4 @@
-//! Companion-register admission/scrub, identity topology ingest, and edge key/value helpers.
+//! Retired identity-carrier scrub, identity topology ingest, and edge key/value helpers.
 
 use std::collections::HashSet;
 
@@ -9,7 +9,6 @@ use super::entities::materialize_entity_blob_in_txn;
 
 use crate::affect::Vad;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::companion::decode_companion_record_body;
 use crate::edge::{
     DecodedEdgeValue, EdgeKind, EdgeProvenanceFlags, decode_edge_value, encode_edge_value,
 };
@@ -143,55 +142,14 @@ fn validate_replicated_identity_topology_record_before_mutation(
         })
 }
 
-pub(super) fn ensure_companion_register_kind_for_entity_delta(
-    vault: &Vault,
-    delta: &loro::event::MapDelta<'_>,
-) -> Result<()> {
-    for new_val in delta.updated.values() {
-        let Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) = new_val else {
-            continue;
-        };
-        let Some(header) = EntityMetadataHeader::parse(blob) else {
-            continue;
-        };
-        if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-            || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-        {
-            continue;
-        }
-        let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-            &blob[ENTITY_METADATA_HEADER_LEN..]
-        } else {
-            &[]
-        };
-        if companion_register_sync_admitted(data).unwrap_or(false) {
-            vault.ensure_companion_register_kind()?;
-            return Ok(());
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn companion_register_sync_admitted(data: &[u8]) -> Result<bool> {
-    let record = decode_companion_record_body(data)?;
-    Ok(record.sensitivity != crate::federation::Sensitivity::Restricted)
-}
-
 pub(super) fn companion_register_blob_is_local_only(blob: &[u8]) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(blob) else {
         return Err(Error::CorruptedIndex("entity metadata"));
     };
-    if header.entity_type != crate::registry::ENTITY_TYPE_FACET
-        || !crate::companion::is_identity_facet_body(&blob[ENTITY_METADATA_HEADER_LEN..])
-    {
-        return Ok(false);
-    }
-    let data = if blob.len() > ENTITY_METADATA_HEADER_LEN {
-        &blob[ENTITY_METADATA_HEADER_LEN..]
-    } else {
-        &[]
-    };
-    Ok(!companion_register_sync_admitted(data)?)
+    Ok(crate::companion::is_retired_identity_carrier(
+        header.entity_type,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+    ))
 }
 
 pub(super) struct CompanionCrdtScrub {
@@ -382,6 +340,14 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     savepoint.commit()?;
     if !materialized {
         return Ok(EndpointHydration::Deferred);
+    }
+    // This savepoint has no postcommit owner. Carry an admitted claim
+    // hydration to the edge batch's OUTER transaction; only its commit may
+    // re-arm the digest timer. Rollback drops that owner's marker.
+    if EntityMetadataHeader::parse(&blob)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+    {
+        crate::batch::queue_proactivity_change(vault, wtxn);
     }
     // ONE-1147 fix-wave: distinguish an ACTUAL hydration write from the
     // already-present `Ready` above, carrying the written bytes so the
