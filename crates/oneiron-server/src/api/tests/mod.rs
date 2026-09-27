@@ -854,26 +854,8 @@ pub(super) fn seed_text_turn(server: &SyncServer, text: &str) -> oneiron::Entity
 pub(super) fn seed_disclosure_scope(
     server: &SyncServer,
     contact_id: oneiron::EntityId,
-    entities: Vec<oneiron::EntityId>,
+    clearance: oneiron::federation::Scope,
 ) {
-    // The clearance is a six-axis scope, not an entity-id allowlist. Select
-    // the bands of the examples; an empty list remains deny-all.
-    let mut clearance = oneiron::federation::Scope::default();
-    if !entities.is_empty() {
-        clearance = oneiron::federation::Scope::top();
-        clearance.bands = oneiron::federation::ScopeAxis::Some(
-            entities
-                .iter()
-                .map(|id| {
-                    server
-                        .vault
-                        .get_entity_type(id)
-                        .expect("example type read")
-                        .expect("example exists")
-                })
-                .collect(),
-        );
-    }
     let scope = oneiron::disclosure::DisclosureScope::new(clearance, "party planning", 100)
         .expect("disclosure scope");
     server
@@ -882,21 +864,53 @@ pub(super) fn seed_disclosure_scope(
         .expect("set disclosure scope");
 }
 
-/// A different kind with the same query words proves the six-axis band ceiling
-/// actually excludes candidates, rather than relying on lexical nonmatches.
-pub(super) fn seed_text_claim(
+fn disclosure_base_world_clearance() -> oneiron::federation::Scope {
+    use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+    let mut scope = Scope::top();
+    scope.worlds = ScopeAxis::Some([ScopeId(oneiron::claim::base_world_id())].into());
+    scope
+}
+
+fn seed_disclosure_claim_in_world(
     server: &SyncServer,
     subject: oneiron::EntityId,
     text: &str,
+    world: oneiron::EntityId,
 ) -> oneiron::EntityId {
     let id = oneiron::EntityId::now();
-    seed_active_claim(server, id, subject, text, 100);
+    let mut claim = oneiron::ClaimBody::new(
+        "event.diary",
+        oneiron::ClaimSubject::Entity(subject),
+        rmpv::Value::from(text),
+        1.0,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    );
+    claim.world = Some(world);
+    // Tier B is required here: otherwise the tier check rejects this claim
+    // before the test can exercise the contact's world clearance.
+    claim.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("private"),
+    )]));
+    server
+        .vault
+        .put_claim(
+            &id,
+            &claim,
+            oneiron::TimeRange {
+                start: 100,
+                end: 100,
+            },
+            100,
+        )
+        .expect("seed out-of-world claim");
     server
         .vault
         .batch()
         .text(&id, &[("body", text)])
         .commit()
-        .expect("index claim text");
+        .expect("index out-of-world claim");
     id
 }
 
