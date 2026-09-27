@@ -155,6 +155,9 @@ pub(crate) fn resolve_policy_manifest(
                             .map_or(threshold, |old| old.min(threshold)),
                     );
                 }
+                if let Some(policy) = decoded.compilation_policy {
+                    resolution.compilation_policies.push(policy);
+                }
                 resolution.packs.push(decoded.pack);
             }
             None => {

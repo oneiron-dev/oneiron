@@ -8,10 +8,13 @@ bound to an authenticated human principal. Unbound/historical evidence remains
 audit-only. Neither generated text nor a scope alone is a grant of authority.
 
 At ≥K distinct, live, judged amendment receipts in the same principal, scope,
-actor and normalized substitution, apply the following rules to the changed
-run (`from` → `to`). The same rules apply to principal-bound inbox amendments.
-This deliberately does not infer meaning from surrounding generated prose or
-from rejection with no corrected text. Priority is the listed order:
+actor and normalized substitution, evaluate the validated `compilation_policy`
+rows in trusted policy manifests against the changed run (`from` → `to`).
+The same applies to principal-bound inbox amendments. No row means no inferred
+family, but ordinary fallback mining still runs. The shipped default manifest
+carries the following *editable data*, not a fixed engine grammar. Its `order`
+row lists precedence; its `routes` carry scope and text selectors, enabled
+family choices and the optional OF-332 style-atom constraint:
 
 1. A scope `expression.style:<subject>` and an OF-332-valid lowercase style
    token as the entire replacement → `preference.style_rule` with that token.
@@ -25,7 +28,13 @@ from rejection with no corrected text. Priority is the listed order:
    `preference.phrasing`; content substitutions propose a skill edit if a
    common skill is named. No skill means no content proposal.
 
-A typed scope requires a nonempty subject after the colon. The route and text
+The shipped selectors require a nonempty subject after each typed scope colon.
+A holder row may narrow the vault row through `parent` holder rows; all matching
+rows must permit the same family and correction. The validated precedence is
+`nested_narrowing_holder_capped_at_vault`; holder rows cannot bypass the vault
+row even if their selectors are broader. Trusted packs also intersect. Every
+matching route must still pass the claim-shape validator. Changing, disabling,
+or reordering the selectors is manifest authoring, not a Rust edit. The route and text
 are derived from the *actual corrected run*, never from a model suggestion,
 freestanding scope, or generated proposal. Normalization (case folding and
 whitespace collapse) and the existing short substitution bound apply before
