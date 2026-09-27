@@ -5975,8 +5975,8 @@ fn tradeoff_learning_cap_holds_before_ask_and_recovers_by_policy() -> Result<()>
     );
     assert_eq!(
         *second_scorer.calls.borrow(),
-        0,
-        "capacity holds before Jev"
+        1,
+        "Jev runs before the ask-only capacity check"
     );
     assert!(skill_tradeoff_ask(&vault, &second)?.is_none());
     assert!(skill_edit_verdicts_for_proposal(&vault, &second)?.is_empty());
@@ -6004,5 +6004,42 @@ fn tradeoff_learning_cap_holds_before_ask_and_recovers_by_policy() -> Result<()>
         TradeoffChoice::Incumbent,
     )?;
     assert!(skill_tradeoff_ask(&vault, &second)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn exhausted_learning_capacity_still_allows_confident_jev_choices() -> Result<()> {
+    for (choice, expected) in [
+        (TradeoffChoice::Candidate, SkillEditDisposition::Accepted),
+        (TradeoffChoice::Incumbent, SkillEditDisposition::Rejected),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, "oneiron.skill.tradeoff.full-cap");
+        let owner = tradeoff_owner(&vault);
+        install_tradeoff_policy(
+            &vault,
+            vec![policy_limits_row("vault", 32, 128, 128, Some(0))],
+        )?;
+        set_skill_tradeoff_goal(&vault, &owner, &skill, tradeoff_goal(&owner))?;
+        let scorer = TradeoffScorer::new(Some((0.95, false))).choosing(choice);
+        let verdict = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &scorer,
+            wake(&vault, "cap-jev", 10),
+            900,
+        )?;
+        assert_eq!(
+            verdict.disposition, expected,
+            "{choice:?} still decides at full human-learning capacity"
+        );
+        assert_eq!(*scorer.calls.borrow(), 1);
+        assert!(skill_tradeoff_ask(&vault, &proposal)?.is_none());
+        assert_eq!(
+            skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+            1
+        );
+    }
     Ok(())
 }

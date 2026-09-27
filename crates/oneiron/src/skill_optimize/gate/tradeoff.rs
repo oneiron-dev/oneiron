@@ -611,20 +611,8 @@ pub(super) fn plan(
         return Ok(TradeoffPlan::Decided(question, choice, None));
     }
     // A body, held-out outcome or goal may have moved since an older ask.
-    // Only an exact match may skip Jev on re-delivery.
-    // A policy cap is admission to the ASK, not a trap sprung only when the
-    // person answers. An exhausted class has no pending question to display.
-    let txn = vault.store.env.read_txn()?;
-    let limits = crate::gate::skill_tradeoff_limits_in_txn(&vault.store, &txn, &goal.responsible)?;
-    if limits
-        .max_learned_rules
-        .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
-    {
-        return Err(invalid(
-            "tradeoff learning capacity exhausted; revise policy before another ask",
-        ));
-    }
-    drop(txn);
+    // Only an exact match may skip Jev on re-delivery. Learning capacity
+    // governs human asks, not a confident Jev decision at the previous rung.
     if let Some(prior) = skill_tradeoff_ask(vault, proposal)?
         && prior.question == question
     {
@@ -648,6 +636,18 @@ pub(super) fn plan(
         if verdict.probability >= goal.jev_band.high {
             return Ok(TradeoffPlan::Decided(question, verdict.choice, advice));
         }
+    }
+    // Only an unresolved Jev verdict needs a human label. Check the
+    // policy BEFORE presenting a question that cannot become a preference.
+    let txn = vault.store.env.read_txn()?;
+    let limits = crate::gate::skill_tradeoff_limits_in_txn(&vault.store, &txn, &goal.responsible)?;
+    if limits
+        .max_learned_rules
+        .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
+    {
+        return Err(invalid(
+            "tradeoff learning capacity exhausted; revise policy before another ask",
+        ));
     }
     Ok(TradeoffPlan::Ask(SkillTradeoffAsk {
         question,
@@ -710,6 +710,16 @@ pub(super) fn apply(
         TradeoffPlan::Ask(ask) => {
             if goal.preference(&question.gains, &question.losses).is_some() {
                 return Err(retry("tradeoff preference moved while scoring"));
+            }
+            // A policy contraction while Jev was thinking cannot commit an
+            // ask the person is no longer permitted to settle.
+            let limits =
+                crate::gate::skill_tradeoff_limits_in_txn(&vault.store, txn, &goal.responsible)?;
+            if limits
+                .max_learned_rules
+                .is_some_and(|cap| u64::try_from(goal.learned.len()).unwrap_or(u64::MAX) >= cap)
+            {
+                return Err(retry("tradeoff learning capacity moved before ask commit"));
             }
             let ask_key = key(ASK_PREFIX, &question.proposal);
             if let Some(prior) = load::<SkillTradeoffAsk>(vault, txn, &ask_key)? {

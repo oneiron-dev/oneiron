@@ -27,6 +27,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/meeting_audio_import.rs",
+     "purpose": "Host-run meeting-audio adapter: one file to a normalized artifact, never a consent grant",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "examples/meeting_audio_import/tests.rs",
+     "purpose": "Packaged adapter acceptance tests and host-policy regression fixtures",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -8578,10 +8594,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/compaction.rs",
+     "purpose": "Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/code_run/storage/compaction/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 1
      }
     },
@@ -9932,12 +9966,23 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 10,
       "mod": 1,
       "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/compaction/driver/integration.rs",
+     "purpose": "Transactional epoch integration, typed executor coverage, and swap plans",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -9957,12 +10002,12 @@
       "MarginLaw",
       "SwapPlan"
      ],
-     "path": "src/compaction/driver.rs",
+     "path": "src/compaction/driver/mod.rs",
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
       "enum": 3,
-      "fn": 23,
+      "fn": 22,
       "struct": 8,
       "trait": 1
      }
@@ -9977,13 +10022,13 @@
      "purpose": "Epoch-summary codec and transactional lineage mint",
      "surface": {
       "const": 4,
-      "crate-vis": 5,
+      "crate-vis": 11,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OutputAffordance",
@@ -9991,14 +10036,16 @@
       "OutputContextView",
       "OutputDecayPolicy",
       "OutputRef",
-      "OutputTier"
+      "OutputTier",
+      "OutputWorkingContext"
      ],
      "path": "src/compaction/output.rs",
      "purpose": "Recoverable output references and local derived summaries (ARCH-0026)",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
-      "struct": 4
+      "fn": 15,
+      "struct": 5
      }
     },
     {
@@ -10018,7 +10065,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/compaction/tests/driver_regressions.rs",
@@ -12407,7 +12454,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/counterparty_contact/storage.rs",
@@ -15668,18 +15715,18 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 3,
-      "fn": 5,
+      "fn": 7,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -15709,7 +15756,8 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "Durable REPL loop: run(), persistence helpers, and LLM request building",
      "surface": {
-      "fn": 1
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -15719,7 +15767,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -15728,6 +15776,14 @@
      "notable": [],
      "path": "src/engine_executor/tests.rs",
      "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/output_decay.rs",
+     "purpose": "Model-facing output decay and successful native compaction on the real REPL path",
      "surface": {}
     },
     {
@@ -16919,7 +16975,7 @@
      "path": "src/gate/constants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 78
      }
     },
     {
@@ -17162,6 +17218,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/hosted_tts_policy.rs",
+     "purpose": "DEC-0005 hosted TTS resource rows",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -17237,7 +17303,7 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -17320,16 +17386,6 @@
      "purpose": "Narrow adapter for the audience-crossing creation of a brief read grant",
      "surface": {
       "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/gate/skill_tradeoff_policy.rs",
-     "purpose": "Vault-resident policy rows for the skill tradeoff ladder",
-     "surface": {
-      "crate-vis": 5
      }
     },
     {
@@ -17478,6 +17534,14 @@
      "notable": [],
      "path": "src/gate/tests/gate_door.rs",
      "purpose": "Write-door chokepoint: consent lifecycle, session bundles, batch atomicity, and edge provenance",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/tests/hosted_tts_policy.rs",
+     "purpose": "Hosted TTS policy rows: defaults, scope, precedence and strict decoding",
      "surface": {}
     },
     {
@@ -18968,7 +19032,7 @@
      "purpose": "Immutable producer artifact and one approval for the complete import batch",
      "surface": {
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -18979,7 +19043,7 @@
      "path": "src/ingest/meeting_audio/cleanup.rs",
      "purpose": "Conservative fix-don't-invent cleanup with no lexical or speaker edits",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -19098,7 +19162,7 @@
      "path": "src/ingest/meeting_audio/provenance.rs",
      "purpose": "Input-bound inference receipts; validation is not a claim of measured quality",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -19129,7 +19193,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/algorithms.rs",
@@ -19174,6 +19238,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AllowedWordCorrection",
       "AsrOutput",
       "AsrPackRequest",
       "AsrRole",
@@ -19186,10 +19251,12 @@
       "BulkImportBinding",
       "BulkImportReceipt",
       "CleanupOutput",
+      "CleanupPolicy",
       "CleanupRequest",
       "GlobalDiarization",
       "InferenceExecution",
       "InferenceProvenance",
+      "LanguageCorrectionRules",
       "MeetingAudioHost",
       "Pcm16",
       "ProcessingTier",
@@ -19207,7 +19274,7 @@
      "surface": {
       "enum": 4,
       "fn": 2,
-      "struct": 21,
+      "struct": 24,
       "trait": 2
      }
     },
@@ -22671,7 +22738,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 3,
       "fn": 4,
       "re-export": 7,
@@ -22753,7 +22820,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 18,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -22766,8 +22833,8 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 5,
-      "fn": 7
+      "crate-vis": 7,
+      "fn": 8
      }
     },
     {
@@ -22908,7 +22975,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/note/program_tests.rs",
@@ -22978,6 +23045,16 @@
      "path": "src/note/tests.rs",
      "purpose": "NOTE body ABI: the pinned four keys, the closed kind, and the negative set the decoder must fail closed on",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/title_index.rs",
+     "purpose": "Atomic title-reservation replacement for authoritative NOTE document sets",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "m",
@@ -24006,6 +24083,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/connector_qualification.rs",
+     "purpose": "Per-rail outbound SOW contract and local qualification probes",
+     "surface": {}
     },
     {
      "bucket": "XL",
@@ -26895,7 +26980,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CanonicalDocument",
@@ -29101,7 +29186,7 @@
      "purpose": "Typed Vault doors for SKILL records",
      "surface": {
       "crate-vis": 7,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -29140,7 +29225,7 @@
      "path": "src/skill/mod.rs",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 5
      }
     },
@@ -29153,7 +29238,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
-      "fn": 3,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -29174,10 +29259,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill/resident.rs",
+     "purpose": "Resident ownership of skill forks: an immutable birth mark, not a claim on the shared base",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -29274,6 +29377,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/skill_attribution/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_attribution/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -30158,8 +30269,8 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 6,
-      "re-export": 7
+      "crate-vis": 5,
+      "re-export": 6
      }
     },
     {
@@ -30169,7 +30280,7 @@
      "path": "src/skill_optimize/gate/admission.rs",
      "purpose": "Admission, its pinned keys, and the record-shape questions both doors ask",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -30232,28 +30343,6 @@
      }
     },
     {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [
-      "JevTradeoffVerdict",
-      "SkillTradeoffAsk",
-      "SkillTradeoffBinding",
-      "SkillTradeoffGoal",
-      "SkillTradeoffQuestion",
-      "TradeoffAxis",
-      "TradeoffChoice",
-      "TradeoffRule"
-     ],
-     "path": "src/skill_optimize/gate/tradeoff.rs",
-     "purpose": "Goal-axis tradeoff policy for optimizer admissions",
-     "surface": {
-      "crate-vis": 9,
-      "enum": 2,
-      "fn": 4,
-      "struct": 6
-     }
-    },
-    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -30304,7 +30393,7 @@
      "surface": {
       "const": 8,
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -30329,7 +30418,7 @@
      "purpose": "Which skill the job may work on: the tier-filtered, dev-partitioned ranking and the reading behind it",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -30338,6 +30427,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/skill_optimize/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_optimize/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -30388,7 +30485,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_reliability/ledger.rs",
@@ -30396,7 +30493,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 8,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -30407,7 +30504,7 @@
      "purpose": "ARCH-0053 §5 skill reliability (SK-05, ONE-1738): the Beta(α, β) posterior that decides which skills load…",
      "surface": {
       "crate-vis": 3,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -30462,10 +30559,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/resident.rs",
+     "purpose": "Per-resident version bandit over independently attributed fork receipts",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/skill_reliability/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/skill_reliability/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -31530,6 +31645,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/sync/bridge/tests.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/bridge/tests/resident.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -34103,7 +34226,7 @@
      "path": "src/voice_cascade.rs",
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
-      "mod": 3,
+      "mod": 4,
       "re-export": 6
      }
     },
@@ -34132,6 +34255,35 @@
       "fn": 1,
       "struct": 1
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HostedBinding",
+      "HostedProvider",
+      "HostedRender",
+      "HostedTransport",
+      "HostedTtsAdapter",
+      "HostedWork"
+     ],
+     "path": "src/voice_cascade/hosted_tts.rs",
+     "purpose": "Hosted TTS request adapters",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 6,
+      "struct": 3,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/hosted_tts/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -34467,7 +34619,7 @@
      "path": "src/voice_identity/ref_bank.rs",
      "purpose": "Private per-vault owner reference bank",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -35859,7 +36011,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35936,7 +36088,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36174,7 +36326,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36244,7 +36396,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36412,7 +36564,7 @@
      "purpose": "Durable batched speculation over real detached worktrees"
     },
     "note": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -36433,7 +36585,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36706,14 +36858,14 @@
      "purpose": "Revocable brief read grants"
     },
     "skill": {
-     "files": 9,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36741,7 +36893,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Dreamer maintenance job that keeps skill…"
     },
     "skill_reliability": {
-     "files": 10,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36797,7 +36949,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36881,7 +37033,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 24,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -36932,8 +37084,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2191,
-   "test_files": 742
+   "source_files": 2197,
+   "test_files": 753
   },
   "oneiron-android": {
    "files": [
@@ -37670,6 +37822,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/oneironer_shadow.rs",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/perf/acceptance.rs",
      "purpose": "ONE-1579 acceptance evidence: structured support for the five ONE-1578 lifecycle knobs, and the exact…",
      "surface": {
@@ -38126,6 +38288,13 @@
      "layout": "dir",
      "purpose": "Campaign #5 interface bench task generation and smoke harness"
     },
+    "oneironer_shadow": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "Checkpoint-backed NER shadow proof beside an indexed fixture turn"
+    },
     "perf": {
      "files": 37,
      "impl_vault": false,
@@ -38164,7 +38333,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 99,
+   "source_files": 100,
    "test_files": 18
   },
   "oneiron-driver": {
@@ -42580,6 +42749,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AutoDevicePrecedence",
       "EmbedderArgs",
       "EmbedderConfig",
       "EmbedderConfigOverride",
@@ -42588,6 +42758,7 @@
       "EmbedderProvider",
       "EmbedderQuant",
       "EndpointEmbedderConfig",
+      "LocalDevicePolicy",
       "LocalEmbedderConfig"
      ],
      "path": "src/config/embedder.rs",
@@ -42595,13 +42766,13 @@
      "surface": {
       "const": 6,
       "crate-vis": 2,
-      "enum": 4,
+      "enum": 5,
       "fn": 7,
-      "struct": 5
+      "struct": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/config/embedder_tests.rs",
@@ -42627,6 +42798,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 1
      }
@@ -43042,7 +43214,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/handler/note_socket_tests.rs",
