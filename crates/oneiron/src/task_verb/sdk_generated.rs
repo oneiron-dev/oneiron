@@ -555,34 +555,40 @@ pub fn rooms_messages(
     memory: &Memory<'_>,
     input: RoomRequest,
 ) -> MemoryResult<crate::workspace_roster::RoomPage> {
-    let room = crate::EntityId::from_hex(&input.room_ref)?;
-    memory.require_room_turn(room)?;
-    memory.rooms_messages_page(
-        room,
-        input
-            .after
-            .as_deref()
-            .map(crate::EntityId::from_hex)
-            .transpose()?,
-        input.limit.unwrap_or(256),
-    )
+    {
+        let room = crate::EntityId::from_hex(&input.room_ref)?;
+        memory.require_room_turn(room)?;
+        memory.rooms_messages_page(
+            room,
+            input
+                .after
+                .as_deref()
+                .map(crate::EntityId::from_hex)
+                .transpose()?,
+            input.limit.unwrap_or(256),
+        )
+    }
 }
 pub fn rooms_claim(
     memory: &Memory<'_>,
     input: RoomClaimRequest,
 ) -> MemoryResult<crate::workspace_roster::RoomClaimOutcome> {
-    let room = crate::EntityId::from_hex(&input.room_ref)?;
-    memory.require_room_turn(room)?;
-    memory.rooms_claim(
-        room,
-        crate::EntityId::from_hex(&input.turn_ref)?,
-        crate::unix_seconds_now(),
-    )
+    {
+        let room = crate::EntityId::from_hex(&input.room_ref)?;
+        memory.require_room_turn(room)?;
+        memory.rooms_claim(
+            room,
+            crate::EntityId::from_hex(&input.turn_ref)?,
+            crate::unix_seconds_now(),
+        )
+    }
 }
 pub fn rooms_speak(
     memory: &Memory<'_>,
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
-    memory.require_room_turn(crate::EntityId::from_hex(&input.conversation_ref)?)?;
-    memory.rooms_speak(&input)
+    {
+        memory.require_room_turn(crate::EntityId::from_hex(&input.conversation_ref)?)?;
+        memory.rooms_speak(&input)
+    }
 }

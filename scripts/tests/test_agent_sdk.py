@@ -71,6 +71,15 @@ class AgentSdkProjectionTests(unittest.TestCase):
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs"])
         self.assertNotIn('"rooms.claim"', outputs["crates/oneiron/src/task_verb/verb_catalog.rs"])
 
+    def test_generated_room_dispatch_keeps_turn_binding(self):
+        spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        core = generator.outputs()["crates/oneiron/src/task_verb/sdk_generated.rs"]
+        for name in ("rooms_messages", "rooms_claim", "rooms_speak"):
+            method = core.split(f"pub fn {name}(", 1)[1].split("\npub fn ", 1)[0]
+            self.assertIn("memory.require_room_turn(", method, name)
+
     def test_mcp_none_suppresses_projection_but_keeps_sdk_method(self):
         spec = importlib.util.spec_from_file_location("sdk_generator", ROOT / "scripts/sdk/generate.py")
         generator = importlib.util.module_from_spec(spec)
