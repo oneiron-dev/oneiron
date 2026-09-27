@@ -753,6 +753,8 @@ fn renamed_root_cannot_redirect_the_orphan_sweep_lock() -> crate::Result<()> {
             claims_suppressed: 0,
             surfaced_result_ids: &[],
             empty_reason: None,
+            pack_output: None,
+            pack_config: None,
         })?;
     assert!(vault.retrieval_run(run.run_id)?.is_some());
     Ok(())
