@@ -190,3 +190,56 @@ fn active_grant_without_a_live_owner_reason_cannot_be_reconfirmed() {
         OwnerReasonVerdict::Ask { prefill: None }
     );
 }
+
+#[test]
+fn unsure_prefill_prefers_the_narrower_budget_in_both_mint_orders() {
+    fn budget_bound(cap: u64) -> GrantBound {
+        GrantBound::action(
+            ActorBound::new("agent-a").expect("actor"),
+            ActionClass::new("send").expect("class"),
+            ActionEnvelope::new(["channel:team".to_owned()])
+                .expect("selector")
+                .with_budget(cap),
+        )
+        .expect("budgeted action bound")
+    }
+    let narrow = budget_bound(10);
+    let wide = budget_bound(100);
+    let request = budget_bound(5);
+    assert!(wide.contains(&narrow));
+    assert!(!narrow.contains(&wide));
+    assert!(narrow.contains(&request));
+    for order in [[100, 10], [10, 100]] {
+        let (_dir, vault, owner) = setup();
+        for cap in order {
+            let bound = budget_bound(cap);
+            let reason = if cap == 10 { "cap ten" } else { "cap hundred" };
+            vault
+                .confirm_owner_reason(
+                    &owner,
+                    &effect(bound.clone()),
+                    &bound,
+                    OwnerReasonConfirm {
+                        reason: Some(reason),
+                        notice_text: "Saved",
+                    },
+                )
+                .expect("owner confirms budgeted reason");
+        }
+        let ask = effect(request.clone());
+        assert_eq!(
+            vault
+                .evaluate_owner_reason(&ask, ReasonMatchConfidence::Unsure)
+                .expect("evaluate unsure match"),
+            OwnerReasonVerdict::Ask {
+                prefill: Some("cap ten".to_owned())
+            },
+            "narrower budget reason must win for order {order:?}",
+        );
+        assert!(matches!(
+            vault.evaluate_owner_reason(&ask, ReasonMatchConfidence::Confident)
+                .expect("evaluate confident match"),
+            OwnerReasonVerdict::Auto { reason, .. } if reason == "cap ten"
+        ));
+    }
+}

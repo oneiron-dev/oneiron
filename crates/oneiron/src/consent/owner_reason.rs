@@ -138,6 +138,28 @@ fn reason_rank(recorded: &GrantBound, required: &GrantBound, id: [u8; 16]) -> Op
     ))
 }
 
+/// A strictly narrower covering grant is the nearer owner reason, including
+/// budget and typed disclosure-scope axes that selector counts cannot see.
+/// Incomparable bounds retain the deterministic relevance/ID ordering.
+fn prefer_reason(
+    candidate_rank: ReasonRank,
+    candidate_bound: &GrantBound,
+    current_rank: ReasonRank,
+    current_bound: &GrantBound,
+) -> bool {
+    if candidate_rank.0 && current_rank.0 {
+        match (
+            current_bound.contains(candidate_bound),
+            candidate_bound.contains(current_bound),
+        ) {
+            (true, false) => return true,
+            (false, true) => return false,
+            _ => {}
+        }
+    }
+    candidate_rank > current_rank
+}
+
 /// Any revocation of the derived grant retires its rule in the same transaction.
 /// The rule remains for audit and old receipt resolution, but never matches again.
 pub(super) fn retire_owner_reason_rules_in_txn(
@@ -325,7 +347,7 @@ impl Vault {
         confidence: ReasonMatchConfidence,
     ) -> Result<OwnerReasonVerdict> {
         self.with_write_txn(|txn| {
-            let mut best: Option<(ReasonRank, RuleRow)> = None;
+            let mut best: Option<(ReasonRank, GrantBound, RuleRow)> = None;
             for entry in self.store.vault_meta.prefix_iter(&*txn, RULE_PREFIX)? {
                 let (key, raw) = entry?;
                 let rule = decode(&raw, &key)?;
@@ -347,12 +369,14 @@ impl Vault {
                     })
                     .max();
                 if let Some(rank) = rank
-                    && best.as_ref().is_none_or(|(old, _)| rank > *old)
+                    && best.as_ref().is_none_or(|(old_rank, old_bound, _)| {
+                        prefer_reason(rank, grant.grant.bound(), *old_rank, old_bound)
+                    })
                 {
-                    best = Some((rank, rule));
+                    best = Some((rank, grant.grant.bound().clone(), rule));
                 }
             }
-            let Some((rank, rule)) = best else {
+            let Some((rank, _, rule)) = best else {
                 return Ok(OwnerReasonVerdict::Ask { prefill: None });
             };
             if !rank.0 {
