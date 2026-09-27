@@ -758,3 +758,84 @@ fn delegated_custody_must_name_the_exact_mailbox_at_engine_door() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn deletion_clears_assignment_slots_in_the_same_transaction() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    for (index, address) in ["batch-delete@example.test", "soft-delete@example.test"]
+        .into_iter()
+        .enumerate()
+    {
+        let id = entity(0xD8 + index as u8);
+        vault.create_channel_identity(
+            &id,
+            &ChannelIdentity::requested(
+                EMAIL_CHANNEL,
+                address,
+                SelfHeldShape::DedicatedAddress,
+                ChannelIdentityBinding::agent(entity(0x51)),
+                1_800_000_000,
+            ),
+        )?;
+        assert_eq!(
+            vault
+                .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
+                .map(|(id, _)| id),
+            Some(id),
+        );
+        if index == 0 {
+            vault.batch().delete(&id).commit()?;
+        } else {
+            vault.delete_entity_with_reason(&id, crate::deletion::DeleteReason::UserDelete)?;
+        }
+        assert!(
+            vault
+                .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
+                .is_none(),
+            "a deleted body must never leave a dangling assignment slot",
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deleting_a_retiring_predecessor_preserves_its_new_occupant() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let address = "reconsented@example.test";
+    let grant = DelegatedGrant::new(
+        "oauth/gmail/reconsented",
+        vec![DelegatedGrantScope::MailRead],
+    );
+    register_delegated_custody(&vault, &grant, address)?;
+    let predecessor = entity(0xC6);
+    let successor = entity(0xC7);
+    let request = |actor| DelegatedProvisionRequest {
+        channel: EMAIL_CHANNEL.to_owned(),
+        address_or_handle: address.to_owned(),
+        binding: ChannelIdentityBinding::agent(actor),
+        grant: grant.clone(),
+    };
+    vault.provision_delegated_identity(&predecessor, request(entity(0x51)), 1_800_000_000)?;
+    vault.step_channel_identity(
+        &predecessor,
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        1_800_000_001,
+    )?;
+    vault.step_channel_identity(&predecessor, ChannelIdentityStep::Fulfill, 1_800_000_002)?;
+    vault.step_channel_identity(&predecessor, ChannelIdentityStep::Release, 1_800_000_003)?;
+    vault.provision_delegated_identity(&successor, request(entity(0x52)), 1_800_000_004)?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
+            .map(|(id, _)| id),
+        Some(predecessor)
+    );
+    vault.delete_entity(&predecessor)?;
+    assert_eq!(
+        vault
+            .channel_identity_by_assignment(EMAIL_CHANNEL, address)?
+            .map(|(id, _)| id),
+        Some(successor)
+    );
+    Ok(())
+}

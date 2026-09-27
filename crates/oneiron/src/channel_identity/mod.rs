@@ -69,7 +69,7 @@ pub use self::record::ChannelIdentity;
 pub use self::shape::{ChannelIdentityShape, SelfHeldShape};
 pub use self::transition::DelegatedProvisionRequest;
 
-pub(crate) use self::assignment::maintain_assignment_put;
+pub(crate) use self::assignment::{clear_assignment_for_delete, maintain_assignment_put};
 #[cfg(test)]
 use self::codec::validate_channel_identity_body_bytes;
 pub(crate) use self::codec::validate_channel_identity_claim_structure;

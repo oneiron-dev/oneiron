@@ -192,6 +192,50 @@ pub(crate) fn maintain_assignment_put(
     write_slot(store, txn, &key, slot)
 }
 
+/// Clears every reference to a deleted ChannelIdentity before its body is
+/// removed or soft-erased. The caller supplies the stored type while the row
+/// is still readable, and stages this in the SAME write transaction as deletion.
+///
+/// Scan the small assignment projection rather than deriving just one key
+/// from the body: a damaged body or stray second slot must not leave a dangling
+/// occupant or predecessor behind. A successor in the other slot is preserved.
+pub(crate) fn clear_assignment_for_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+) -> Result<()> {
+    if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
+        return Ok(());
+    }
+    let mut changed = Vec::new();
+    for item in store.vault_meta.prefix_iter(&*txn, PREFIX)? {
+        let (key, value) = item?;
+        let mut slot: [u8; 32] = value
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::CorruptedIndex("channel assignment slot"))?;
+        let mut touched = false;
+        for half in slot.chunks_exact_mut(16) {
+            if half == id.as_bytes() {
+                half.fill(0);
+                touched = true;
+            }
+        }
+        if touched {
+            changed.push((key.to_vec(), slot));
+        }
+    }
+    for (key, slot) in changed {
+        if slot == [0; 32] {
+            store.vault_meta.delete(txn, &key)?;
+        } else {
+            store.vault_meta.put(txn, &key, &slot)?;
+        }
+    }
+    Ok(())
+}
+
 /// Explicit CID-7 recovery. Only this door scans stored rows; normal routing
 /// and write admission use the index. Pre-release vaults have no ABI migration.
 pub(super) fn rebuild(store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
