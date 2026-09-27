@@ -279,6 +279,10 @@ pub(super) fn birth_companion(
     // slot — the one place the engine already reads a persona name from, and
     // the one an owner can later edit through `update_agent_definition`.
     let mut definition = companion.actor_definition.clone();
+    // A companion gets her own dreaming by default; an authored setting wins.
+    definition
+        .dreaming
+        .get_or_insert(crate::agent_def::DreamingMode::Own);
     definition.display_name = Some(companion.display_name.clone());
     ensure_agent_definition(vault, intent, &companion.actor_ref, &definition, writer)?;
 

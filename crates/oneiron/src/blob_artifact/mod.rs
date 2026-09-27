@@ -14,10 +14,10 @@
 //! * each version is an append-only `vault_meta` record carrying the content
 //!   hash, per-version provenance (user upload | agent-run ref), and the id
 //!   of its `blob.version` claim — the LEDGER event for that version;
-//! * history is append-only: a version is only ever added at head+1, and
-//!   existing version records are never rewritten or deleted while the
-//!   artifact lives. Re-appending the current head bytes is a dedupe no-op
-//!   that returns the existing head version.
+//! * history is append-only: a version is only ever added at head+1, with
+//!   an optional parent/fork pointer to any earlier version. Existing records
+//!   are never rewritten or deleted while the artifact lives. Re-appending
+//!   the current head bytes normally dedupes; explicit forks always append.
 //!
 //! Content-hash dedupe is vault-scoped ONLY. A vault is one tenant's sealed
 //! store (OF-307): a content hash computed from one tenant's bytes never
@@ -40,7 +40,7 @@ pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
-pub use self::versions::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion};
+pub use self::versions::{BLOB_ARTIFACT_VERSION_RECORD_KEYS, BlobArtifactVersion, CalcEngineStamp};
 
 #[cfg(test)]
 mod tests;

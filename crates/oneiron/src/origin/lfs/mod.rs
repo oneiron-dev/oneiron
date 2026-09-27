@@ -31,6 +31,7 @@ pub use self::store::{
     VAULT_LFS_OBJECT_KEY_PREFIX, VAULT_LFS_REF_KEY_PREFIX, VAULT_LFS_REPO_ID_DOMAIN,
     VAULT_LFS_SCHEMA_VERSION, VaultLfsObject, check_lfs_expectation, lfs_repo_id,
 };
+pub(crate) use chunks::mint_lfs_chunk_parameters_in_txn;
 pub(crate) use lifecycle::{
     delete_lfs_lifecycle_in_txn, guard_lfs_asset_put, reject_direct_lfs_chunk_delete,
 };

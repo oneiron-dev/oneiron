@@ -22,10 +22,10 @@ use rmpv::Value;
 /// alone would let a seeded `enabled: true` row encode differently across
 /// vaults, breaking byte-identical cross-vault seeding.
 ///
-/// `memory_profile` (RT-05, ONE-1687) appends LAST and is elided when absent,
-/// so a body written before it existed decodes with `memory_profile: None` and
-/// re-encodes byte-for-byte.
-pub const AGENT_DEF_BODY_KEYS: [&str; 23] = [
+/// `memory_profile` (RT-05, ONE-1687) and the dreaming mode/model fields
+/// append in that order and are elided when absent, so older bodies re-encode
+/// byte-for-byte. Absent dreaming means inherit, on by default.
+pub const AGENT_DEF_BODY_KEYS: [&str; 25] = [
     "agentId",
     "desc",
     "version",
@@ -49,6 +49,8 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 23] = [
     "enabled",
     "displayName",
     "memory_profile",
+    "dreaming",
+    "dreamingModel",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
@@ -131,6 +133,10 @@ pub(super) const KEY_ENABLED: &str = AGENT_DEF_BODY_KEYS[20];
 pub(super) const KEY_DISPLAY_NAME: &str = AGENT_DEF_BODY_KEYS[21];
 
 pub(super) const KEY_MEMORY_PROFILE: &str = AGENT_DEF_BODY_KEYS[22];
+
+pub(super) const KEY_DREAMING: &str = AGENT_DEF_BODY_KEYS[23];
+
+pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
 
 pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
 
@@ -326,6 +332,39 @@ impl CompactionOwnership {
     }
 }
 
+/// How a resident's own dreaming chooses its model and window.
+///
+/// `Inherit` shares the vault weaver model and window, never the resident's
+/// diary. `Own` uses the resident's model slot (or its talking model when the
+/// slot is unset). `Off` disables that resident's dreaming, not the vault weave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DreamingMode {
+    Own,
+    Inherit,
+    Off,
+}
+
+impl DreamingMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Own => "own",
+            Self::Inherit => "inherit",
+            Self::Off => "off",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "own" => Some(Self::Own),
+            "inherit" => Some(Self::Inherit),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
 /// Optional per-entity-class share of the window budget.
 ///
 /// Absent means the engine default split holds. Every fraction is validated
@@ -434,6 +473,10 @@ pub struct AgentDefinition {
     /// identity: it may change on update under the ordinary version-bump rule,
     /// so it is deliberately NOT in the freeze-set.
     pub memory_profile: Option<MemoryProfile>,
+    /// Absent means enabled and inheriting the vault weaver model and window.
+    pub dreaming: Option<DreamingMode>,
+    /// Optional per-resident model slot for `Own` dreaming. Host-resolved.
+    pub dreaming_model: Option<ModelTierRef>,
 }
 
 impl AgentDefinition {
@@ -488,7 +531,15 @@ impl AgentDefinition {
             enabled,
             display_name,
             memory_profile: None,
+            dreaming: None,
+            dreaming_model: None,
         }
+    }
+
+    /// Effective setting: an absent key is inherit, ON by default.
+    #[must_use]
+    pub fn dreaming_mode(&self) -> DreamingMode {
+        self.dreaming.unwrap_or(DreamingMode::Inherit)
     }
 
     /// Attaches the RT-05 [`MemoryProfile`] (ONE-1687).
@@ -501,6 +552,17 @@ impl AgentDefinition {
     #[must_use]
     pub fn with_memory_profile(mut self, memory_profile: Option<MemoryProfile>) -> Self {
         self.memory_profile = memory_profile;
+        self
+    }
+
+    #[must_use]
+    pub fn with_dreaming(
+        mut self,
+        mode: Option<DreamingMode>,
+        model: Option<ModelTierRef>,
+    ) -> Self {
+        self.dreaming = mode;
+        self.dreaming_model = model;
         self
     }
 }

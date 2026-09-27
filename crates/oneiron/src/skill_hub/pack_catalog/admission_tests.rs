@@ -229,6 +229,106 @@ fn connector_requires_qualified_runtime_and_changed_hub_requires_reconsent() -> 
     Ok(())
 }
 #[test]
+fn predicate_collision_names_both_packs_in_either_install_order() -> Result<()> {
+    // A parent and nested pack may each declare the same valid global name.
+    let parent = PackSource::from_files(
+        source(false)?
+            .files()
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if file.path == "PACK.md" {
+                    file.content = String::from_utf8(file.content)
+                        .unwrap()
+                        .replace("alice.tools.topic", "alice.tools.sub.topic")
+                        .into_bytes();
+                }
+                file
+            })
+            .collect(),
+    )?;
+    let nested = PackSource::from_files(
+        source(false)?
+            .files()
+            .iter()
+            .cloned()
+            .map(|mut file| {
+                if file.path == "PACK.md" || file.path.starts_with("knowledge/") {
+                    file.path = file.path.replace("alice.tools", "alice.tools.sub");
+                    file.content = String::from_utf8(file.content)
+                        .unwrap()
+                        .replace("alice.tools", "alice.tools.sub")
+                        .into_bytes();
+                }
+                file
+            })
+            .collect(),
+    )?;
+    for (first, second) in [(&parent, &nested), (&nested, &parent)] {
+        let (_dir, vault, owner, hub, publisher) = fixture(SkillHubTrustTier::Verified, first)?;
+        let mut asks = Vec::new();
+        for source in [first, second] {
+            let id = vault.stage_pack_source(source, TimeRange { start: 3, end: 3 }, 3)?;
+            let reference = HubRef::new(
+                hub.hub_id,
+                "pack",
+                HubPin::ContentHash(source.content_hash().to_hex()),
+            )?;
+            let ask = vault.prepare_pack_install(
+                id,
+                &reference,
+                &publisher,
+                &Qualification {
+                    runtime: false,
+                    passed: true,
+                },
+            )?;
+            vault.approve_pack_install(&ask, &owner)?;
+            asks.push(ask);
+        }
+        let PackInstallDisposition::Installed(receipt) = vault.install_pack(&asks[0])? else {
+            panic!("first pack installs");
+        };
+        let byte_map = vault.pack_byte_map_snapshot()?;
+        let err = vault.install_pack(&asks[1]).unwrap_err();
+        assert!(matches!(
+            &err,
+            crate::error::Error::Registry(
+                crate::error::RegistryError::PackPredicateNameCollision {
+                    predicate,
+                    installed_pack,
+                    installing_pack,
+                }
+            ) if predicate == "alice.tools.sub.topic"
+                && installed_pack == &first.manifest().name
+                && installing_pack == &second.manifest().name
+        ));
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::PackPredicateNameCollision
+        );
+        let message = err.to_string();
+        for name in [
+            "alice.tools.sub.topic",
+            &first.manifest().name,
+            &second.manifest().name,
+        ] {
+            assert!(message.contains(name), "missing {name} in {message}");
+        }
+        assert_eq!(
+            vault.installed_pack(&first.manifest().name)?,
+            Some(*receipt.clone())
+        );
+        assert!(vault.installed_pack(&second.manifest().name)?.is_none());
+        assert_eq!(
+            vault.pack_for_predicate("alice.tools.sub.topic")?,
+            Some(*receipt)
+        );
+        assert_eq!(vault.pack_byte_map_snapshot()?, byte_map);
+    }
+    Ok(())
+}
+#[test]
 fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()> {
     let mut files = source(false)?.files().to_vec();
     files
@@ -256,5 +356,301 @@ fn invalid_bundled_skill_rolls_back_map_catalog_and_consent_spend() -> Result<()
     assert!(vault.pack_for_predicate("alice.tools.topic")?.is_none());
     // The source remains intact; the failed attempted install publishes no half-state.
     assert_eq!(vault.get_pack_source(&id)?, Some(source));
+    Ok(())
+}
+
+struct Replay;
+impl crate::skill_optimize::HeldOutReplayScorer for Replay {
+    fn score(&self, case: &crate::skill_optimize::HeldOutReplayCase<'_>) -> Result<f32> {
+        Ok(if case.instructions.contains("Keep facts exact.") {
+            0.9
+        } else {
+            0.2
+        })
+    }
+}
+
+fn installed_active_lens() -> Result<(
+    tempfile::TempDir,
+    Vault,
+    crate::lens::LensMount,
+    EntityId,
+    crate::lens::LensMount,
+)> {
+    installed_active_lens_for(None, "format")
+}
+
+fn installed_active_lens_for(
+    reference_text: Option<&str>,
+    folder: &str,
+) -> Result<(
+    tempfile::TempDir,
+    Vault,
+    crate::lens::LensMount,
+    EntityId,
+    crate::lens::LensMount,
+)> {
+    use crate::lens::LensMount;
+    use crate::skill::SkillLifecycle;
+    let mut files = source(false)?.files().to_vec();
+    files.push(HubFile::new(
+        "skills/z-extra/SKILL.md",
+        b"---\nname: alice.extra\ndescription: extra\nversion: 1\n---\nAnother skill.\n".to_vec(),
+    ));
+    files
+        .iter_mut()
+        .find(|file| file.path == "skills/format/SKILL.md")
+        .unwrap()
+        .path = format!("skills/{folder}/SKILL.md");
+    let source = PackSource::from_files(files)?;
+    let (dir, vault, owner, mut reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    if let Some(text) = reference_text {
+        reference = HubRef::new(
+            reference.hub_id,
+            text,
+            HubPin::ContentHash(source.content_hash().to_hex()),
+        )?;
+    }
+    let source_id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let ask = vault.prepare_pack_install(
+        source_id,
+        &reference,
+        &publisher,
+        &Qualification {
+            runtime: false,
+            passed: true,
+        },
+    )?;
+    let absent = LensMount::Pack {
+        pack_name: "alice.tools".into(),
+        skill_id: EntityId::now(),
+    };
+    assert_eq!(
+        vault.mounted_lenses(std::slice::from_ref(&absent))?,
+        vec![LensMount::Vault, LensMount::Admin]
+    );
+    assert_eq!(vault.render_mounted_lens(&absent, || Ok(1))?, None);
+    vault.approve_pack_install(&ask, &owner)?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("consented install");
+    };
+    assert_eq!(receipt.candidate_skills.len(), 2);
+    let skill_id = EntityId::from_hex(&receipt.candidate_skills[0])?;
+    let skill_hash = vault
+        .get_skill_record(&skill_id)?
+        .unwrap()
+        .content_hash
+        .unwrap();
+    let skill_source = super::bundled_skills::pack_skill_hub_ref(&reference, folder, skill_hash)?;
+    let lens = LensMount::Pack {
+        pack_name: receipt.pack_name,
+        skill_id,
+    };
+    assert_eq!(vault.render_mounted_lens(&lens, || Ok(1))?, None); // Candidate cannot mount.
+
+    let baseline = EntityId::now();
+    let mut base = super::super::folder::package_from_files(vec![HubFile::new(
+        "SKILL.md",
+        b"---\nname: fixture.base\ndescription: baseline\nversion: 1\n---\nBaseline.\n".to_vec(),
+    )])?
+    .record;
+    base.source = crate::claim::ClaimSource::UserStated;
+    base.content_hash = None;
+    base.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+    vault.put_skill_record(&baseline, &base, TimeRange { start: 4, end: 4 }, 4)?;
+    base.lifecycle_status = SkillLifecycle::Active;
+    vault.update_skill_record(&baseline, &base, TimeRange { start: 5, end: 5 }, 5)?;
+    crate::skill_hub::test_support::reserve(&vault, &baseline, &base.skill_id);
+    let activation =
+        vault.prepare_marketplace_activation(skill_id, &skill_source, &publisher, baseline)?;
+    vault.approve_marketplace_activation(&activation, &owner)?;
+    let crate::skill_hub::HubAdmissionDisposition::Ruled(result) = vault.admit_marketplace_skill(
+        &activation,
+        &Replay,
+        TimeRange { start: 20, end: 20 },
+        21,
+    )?
+    else {
+        panic!("consented activation");
+    };
+    assert!(result.accepted);
+    let healthy = install_healthy_pack(&vault, &owner, &reference, &publisher, baseline)?;
+    Ok((dir, vault, lens, source_id, healthy))
+}
+
+fn install_healthy_pack(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    reference: &HubRef,
+    publisher: &ForeignSkillPublisher,
+    baseline: EntityId,
+) -> Result<crate::lens::LensMount> {
+    let source = PackSource::from_files(vec![
+        HubFile::new("PACK.md", b"---\nname: alice.other\ndescription: fixture\nversion: 1\nkind: capability\n---\nOther pack.\n".to_vec()),
+        HubFile::new("skills/healthy/SKILL.md", b"---\nname: alice.healthy\ndescription: healthy\nversion: 1\n---\nKeep facts exact.\n".to_vec()),
+    ])?;
+    let other_ref = HubRef::new(
+        reference.hub_id,
+        "other-pack",
+        HubPin::ContentHash(source.content_hash().to_hex()),
+    )?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 6, end: 6 }, 6)?;
+    let ask = vault.prepare_pack_install(
+        id,
+        &other_ref,
+        publisher,
+        &Qualification {
+            runtime: false,
+            passed: true,
+        },
+    )?;
+    vault.approve_pack_install(&ask, owner)?;
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&ask)? else {
+        panic!("consented second install");
+    };
+    let skill_id = EntityId::from_hex(&receipt.candidate_skills[0])?;
+    let hash = vault
+        .get_skill_record(&skill_id)?
+        .unwrap()
+        .content_hash
+        .unwrap();
+    let skill_source = super::bundled_skills::pack_skill_hub_ref(&other_ref, "healthy", hash)?;
+    let activation =
+        vault.prepare_marketplace_activation(skill_id, &skill_source, publisher, baseline)?;
+    vault.approve_marketplace_activation(&activation, owner)?;
+    let crate::skill_hub::HubAdmissionDisposition::Ruled(result) = vault.admit_marketplace_skill(
+        &activation,
+        &Replay,
+        TimeRange { start: 22, end: 22 },
+        23,
+    )?
+    else {
+        panic!("consented second activation");
+    };
+    assert!(result.accepted);
+    Ok(crate::lens::LensMount::Pack {
+        pack_name: receipt.pack_name,
+        skill_id,
+    })
+}
+
+#[test]
+fn pack_lens_mounts_only_while_its_installed_skill_loads_as_canon() -> Result<()> {
+    use crate::lens::LensMount;
+    use crate::skill::SkillLifecycle;
+    for state in [
+        Some(SkillLifecycle::Stale),
+        Some(SkillLifecycle::Quarantined),
+        None,
+    ] {
+        let (_dir, vault, lens, _, _healthy) = installed_active_lens()?;
+        let LensMount::Pack { skill_id, .. } = &lens else {
+            panic!("pack binding");
+        };
+        let core = vec![LensMount::Vault, LensMount::Admin];
+        let wrong_pack = LensMount::Pack {
+            pack_name: "alice.other".into(),
+            skill_id: *skill_id,
+        };
+        assert_eq!(
+            vault.mounted_lenses(&[lens.clone(), wrong_pack])?,
+            vec![LensMount::Vault, LensMount::Admin, lens.clone()]
+        );
+        assert_eq!(vault.render_mounted_lens(&lens, || Ok(7))?, Some(7));
+        if let Some(state) = state {
+            let mut skill = vault.get_skill_record(skill_id)?.unwrap();
+            skill.lifecycle_status = state;
+            if state == SkillLifecycle::Quarantined {
+                skill.approval_status = crate::claim::ClaimApprovalStatus::Approved;
+            }
+            vault.update_skill_record(skill_id, &skill, TimeRange { start: 30, end: 30 }, 31)?;
+        } else {
+            assert!(vault.delete_entity(skill_id)?);
+        }
+        assert_eq!(vault.mounted_lenses(std::slice::from_ref(&lens))?, core);
+        assert_eq!(
+            vault.render_mounted_lens(&lens, || panic!("hidden renderer ran"))?,
+            None::<()>
+        );
+        // A removed host binding cannot leave an orphaned mount either.
+        assert_eq!(vault.mounted_lenses(&[])?, core);
+        assert_eq!(
+            vault.render_mounted_lens(&LensMount::Admin, || Ok(9))?,
+            Some(9)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn deleted_pack_source_or_soft_erased_skill_hides_only_affected_lens() -> Result<()> {
+    use crate::lens::LensMount;
+    for remove_source in [false, true] {
+        let (_dir, vault, lens, source_id, healthy) = installed_active_lens()?;
+        let LensMount::Pack { skill_id, .. } = &lens else {
+            panic!("pack binding");
+        };
+        let bindings = [lens.clone(), healthy.clone()];
+        assert_eq!(
+            vault.mounted_lenses(&bindings)?,
+            vec![
+                LensMount::Vault,
+                LensMount::Admin,
+                lens.clone(),
+                healthy.clone()
+            ]
+        );
+        if remove_source {
+            assert!(vault.delete_entity(&source_id)?);
+        } else {
+            vault.delete_entity_with_reason(skill_id, crate::DeleteReason::UserDelete)?;
+        }
+        assert_eq!(
+            vault.mounted_lenses(&bindings)?,
+            vec![LensMount::Vault, LensMount::Admin, healthy.clone()]
+        );
+        assert_eq!(
+            vault.render_mounted_lens(&lens, || panic!("removed renderer ran"))?,
+            None::<()>
+        );
+        assert_eq!(vault.render_mounted_lens(&healthy, || Ok(7))?, Some(7));
+    }
+    Ok(())
+}
+
+#[test]
+fn longest_valid_pack_ref_and_long_skill_folder_install_and_activate() -> Result<()> {
+    for (reference, folder) in [
+        ("r".repeat(4096), "format".to_owned()),
+        ("pack".to_owned(), "f".repeat(900)),
+    ] {
+        let (_dir, vault, lens, _source_id, healthy) =
+            installed_active_lens_for(Some(&reference), &folder)?;
+        assert_eq!(
+            vault.mounted_lenses(&[lens.clone(), healthy])?.get(2),
+            Some(&lens)
+        );
+        assert_eq!(vault.render_mounted_lens(&lens, || Ok(1))?, Some(1));
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_source_cannot_be_installed_as_a_runtime_pack() -> Result<()> {
+    struct UnexpectedQualification;
+    impl PackQualifier for UnexpectedQualification {
+        fn qualify(&self, _: &PackSource) -> Result<PackQualification> {
+            panic!("an inert agent source cannot reach the host qualifier");
+        }
+    }
+    let source = PackSource::from_files(super::tests::agent_files()?)?;
+    let (_dir, vault, _owner, reference, publisher) =
+        fixture(SkillHubTrustTier::Verified, &source)?;
+    let id = vault.stage_pack_source(&source, TimeRange { start: 3, end: 3 }, 3)?;
+    let err = vault
+        .prepare_pack_install(id, &reference, &publisher, &UnexpectedQualification)
+        .expect_err("agent sources are not runtime installations");
+    assert!(matches!(err, crate::Error::InvalidConfig(_)));
     Ok(())
 }

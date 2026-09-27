@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/edit_path.rs` | src | s | 6 crate-vis | — | Five edit-task shapes with an independent tests-plus-contract oracle |
 | `src/beam/edit_path/tests.rs` | test | s | 2 fn · 1 mod | — | — |
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
-| `src/beam/infra.rs` | src | s | 4 crate-vis | — | Vector-database cost framing |
+| `src/beam/infra.rs` | src | s | 5 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
 | `src/beam/llm_host.rs` | src | m | 10 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
 | `src/beam/llm_judge.rs` | src | s | 8 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
@@ -119,6 +119,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/perf/trust/tests.rs` | test | s | — | — | ONE-1961 regressions over the trust tables |
 | `src/perf/wake.rs` | src | s | 1 crate-vis | — | ONE-1579 axis 2: process spawn-to-ready wake latency |
 | `src/retrieval_trace_export.rs` | src | m | 4 crate-vis | — | — |
+| `src/retrieval_turn_corpus.rs` | src | m | 1 crate-vis | — | Offline replay of finalized, turn-indexed retrieval runs |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/vector/mod.rs` | src | s | 4 crate-vis | — | `vector` subcommand — ARCH-0019 §perf vector benchmark harness (ONE-1120) |
 | `src/vector/vector_config.rs` | src | s | 17 crate-vis | — | Vector bench targets, settings, and CLI flag parsing |

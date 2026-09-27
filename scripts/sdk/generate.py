@@ -124,7 +124,8 @@ def native_boundary(row, language):
         tail = napi_result(row['output']) if typed else 'serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))'
         body = f'{setup} let output = {call}.map_err(facade_error)?; {tail}'
     else:
-        body = f'{setup} let output = py.detach(|| {call}).map_err(raise)?; encode(&output)'
+        encode_output = 'encode_recall(&output)' if row['name'] == 'recall' else 'encode(&output)'
+        body = f'{setup} let output = py.detach(|| {call}).map_err(raise)?; {encode_output}'
     return head + body + '}\n'
 
 def ts_wire_type(row):
@@ -325,6 +326,15 @@ def outputs():
         Ok(Json({result}))
         }}\n'''
     remote = HEADER + 'use super::*;\n'
+    remote += '''fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(
+        client: &RemoteClient, verb: &str, input: &serde_json::Value,
+    ) -> Result<serde_json::Value, MemoryError> {
+        let output: R = client.call(verb, input)?;
+        serde_json::to_value(output).map_err(|error| crate::error::transport_error(
+            format!("the remote SDK could not encode {verb}'s decoded result: {error}")
+        ))
+    }
+'''
     remote += 'impl OneironClient {\n'
     remote += '''pub fn agent_verb(&self, verb: &str, input: serde_json::Value) -> Result<serde_json::Value, MemoryError> {
         self.ensure_dispatch_pid()?;
@@ -332,9 +342,15 @@ def outputs():
         oneiron::task_verb::sdk::validate_input(verb, &input)?;
         match &self.backend {
             Backend::Embedded(client) => oneiron::task_verb::sdk::invoke(&client.memory(), verb, input),
-            Backend::Remote(client) => client.call(verb, &input),
-        }
+            Backend::Remote(client) => match verb {
+'''
+    for row in facade_rows:
+        output = rust_type(row['output']) if not row['output'].startswith(('Vec<', 'Option<')) else row['output'].replace('crate::', 'oneiron::')
+        remote += f'{json.dumps(row["name"])} => remote_agent_verb_output::<{output}>(client, verb, &input),\n'
+    remote += '''_ => Err(crate::error::bad_request("unknown SDK agent verb", &["Use a verb from the SDK catalog."])),
+        },
     }
+}
 '''
     remote += '''fn typed_agent_verb<R: serde::de::DeserializeOwned>(&self, verb: &str, input: serde_json::Value) -> Result<R, MemoryError> {
         match &self.backend {
@@ -382,7 +398,8 @@ export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {p
 export type ConsultPayloadRef = {claim: string} | {turn: string};
 export type TaskAskOptionId = string;
 export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}};
-export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null }
+export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one"; probability: number | null }
+export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null; ladder_answer?: TaskAskLadderPrediction | null; class_key?: string | null }
 export type TaskAskElectorate = "any" | {people: string[]};
 export interface TaskAskNeed {count: number; of?: TaskAskElectorate}
 export type TaskAskDecide = "first" | {all: {of: TaskAskElectorate; answer: TaskAskOptionId}} | {at_least: {count: number; of: TaskAskElectorate; answer: TaskAskOptionId}};
@@ -397,7 +414,7 @@ export interface TaskAskAnswer { task_ref: string; actor_ref: string; result_ref
 export interface TaskAskCoverage {met: boolean; required: number; responded: string[]; unknown: string[]; unmet_people: string[]}
 export type TaskAskDecision = "collected" | {first: TaskAskAnswer} | {answer: TaskAskOptionId} | "no" | "conflict" | "unknown";
 export interface TaskAskFallback {branch: TaskAskDefault; surface: "card" | "none"}
-export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"}
+export interface TaskAskEvidence {answer: TaskAskAnswer; word: TaskAskWord; source: "human" | "inform" | "executor"; person_ref: string; order: number; reason: "counted" | "inform" | "human_dominates" | "executor" | "superseded" | "outside_electorate" | "missing_source" | "late"; ladder_changed: boolean | null}
 export interface TaskAskSettlement {group_ref: string; reference: string; revision: number; at: number; cutoff_order: number; reason: "first_word" | "all_responded" | "deadline" | "stale"; requested: TaskAskSpec; effective: TaskAskSpec; base_policy_version: number; electorate: string[]; question_digest: number[]; unmet_sources: ConsultPayloadRef[]; outcome_answer_ref: string | null}
 export interface TaskAskResult {coverage: TaskAskCoverage; decision: TaskAskDecision; fallback: TaskAskFallback | null; evidence: TaskAskEvidence[]; settlement: TaskAskSettlement}
 export type TaskAskStatus = {Pending: {hold: "NoLiveRoute" | null}} | {Settled: TaskAskResult};
