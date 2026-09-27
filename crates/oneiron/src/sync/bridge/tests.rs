@@ -1,9 +1,6 @@
 use super::*;
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{
-    CompanionProvenance, CompanionRecord, CompanionScope, encode_companion_record_body,
-};
 use crate::config::VaultConfig;
 use crate::edge::EdgeActorClass;
 use crate::error::SyncError;
@@ -122,26 +119,6 @@ fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8
     blob.extend_from_slice(&learned_at.to_be_bytes());
     blob.extend_from_slice(data);
     blob
-}
-
-fn companion_record(
-    persona_ref: EntityId,
-    sensitivity: crate::federation::Sensitivity,
-) -> CompanionRecord {
-    CompanionRecord::relationship(
-        CompanionScope::neutral(),
-        persona_ref,
-        EntityId::from_bytes_unchecked([0xFE; 16]),
-        Value::from("private companion tuning"),
-        CompanionProvenance::new(
-            EntityId::from_bytes_unchecked([0xB8; 16]),
-            EdgeActorClass::Agent,
-            ClaimSource::UserStated,
-            ClaimApprovalStatus::Approved,
-            Value::from("private provenance"),
-        ),
-        sensitivity,
-    )
 }
 
 #[cfg(feature = "sync")]
@@ -1727,17 +1704,15 @@ fn observer_b_materializes_never_deleted_entity_normally() {
 }
 
 #[test]
-fn companion_register_api_observer_b_suppresses_local_only_records() {
+fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
     let vault = test_vault();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
     let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-
     let id = EntityId::from_bytes_unchecked([0x62; 16]);
-    let persona = EntityId::from_bytes_unchecked([0x6A; 16]);
+    let person = EntityId::from_bytes_unchecked([0x6A; 16]);
     let learned_at = 1_772_400_000u64;
-    let record = companion_record(persona, crate::federation::Sensitivity::Restricted);
-    let body = encode_companion_record_body(&record.created_at(learned_at).unwrap()).unwrap();
+    let body = crate::companion::tests::support::retired_persona_facet_body(person);
     map_insert_bytes(
         &doc.get_map("entities"),
         &id.to_hex(),
@@ -1753,138 +1728,17 @@ fn companion_register_api_observer_b_suppresses_local_only_records() {
     )
     .unwrap();
     doc.commit();
-
     assert!(
-        vault.get_companion_record(&id).unwrap().is_none(),
-        "live sync replay must not materialize local-only companion register records"
-    );
-}
-
-#[test]
-fn companion_register_api_observer_b_scrubs_local_only_rows_and_edges_from_crdt() {
-    let vault = test_vault();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-
-    let local_id = EntityId::from_bytes_unchecked([0x43; 16]);
-    let portable_id = EntityId::from_bytes_unchecked([0x44; 16]);
-    let local_persona = EntityId::from_bytes_unchecked([0x4A; 16]);
-    let portable_persona = EntityId::from_bytes_unchecked([0x4B; 16]);
-    let learned_at = 1_772_400_001u64;
-    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    let portable_record =
-        companion_record(portable_persona, crate::federation::Sensitivity::Public);
-    let local_body =
-        encode_companion_record_body(&local_record.created_at(learned_at).unwrap()).unwrap();
-    let portable_body =
-        encode_companion_record_body(&portable_record.created_at(learned_at).unwrap()).unwrap();
-    let entities = doc.get_map("entities");
-    let edges = doc.get_map("edges");
-    let edge_key = format_edge_key(&local_id, EdgeKind::Mentions, &portable_id);
-
-    map_insert_bytes(
-        &entities,
-        &portable_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_FACET,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &portable_body,
-        ),
-    )
-    .unwrap();
-    map_insert_bytes(
-        &edges,
-        &edge_key,
-        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.6, learned_at, None, None).unwrap(),
-    )
-    .unwrap();
-    doc.commit();
-
-    map_insert_bytes(
-        &entities,
-        &local_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_FACET,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &local_body,
-        ),
-    )
-    .unwrap();
-    doc.commit();
-
-    assert!(vault.get_companion_record(&local_id).unwrap().is_none());
-    assert!(
-        map_get_bytes(&entities, &local_id.to_hex()).is_none(),
-        "live observer must scrub local-only companion rows from the CRDT window"
+        vault.get(&id).unwrap().is_none(),
+        "legacy FACET must not materialize"
     );
     assert!(
-        map_get_bytes(&edges, &edge_key).is_none(),
-        "live observer must scrub edges touching local-only companion rows"
+        vault.get(&person).unwrap().is_none(),
+        "legacy replay must not mint a PERSON shell"
     );
     assert!(
-        vault.get_companion_record(&portable_id).unwrap().is_some(),
-        "syncable companion rows should still materialize"
-    );
-}
-
-#[test]
-fn companion_register_api_observer_b_rejects_edges_touching_existing_local_only_endpoint() {
-    let vault = test_vault();
-    let doc = LoroDoc::new();
-    let materializer = Arc::new(Materializer::new());
-    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
-
-    let local_id = EntityId::from_bytes_unchecked([0x45; 16]);
-    let task_id = EntityId::from_bytes_unchecked([0x46; 16]);
-    let local_persona = EntityId::from_bytes_unchecked([0x4C; 16]);
-    let learned_at = 1_772_400_002u64;
-    let local_record = companion_record(local_persona, crate::federation::Sensitivity::Restricted);
-    vault
-        .create_companion_record(&local_id, &local_record, learned_at)
-        .unwrap();
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &task_id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_TASK,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &task_body(),
-        ),
-    )
-    .unwrap();
-    doc.commit();
-
-    let edge_key = format_edge_key(&task_id, EdgeKind::Mentions, &local_id);
-    map_insert_bytes(
-        &doc.get_map("edges"),
-        &edge_key,
-        &encode_edge_value_for_crdt(EdgeKind::Mentions, 0.7, learned_at, None, None).unwrap(),
-    )
-    .unwrap();
-    doc.commit();
-
-    assert!(
-        !vault
-            .edge_exists(&task_id, EdgeKind::Mentions, &local_id)
-            .unwrap(),
-        "edges touching existing local-only companion endpoints must not materialize"
-    );
-    assert!(
-        map_get_bytes(&doc.get_map("edges"), &edge_key).is_none(),
-        "live observer must scrub the rejected local-only edge carrier"
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none(),
+        "rejected CRDT carrier is scrubbed"
     );
 }
 

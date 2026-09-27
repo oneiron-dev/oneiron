@@ -44,8 +44,6 @@ pub(crate) const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
     "turns:annotate",
     "companion:profile:read",
     "companion:access-grant:write",
-    "companion:register:read",
-    "companion:register:write",
     "usage:read",
     "usage:write",
     "sync:connect",

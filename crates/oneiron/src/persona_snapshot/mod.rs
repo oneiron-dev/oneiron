@@ -56,9 +56,7 @@ mod tests;
 #[cfg(test)]
 use self::compile::*;
 #[cfg(test)]
-use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey,
-};
+use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]

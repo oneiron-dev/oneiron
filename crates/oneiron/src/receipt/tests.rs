@@ -1,9 +1,7 @@
 use super::*;
 use crate::access_grant::AccessGrant;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::counterparty_contact::{CounterpartyContactRecord, CounterpartyOptOutReason};
-use crate::edge::EdgeActorClass;
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
     encode_federation_grant_body,
@@ -11,9 +9,6 @@ use crate::federation::{
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::store::{GateDecisionId, PendingGateConsentRecord, Store};
 use crate::temporal::TimeRange;
-use crate::write_envelope::WriteActor;
-use crate::write_envelope::WriteEnvelope;
-use crate::write_envelope::WriteProvenance;
 
 fn temp_vault() -> Result<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
@@ -180,27 +175,6 @@ fn append_pending_gate_consent(
         )
     })?;
     Ok(decision_id)
-}
-
-fn provenance(actor: EntityId) -> CompanionProvenance {
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(actor, EdgeActorClass::Agent),
-        ClaimSource::UserStated,
-        WriteProvenance::new(rmpv::Value::from("receipt fixture")).unwrap(),
-        ClaimApprovalStatus::Approved,
-    );
-    CompanionProvenance::from_envelope(&envelope)
-}
-
-fn companion_record(actor: EntityId) -> CompanionRecord {
-    CompanionRecord::relationship(
-        CompanionScope::neutral(),
-        entity(0x51),
-        EntityId::from_bytes_unchecked([0xFE; 16]),
-        rmpv::Value::from("persona"),
-        provenance(actor),
-        crate::federation::Sensitivity::Public,
-    )
 }
 
 fn put_federation_grant(vault: &Vault, id: EntityId, learned_at: u64) -> Result<()> {
@@ -444,9 +418,6 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
         "gate.pending.actor_ceiling",
     )?;
 
-    let identity_actor = entity(0x50);
-    vault.create_companion_record(&entity(0x52), &companion_record(identity_actor), 20)?;
-
     let access_grant =
         AccessGrant::companion_profile_read(entity(0x60), entity(0x62), entity(0x63), 30);
     vault.create_access_grant(&entity(0x64), &access_grant)?;
@@ -458,17 +429,12 @@ fn receipt_query_returns_mixed_kinds_and_filters() -> Result<()> {
         .map(|receipt| receipt.receipt_kind)
         .collect();
     assert!(kinds.contains(&ReceiptKind::Gate));
-    assert!(kinds.contains(&ReceiptKind::IdentityLifecycle));
     assert!(kinds.contains(&ReceiptKind::ScopedRead));
     assert!(kinds.contains(&ReceiptKind::Share));
 
     let gate = vault.receipts(ReceiptQuery::new(10).with_kind(ReceiptKind::Gate))?;
     assert_eq!(gate.len(), 1);
     assert_eq!(gate[0].actor.as_deref(), Some("agent-alpha"));
-
-    let by_actor = vault.receipts(ReceiptQuery::new(10).with_actor(identity_actor.to_hex()))?;
-    assert_eq!(by_actor.len(), 1);
-    assert_eq!(by_actor[0].receipt_kind, ReceiptKind::IdentityLifecycle);
 
     let by_outcome = vault.receipts(ReceiptQuery::new(10).with_outcome("active"))?;
     assert_eq!(by_outcome.len(), 1);

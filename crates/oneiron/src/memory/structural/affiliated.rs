@@ -2,7 +2,6 @@
 
 use crate::claim::ClaimApprovalStatus;
 use crate::edge::EdgeKind;
-
 use crate::error::ErrorKind;
 use crate::ingest::{
     INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,

@@ -353,18 +353,17 @@ fn companion_birth_is_full_person() -> Result<()> {
             .any(|edge| edge.kind == EdgeKind::HasFacet && edge.target == birth.work_facet_ref)
     );
 
-    // Persona identity is on PERSON; the work FACET is only a mask.
-    let raw = vault.get(&birth.person_ref)?.expect("companion PERSON");
-    let body = rmpv::decode::read_value(&mut &raw[..]).expect("decode PERSON body");
-    let rmpv::Value::Map(fields) = body else {
-        panic!("PERSON identity map");
+    // The identity baseline is on PERSON, not an extra persona-shaped FACET.
+    let raw = vault
+        .get(&birth.person_ref)?
+        .expect("companion PERSON body");
+    let body: Value = rmpv::decode::read_value(&mut &raw[..]).expect("valid PERSON body");
+    let Value::Map(fields) = body else {
+        panic!("companion PERSON must be a map");
     };
-    assert!(
-        fields
-            .iter()
-            .any(|(key, _)| key.as_str() == Some("persona_definition"))
-    );
-    assert!(vault.companion_register()?.is_empty());
+    assert!(fields.iter().any(|(key, value)| {
+        key.as_str() == Some("persona_definition") && matches!(value, Value::Map(_))
+    }));
     assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
 
     // Exactly the requested companion-profile read, and nothing wider.
@@ -406,6 +405,103 @@ fn companion_birth_is_full_person() -> Result<()> {
     assert_eq!(companion_row.subject_ref, birth.person_ref);
     assert_eq!(companion_row.facet_ref, Some(birth.work_facet_ref));
     assert_eq!(companion_row.display_name, birth.display_name);
+    Ok(())
+}
+
+#[test]
+fn existing_companion_person_requires_valid_baseline_before_grant() -> Result<()> {
+    for invalid_baseline in [
+        Value::Nil,
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(2)),
+            (Value::from("baseline"), Value::Map(vec![])),
+        ]),
+        Value::Map(vec![
+            (Value::from("schema_version"), Value::from(1)),
+            (Value::from("baseline"), Value::Array(vec![])),
+        ]),
+    ] {
+        let (_dir, vault, mut intent) = fixture("Antevon");
+        let birth = companion_birth();
+        intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+        intent.companion_birth = Some(birth.clone());
+        let body = encode_value(&Value::Map(vec![
+            (
+                Value::from("schema_version"),
+                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+            ),
+            (
+                Value::from("display_name"),
+                Value::from(birth.display_name.as_str()),
+            ),
+            (Value::from("persona_definition"), invalid_baseline),
+        ]))?;
+        vault.put_entity(
+            &birth.person_ref,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: AT, end: AT },
+            AT,
+            &body,
+        )?;
+        assert!(
+            vault
+                .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+                .is_err()
+        );
+        assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_none());
+        assert_ne!(
+            read_journal(&vault, &onboarding_key(&intent.onboarding_id))?.map(|row| row.step),
+            Some(MemberOnboardingStep::Complete)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn existing_companion_person_preserves_valid_edited_baseline_on_resume() -> Result<()> {
+    let (_dir, vault, mut intent) = fixture("Antevon");
+    let birth = companion_birth();
+    intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
+    intent.companion_birth = Some(birth.clone());
+    let edited = serde_json::json!({"display_name": "edited identity", "tone": "patient"});
+    let body = encode_value(&Value::Map(vec![
+        (
+            Value::from("schema_version"),
+            Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+        ),
+        (
+            Value::from("display_name"),
+            Value::from(birth.display_name.as_str()),
+        ),
+        (
+            Value::from("persona_definition"),
+            crate::companion::companion_value_from_json(
+                &serde_json::json!({"schema_version": 1, "baseline": edited}),
+            )?,
+        ),
+    ]))?;
+    vault.put_entity(
+        &birth.person_ref,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: AT, end: AT },
+        AT,
+        &body,
+    )?;
+    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
+    assert!(vault.get_access_grant(&birth.profile_grant_ref)?.is_some());
+    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    assert_eq!(
+        crate::companion::validated_persona_baseline(
+            &vault.get(&birth.person_ref)?.expect("PERSON")
+        )?,
+        edited
+    );
     Ok(())
 }
 

@@ -41,11 +41,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
 | `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
-| `src/api/companion/errors.rs` | src | s | 4 crate-vis | — | Companion error constructors |
-| `src/api/companion/mod.rs` | src | s | 8 crate-vis | — | Companion control-plane surface: access grants, psych-mirror profiles, and the companion register record… |
+| `src/api/companion/errors.rs` | src | s | 3 crate-vis | — | Companion error constructors |
+| `src/api/companion/mod.rs` | src | s | 5 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
 | `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
-| `src/api/companion/register.rs` | src | m | 18 crate-vis | — | Companion register record routes and DTOs |
-| `src/api/companion/register_wire.rs` | src | s | 14 crate-vis | — | Register wire-format converters and validators |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
 | `src/api/context_board/cursor.rs` | src | s | 12 crate-vis | — | Server-owned MEMORIES cursors and session read sets, keyed by principal and session |
 | `src/api/context_board/memories.rs` | src | m | 19 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |

@@ -36,7 +36,7 @@ pub(crate) fn admit_note_in_txn(
         // The embedded unrooted host fallback is not remote owner authority.
         return Err(denied());
     }
-    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)?;
+    admit_selected_in_txn(vault, txn, id, selector, &admission)?;
     Ok(admission.position.into_scope())
 }
 

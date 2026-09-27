@@ -245,7 +245,6 @@ pub(super) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
     key: &WindowKey,
-    grant_scope: FederationGrantScope,
     selector: &SyncSelector,
     position: &Position,
 ) -> Result<LoroDoc> {
@@ -378,7 +377,6 @@ pub(super) fn filter_window_doc(
         let Some(decision) = entity_selector_decision(
             vault,
             (&id, blob),
-            grant_scope,
             selector,
             &facet_scope,
             position,

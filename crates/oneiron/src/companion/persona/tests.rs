@@ -144,6 +144,34 @@ fn persona_rebase_replays_changes_on_person_without_minting_masks() -> Result<()
 }
 
 #[test]
+fn persona_reads_person_identity_without_legacy_register_records() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let issuer = HostSlipIssuer::from_secret(b"person identity only")?;
+    let proof = vault.verified_host_root_slip(&issuer)?;
+    let read = vault.scoped_read(ScopedReadActorKey::from_verified_slip(&proof).unwrap());
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"",
+    )?;
+    let masks = vault.count_entities_by_type(ENTITY_TYPE_FACET)?;
+    vault.put_persona_baseline(&person, &json!({"style": "steady"}), 2)?;
+    let compiled = read.compile_persona(&person, None)?;
+    assert_eq!(compiled.person, person);
+    assert_eq!(compiled.value, json!({"style": "steady"}));
+    assert_eq!(vault.count_entities_by_type(ENTITY_TYPE_FACET)?, masks);
+    assert_eq!(
+        vault.count_entities_by_type(super::super::ENTITY_TYPE_COMPANION_REGISTER)?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn persona_scenario_is_a_scoped_owned_mask_and_malformed_changes_fail_closed() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;

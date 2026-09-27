@@ -20,8 +20,6 @@ use crate::context_pack::TokenAllocation;
 use crate::pipeline::Signal;
 use crate::registry::ENTITY_TYPE_FACET;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
-#[cfg(test)]
-use crate::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;
 use crate::tokenizer::PackTokenizer;
 
 use super::group_labels::known_group_labels;
@@ -216,21 +214,6 @@ fn estimate_entity_chars_with_depth_limit(
         chars += 2;
     }
     chars
-}
-
-#[cfg(test)]
-pub(super) fn budget_groups(
-    source: &[(GroupKey, Vec<PreparedEntity>)],
-    allocation: &TokenAllocation,
-    token_budget: usize,
-) -> (Vec<(GroupKey, Vec<PreparedEntity>)>, usize) {
-    budget_groups_with_depth_limit(
-        source,
-        allocation,
-        token_budget,
-        DEFAULT_CONTEXT_PACK_TOKENIZER,
-        None,
-    )
 }
 
 pub(super) fn budget_groups_with_depth_limit(

@@ -1,97 +1,15 @@
 use crate::ports::EntityStoreRead;
 use std::collections::BTreeMap;
 
-use super::grant::scan_entities_by_type;
 use super::kernel::{
     FIELD_AMENDED_BODY, FIELD_AMENDMENT_DELTA, FIELD_CLAIM_SOURCE, FIELD_OP_KIND,
     FIELD_PROPOSAL_REF, FIELD_SCOPE_ACTOR, FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, ReceiptKind,
     ReceiptQuery, ReceiptRecord, hex_lower,
 };
 use crate::Vault;
-use crate::companion::{
-    CompanionLifecycleEvent, CompanionRecord, CompanionScope, CompanionSubject,
-    decode_companion_record_body,
-};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::ChannelIdentityLifecycleReceiptRecord;
-
-pub(super) fn companion_lifecycle_receipts(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    query: &ReceiptQuery,
-) -> Result<Vec<ReceiptRecord>> {
-    let mut receipts = Vec::new();
-    scan_entities_by_type(
-        vault,
-        txn,
-        crate::registry::ENTITY_TYPE_FACET,
-        "identity facet type index",
-        |id, header, body| {
-            if !crate::companion::is_identity_facet_body(body) {
-                return Ok(());
-            }
-            let record = decode_companion_record_body(body)?;
-            for (index, event) in record.lifecycle_events.iter().enumerate() {
-                let receipt =
-                    companion_lifecycle_receipt(id, &record, *event, index, header.learned_at);
-                if query.matches(&receipt) {
-                    receipts.push(receipt);
-                }
-            }
-            Ok(())
-        },
-    )?;
-    Ok(receipts)
-}
-
-fn companion_lifecycle_receipt(
-    id: EntityId,
-    record: &CompanionRecord,
-    event: CompanionLifecycleEvent,
-    event_index: usize,
-    learned_at: u64,
-) -> ReceiptRecord {
-    let mut fields = BTreeMap::new();
-    fields.insert(
-        "actor_class".to_owned(),
-        record.provenance.actor_class.gate_actor_class().to_owned(),
-    );
-    fields.insert(
-        "source".to_owned(),
-        record.provenance.source.as_str().to_owned(),
-    );
-    fields.insert(
-        "approval".to_owned(),
-        record.provenance.approval.as_str().to_owned(),
-    );
-    fields.insert("record_kind".to_owned(), record.kind().as_str().to_owned());
-    fields.insert(
-        "record_lifecycle".to_owned(),
-        record.lifecycle.as_str().to_owned(),
-    );
-    fields.insert("learned_at".to_owned(), learned_at.to_string());
-    append_companion_scope_fields(&mut fields, &record.scope);
-    append_companion_subject_fields(&mut fields, &record.subject);
-
-    ReceiptRecord {
-        receipt_id: format!(
-            "identity_lifecycle:{}:{}:{}",
-            id.to_hex(),
-            event.kind.as_str(),
-            event_index
-        ),
-        receipt_kind: ReceiptKind::IdentityLifecycle,
-        occurred_at: event.at,
-        actor: Some(record.provenance.actor_ref.to_hex()),
-        on_behalf_of: None,
-        outcome: event.kind.as_str().to_owned(),
-        job_ref: None,
-        trigger_ref: Some(format!("entity:{}", id.to_hex())),
-        policy_trace: Vec::new(),
-        fields,
-    }
-}
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
 /// counter-events, effective AND parked) into `IdentityLifecycle` receipts.
@@ -415,41 +333,5 @@ fn channel_identity_lifecycle_receipt(
         trigger_ref: Some(format!("entity:{}", hex_lower(&record.identity_id))),
         policy_trace: Vec::new(),
         fields,
-    }
-}
-
-fn append_companion_scope_fields(fields: &mut BTreeMap<String, String>, scope: &CompanionScope) {
-    match scope {
-        CompanionScope::Neutral => {
-            fields.insert("scope".to_owned(), "neutral".to_owned());
-        }
-        CompanionScope::Personal { person_ref } => {
-            fields.insert("scope".to_owned(), "personal".to_owned());
-            fields.insert("person_ref".to_owned(), person_ref.to_hex());
-        }
-        CompanionScope::SharedVault { vault_id } => {
-            fields.insert("scope".to_owned(), "shared_vault".to_owned());
-            fields.insert("vault_id".to_owned(), vault_id.to_string());
-        }
-    }
-}
-
-fn append_companion_subject_fields(
-    fields: &mut BTreeMap<String, String>,
-    subject: &CompanionSubject,
-) {
-    match subject {
-        CompanionSubject::Persona { persona_ref } => {
-            fields.insert("subject".to_owned(), "persona".to_owned());
-            fields.insert("persona_ref".to_owned(), persona_ref.to_hex());
-        }
-        CompanionSubject::Relationship {
-            source_ref,
-            target_ref,
-        } => {
-            fields.insert("subject".to_owned(), "relationship".to_owned());
-            fields.insert("source_ref".to_owned(), source_ref.to_hex());
-            fields.insert("target_ref".to_owned(), target_ref.to_hex());
-        }
     }
 }
