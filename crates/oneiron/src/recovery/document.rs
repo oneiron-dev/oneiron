@@ -23,6 +23,7 @@ pub struct CanonicalDocument {
     pub entity_id: [u8; 16],
     pub head: [u8; 16],
     pub text: String,
+    pub title: Option<String>,
     pub birth_actor: [u8; 16],
     pub birth_at: u64,
     pub authorship: Vec<crate::note::NoteAuthorship>,
@@ -34,7 +35,12 @@ impl CanonicalDocument {
     }
     /// Rebuild a new entity document; old insert/delete history is not imported.
     pub fn rebuild(&self) -> Result<LoroDoc> {
-        crate::note::recovery::rebuild(id(self.entity_id)?, &self.text, &self.authorship)
+        crate::note::recovery::rebuild(
+            id(self.entity_id)?,
+            &self.text,
+            self.title.as_deref(),
+            &self.authorship,
+        )
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,7 +172,7 @@ pub(super) fn from_doc(
     birth_actor: [u8; 16],
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
-    let (text, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
+    let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
     if !live && !authorship.is_empty() {
         return Err(invalid("proposal values cannot carry authority"));
     }
@@ -174,6 +180,7 @@ pub(super) fn from_doc(
         entity_id,
         head,
         text,
+        title,
         birth_actor,
         birth_at,
         authorship,
