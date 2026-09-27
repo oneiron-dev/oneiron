@@ -25,7 +25,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
     let draft = OutboundDraftInput {
         verb: "send".to_owned(),
         channel: "email".to_owned(),
-        target: "counterparty:durable-idempotency".to_owned(),
+        target: "transport:shared-inbox".to_owned(),
         on_behalf_of: None,
         content_ref: None,
         idempotency_key: Some("durable-idempotency:test".to_owned()),
@@ -37,7 +37,7 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
     };
     let first = vault
         .memory(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&draft)
+        .schedule_outbound_for_counterparty(&draft, "counterparty:durable-idempotency")
         .expect("first schedule");
     assert!(!first.deduped);
     let unsettled_tasks = vault.connector_send_tasks()?;
@@ -48,6 +48,11 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
     // not as a fabricated successful terminal state.
     assert_eq!(unsettled.attempt_started_node_id, None);
     assert_eq!(unsettled.outcome, None);
+    assert_eq!(unsettled.intent.target, "transport:shared-inbox");
+    assert_eq!(
+        unsettled.counterparty_ref.as_deref(),
+        Some("counterparty:durable-idempotency")
+    );
 
     reset_delivered_projection_receipt_observation();
     let mut executor = RecordingExecutor::default();
@@ -99,6 +104,17 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
         0
     );
     crate::comm::run_comm_projector(&vault).expect("project send receipts");
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            "transport:shared-inbox",
+            "email",
+        )
+        .expect("target claim query"),
+        0,
+        "transport destination is not a PERSON contact",
+    );
     assert_eq!(
         crate::comm::count_active_comm_claims(
             &vault,
@@ -180,6 +196,54 @@ pub(super) fn delivered_send_idempotency_survives_attempt_completion() -> crate:
 }
 
 #[test]
+fn unbound_send_does_not_trust_provider_counterparty_receipt_field() -> crate::Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let actor = entity(0x4C);
+    put_connector_task_actor(&vault, actor, 100)?;
+    put_policy_manifest_bytes(
+        &vault,
+        entity(0x4D),
+        &policy_manifest(&actor.to_hex(), "email", &["send"]),
+    )?;
+    let draft = connector_task_draft("unbound-provider-field", "session:unbound", 100);
+    vault
+        .memory(actor, EdgeActorClass::Agent)
+        .schedule_outbound(&draft)
+        .expect("unbound schedule");
+    let mut executor = RecordingExecutor {
+        outcome: OutboundExecutionOutcome::delivered_to_channel("provider:unbound")
+            .with_receipt_field("counterparty_ref", "forged-person"),
+        ..Default::default()
+    };
+    assert_eq!(
+        vault
+            .run_connector_task_executor(&mut executor, 101)
+            .unwrap(),
+        1
+    );
+    let receipt = crate::receipt::delivered_send_receipt_for_task(
+        &vault,
+        vault.connector_send_tasks()?[0].task_ref,
+    )?
+    .expect("delivered receipt");
+    assert_eq!(receipt.fields.get("counterparty_ref"), None);
+    crate::comm::run_comm_projector(&vault).expect("project unbound receipt");
+    // Neither the transport destination nor a provider-supplied identity
+    // becomes a standing counterparty without a frozen TASK binding.
+    assert_eq!(
+        crate::comm::count_active_comm_claims(
+            &vault,
+            crate::comm::PREDICATE_COMM_LAST_TOUCH,
+            "forged-person",
+            "email",
+        )
+        .expect("claim query"),
+        0,
+    );
+    Ok(())
+}
+
+#[test]
 fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<()> {
     use crate::attempt_queue::{AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome};
     use crate::memory::BRIDGE_OUTBOUND_ATTEMPT_KIND;
@@ -200,7 +264,7 @@ fn failed_send_receipt_is_audit_only_and_same_task_can_retry() -> crate::Result<
     );
     vault
         .memory(actor, EdgeActorClass::Agent)
-        .schedule_outbound(&draft)
+        .schedule_outbound_for_counterparty(&draft, &draft.target)
         .expect("schedule outbound");
     let tasks = vault.connector_send_tasks()?;
     assert_eq!(tasks.len(), 1);
