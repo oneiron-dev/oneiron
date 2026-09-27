@@ -181,6 +181,11 @@ pub(super) fn validate_cost_component(
     if input.cost_usd > MAX_NORMALIZABLE_COST_USD {
         return Err(format!("{owner}.costUsd is too large to normalize safely"));
     }
+    if input.token_source == TokenAccountingSource::ElapsedOnly
+        && (input.input_tokens != 0 || input.output_tokens != 0 || input.target_tokens != 0)
+    {
+        return Err(format!("{owner} elapsed_only must have zero tokens"));
+    }
     if matches!(
         input.token_source,
         TokenAccountingSource::FixtureDeclaredZero | TokenAccountingSource::NotApplicable

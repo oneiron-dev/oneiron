@@ -1,6 +1,7 @@
 //! Regressions for request policy freshness, wire identity, opaque bodies and
 //! post-filter durable trace publication.
 
+use super::support::telemetry_config;
 use super::*;
 
 fn error_variants(method: VaultReadMethod) -> [VaultReadError; 6] {
@@ -59,7 +60,7 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
     // A world grant admits that world AND base reality. Narrow it to base,
     // or revoke it by naming another actor, between calls on the same adapter.
     for actor_ref in ["reader", "other"] {
-        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (_dir, vault) = open_test_vault_with(telemetry_config());
         let (base_id, admitted_id) = seed_scoped_pack_vault(&vault);
         put_policy_manifest_bytes(
             &vault,
@@ -182,7 +183,7 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
 
 #[test]
 fn opaque_bodies_survive_query_and_hydrate_views_losslessly() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     let occurred = TimeRange { start: 1, end: 1 };
     let bodies = [vec![0xc1, 0xff, 0x00, 0x80], Vec::new(), vec![0xc0, 0xff]];
     let mut references = Vec::new();
@@ -266,7 +267,7 @@ fn opaque_bodies_survive_query_and_hydrate_views_losslessly() {
 #[test]
 fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
     for remove_all in [false, true] {
-        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (_dir, vault) = open_test_vault_with(telemetry_config());
         let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
         let mut assembly = vault
             .context_pack()
@@ -378,7 +379,7 @@ fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
 fn ordinary_context_pack_finalization_retains_scope_count_on_base_and_session_routes() {
     // Plain base beside a live room, off-record overlay, and on-record base.
     for (session_bound, on_record) in [(false, false), (true, false), (true, true)] {
-        let (_dir, vault) = open_test_vault_with(embedding_test_config());
+        let (_dir, vault) = open_test_vault_with(telemetry_config());
         let (admitted_id, _) = seed_scoped_pack_vault(&vault);
         let session = vault
             .off_record_session_vault()
@@ -502,7 +503,7 @@ fn provisional_context_pack_run(vault: &Vault) -> (Vec<u8>, RetrievalRunRecord) 
 
 #[test]
 fn finish_post_filter_propagates_finalize_failure_and_discards_trace() {
-    let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    let (_dir, vault) = open_test_vault_with(telemetry_config());
     seed_scoped_pack_vault(&vault);
     let mut assembly = vault
         .context_pack()
