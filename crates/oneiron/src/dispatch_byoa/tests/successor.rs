@@ -46,6 +46,14 @@ fn claimed_with_manifest(
             ManifestEntry::new(ManifestKind::Skill, "skill.capture", "1", 21),
         )
         .expect("manifest");
+    queue
+        .set_executor_model(
+            attempt.id,
+            "worker",
+            attempt.attempt_count,
+            "fixture/model@1",
+        )
+        .expect("stamp executor");
     if landing {
         queue
             .request_cancel(RequestAttemptCancel {
