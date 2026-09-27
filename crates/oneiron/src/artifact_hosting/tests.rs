@@ -949,6 +949,7 @@ fn blob_publish_after_delete_in_the_writer_cannot_revive_on_id_reuse() -> Result
                 artifact_id: id,
                 version: first.version,
             },
+            ArtifactServeTier::Private,
         )
         .expect_err("deleted export cannot be published");
     assert!(matches!(error, Error::EntityNotFound));
