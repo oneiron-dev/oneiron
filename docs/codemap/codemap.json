@@ -35938,8 +35938,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2118,
-   "test_files": 722
+   "source_files": 2120,
+   "test_files": 723
   },
   "oneiron-android": {
    "files": [
