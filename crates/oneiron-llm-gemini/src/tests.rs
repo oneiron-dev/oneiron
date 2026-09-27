@@ -471,6 +471,7 @@ fn routed_gemini_verdict_omits_cached_prefix_in_final_wire() {
     let request = LlmRequest {
         model: ModelId::new("google/old-model@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
@@ -633,6 +634,7 @@ fn gemini_native_seat_pins_win_normalized_caller_aliases_on_both_verbs() {
     let base = LlmRequest {
         model: ModelId::new("google/old-model@r1").unwrap(),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AnswerGen,
             class: CallClass::BestEffort,
@@ -697,4 +699,200 @@ fn gemini_native_seat_pins_win_normalized_caller_aliases_on_both_verbs() {
         json!("application/json")
     );
     assert!(vault.routed_seat("gemini-pin").unwrap().is_some());
+}
+
+#[test]
+fn manifest_gemini_seat_none_clears_stale_thinking_on_recorded_wire() {
+    use oneiron::llm::ReasoningEffort;
+    use oneiron::llm::manifest::{MODEL_ROLES, ModelBinding, ModelManifest, ModelSlot};
+    use oneiron::llm::seat::{
+        ModelDescription, SeatCandidate, SeatJudge, SeatJudgment, SeatKind, SeatTask,
+    };
+    use std::sync::{Arc, Mutex};
+
+    struct Judge(ModelId, Option<ReasoningEffort>);
+    impl SeatJudge for Judge {
+        fn judge(&self, _: &SeatTask, rows: &[SeatCandidate]) -> oneiron::Result<SeatJudgment> {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].wire, ModelWireFormat::Gemini);
+            assert_eq!(rows[0].default_effort, ReasoningEffort::None);
+            Ok(SeatJudgment {
+                model: self.0.clone(),
+                effort: self.1,
+                why: "The owner description fits this task".into(),
+            })
+        }
+    }
+    struct Recording(Arc<Mutex<Vec<GeminiHttpRequest>>>);
+    impl GeminiTransport for Recording {
+        fn execute<'a>(
+            &'a self,
+            request: GeminiHttpRequest,
+            _: &'a BudgetLease,
+        ) -> GeminiFuture<'a> {
+            self.0.lock().unwrap().push(request);
+            Box::pin(async {
+                Ok(GeminiHttpResponse {
+                    status: 200,
+                    body: fixture(),
+                })
+            })
+        }
+        fn stream<'a>(
+            &'a self,
+            _: GeminiHttpRequest,
+            _: &'a BudgetLease,
+        ) -> LlmResult<GeminiProviderStream<'a>> {
+            Err(FatalLlmError::InvalidRequest.into())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
+    let model = ModelId::new("google/gemini-model@r1").unwrap();
+    vault
+        .set_model_manifest(&ModelManifest {
+            version: 2,
+            roles: MODEL_ROLES
+                .into_iter()
+                .map(|role| {
+                    (
+                        role,
+                        ModelBinding {
+                            model: model.clone(),
+                            slot: ModelSlot::Llm,
+                            tier: ModelTierRef("legacy".into()),
+                            route_models: BTreeMap::new(),
+                        },
+                    )
+                })
+                .collect(),
+            routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+                .into_iter()
+                .map(|slot| (slot, ModelLocality::ThirdParty))
+                .collect(),
+            verdict: None,
+        })
+        .unwrap();
+    let row = ModelRegistryRow {
+        version: 1,
+        wire: ModelWireFormat::Gemini,
+        catalog: LlmCatalogEntry {
+            model: model.clone(),
+            display_name: "Gemini fixture".into(),
+            locality: ModelLocality::ThirdParty,
+            context_window_tokens: 8192,
+            max_output_tokens: Some(1024),
+            cost: Some(LlmCatalogCost {
+                input_per_million: "1".into(),
+                output_per_million: "1".into(),
+                cache_read_per_million: None,
+                cache_write_per_million: None,
+            }),
+            capabilities: vec![LlmCapability::Reasoning, LlmCapability::JsonResponse],
+            metadata: BTreeMap::new(),
+        },
+        scores: BTreeMap::new(),
+        fetched_at: BTreeMap::new(),
+    };
+    vault.put_model_registry_row(&row).unwrap();
+    vault
+        .set_model_description(&ModelDescription {
+            model: model.clone(),
+            facet: "reasoning".into(),
+            owner: Some("Task judgment".into()),
+            measured: None,
+            benchmarks: None,
+            vendor: None,
+        })
+        .unwrap();
+    let task = SeatTask {
+        kind: SeatKind::Attempt,
+        warm_scope: "gemini-run".into(),
+        task: "judge a task".into(),
+        facet: "reasoning".into(),
+        required: vec![LlmCapability::JsonResponse],
+        min_context_tokens: 1000,
+        locality: ModelLocality::ThirdParty,
+        override_model: None,
+        override_effort: None,
+    };
+    let run_id = EntityId::now();
+    let seat = vault
+        .birth_model_seat(run_id, &task, &Judge(model.clone(), None))
+        .unwrap();
+    assert_eq!(seat.effort(), ReasoningEffort::None);
+    assert_eq!(
+        vault.model_seat_receipt(run_id).unwrap().unwrap().effort,
+        ReasoningEffort::None
+    );
+    let mut request = LlmRequest {
+        model: model.clone(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            purpose: CallPurpose::AnswerGen,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::AnswerGen,
+                ModelTierRef("default".into()),
+            ),
+            response_format: ResponseFormat::Json {
+                schema: json!({"type":"object"}),
+            },
+            locality: ModelLocality::ThirdParty,
+        },
+        messages: vec![LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: "task".into(),
+            }],
+        }],
+        tools: vec![],
+        params: BTreeMap::from([
+            ("reasoning_effort".into(), json!("high")),
+            ("thinkingConfig".into(), json!({"thinkingBudget":4096})),
+            ("temperature".into(), json!(0.2)),
+        ]),
+        provider_options: BTreeMap::new(),
+    };
+    seat.bind(&mut request);
+    let recorded = Arc::new(Mutex::new(Vec::new()));
+    let backend = GeminiBackend::from_registry(&vault, Recording(recorded.clone())).unwrap();
+    let guard =
+        BudgetGuard::with_reserve_units("gemini-seat", 100, 10, BudgetExhaustionPolicy::Suspend);
+    let lease = guard.admit_for_request(&request).unwrap().lease;
+    ready(backend.generate(request.clone(), &lease)).unwrap();
+    let seen = recorded.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    let generation = &seen[0].body["generationConfig"];
+    assert_eq!(generation["temperature"], json!(0.2));
+    assert!(generation.get("reasoning_effort").is_none());
+    assert!(generation.get("thinkingConfig").is_none());
+    drop(seen);
+    // Gemini's effort mapping is not a universal enum. Neither admission nor
+    // the direct adapter door may claim a non-None pin works silently.
+    let mut unsupported = task;
+    unsupported.warm_scope = "different-run".into();
+    unsupported.override_effort = Some(ReasoningEffort::Low);
+    assert!(
+        vault
+            .birth_model_seat(EntityId::now(), &unsupported, &Judge(model.clone(), None))
+            .is_err()
+    );
+    unsupported.override_effort = None;
+    assert!(
+        vault
+            .birth_model_seat(
+                EntityId::now(),
+                &unsupported,
+                &Judge(model, Some(ReasoningEffort::High))
+            )
+            .is_err()
+    );
+    request.envelope.seat_effort = Some(ReasoningEffort::Low);
+    assert!(matches!(
+        super::wire::build_request(&row.catalog, &request, false),
+        Err(LlmError::Fatal(FatalLlmError::InvalidRequest))
+    ));
+    assert_eq!(recorded.lock().unwrap().len(), 1);
 }

@@ -97,6 +97,7 @@ fn request() -> LlmRequest {
     LlmRequest {
         model: model("test/unused@r1"),
         envelope: CallEnvelope {
+            seat_effort: None,
             scope: Default::default(),
             purpose: CallPurpose::AutoCheck,
             class: CallClass::BestEffort,
@@ -645,4 +646,68 @@ fn verdict_controls_reject_shadowing_provider_options_and_reserved_overrides() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn verdict_and_routed_seat_rebinding_replace_any_prior_effort_pin() {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let mut configured = policy();
+    configured.models[1]
+        .effort_ladder
+        .push(ReasoningEffort::None);
+    vault.set_description_policy(&configured).unwrap();
+    let generating = vault
+        .route_seat(
+            SeatBirth {
+                id: "generating",
+                role: "writer",
+                task: "quick",
+                purpose: &CallPurpose::AnswerGen,
+                settings: &SeatSettings::default(),
+                tier: &tier(),
+            },
+            &Judge::new(),
+        )
+        .unwrap();
+    let mut request = request();
+    generating.bind(&mut request).unwrap();
+    assert_eq!(request.envelope.seat_effort, Some(ReasoningEffort::Low));
+    let settings = SeatSettings {
+        allowed_models: Some(vec![model("test/strong@r1")]),
+        effort: Some(ReasoningEffort::High),
+        inference_overrides: BTreeMap::new(),
+    };
+    let payload = || VerdictPayload {
+        instructions: Some("current schema verdict".into()),
+        input: vec![ContentPart::Text {
+            text: "new evidence".into(),
+        }],
+    };
+    let high = vault
+        .routed_verdict_request("deep", &Judge::new(), &settings, request.clone(), payload())
+        .unwrap();
+    assert_eq!(high.model, model("test/strong@r1"));
+    assert_eq!(high.envelope.seat_effort, Some(ReasoningEffort::High));
+    assert_eq!(high.params["reasoning_effort"], json!("high"));
+    // Rebinding a call to its original generating seat restores THAT seat's pin.
+    let mut rebound = high;
+    generating.bind(&mut rebound).unwrap();
+    assert_eq!(rebound.envelope.seat_effort, Some(ReasoningEffort::Low));
+    assert_eq!(rebound.params["reasoning_effort"], json!("low"));
+    let none = vault
+        .routed_verdict_request(
+            "deep",
+            &Judge::new(),
+            &SeatSettings {
+                effort: Some(ReasoningEffort::None),
+                ..settings
+            },
+            request,
+            payload(),
+        )
+        .unwrap();
+    assert_eq!(none.model, model("test/strong@r1"));
+    assert_eq!(none.envelope.seat_effort, Some(ReasoningEffort::None));
+    assert!(!none.params.contains_key("reasoning_effort"));
+    assert_eq!(generating.effort, ReasoningEffort::Low);
 }

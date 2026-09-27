@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::registry::ModelWireFormat;
 use super::{LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::{
     Vault,
@@ -153,6 +154,7 @@ pub struct SeatTask {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeatCandidate {
     pub model: ModelId,
+    pub wire: ModelWireFormat,
     pub locality: ModelLocality,
     pub description: Vec<DescriptionLine>,
     pub reasoning: bool,
@@ -293,7 +295,8 @@ impl SeatPool {
             let reasoning = catalog.supports(&LlmCapability::Reasoning);
             candidates.push(SeatCandidate {
                 reasoning,
-                default_effort: if reasoning {
+                wire: row.wire,
+                default_effort: if reasoning && row.wire != ModelWireFormat::Gemini {
                     ReasoningEffort::Low
                 } else {
                     ReasoningEffort::None
@@ -339,7 +342,8 @@ impl SeatPool {
             .or(judgment.effort)
             .unwrap_or(candidate.default_effort);
         if judgment.why.trim().is_empty()
-            || (effort != ReasoningEffort::None && !candidate.reasoning)
+            || (effort != ReasoningEffort::None
+                && (!candidate.reasoning || candidate.wire == ModelWireFormat::Gemini))
         {
             return Err(invalid("invalid seat judgment or effort"));
         }
