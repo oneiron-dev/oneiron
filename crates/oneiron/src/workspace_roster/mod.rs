@@ -6,8 +6,8 @@
 //! sharing one presence. Every part of that already exists as a generic rail:
 //! the house mind is a seeded `AGENT_DEF` row ([`crate::agent_def`]) anchored
 //! to the workspace `ORG` through [`crate::subject_model`], a companion is a
-//! model-substrate `PERSON` with its own actor anchor and companion-register
-//! record, membership is a [`crate::federation::FederationGrant`], and a
+//! model-substrate `PERSON` with its own actor anchor and PERSON persona baseline,
+//! membership is a [`crate::federation::FederationGrant`], and a
 //! delegated mailbox is a [`crate::channel_identity::ChannelIdentity`]. This
 //! module is the assembly order and the crash-safe journal around it. It adds
 //! no entity kind, no compiled persona, and no product name.
@@ -65,8 +65,6 @@ use crate::channel_identity::{
 use crate::channel_identity_autonomy::{
     ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -113,14 +111,15 @@ mod tests;
 
 mod project;
 pub(crate) use project::{
-    LEADER_CHAT_FIELD, admit_leader_chat_turn, admit_leader_chat_witness, deindex_project_room,
-    is_project_type, leader_chat_record_permitted, permit_leader_chat_record,
-    reconcile_project_rooms, seed_root_project, settle_leader_chat_record, validate_project_body,
-    validate_room_body,
+    HUB_BELONGS_TO_LAMBDA, LEADER_CHAT_FIELD, admit_leader_chat_turn, admit_leader_chat_witness,
+    deindex_project_room, is_project_entity, is_project_type, leader_chat_record_permitted,
+    permit_leader_chat_record, reconcile_project_rooms, seed_root_project,
+    settle_leader_chat_record, validate_project_body, validate_project_edge_delete,
+    validate_project_edge_put, validate_project_graph, validate_room_body,
 };
 pub use project::{
-    LEADER_CHAT_RULE_PREDICATE, LeaderChat, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRoom,
-    ProjectRoomChange, ProjectWidenAsk, ProjectWidenAxis,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, PROJECT_TYPE_BYTE, ProjectRecord, ProjectRole,
+    ProjectRoom, ProjectRoomChange, ProjectWidenAsk, ProjectWidenAxis,
 };
 
 mod rooms;

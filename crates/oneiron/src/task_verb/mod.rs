@@ -5,6 +5,7 @@
 
 mod ask_band;
 mod ask_facade;
+mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_types;
@@ -117,9 +118,11 @@ pub(crate) use ask_settlement::settle_ask_if_due;
 
 pub use ask_types::{
     AskAuthorityScope, TaskAskAnswer, TaskAskBranch, TaskAskClass, TaskAskCoverage, TaskAskDecide,
-    TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskElectorate, TaskAskEvidence,
-    TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle, TaskAskHoldReason,
-    TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId, TaskAskProvisional, TaskAskQuestion,
-    TaskAskReceipt, TaskAskResult, TaskAskSettlement, TaskAskSettlementReason, TaskAskSource,
-    TaskAskSpec, TaskAskStatus, TaskAskSurface, TaskAskTarget, TaskAskWait, TaskAskWord,
+    TaskAskDecision, TaskAskDefault, TaskAskDisagree, TaskAskEffectAuthorization,
+    TaskAskElectorate, TaskAskEvidence, TaskAskEvidenceReason, TaskAskFallback, TaskAskHandle,
+    TaskAskHoldReason, TaskAskLadderPrediction, TaskAskNeed, TaskAskOptionId,
+    TaskAskPersonEvidence, TaskAskPersonKind, TaskAskPreflight, TaskAskPreflightRecipient,
+    TaskAskProvisional, TaskAskQuestion, TaskAskReceipt, TaskAskResult, TaskAskSettlement,
+    TaskAskSettlementReason, TaskAskSource, TaskAskSpec, TaskAskStatus, TaskAskSurface,
+    TaskAskTarget, TaskAskWait, TaskAskWord,
 };

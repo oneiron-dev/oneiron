@@ -255,26 +255,7 @@ pub(crate) fn keep_membership_pin(
     Ok(())
 }
 
-pub(super) fn record_kind(body: &[u8]) -> Result<Option<&'static str>> {
-    let mut bytes = body;
-    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
-        return Ok(None);
-    };
-    let mut kinds = fields
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some("dag_kind"));
-    let Some((_, value)) = kinds.next() else {
-        return Ok(None);
-    };
-    if !bytes.is_empty() || kinds.next().is_some() {
-        return Err(invalid("invalid DAG record kind"));
-    }
-    match value.as_str() {
-        Some("record") => Ok(Some("record")),
-        Some("thread") => Ok(Some("thread")),
-        _ => Err(invalid("invalid DAG record kind")),
-    }
-}
+pub(super) use super::topology::record_kind;
 
 pub(crate) fn pin_typed_record(
     store: &impl ManifestDbs,
@@ -287,4 +268,110 @@ pub(crate) fn pin_typed_record(
         pin_record(store, txn, id)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_parent_value(
+    source: EntityId,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<()> {
+    if source == target || value.weight != 1.0 || value.vad.is_some() || value.provenance.is_some()
+    {
+        return Err(invalid("invalid received DAG edge value"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_edge_shape(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+    use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+
+    let (source_type, target_type) = match kind {
+        EdgeKind::Parent | EdgeKind::RepliesTo => (ENTITY_TYPE_TURN, ENTITY_TYPE_TURN),
+        EdgeKind::SpawnedBy => (ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN),
+        _ => return Err(super::graph::invalid("not a received DAG edge")),
+    };
+    if source == target || value.weight != 1.0 || value.vad.is_some() || value.provenance.is_some()
+    {
+        return Err(super::graph::invalid("invalid received DAG edge value"));
+    }
+    let source_body = match live_entity_row_in_txn(store, txn, &source)? {
+        LiveEntityRow::Live { entity_type, body } if entity_type == source_type => body,
+        _ => return Err(super::graph::invalid("invalid received DAG edge source")),
+    };
+    if !matches!(
+        live_entity_row_in_txn(store, txn, &target)?,
+        LiveEntityRow::Live { entity_type, .. } if entity_type == target_type
+    ) {
+        return Err(super::graph::invalid("invalid received DAG edge target"));
+    }
+    if kind == EdgeKind::RepliesTo {
+        let mut input = source_body.as_slice();
+        let reply_target = rmpv::decode::read_value(&mut input).ok().and_then(|value| {
+            let fields = value.as_map()?;
+            let mut pointers = fields
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("reply_to"));
+            let (_, pointer) = pointers.next()?;
+            if pointers.next().is_some() {
+                return None;
+            }
+            let mut records = pointer
+                .as_map()?
+                .iter()
+                .filter(|(key, _)| key.as_str() == Some("record"));
+            let (_, record) = records.next()?;
+            if records.next().is_some() {
+                return None;
+            }
+            EntityId::from_hex(record.as_str()?).ok()
+        });
+        if !input.is_empty() || reply_target != Some(target) {
+            return Err(super::graph::invalid(
+                "received reply pointer disagrees with RepliesTo",
+            ));
+        }
+    }
+    if kind == EdgeKind::SpawnedBy {
+        let mut input = source_body.as_slice();
+        let anchor = rmpv::decode::read_value(&mut input).ok().and_then(|value| {
+            value.as_map().and_then(|fields| {
+                let mut anchors = fields
+                    .iter()
+                    .filter(|(key, _)| key.as_str() == Some("dag_spawning_turn"));
+                let (_, value) = anchors.next()?;
+                (anchors.next().is_none())
+                    .then(|| value.as_str())
+                    .flatten()
+                    .and_then(|text| EntityId::from_hex(text).ok())
+            })
+        });
+        if !input.is_empty() || anchor != Some(target) {
+            return Err(super::graph::invalid(
+                "received session anchor disagrees with SpawnedBy",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
+pub(crate) fn validate_received_edge(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    kind: EdgeKind,
+    target: EntityId,
+    value: crate::edge::DecodedEdgeValue,
+) -> Result<()> {
+    validate_received_edge_shape(store, txn, source, kind, target, value)
 }

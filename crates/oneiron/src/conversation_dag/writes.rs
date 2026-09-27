@@ -10,7 +10,7 @@ use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use rmpv::Value;
@@ -65,7 +65,7 @@ fn stamp_body(
     }
     entries.push((
         Value::from("dag_kind"),
-        Value::from(if thread { "thread" } else { "record" }),
+        Value::from(super::topology::RecordKind::from_thread(thread).as_str()),
     ));
     entries.push((
         Value::from("actor"),
@@ -129,19 +129,18 @@ pub(crate) fn append_in_txn(
     if input.advance && input.parent != old_head {
         return Err(RecordError::HeadAdvanceOffTrunk.into());
     }
-    let spawning_turn = if let Some(session) = input.session {
-        require_type(&vault.store, txn, &session, ENTITY_TYPE_SESSION)?;
-        let parents = edge_ids(&vault.store, txn, &session, EdgeKind::SpawnedBy, false, 2)?;
-        if parents.len() > 1 {
-            return Err(invalid("session has multiple SpawnedBy edges"));
+    let placement = if let Some(session) = input.session {
+        match super::topology::classify_session(&vault.store, txn, session, input.conversation)? {
+            super::topology::Fact::Known(placement) => Some(placement),
+            super::topology::Fact::Wait(_) => {
+                return Err(invalid("session anchor has not been reconciled"));
+            }
+            super::topology::Fact::Reject(reason) => return Err(reason.into_error()),
         }
-        if let Some(turn) = parents.first() {
-            require_member(&vault.store, txn, &input.conversation, turn)?;
-        }
-        parents.first().copied()
     } else {
         None
     };
+    let spawning_turn = placement.and_then(super::topology::SessionPlacement::anchor);
     if spawning_turn.is_some() && input.advance {
         return Err(RecordError::HeadAdvanceOffTrunk.into());
     }
@@ -155,22 +154,30 @@ pub(crate) fn append_in_txn(
         if path.len() >= crate::limits::MAX_ANCESTOR_DEPTH {
             return Err(Error::IndexOverflow("conversation_dag_walk"));
         }
-        let parent_session =
-            crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &parent)?;
-        if spawning_turn.is_some()
-            && spawning_turn != Some(parent)
-            && parent_session != input.session
-        {
-            return Err(invalid(
-                "sub-session parent must be its spawning turn or its own record",
-            ));
-        }
-        if graph::is_sub_session_record(&vault.store, txn, &parent)?
-            && parent_session != input.session
-            && spawning_turn != Some(parent)
-        {
-            return Err(invalid("cannot append across sub-session boundaries"));
-        }
+        let target_placement = if Some(parent) == spawning_turn {
+            None
+        } else {
+            crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &parent)?
+                .map(|session| {
+                    super::topology::classify_session(
+                        &vault.store,
+                        txn,
+                        session,
+                        input.conversation,
+                    )
+                })
+                .transpose()?
+                .map(|fact| match fact {
+                    super::topology::Fact::Known(placement) => Ok(placement),
+                    super::topology::Fact::Wait(_) => {
+                        Err(invalid("session anchor has not been reconciled"))
+                    }
+                    super::topology::Fact::Reject(reason) => Err(reason.into_error()),
+                })
+                .transpose()?
+        };
+        super::topology::parent_boundary(placement, target_placement, parent)
+            .map_err(super::topology::DagRejection::into_error)?;
     } else {
         if spawning_turn.is_some() {
             return Err(invalid("sub-session root must continue its spawning turn"));

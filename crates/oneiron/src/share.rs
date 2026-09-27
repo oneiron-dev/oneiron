@@ -219,6 +219,25 @@ fn admission_key(id: &EntityId) -> Vec<u8> {
     [b"share:brief:admission:v1:".as_slice(), id.as_bytes()].concat()
 }
 
+// A one-way admission fence for a deleted brief identity. It is staged in the
+// same writer that rechecks direct shares, before the CRDT tombstone can publish.
+// A failed delete may leave the fence, but cannot leave an unshared new grant
+// racing ahead of a later retry at the same id.
+fn delete_reservation_key(id: &EntityId) -> Vec<u8> {
+    [b"share:brief:deleting:v1:".as_slice(), id.as_bytes()].concat()
+}
+
+pub(crate) fn reserve_brief_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store
+        .vault_meta
+        .put(txn, &delete_reservation_key(id), &[1])?;
+    Ok(())
+}
+
 pub(crate) fn check_generic_grant_write(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -389,6 +408,33 @@ pub(crate) fn read_share_in_txn(
     Ok(Some((share, admission)))
 }
 
+/// Explicit, currently effective brief grants for this entity. A facet stamp
+/// alone is not recipient evidence; grants with opaque non-entity handles are
+/// deliberately not guessed to target this entity.
+pub(crate) fn active_brief_shares_for(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    now: u64,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    let mut shares = Vec::new();
+    for row in store
+        .type_index
+        .prefix_iter(txn, &[ENTITY_TYPE_ACCESS_GRANT])?
+    {
+        let (key, _) = row?;
+        let share_id = crate::vault::entity_id_from_type_index_key(&key)?;
+        if let Some((share, _)) = read_share_in_txn(store, txn, &share_id)?
+            && EntityId::from_hex(&share.brief_ref).ok() == Some(*id)
+            && share.grant().effective_status_at(now) == AccessGrantStatus::Active
+        {
+            shares.push((share_id, share.recipient_ref));
+        }
+    }
+    shares.sort_unstable();
+    Ok(shares)
+}
+
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
     let raw = store
         .port_entity_record(txn, &actor.entity_ref())?
@@ -478,6 +524,29 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
+        // A past hard purge is an irreversible identity fence. A new brief
+        // grant must not point at that same id, even when the caller reuses
+        // the exact opaque `brief:<hex>` handle after deleting the record.
+        if let Ok(id) = EntityId::from_hex(&share.brief_ref) {
+            if self
+                .store
+                .vault_meta
+                .get(&txn, &delete_reservation_key(&id))?
+                .is_some()
+            {
+                return Err(Error::InvariantViolation("cannot share a deleting brief"));
+            }
+            if self
+                .store
+                .sync_state
+                .get(&txn, &crate::deletion::local_hard_delete_key(&id))?
+                .is_some()
+            {
+                return Err(Error::InvariantViolation(
+                    "cannot share a hard-deleted brief",
+                ));
+            }
+        }
         verify_share_actor(&self.store, &txn, issuer)?;
         let (gate_id, decision) =
             crate::gate::check_share_create_policy(&self.store, &mut txn, share_id, issuer, share)?;
@@ -564,11 +633,11 @@ impl Vault {
         requested_scope_narrowing: Option<&ShareViewerScope>,
         brief_claim_refs: &[EntityId],
     ) -> Result<Option<ResolvedShare>> {
+        let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
         let Some((share, _)) = read_share_in_txn(&self.store, &txn, share_id)? else {
             return Ok(None);
         };
-        let now = self.store.clock.now_recorded_at();
         if share.grant().effective_status_at(now) != AccessGrantStatus::Active
             || share.recipient_ref != *viewer
         {

@@ -109,18 +109,23 @@ pub(super) fn lineage(
     txn: &heed::RoTxn<'_>,
     start: EntityId,
 ) -> Result<Vec<EntityId>> {
+    // Breadth-first over the PROJECT DAG. The first shared ancestor is the
+    // closest on the requester's side, while rules check every shared node.
     let mut result = Vec::new();
-    let mut next = Some(start);
-    while let Some(id) = next {
-        if result.len() >= 256 || result.contains(&id) {
+    let mut pending = std::collections::VecDeque::from([start]);
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop_front() {
+        if !seen.insert(id) {
+            continue; // a diamond legitimately reaches one ancestor twice
+        }
+        if seen.len() > 256 {
             return Err(denied());
         }
         let project = project_in(vault, txn, id)?;
         result.push(id);
-        next = project
-            .parent
-            .map(|parent| EntityId::from_hex(&parent))
-            .transpose()?;
+        for parent in project.parents {
+            pending.push_back(EntityId::from_hex(&parent)?);
+        }
     }
     Ok(result)
 }
@@ -167,6 +172,7 @@ fn check_rule(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) 
         if let Some(rule) = vault.find_claim_for_subject_in_txn(txn, &ancestor, |id, claim| {
             (claim.predicate == LEADER_CHAT_RULE_PREDICATE
                 && claim.subject == ClaimSubject::Entity(ancestor)
+                && claim.scope_project == ancestor
                 && claim.approval == ClaimApprovalStatus::Approved
                 && claim.lifecycle == ClaimLifecycleStatus::Active
                 && !claim.stale

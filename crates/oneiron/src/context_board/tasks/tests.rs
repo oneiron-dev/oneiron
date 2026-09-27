@@ -74,9 +74,11 @@ fn connector_send_task() -> ConnectorSendTask {
             trigger_ref: "tr_1".to_owned(),
             job_ref: None,
         },
+        counterparty_ref: None,
         originating_session_ref: None,
         attempt_started_node_id: None,
         outcome: None,
+        suppression: None,
         // ONE-1768 hydrated clock authority. This board fixture is a
         // hostless send: absent everywhere, which is exactly what a
         // pre-change TASK body decodes to.
