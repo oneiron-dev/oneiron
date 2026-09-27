@@ -7407,6 +7407,7 @@ dependencies = [
 name = "oneiron-llm-openai"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "futures-core",
  "oneiron",
  "serde",
