@@ -67,6 +67,19 @@ impl ScopedRead<'_> {
         if header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
+        // Grant bodies contain both private diary ids. They are authority,
+        // never a readable graph/search result of their own.
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT
+            && !crate::access_grant::decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])
+                .is_ok_and(|grant| {
+                    !matches!(
+                        grant.scope,
+                        crate::access_grant::AccessGrantScope::DiaryCoreference { .. }
+                    )
+                })
+        {
+            return Ok(false);
+        }
         let deletion = match self.session_view {
             Some(view) => crate::ports::TombstoneStoreRead::port_deletion_state(view, rtxn, id)?,
             None => crate::ports::TombstoneStoreRead::port_deletion_state(self.vault, rtxn, id)?,
@@ -92,7 +105,7 @@ impl ScopedRead<'_> {
             return Ok(false);
         }
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..]);
+            return self.note_readable_in(rtxn, id, &raw[ENTITY_METADATA_HEADER_LEN..], policy);
         }
         if header.entity_type == ENTITY_TYPE_CLAIM {
             self.is_claim_raw_readable_with_policy_in(rtxn, policy, id, raw, filter)

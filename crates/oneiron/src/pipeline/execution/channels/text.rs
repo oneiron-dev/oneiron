@@ -31,6 +31,7 @@ pub(super) struct TextChannelInputs<'a> {
     pub(super) filter_config: PipelineFilterConfig<'a>,
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) text_scope_widening_active: bool,
+    pub(super) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
     /// The D19 widening probe's gate cache, moved in and reused as the
     /// exact-posting probe gate.
     pub(super) claim_gate_widening_probe: ClaimStatusGateCache,
@@ -179,6 +180,7 @@ impl PipelineBuilder<'_> {
                     crate::bm25::Bm25SearchOptions {
                         recency: None,
                         exact_posting_matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
                     },
                 )?
             } else {
@@ -191,6 +193,7 @@ impl PipelineBuilder<'_> {
                         rank: inputs.bm25_config,
                         filter_all: self.candidate_filter.is_some(),
                         matches_scope: &mut exact_posting_matches_scope,
+                        private_note_ids: inputs.private_note_ids,
                     },
                 )?
             };
@@ -244,6 +247,7 @@ impl PipelineBuilder<'_> {
                 };
                 let mut retry_prefix_probe_claim_gate = ClaimStatusGateCache {
                     include_stale: inputs.authority_filter.include_stale,
+                    private_note_ids: claim_gate.private_note_ids.clone(),
                     ..ClaimStatusGateCache::default()
                 };
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
@@ -270,6 +274,7 @@ impl PipelineBuilder<'_> {
                         crate::bm25::Bm25SearchOptions {
                             recency: None,
                             exact_posting_matches_scope: &mut retry_exact_posting_matches_scope,
+                            private_note_ids: inputs.private_note_ids,
                         },
                     )?
                 } else {
@@ -282,6 +287,7 @@ impl PipelineBuilder<'_> {
                             rank: inputs.bm25_config,
                             filter_all: self.candidate_filter.is_some(),
                             matches_scope: &mut retry_exact_posting_matches_scope,
+                            private_note_ids: inputs.private_note_ids,
                         },
                     )?
                 };
@@ -348,6 +354,7 @@ impl PipelineBuilder<'_> {
         let scope = crate::bm25::Bm25SearchOptions {
             recency: options.recency,
             exact_posting_matches_scope: &mut matches_scope,
+            private_note_ids: options.private_note_ids,
         };
         if self.candidate_filter.is_some() {
             crate::bm25::search_text_filtered_with_recency(

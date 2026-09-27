@@ -23,6 +23,7 @@ impl ScopedRead<'_> {
             .vault
             .query()
             .authority_filter(filter.clone())
+            .scoped_note_reader(self.actor_key.clone())
             .search(query, vector, None, fetch_limit)
             .run_for_pack()?;
         self.filter_search_results(
@@ -109,36 +110,39 @@ impl ScopedRead<'_> {
         let mut value = Vec::new();
         let mut suppressed = 0;
         for result in results {
-            if self.is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
-                && self.is_entity_retrievable_with_policy_in(
-                    &txn,
-                    &fresh_policy,
-                    &fresh_filter,
-                    &result.id,
-                )?
-                && match revisions.get(&result.id) {
-                    Some(revision) => {
-                        let mode = crate::vault::ReadMode::Pinned(*revision);
-                        self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
-                            .is_some()
-                            && self
-                                .entity_raw_with_mode_in(
-                                    &txn,
-                                    &fresh_policy,
-                                    &fresh_filter,
-                                    &result.id,
-                                    mode,
-                                )?
+            let admitted = self.admit_in(&txn, &result.id, || {
+                let allowed = self
+                    .is_entity_retrievable_with_policy_in(&txn, policy, filter, &result.id)?
+                    && self.is_entity_retrievable_with_policy_in(
+                        &txn,
+                        &fresh_policy,
+                        &fresh_filter,
+                        &result.id,
+                    )?
+                    && match revisions.get(&result.id) {
+                        Some(revision) => {
+                            let mode = crate::vault::ReadMode::Pinned(*revision);
+                            self.entity_raw_with_mode_in(&txn, policy, filter, &result.id, mode)?
                                 .is_some()
-                    }
-                    None => true,
-                }
+                                && self
+                                    .entity_raw_with_mode_in(
+                                        &txn,
+                                        &fresh_policy,
+                                        &fresh_filter,
+                                        &result.id,
+                                        mode,
+                                    )?
+                                    .is_some()
+                        }
+                        None => true,
+                    };
+                Ok(allowed.then_some(result))
+            })?;
+            suppressed += admitted.suppression();
+            if let Some(row) = admitted.into_option()
+                && value.len() < limit
             {
-                if value.len() < limit {
-                    value.push(result);
-                }
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
-                suppressed += 1;
+                value.push(row);
             }
         }
         let mut receipt = self.receipt_for(requested, policy, filter, previously_suppressed);
@@ -218,10 +222,13 @@ impl ScopedRead<'_> {
         let mut value = Vec::with_capacity(before);
         let mut suppressed = 0;
         for result in results {
-            if self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)? {
-                value.push(result);
-            } else if self.entity_record_in(&txn, &result.id)?.is_some() {
-                suppressed += 1;
+            let admitted = self.admit_in(&txn, &result.id, || {
+                self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &result.id)
+                    .map(|visible| visible.then_some(result))
+            })?;
+            suppressed += admitted.suppression();
+            if let Some(row) = admitted.into_option() {
+                value.push(row);
             }
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);

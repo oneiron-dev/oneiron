@@ -97,6 +97,7 @@ pub fn put_coreference_link(
     if !vault.entity_exists(&local_person)? || !vault.entity_exists(&other_person)? {
         return Err(Error::EntityNotFound);
     }
+    require_person_pair(vault, local_person, other_person)?;
 
     let claim_id = vault.store.clock.entity_id()?;
     let body = coreference_claim_body(
@@ -150,6 +151,7 @@ pub fn coreference_share_consent(
     require_coreference_actor(vault, actor)?;
     let (source, target) = coreference_link_orientation(vault, local_person, other_person)?
         .ok_or(Error::EdgeNotFound)?;
+    require_person_pair(vault, local_person, other_person)?;
 
     let claim_id = vault.store.clock.entity_id()?;
     let body = coreference_claim_body(
@@ -195,6 +197,9 @@ pub(crate) fn coreference_shared_for_pact_in_txn(
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
+    if !person_pair_in_txn(vault, txn, a, b)? {
+        return Ok(false);
+    }
     for (source, target) in [(a, b), (b, a)] {
         let key = crate::store::Store::encode_edge_key(&source, EdgeKind::SameAs, &target);
         if vault.store.edges_out.get(txn, &key)?.is_some()
@@ -373,4 +378,27 @@ fn apply_coreference_ops(vault: &Vault, ops: Vec<BatchOp>) -> Result<()> {
             true,
         )
     })
+}
+
+fn require_person_pair(vault: &Vault, a: EntityId, b: EntityId) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    if person_pair_in_txn(vault, &txn, a, b)? {
+        Ok(())
+    } else {
+        Err(Error::InvalidClaimBody(
+            "cross-vault same_as requires PERSON endpoints",
+        ))
+    }
+}
+
+pub(crate) fn person_pair_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    a: EntityId,
+    b: EntityId,
+) -> Result<bool> {
+    Ok(
+        vault.get_entity_type_in_txn(txn, &a)? == Some(crate::registry::ENTITY_TYPE_PERSON)
+            && vault.get_entity_type_in_txn(txn, &b)? == Some(crate::registry::ENTITY_TYPE_PERSON),
+    )
 }

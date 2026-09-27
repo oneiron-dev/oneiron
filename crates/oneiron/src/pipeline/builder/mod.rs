@@ -46,6 +46,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) criticality: Option<bool>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
+    /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
+    pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
     pub(super) since_filter: Option<u64>,
     pub(super) occurred_range: Option<(u64, u64)>,
     pub(super) learned_range: Option<(u64, u64)>,
@@ -112,6 +114,7 @@ impl<'a> PipelineBuilder<'a> {
             type_filter: None,
             criticality: None,
             authority_filter: None,
+            scoped_note_reader: None,
             since_filter: None,
             occurred_range: None,
             learned_range: None,
@@ -185,6 +188,12 @@ impl<'a> PipelineBuilder<'a> {
     /// Installs only gate-resolved authority. Public callers use scoped search.
     pub(crate) fn authority_filter(mut self, filter: crate::gate::ResolvedRetrievalFilter) -> Self {
         self.authority_filter = Some(filter);
+        self
+    }
+
+    /// A scoped read provides the authenticated actor, not a candidate list.
+    pub(crate) fn scoped_note_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.scoped_note_reader = Some(key);
         self
     }
 

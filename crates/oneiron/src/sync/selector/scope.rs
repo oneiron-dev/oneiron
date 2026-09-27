@@ -178,6 +178,10 @@ fn coreference_shared_for_pact_in_txn(
     b: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
 ) -> Result<bool> {
+    // Diary NOTE links are local Empty-scope edges, never federation identity.
+    if !crate::federation::person_pair_in_txn(vault, rtxn, a, b)? {
+        return Ok(false);
+    }
     for (source, target) in [(a, b), (b, a)] {
         if edge_exists_in_txn(vault, rtxn, &source, EdgeKind::SameAs, &target)?
             && coreference_consent_names_pact_in_txn(vault, rtxn, source, target, pact_id)?

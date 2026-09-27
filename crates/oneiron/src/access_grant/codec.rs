@@ -207,6 +207,14 @@ pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
             ),
             (Value::from("space_ref"), Value::from(space_ref.to_hex())),
         ]),
+        AccessGrantScope::DiaryCoreference {
+            left_ref,
+            right_ref,
+        } => Value::Map(vec![
+            (Value::from("kind"), Value::from("diary_coreference")),
+            (Value::from("left_ref"), Value::from(left_ref.to_hex())),
+            (Value::from("right_ref"), Value::from(right_ref.to_hex())),
+        ]),
         AccessGrantScope::SharedBrief { .. } => crate::share::encode_shared_brief_scope(scope),
         AccessGrantScope::ChannelIdentity {
             identity_ref,
@@ -275,6 +283,13 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
                 "messages" => AccessGrantScope::Messages { space_ref },
                 "summaries" => AccessGrantScope::Summaries { space_ref },
                 _ => AccessGrantScope::RelationshipClaims { space_ref },
+            })
+        }
+        "diary_coreference" => {
+            validate_keys(entries, &["kind", "left_ref", "right_ref"])?;
+            Ok(AccessGrantScope::DiaryCoreference {
+                left_ref: decode_entity_ref(required_value(entries, "left_ref")?)?,
+                right_ref: decode_entity_ref(required_value(entries, "right_ref")?)?,
             })
         }
         "shared_brief" => crate::share::decode_shared_brief_scope(entries),

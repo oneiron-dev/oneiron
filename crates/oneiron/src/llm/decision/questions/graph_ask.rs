@@ -268,6 +268,18 @@ fn answer_unit(
     // A callback can take arbitrarily long. A cheap preflight avoids waiting
     // for the writer when authority or source bytes have already changed.
     let fresh = vault.scoped_read(asker_reader(vault, principal)?);
+    if !fresh
+        .graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?
+        .is_some_and(|neighbors| {
+            neighbors.iter().map(|row| row.0).eq(context
+                .sources
+                .iter()
+                .skip(1)
+                .map(|source| source.id))
+        })
+    {
+        return Ok(UnitOutcome::Abstain);
+    }
     let current = fresh.get_entities_parts_with_receipt(
         &context.sources.iter().map(|s| s.id).collect::<Vec<_>>(),
         None,
@@ -284,6 +296,24 @@ fn answer_unit(
     // but provider and write-gate failures remain typed failures.
     let record = vault.with_write_txn(|txn| {
         let scoped = vault.scoped_read(asker_reader_in_txn(vault, txn, principal)?);
+        if !scoped
+            .graph_ask_neighbors_in_txn(
+                txn,
+                &unit,
+                MAX_NEIGHBORS,
+                MAX_NEIGHBOR_SCAN,
+                MAX_SOURCE_BYTES,
+            )?
+            .is_some_and(|neighbors| {
+                neighbors.iter().map(|row| row.0).eq(context
+                    .sources
+                    .iter()
+                    .skip(1)
+                    .map(|source| source.id))
+            })
+        {
+            return Ok(None);
+        }
         let mut taint = ClaimSource::UserStated;
         for source in &context.sources {
             let Some((kind, _, body)) = scoped.graph_ask_parts_in_txn(txn, &source.id)? else {

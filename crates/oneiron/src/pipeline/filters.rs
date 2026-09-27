@@ -70,7 +70,11 @@ pub(super) fn claim_status_gate_allows(
         return Ok(true);
     };
     if meta.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-        return crate::note::ordinary_entity_visible(store, rtxn, id);
+        return Ok(gate
+            .private_note_ids
+            .as_ref()
+            .is_some_and(|ids| ids.contains(id))
+            || crate::note::ordinary_entity_visible(store, rtxn, id)?);
     }
     if meta.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
@@ -571,6 +575,7 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     let mut local_metadata = EntityMetadataCache::default();
     let mut local_gate = ClaimStatusGateCache {
         include_stale: filters.authority_filter.include_stale,
+        private_note_ids: claim_gate.private_note_ids.clone(),
         ..ClaimStatusGateCache::default()
     };
     let (metadata_cache, claim_gate) = if filters.candidate_filter.is_some() {

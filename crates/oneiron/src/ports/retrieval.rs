@@ -9,6 +9,8 @@ pub(crate) struct TextQuery<'a> {
     /// True gates every posting before ranking; false gates prefix expansion only.
     pub filter_all: bool,
     pub matches_scope: &'a mut dyn FnMut(&EntityId) -> Result<bool>,
+    /// Authenticated private diary ids from this query's read snapshot only.
+    pub private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
 }
 pub(crate) trait RetrievalIndexExecution: Transactions {
     fn port_retrieval_text_scoped(

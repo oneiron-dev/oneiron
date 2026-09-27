@@ -28,6 +28,7 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
         let options = crate::bm25::Bm25SearchOptions {
             recency: None,
             exact_posting_matches_scope: &mut scope,
+            private_note_ids: query.private_note_ids,
         };
         let rows = if query.filter_all {
             crate::bm25::search_text_filtered_with_recency(
