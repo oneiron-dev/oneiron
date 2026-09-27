@@ -4,6 +4,7 @@ use crate::campaign::claims::{
     PREDICATE_CAMPAIGN_MEMBER, PREDICATE_COMM_JURISDICTION, decode_comm_jurisdiction_value,
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::counterparty_contact::normalize_channel_class;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::ExternalEffectGateInput;
@@ -15,7 +16,7 @@ use super::codec::{
 };
 use super::evaluate::{
     ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts, HydratedListProvenance,
-    evaluate_dispatch_compliance, normalize_jurisdiction, normalize_token,
+    evaluate_dispatch_compliance, normalize_jurisdiction,
 };
 use super::pack_store::active_compliance_pack_in_txn;
 use super::rules::{
@@ -75,7 +76,7 @@ pub(super) fn hydrate_dispatch_compliance_facts(
         counterparty,
         jurisdiction: observation.as_ref().map(|(token, _)| token.clone()),
         jurisdiction_confidence_millis: observation.and_then(|(_, confidence)| confidence),
-        channel: normalize_token(&effect.channel),
+        channel: normalize_channel_class(&effect.channel),
         legal_form: evidence.legal_form,
         list_provenance: evidence.list_provenance,
         jp_publication: evidence.jp_publication,
