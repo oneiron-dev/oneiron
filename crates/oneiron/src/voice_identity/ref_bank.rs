@@ -14,7 +14,6 @@ const OWNER_PREFIX: &[u8] = b"voice:owner_ref_owner:v1:";
 const PACK_PREFIX: &[u8] = b"voice:owner_ref:v1:";
 const IDENTITY_PREFIX: &[u8] = b"voice:ref_identity:v1:";
 const TARGET_PREFIX: &[u8] = b"voice:ref_target:v1:";
-const REVISION_PREFIX: &[u8] = b"voice:owner_ref_revision:v1:";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -80,6 +79,9 @@ pub struct VoiceTargetRecord {
     pub source_packs: Vec<String>,
     pub ref_digest: [u8; 32],
     pub cloned_at: u64,
+    /// Fresh on every new or replaced record. A hosted binding fences on it, so a
+    /// withdrawn and re-recorded target cannot revive an older binding.
+    pub revision: [u8; 16],
 }
 
 fn invalid(message: &str) -> Error {
@@ -196,10 +198,6 @@ pub(super) fn delete_owner_refs(
         if store.vault_meta.delete(txn, &key)? {
             deleted += 1;
         }
-        if let Some(pack_id) = key.strip_prefix(PACK_PREFIX) {
-            let revision_key = [REVISION_PREFIX, pack_id].concat();
-            store.vault_meta.delete(txn, &revision_key)?;
-        }
         store.vault_meta.delete(txn, &index)?;
     }
     Ok(deleted)
@@ -237,13 +235,6 @@ impl Vault {
         }
         identity.pack_ids.push(pack.id.clone());
         self.store.vault_meta.put(&mut txn, &pack_key, &bytes)?;
-        // A withdrawn and later recreated pack gets a new incarnation even
-        // when its ID and audio are byte-identical. Hosted work binds to this.
-        self.store.vault_meta.put(
-            &mut txn,
-            &key(REVISION_PREFIX, &pack.id)?,
-            uuid::Uuid::new_v4().as_bytes(),
-        )?;
         self.store
             .vault_meta
             .put(&mut txn, &identity_key, &encode(&identity)?)?;
@@ -306,6 +297,7 @@ impl Vault {
             source_packs: request.source_packs.clone(),
             ref_digest: request.ref_digest,
             cloned_at,
+            revision: uuid::Uuid::new_v4().into_bytes(),
         };
         let target_key = target_key(&request.voice_id, &request.target)?;
         let owner = read_identity(&self.store, &txn, &request.voice_id)?
@@ -339,62 +331,26 @@ impl Vault {
         target: &str,
         include_generated: bool,
     ) -> Result<Option<VoiceTargetRecord>> {
-        let key = target_key(voice_id, target)?;
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&txn, &key)? else {
-            return Ok(None);
-        };
-        let record: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
-        let selected = select_clone(&self.store, &txn, voice_id, target, include_generated)?;
-        let owner = read_identity(&self.store, &txn, voice_id)?
-            .ok_or_else(|| invalid("unknown voice identity"))?
-            .owner;
-        validate_target_record(
-            &record,
-            voice_id,
-            target,
-            limits_for(&self.store, &txn, &owner)?,
-        )?;
-        if record.source_packs != selected.source_packs || record.ref_digest != selected.ref_digest
-        {
-            return Ok(None);
-        }
-        Ok(Some(record))
+        current_target(&self.store, &txn, voice_id, target, include_generated)
     }
 
-    /// Vault-scoped pack incarnation; withdrawal removes it with the pack.
-    pub(crate) fn owner_voice_ref_revision(&self, id: &str) -> Result<Option<[u8; 16]>> {
-        let pack_key = key(PACK_PREFIX, id)?;
-        let revision_key = key(REVISION_PREFIX, id)?;
-        let txn = self.store.env.read_txn()?;
-        let Some(revision) = self.store.vault_meta.get(&txn, &revision_key)? else {
-            return Ok(None);
-        };
-        if self.store.vault_meta.get(&txn, &pack_key)?.is_none() {
-            return Err(invalid("orphaned voice reference revision"));
-        }
-        Ok(Some(revision.as_ref().try_into().map_err(|_| {
-            invalid("corrupt voice reference revision")
-        })?))
-    }
-
-    /// Serialize queue admission against withdrawal in the vault write txn.
-    pub(crate) fn with_live_voice_ref<R>(
+    /// Calls `admit` only while the target record at `revision` is still
+    /// current. The write transaction serializes admission against withdrawal
+    /// and eviction, including writers in other processes.
+    pub(crate) fn with_live_voice_target<R>(
         &self,
-        id: &str,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
         revision: [u8; 16],
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<R>,
     ) -> Result<Option<R>> {
-        let pack_key = key(PACK_PREFIX, id)?;
-        let revision_key = key(REVISION_PREFIX, id)?;
         let txn = self.store.env.write_txn()?;
-        if self.store.vault_meta.get(&txn, &pack_key)?.is_none()
-            || self.store.vault_meta.get(&txn, &revision_key)?
-                .is_none_or(|current| current.as_ref() != revision.as_slice())
-        {
-            return Ok(None);
+        match current_target(&self.store, &txn, voice_id, target, include_generated)? {
+            Some(record) if record.revision == revision => Ok(Some(admit(&txn)?)),
+            _ => Ok(None),
         }
-        Ok(Some(admit(&txn)?))
     }
 
     pub fn evict_voice_target(&self, voice_id: &str, target: &str) -> Result<()> {
@@ -410,6 +366,29 @@ impl Vault {
         txn.commit()?;
         Ok(())
     }
+}
+
+fn current_target(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    voice_id: &str,
+    target: &str,
+    include_generated: bool,
+) -> Result<Option<VoiceTargetRecord>> {
+    let key = target_key(voice_id, target)?;
+    let Some(raw) = store.vault_meta.get(txn, &key)? else {
+        return Ok(None);
+    };
+    let record: VoiceTargetRecord = decode(&raw, "corrupt voice target clone")?;
+    let selected = select_clone(store, txn, voice_id, target, include_generated)?;
+    let owner = read_identity(store, txn, voice_id)?
+        .ok_or_else(|| invalid("unknown voice identity"))?
+        .owner;
+    validate_target_record(&record, voice_id, target, limits_for(store, txn, &owner)?)?;
+    if record.source_packs != selected.source_packs || record.ref_digest != selected.ref_digest {
+        return Ok(None);
+    }
+    Ok(Some(record))
 }
 
 fn read_identity(
