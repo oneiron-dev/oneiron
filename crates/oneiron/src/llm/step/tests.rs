@@ -2646,3 +2646,27 @@ fn native_schema_validation_refuses_invalid_requests_and_unvalidated_terminals()
     }
     Ok(())
 }
+
+#[test]
+fn schema_guard_rejects_non_progressing_reference_cycles_and_keeps_recursive_objects() {
+    use serde_json::json;
+    let stuck = json!({"$defs":{"a":{"allOf":[{"$ref":"#/$defs/b"}]},
+        "b":{"not":{"$ref":"#/$defs/a"}}}, "$ref":"#/$defs/a"});
+    assert!(super::validate_json_schema(&stuck, &json!({})).is_err());
+    let recursive = json!({"type":"object", "properties":{
+        "next":{"$ref":"#"}, "value":{"type":"integer"}}});
+    assert!(super::validate_json_schema(&recursive, &json!({"next":{"value":4}})).is_ok());
+    assert!(super::validate_json_schema(&recursive, &json!({"next":{"value":"bad"}})).is_err());
+}
+
+#[test]
+fn schema_guard_bounds_large_host_side_validation_before_native_execution() {
+    use serde_json::json;
+    let value = (0..2100).map(|n| n.to_string()).collect::<Vec<_>>();
+    assert!(super::validate_json_schema(&json!({}), &json!(value)).is_err());
+    let exponential = json!({"type":"object", "properties":{
+        "next":{"allOf":[{"$ref":"#"},{"$ref":"#"}]}}});
+    assert!(super::validate_json_schema(&exponential, &json!(null)).is_err());
+    let schema = json!({"$dynamicRef":"#"});
+    assert!(super::validate_json_schema(&schema, &json!(null)).is_err());
+}

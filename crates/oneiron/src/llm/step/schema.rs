@@ -11,6 +11,7 @@ pub fn validate_json_schema(
     schema: &serde_json::Value,
     value: &serde_json::Value,
 ) -> Result<(), String> {
+    super::schema_guard::check(schema, value)?;
     let validator = jsonschema::validator_for(schema).map_err(|error| error.to_string())?;
     let errors = validation_errors(&validator, value);
     if errors.is_empty() {
@@ -63,6 +64,12 @@ pub(super) async fn generate(
         return Ok(super::execute::generate_with_retry(backend, request, lease).await?);
     };
     // Validate the schema itself before contacting the backend. Remote refs are disabled.
+    super::schema_guard::check(schema, &serde_json::Value::Null).map_err(|error| {
+        DurableStepError::SchemaValidation {
+            attempts: 0,
+            errors: vec![error],
+        }
+    })?;
     let validator =
         jsonschema::validator_for(schema).map_err(|error| DurableStepError::SchemaValidation {
             attempts: 0,
@@ -135,7 +142,10 @@ pub(super) async fn generate(
             })
             .collect();
         let errors = match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(value) => validation_errors(&validator, &value),
+            Ok(value) => match super::schema_guard::check(schema, &value) {
+                Ok(()) => validation_errors(&validator, &value),
+                Err(error) => vec![error],
+            },
             Err(error) => vec![error.to_string()],
         };
         if errors.is_empty() {
