@@ -5,8 +5,8 @@ use heed::RoTxn;
 use crate::error::{Error, Result};
 
 use super::{
-    GATE_DECISION_KEY_PREFIX, GateDecisionId, GateDecisionRecord, Store, decode_gate_decision,
-    gate_decision_id_from_key, gate_decision_upper_bound,
+    GATE_DECISION_KEY_PREFIX, GateDecisionId, GateDecisionRecord, Store, gate_decision_id_from_key,
+    gate_decision_upper_bound,
 };
 
 impl Store {
@@ -30,7 +30,7 @@ impl Store {
         )? {
             let (key, value) = row?;
             let decision_id = gate_decision_id_from_key(&key)?;
-            let record = decode_gate_decision(&value)?;
+            let record = self.decode_gate_decision_value(decision_id, &value)?;
             if record.decision_id != decision_id {
                 return Err(Error::CorruptedIndex("gate decision ledger"));
             }
