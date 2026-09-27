@@ -212,18 +212,29 @@ fn confirm_without_reason_only_approves_once_and_untrusted_or_stale_acts_cannot_
             },
         )
         .unwrap();
+    let unrelated = bound("pay", "channel:team");
+    vault
+        .create_standing_grant(&owner, unrelated.clone())
+        .unwrap();
     assert!(
         vault
             .confirm_owner_reason(
                 &owner,
-                &op,
-                &required,
+                &effect(unrelated.clone()),
+                &unrelated,
                 OwnerReasonConfirm {
-                    reason: Some("replace it"),
+                    reason: Some("do not replace it"),
                     notice_text: "Saved"
-                }
+                },
             )
             .is_err()
+    );
+    assert!(
+        vault
+            .consent_grant(&unrelated.digest().to_hex())
+            .unwrap()
+            .unwrap()
+            .is_active()
     );
     let mut forged = granted.undo.unwrap();
     forged.rule_decision_id = GateDecisionId::now();

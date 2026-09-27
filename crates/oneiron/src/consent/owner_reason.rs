@@ -169,8 +169,9 @@ impl Vault {
     /// An optional reason on the authenticated confirm. The bound is the
     /// engine-composed requirement, not a class inferred by a model. A reason
     /// mints that exact class/envelope as one standing grant and a rule row in
-    /// the same transaction. Reconfirming an active grant is refused so undo
-    /// cannot accidentally revoke an unrelated earlier grant.
+    /// the same transaction. An unsure re-ask can re-mint its active derived
+    /// grant, retiring the predecessor rule. Unrelated active grants cannot
+    /// be replaced through this reason door.
     pub fn confirm_owner_reason(
         &self,
         owner: &AuthenticatedOwner,
@@ -212,13 +213,36 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, &*txn)?;
             let grant_ref = bound.digest().to_hex();
-            if self
-                .consent_grant_in_txn(&*txn, &grant_ref)?
-                .is_some_and(|row| row.is_active())
+            if let Some(grant) = self.consent_grant_in_txn(&*txn, &grant_ref)?
+                && grant.is_active()
             {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "reason would replace an active standing grant",
-                )));
+                // Only the live rule that derived THIS grant permits an
+                // in-moment re-ask. A same-bound independent re-mint retires
+                // that rule in the shared mint door, even with the same owner
+                // authentication; it cannot be silently replaced here.
+                let mut derived = false;
+                for entry in self
+                    .store
+                    .vault_meta
+                    .prefix_iter(&*txn, &grant_prefix(&grant_ref))?
+                {
+                    let (key, raw) = entry?;
+                    let rule = decode(&raw, &key)?;
+                    if !rule.retired
+                        && rule.actor == *owner.actor().as_bytes()
+                        && rule.actor == *grant.owner_stamp.actor.as_bytes()
+                        && rule.authentication_id == grant.owner_stamp.decision_id.as_bytes()
+                        && grant.grant.bound() == bound
+                    {
+                        derived = true;
+                        break;
+                    }
+                }
+                if !derived {
+                    return Err(Error::Gate(GateError::InvalidConsentBound(
+                        "reason would replace an unrelated standing grant",
+                    )));
+                }
             }
             let receipt = self.create_standing_grant_in_txn(txn, owner, bound.clone())?;
             let row = RuleRow {

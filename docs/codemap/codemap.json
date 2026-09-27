@@ -34544,6 +34544,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_reason.rs",
+     "purpose": "Public confirm → unsure re-ask → reconfirm → undo contract",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/relay_attestation_compilefail/a_witness_no_universal_mint.rs",
      "purpose": "(a.2) Out-of-boundary construction of `AttestedRelayDomain` must fail: there is no absent-constructor…",
      "surface": {}
@@ -35958,7 +35966,7 @@
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2122,
-   "test_files": 723
+   "test_files": 724
   },
   "oneiron-android": {
    "files": [
