@@ -48,7 +48,7 @@ pub trait SlideReviewProvider {
 
 /// User-configured display words, including the severity words in comments.
 /// No question, glossary, prompt or user-facing label is compiled into Rust.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlideReviewLabels {
     pub yes: String,
     pub no: String,
@@ -99,6 +99,8 @@ pub struct SlideJudgment {
     pub evidence_hash: [u8; 32],
     pub judged_version: Option<u64>,
     pub comment: String,
+    /// Runtime display words pinned so settle can recheck comment semantics.
+    pub labels: SlideReviewLabels,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +281,7 @@ pub fn review_slides(
                     evidence_hash: evidence_hash(unit),
                     judged_version: base_version,
                     comment,
+                    labels: labels.clone(),
                 });
             }
             pending = next;
@@ -356,22 +359,26 @@ pub(crate) fn verify_judgments(proposal: &EditProposal) -> Result<()> {
             return Err(invalid("review receipt requires a new comment"));
         };
         let decision = &row.decision;
+        let probability = decision
+            .probability
+            .ok_or_else(|| invalid("missing review probability"))?;
+        if decision.answer == DecisionAnswer::Abstain {
+            return Err(invalid("abstentions cannot create comments"));
+        }
         if row.thread_id != patch.thread_id
             || row.thread_id != patch.comment_id
             || row.target != *target
             || row.comment != *text
             || decision.receipt.principal != patch.asked_by
-            || patch.answered_by == patch.asked_by && decision.receipt.providers.is_empty()
-            || decision
-                .probability
-                .is_none_or(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
-            || decision.answer == DecisionAnswer::Abstain
+            || !probability.is_finite()
+            || !(0.0..=1.0).contains(&probability)
             || decision.receipt.band.validate().is_err()
-            || decision.in_band
-                != decision
-                    .receipt
-                    .band
-                    .contains(decision.probability.unwrap_or(0.0))
+            || row.labels.validate().is_err()
+            || row.comment
+                != row
+                    .labels
+                    .comment(&decision.answer, probability, decision.receipt.band)
+            || decision.in_band != decision.receipt.band.contains(probability)
             || decision.receipt.question_version == 0
             || decision.receipt.providers.is_empty()
             || row.frontier != proposal.base_content_hash
