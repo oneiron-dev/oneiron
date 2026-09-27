@@ -11,6 +11,33 @@ pub trait PackFitPolicy {
         source: &PackSource,
         permissions: &PackPermissions,
     ) -> Result<PackFitVerdict>;
+
+    /// A code-running qualification must use the foreign code-mode sandbox
+    /// under the object's grant. Script packs cannot become Active without a
+    /// source-bound qualified runtime; a flag-off Candidate needs no run yet.
+    fn qualify_script(&self, _source: &PackSource) -> Result<Option<PackQualification>> {
+        Ok(None)
+    }
+}
+
+pub trait PackQualifier {
+    fn qualify(&self, source: &PackSource) -> Result<PackQualification>;
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackQualification {
+    pub suite: String,
+    pub report_hash: String,
+    pub passed: bool,
+    pub advisory_accepted: bool,
+    pub advisory: String,
+    pub runtime: Option<PackRuntimeRecipe>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PackRuntimeRecipe {
+    pub adapter: super::PackAdapter,
+    pub runtime_id: String,
+    pub runtime_hash: String,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +82,7 @@ pub struct PackInstallAsk {
     pub(super) verdict: PackFitVerdict,
     pub(super) manifest: PackManifest,
     pub(super) permissions: PackPermissions,
+    pub(super) qualification: Option<PackQualification>,
     pub(super) surface: HubAskSurface,
 }
 impl PackInstallAsk {
@@ -69,6 +97,9 @@ impl PackInstallAsk {
     }
     pub fn verdict(&self) -> PackFitVerdict {
         self.verdict
+    }
+    pub fn qualification(&self) -> Option<&PackQualification> {
+        self.qualification.as_ref()
     }
     pub fn surface(&self) -> HubAskSurface {
         self.surface
@@ -105,6 +136,9 @@ pub struct PackInstallReceipt {
     pub publisher: String,
     /// The object's card lists requested powers. None is granted by installation.
     pub permissions: PackPermissions,
+    /// Qualified source/runtime as data. A Candidate has no execution right.
+    pub qualification_report_hash: Option<String>,
+    pub runtime: Option<PackRuntimeRecipe>,
     /// Typed section recipes from the pinned tree; runtime must enforce requested powers.
     pub sections: Vec<PackSection>,
     pub predicates: Vec<String>,
