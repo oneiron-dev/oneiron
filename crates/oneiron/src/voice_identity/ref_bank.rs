@@ -169,11 +169,11 @@ impl Vault {
         let txn = self.store.env.write_txn()?;
         let revision_key = [REVISION_PREFIX, id.as_bytes()].concat();
         if self.store.vault_meta.get(&txn, &pack_key)?.is_none()
-            || !self
+            || self
                 .store
                 .vault_meta
                 .get(&txn, &revision_key)?
-                .is_some_and(|current| current.as_ref() == revision.as_slice())
+                .is_none_or(|current| current.as_ref() != revision.as_slice())
         {
             return Ok(None);
         }
