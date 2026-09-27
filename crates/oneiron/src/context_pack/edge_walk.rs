@@ -109,6 +109,9 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// `None` because naming a dead world is a request to read it, and the
     /// caller marks what comes back instead of hiding it.
     pub(super) stale_worlds: Option<&'a BTreeMap<EntityId, crate::federation::WorldStaleStamp>>,
+    /// The same resolved type floor and explicit kind names as primary retrieval.
+    pub(super) type_filter: &'a crate::gate::ResolvedRetrievalFilter,
+    pub(super) named_types: Option<&'a [u8]>,
 }
 
 /// Expands the seed set along its edges under `options`.
@@ -124,6 +127,8 @@ pub(super) fn walk_edges(
         exclude,
         clamp,
         stale_worlds,
+        type_filter,
+        named_types,
     } = options;
     if hops == 0 || budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
@@ -199,10 +204,15 @@ pub(super) fn walk_edges(
                 }
                 if let Some(raw) = store.entities.get(rtxn, edge.target.as_bytes())?
                     && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-                    && matches!(
+                    && (matches!(
                         header.entity_type,
                         crate::registry::ENTITY_TYPE_SKILL | crate::registry::ENTITY_TYPE_AGENT_DEF
-                    )
+                    ) || !crate::pipeline::retrieval_type_allowed(
+                        type_filter,
+                        named_types,
+                        store,
+                        header.entity_type,
+                    ))
                 {
                     continue;
                 }
