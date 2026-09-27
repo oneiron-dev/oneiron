@@ -1474,3 +1474,111 @@ async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
     );
     assert!(last["nextCursor"].is_null());
 }
+
+#[tokio::test]
+async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_rows() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x0002_5001);
+    let other = seeded_test_entity_id(0x0002_5002);
+    let person = seeded_test_entity_id(0x0002_5003);
+    let first = seeded_test_entity_id(0x0002_5004);
+    let second = seeded_test_entity_id(0x0002_5005);
+    let first_grant = seeded_test_entity_id(0x0002_5006);
+    let unrelated_grant = seeded_test_entity_id(0x0002_5007);
+    seed_companion_profile_access(&server, first_grant, principal, person, first);
+    seed_companion_profile_access(
+        &server,
+        seeded_test_entity_id(0x0002_5008),
+        principal,
+        person,
+        second,
+    );
+    seed_companion_profile_access(&server, unrelated_grant, other, person, first);
+    for (id, compact) in [(first, "first compact"), (second, "second compact")] {
+        server
+            .vault
+            .put_psych_profile(
+                &id,
+                &oneiron::PsychProfile::new(
+                    id,
+                    compact,
+                    "text",
+                    "narrative",
+                    vec![seeded_test_entity_id(0x0002_5009)],
+                    oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let list = |server: Arc<SyncServer>| {
+        let path = path.clone();
+        async move {
+            let (status, body) = route_json(
+                server,
+                core_request_with_principal_ref(
+                    "GET",
+                    &path,
+                    "companion:profile:read",
+                    &principal.to_hex(),
+                    None,
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["items"].as_array().unwrap().clone()
+        }
+    };
+    server
+        .vault
+        .delete_entity_with_reason(&unrelated_grant, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&unrelated_grant).unwrap());
+    let rows = list(server.clone()).await;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"],
+        "first compact"
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"],
+        "second compact"
+    );
+
+    server
+        .vault
+        .delete_entity_with_reason(&first, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    assert!(server.vault.is_deleted_shell(&first).unwrap());
+    let rows = list(server.clone()).await;
+    assert_eq!(rows.len(), 2);
+    assert!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == first.to_hex())
+            .unwrap()["personalityCompact"]
+            .is_null()
+    );
+    assert_eq!(
+        rows.iter()
+            .find(|row| row["persona_ref"] == second.to_hex())
+            .unwrap()["personalityCompact"],
+        "second compact"
+    );
+
+    server
+        .vault
+        .delete_entity_with_reason(&first_grant, oneiron::DeleteReason::UserDelete)
+        .unwrap();
+    let rows = list(server).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["persona_ref"], second.to_hex());
+    assert_eq!(rows[0]["personalityCompact"], "second compact");
+}

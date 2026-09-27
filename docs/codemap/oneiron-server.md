@@ -136,7 +136,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/auth_idempotency.rs` | test | m | — | — | OpenAPI route auth, v1/legacy auth plane + revocation + scopes, core idempotency middleware semantics |
 | `src/api/tests/billing_usage.rs` | test | m | — | — | Provider money facts, runtime metering boundaries, and removed wallet routes |
 | `src/api/tests/board_host_events.rs` | test | m | — | — | Router proofs for session observations and turn-local capability riders |
-| `src/api/tests/companion.rs` | test | L | — | — | Companion profile access grants, tiers/missing/stale/refresh reads, register CRUD/retire/end-relationship |
+| `src/api/tests/companion.rs` | test | XL | — | — | Companion profile access grants, tiers/missing/stale/refresh reads, register CRUD/retire/end-relationship |
 | `src/api/tests/context_board_standing.rs` | test | s | — | — | The real session endpoint cannot fill context before a registered standing floor |
 | `src/api/tests/context_pack_disclosure.rs` | test | L | — | — | Context-pack telemetry, interlocutor echo/stamps, owner-absence clamping, scope-smuggling resistance |
 | `src/api/tests/context_pack_v4.rs` | test | L | — | — | Context-board memories/cursor/companion/assets, session scoping, evidence run-id omission |

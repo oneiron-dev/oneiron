@@ -130,7 +130,7 @@
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -11868,7 +11868,7 @@
      "path": "src/conversation_dag/graph.rs",
      "purpose": "Strict transactional graph reads and shared guards",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -25523,7 +25523,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -40380,7 +40380,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/companion.rs",

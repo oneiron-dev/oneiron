@@ -72,7 +72,7 @@ pub(crate) async fn list_personas(
         for id in &ids {
             let Some(grant) = server
                 .vault
-                .get_access_grant(id)
+                .get_live_access_grant(id)
                 .map_err(|e| companion_engine_error("persona grant read failed", e))?
             else {
                 continue;
@@ -91,7 +91,7 @@ pub(crate) async fn list_personas(
             {
                 continue;
             }
-            let profile = match server.vault.get_psych_profile(&persona) {
+            let profile = match server.vault.get_live_psych_profile(&persona) {
                 Ok(profile) => profile,
                 Err(error) if error.kind() == ErrorKind::InvalidEntityType => None,
                 Err(error) => {

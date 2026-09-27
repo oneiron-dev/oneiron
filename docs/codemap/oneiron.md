@@ -22,7 +22,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 18 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | s | 1 struct · 1 enum · 4 fn | AccessRequest, AccessRequestStatus | Durable request/response lifecycle |
 | `src/access_grant/tests.rs` | test | L | — | — | — |
-| `src/access_grant/vault_doors.rs` | src | s | 6 fn · 1 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
+| `src/access_grant/vault_doors.rs` | src | s | 7 fn · 1 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
 | `src/actor_claims/archive.rs` | src | s | 3 crate-vis | — | Domain-owned inert restore of learned actor rows |
 | `src/actor_claims/archive_references.rs` | src | s | 2 crate-vis | — | Typed actor evidence references for credential-safe archive serialization |
 | `src/actor_claims/distill.rs` | src | m | 3 struct · 1 trait · 3 fn · 3 crate-vis | SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance | CHAT lane: session-end distill jobs, turn readers, and the distill run |
@@ -951,7 +951,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation/visibility.rs` | src | s | 2 fn · 4 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation_dag/admission.rs` | src | s | 9 crate-vis | — | Close the legacy ChildOf-only append door after DAG adoption |
 | `src/conversation_dag/fixtures.rs` | src | s | 6 crate-vis | — | — |
-| `src/conversation_dag/graph.rs` | src | s | 16 crate-vis | — | Strict transactional graph reads and shared guards |
+| `src/conversation_dag/graph.rs` | src | s | 17 crate-vis | — | Strict transactional graph reads and shared guards |
 | `src/conversation_dag/membership.rs` | src | s | 4 crate-vis | — | Replicated TURN session membership: body carrier and local index reconstruction |
 | `src/conversation_dag/migration.rs` | src | s | 1 fn · 2 crate-vis | — | Idempotent lazy and maintenance migration of legacy conversation turns |
 | `src/conversation_dag/mod.rs` | src | s | 1 mod · 2 re-export · 7 crate-vis | — | Conversation DAG topology, local HEAD state and exact scope resolution |
@@ -2068,7 +2068,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/psych_profile/mirror.rs` | src | m | 6 struct · 1 enum · 8 fn · 1 const | PsychMirrorDriftAnchor, PsychMirrorDriftAnchorEvent, PsychMirrorDriftAnchorState, PsychMirrorSelectedSource, PsychMirrorSelectionScore, PsychMirrorSelectionWeights, PsychMirrorSourceCandidate | Psych Mirror source selection scoring, entropy, and drift anchors |
 | `src/psych_profile/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | PsychProfile snapshot record substrate |
 | `src/psych_profile/record.rs` | src | s | 2 struct · 3 enum · 5 fn · 2 const · 17 crate-vis | PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileStaleReason, PsychProfileState | Snapshot record types, projections, and constructors/validators |
-| `src/psych_profile/store.rs` | src | s | 4 fn | — | Vault put/get/state maintenance-gated persistence for profiles |
+| `src/psych_profile/store.rs` | src | s | 5 fn | — | Vault put/get/state maintenance-gated persistence for profiles |
 | `src/psych_profile/tests.rs` | test | m | — | — | — |
 | `src/query_expansion.rs` | src | s | 6 struct · 1 enum · 1 trait · 1 fn · 3 const · 2 crate-vis | CompletionCandidate, CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions, HydeRequest | Host-injected HyDE query-expansion seam |
 | `src/query_expansion/tests.rs` | test | s | — | — | — |

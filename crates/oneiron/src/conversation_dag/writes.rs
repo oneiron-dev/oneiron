@@ -313,7 +313,7 @@ impl Vault {
     pub fn selected_line_snapshot(&self, conversation: &EntityId) -> Result<Option<Vec<EntityId>>> {
         let txn = self.store.env.read_txn()?;
         read_id(&self.store, &txn, HEAD, conversation)?
-            .map(|_| graph::canonical_chain(&self.store, &txn, conversation))
+            .map(|head| graph::preview_canonical_chain(&self.store, &txn, conversation, head))
             .transpose()
     }
 

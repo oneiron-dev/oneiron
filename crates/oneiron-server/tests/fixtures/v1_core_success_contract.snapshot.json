@@ -136,9 +136,26 @@
         "capabilities": [],
         "confidenceAdjustment": -0.35,
         "evidence": {
-          "result_ids": [],
-          "scores": [],
-          "telemetry_persisted": false
+          "result_ids": [
+            "7e000000000000000000000012210001"
+          ],
+          "retrieval_run_id": "<retrieval-run-id>",
+          "scores": [
+            {
+              "access_factor": 1.0,
+              "components": [
+                {
+                  "rank": 1,
+                  "score": 0.4305951,
+                  "signal": "text"
+                }
+              ],
+              "final_rank": 1,
+              "final_score": 1.0,
+              "result_id": "7e000000000000000000000012210001"
+            }
+          ],
+          "telemetry_persisted": true
         },
         "grantedData": [
           "7e000000000000000000000012210001"
@@ -325,8 +342,9 @@
           },
           "evidence": {
             "result_ids": [],
+            "retrieval_run_id": "<retrieval-run-id>",
             "scores": [],
-            "telemetry_persisted": false
+            "telemetry_persisted": true
           },
           "grantedData": [],
           "interlocutors": [

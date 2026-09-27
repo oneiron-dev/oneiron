@@ -457,3 +457,79 @@ async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
         .unwrap();
     assert_eq!(row["lastMessageSnippet"], "selected ancestor");
 }
+
+#[tokio::test]
+async fn list_preview_traverses_deleted_selected_shells_without_losing_other_rooms() {
+    let (_dir, server, actor) = setup();
+    let mut expected = Vec::new();
+    for (case, text) in [
+        ("deleted_head", "visible root"),
+        ("deleted_middle", "earlier root"),
+        ("deleted_root", "live child"),
+        ("unrelated", "other room"),
+    ] {
+        let room = post(&server, "/v1/core/conversations", json!({"body": {}})).await;
+        let records = format!(
+            "/v1/core/conversations/{}/records",
+            room["id"].as_str().unwrap()
+        );
+        let root_text = if case == "deleted_root" {
+            "deleted root"
+        } else {
+            text
+        };
+        let root = post(
+            &server,
+            &records,
+            json!({
+                "advance": true, "body": {"txt": root_text}, "actor": actor,
+            }),
+        )
+        .await;
+        let mut deleted = None;
+        if case == "deleted_head" {
+            let head = post(&server, &records, json!({
+                "parent": root["id"], "advance": true, "body": {"txt": "erased head"}, "actor": actor,
+            })).await;
+            deleted = Some(head["id"].as_str().unwrap().to_owned());
+        } else if case == "deleted_middle" {
+            let middle = post(&server, &records, json!({
+                "parent": root["id"], "advance": true, "body": {"txt": "erased middle"}, "actor": actor,
+            })).await;
+            post(
+                &server,
+                &records,
+                json!({
+                    "parent": middle["id"], "advance": true, "body": {}, "actor": actor,
+                }),
+            )
+            .await;
+            deleted = Some(middle["id"].as_str().unwrap().to_owned());
+        } else if case == "deleted_root" {
+            post(
+                &server,
+                &records,
+                json!({
+                    "parent": root["id"], "advance": true, "body": {"txt": text}, "actor": actor,
+                }),
+            )
+            .await;
+            deleted = Some(root["id"].as_str().unwrap().to_owned());
+        }
+        if let Some(id) = deleted {
+            let id = EntityId::from_hex(&id).unwrap();
+            server
+                .vault
+                .delete_entity_with_reason(&id, oneiron::DeleteReason::UserDelete)
+                .unwrap();
+            assert!(server.vault.is_deleted_shell(&id).unwrap());
+        }
+        expected.push((room["id"].as_str().unwrap().to_owned(), text));
+    }
+    let list = get(&server, "/v1/core/conversations?limit=20").await;
+    let rows = list["items"].as_array().unwrap();
+    for (id, text) in expected {
+        let row = rows.iter().find(|row| row["id"] == id).unwrap();
+        assert_eq!(row["lastMessageSnippet"], text, "room {id}");
+    }
+}
