@@ -552,14 +552,14 @@ fn maybe_delivered_fresh_retry_reuses_provider_idempotency_key() -> crate::Resul
     put_policy_manifest_bytes(
         &vault,
         entity(0x53),
-        &policy_manifest(&actor.to_hex(), "email", &["replace"]),
+        &policy_manifest(&actor.to_hex(), "email_resend", &["send"]),
     )?;
     let mut draft = connector_task_draft(
         "same-provider-key-retry:test",
         "session:same-provider-key-retry",
         120,
     );
-    draft.verb = "replace".to_owned();
+    draft.channel = "email_resend".to_owned();
     vault
         .memory(actor, EdgeActorClass::Agent)
         .schedule_outbound(&draft)
@@ -705,7 +705,7 @@ fn non_idempotent_send_masks_provider_idempotency_key() -> crate::Result<()> {
         1
     );
 
-    // email/send is NonIdempotentInterrupt: the sink must not be handed the
+    // Generic email/send has no provider key: the sink must not be handed the
     // ledger id as a provider idempotency (dedup) token, even though the ledger
     // row still keys the intent internally.
     assert_eq!(executor.idempotency_keys, vec![None]);

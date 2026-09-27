@@ -26,7 +26,7 @@ fn line_push_quota() -> Value {
 }
 
 pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityManifest> {
-    vec![
+    let mut manifests = vec![
         feedback_manifest("feedback_cloud"),
         feedback_manifest("feedback_collector"),
         feedback_manifest("feedback_github"),
@@ -68,12 +68,13 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     json!({
                         "to": "line_user_id | line_group_id",
                         "messages": [{"type": "text", "text": "string"}],
-                        "quota": line_push_quota()
+                        "quota": line_push_quota(),
+                        "X-Line-Retry-Key": "frozen ledger idempotency key"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentNative,
                     OutboundPermissionState::Conditional,
                     false,
                     "LINE push messages debit the monthly push quota and require plan-tier checks before dispatch.",
@@ -129,12 +130,13 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     "narrowcast",
                     json!({
                         "messages": [{"type": "text", "text": "string"}],
-                        "recipient": {"type": "operator", "and": []}
+                        "recipient": {"type": "operator", "and": []},
+                        "X-Line-Retry-Key": "frozen ledger idempotency key"
                     }),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentNative,
                     OutboundPermissionState::ProviderReview,
                     true,
                     "LINE narrowcast is a connector-specific capability and can require plan/review constraints.",
@@ -153,7 +155,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentEmulated,
                     OutboundPermissionState::Allowed,
                     false,
                     "Bot sends are supported when the bot may message the target chat.",
@@ -165,7 +167,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentEmulated,
                     OutboundPermissionState::Allowed,
                     true,
                     "Media calls require a supported media transport and target chat permission.",
@@ -198,7 +200,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         ),
         manifest(
             "slack",
-            "workspace_chat",
+            "workspace_bot",
             "Slack Web API outbound schema; OAuth scopes and workspace policies are distinct from capability.",
             vec![
                 verb(
@@ -208,7 +210,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentEmulated,
                     OutboundPermissionState::Conditional,
                     false,
                     "Requires chat:write, chat:write.customize for persona attribution, and channel posting permission; Slack message metadata is app-level-token only.",
@@ -253,20 +255,32 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
         ),
         manifest(
             "discord",
-            "community_chat",
+            "workspace_bot",
             "Discord Bot API outbound schema; guild/channel permissions control usable capability.",
             vec![
                 verb(
                     "send",
                     "create_message",
-                    json!({"channel_id": "snowflake", "content": "string", "embeds": "optional array", "message_reference": "optional reply"}),
+                    json!({"channel_id": "snowflake", "content": "string", "nonce": "frozen ledger idempotency key", "enforce_nonce": true, "embeds": "optional array", "message_reference": "optional reply"}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentNative,
                     OutboundPermissionState::Conditional,
                     false,
                     "Requires Send Messages in the target channel.",
+                ),
+                verb(
+                    "cold_dm",
+                    "create_message",
+                    json!({"channel_id": "private channel snowflake", "content": "string", "nonce": "frozen ledger idempotency key", "enforce_nonce": true}),
+                    OutboundInterruptionClass::Interrupt,
+                    OutboundDeliverySemanticsKind::FireAndForget,
+                    None,
+                    OutboundRetryClass::IdempotentNative,
+                    OutboundPermissionState::Conditional,
+                    true,
+                    "Cold or bulk marketing DMs to strangers carry disclosed platform policy risk; hold for a per-channel owner grant. Ordinary owner DMs use send.",
                 ),
                 verb(
                     "react",
@@ -317,7 +331,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 OutboundInterruptionClass::Interrupt,
                 OutboundDeliverySemanticsKind::FireAndForget,
                 None,
-                OutboundRetryClass::NonIdempotentInterrupt,
+                OutboundRetryClass::IdempotentEmulated,
                 OutboundPermissionState::Conditional,
                 true,
                 "APNs can interrupt users and depends on app entitlement, token validity, and user notification permission.",
@@ -332,11 +346,11 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 verb(
                     "send",
                     "messages_for_business_send",
-                    json!({"conversation_id": "string", "text": "string", "rich_link": "optional object"}),
+                    json!({"conversation_id": "string", "text": "string", "message_uuid": "frozen ledger idempotency key", "rich_link": "optional object"}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentNative,
                     OutboundPermissionState::ProviderReview,
                     true,
                     "Messages for Business requires brand/channel approval and an active conversation.",
@@ -367,7 +381,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentEmulated,
                     OutboundPermissionState::Conditional,
                     true,
                     "Local bridge sends require host-device consent and OS-level Messages availability.",
@@ -379,7 +393,7 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
-                    OutboundRetryClass::NonIdempotentInterrupt,
+                    OutboundRetryClass::IdempotentEmulated,
                     OutboundPermissionState::Conditional,
                     true,
                     "Media sends require explicit file access and host-device consent.",
@@ -518,13 +532,52 @@ pub(super) fn build_outbound_capability_manifests() -> Vec<OutboundCapabilityMan
                 OutboundInterruptionClass::Interrupt,
                 OutboundDeliverySemanticsKind::FireAndForget,
                 None,
-                OutboundRetryClass::NonIdempotentInterrupt,
+                OutboundRetryClass::IdempotentEmulated,
                 OutboundPermissionState::ProviderReview,
                 true,
                 "Voice calls require recipient consent, jurisdictional compliance, and provider approval.",
             )],
         ),
-    ]
+    ];
+    // Email is a provider family, not one retry guarantee. SES and Postmark
+    // must never inherit Resend's provider-native idempotency guarantee.
+    manifests.extend([
+        email_provider_manifest("email_resend", Some("Idempotency-Key"), "emails.send"),
+        email_provider_manifest("email_ses", None, "SendEmail"),
+        email_provider_manifest("email_postmark", None, "POST /email"),
+    ]);
+    manifests
+}
+
+fn email_provider_manifest(
+    provider: &'static str,
+    native_key: Option<&'static str>,
+    channel_call: &'static str,
+) -> OutboundCapabilityManifest {
+    manifest(
+        provider,
+        "email",
+        "Verified sender, recipient consent and account limits are separate from send capability.",
+        vec![verb(
+            "send",
+            channel_call,
+            json!({
+                "to": ["addr@example.com"], "subject": "string", "body": "string",
+                "provider_idempotency_header": native_key,
+            }),
+            OutboundInterruptionClass::Interrupt,
+            OutboundDeliverySemanticsKind::FireAndForget,
+            None,
+            if native_key.is_some() {
+                OutboundRetryClass::IdempotentNative
+            } else {
+                OutboundRetryClass::IdempotentEmulated
+            },
+            OutboundPermissionState::Conditional,
+            true,
+            "Verified sender and recipient consent required; queue dedupe cannot make an ambiguous send safe to retry.",
+        )],
+    )
 }
 
 fn manifest(
@@ -537,6 +590,7 @@ fn manifest(
         manifest_version: OUTBOUND_CAPABILITY_MANIFEST_VERSION,
         connector: connector.to_owned(),
         connector_family: connector_family.to_owned(),
+        family: (connector_family == "workspace_bot").then_some("workspace_bot"),
         verified_at: "2026-07-06",
         schema_on_demand: format!("/v1/core/outbound/capabilities/{connector}"),
         foreign_content_posture,

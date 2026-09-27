@@ -23037,6 +23037,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/connector_qualification.rs",
+     "purpose": "Per-rail outbound SOW contract and local qualification probes",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -34978,7 +34986,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35478,7 +35486,7 @@
    "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2094,
-   "test_files": 718
+   "test_files": 719
   },
   "oneiron-android": {
    "files": [

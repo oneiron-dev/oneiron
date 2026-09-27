@@ -78,9 +78,11 @@ impl OutboundDispatchPipeline {
                 "LinkedIn connect request requires current seat policy".to_owned(),
             )));
         }
-        let idempotency_supported = !matches!(
+        // Queue dedupe cannot prove an uncertain remote send did not happen.
+        // Only provider-native keys and in-place replacements are replay-safe.
+        let idempotency_supported = matches!(
             verb_contract.retry_class,
-            OutboundRetryClass::NonIdempotentInterrupt
+            OutboundRetryClass::IdempotentNative | OutboundRetryClass::ReplaceIdempotent
         );
 
         // Find the logical attempt BEFORE consulting today's sender set. A
