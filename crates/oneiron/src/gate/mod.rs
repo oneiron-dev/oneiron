@@ -22,6 +22,7 @@ mod effect;
 mod foreign_agent;
 mod grants;
 mod input;
+mod owner_policy_mutation;
 pub(crate) mod proposal_observation;
 mod repair;
 mod resolution;
@@ -92,6 +93,8 @@ pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles, consent_gate_reason_codes,
 };
+pub(crate) use self::owner_policy_mutation::apply_owner_policy_row_change_in_txn;
+pub use self::owner_policy_mutation::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::resolution::{PolicyManifestResolution, resolve_policy_manifest};
 pub use self::retrieval_filter::RetrievalFilter;

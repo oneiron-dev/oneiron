@@ -16924,9 +16924,33 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 3
+      "crate-vis": 27,
+      "re-export": 4
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PolicyRowAction",
+      "PolicyRowChange",
+      "PolicyRowScope"
+     ],
+     "path": "src/gate/owner_policy_mutation.rs",
+     "purpose": "Authenticated, exact-key edits to the owner-policy table in the default manifest",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/gate/owner_policy_mutation/tests.rs",
+     "purpose": "—",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -35556,7 +35580,7 @@
      "purpose": "—"
     },
     "gate": {
-     "files": 75,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -36244,8 +36268,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 729
+   "source_files": 2141,
+   "test_files": 730
   },
   "oneiron-android": {
    "files": [
