@@ -114,6 +114,15 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
     for key in keys {
         vault.store.vault_meta.delete(txn, &key)?;
     }
-    super::document_store::persist(vault, txn, &clean)?;
+    if vault
+        .store
+        .sync_state
+        .get(txn, &format!("ds:e:{}", id.to_hex()))?
+        .is_some()
+    {
+        super::document_store::persist_replica(vault, txn, &clean)?;
+    } else {
+        super::document_store::persist_authoritative(vault, txn, &clean)?;
+    }
     crate::sync::documents::storage::snapshot(vault, txn, id, &clean.doc, true)
 }

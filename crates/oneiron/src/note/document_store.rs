@@ -33,7 +33,35 @@ pub(super) fn load(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> Result
     NoteDocument::from_loro(id, doc)
 }
 
-pub(super) fn persist(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
+pub(super) fn persist_authoritative(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)?;
+    super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_replica(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
+    persist_structural(vault, txn, doc)
+}
+
+#[cfg(feature = "sync")]
+pub(super) fn persist_recovered_document(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    doc: &NoteDocument,
+) -> Result<()> {
+    persist_structural(vault, txn, doc)
+}
+
+fn persist_structural(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
     // Keep the live NOTE projection valid, including after concurrent
@@ -169,7 +197,7 @@ impl Memory<'_> {
                     command_hash: *blake3::hash(&body).as_bytes(),
                 },
             )?;
-            persist(self.vault(), txn, &doc)?;
+            persist_authoritative(self.vault(), txn, &doc)?;
             Ok(())
         })?;
         #[cfg(feature = "sync")]
@@ -188,6 +216,25 @@ impl Memory<'_> {
             },
         )
         .map(|_| ())
+    }
+
+    /// Set editable NOTE metadata under the same actor and title gate as socket ops.
+    pub fn set_note_title(
+        &self,
+        note: EntityId,
+        title: impl Into<String>,
+    ) -> MemoryResult<NoteEditOutcome> {
+        Ok(self
+            .apply_local_note_operation(
+                note,
+                &super::NoteOperation {
+                    request_id: EntityId::now(),
+                    change: super::NoteChange::SetTitle {
+                        title: title.into(),
+                    },
+                },
+            )?
+            .outcome)
     }
 
     /// Free prose commits now. Cited spans go through the reviewed claim door.
