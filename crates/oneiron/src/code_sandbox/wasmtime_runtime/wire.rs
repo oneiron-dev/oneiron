@@ -273,6 +273,11 @@ fn response(response: SelfDispatchResponse) -> Result<String> {
         SelfDispatchOutcome::Context(_) => {
             return Err(failure("context is not a linked component import"));
         }
+        SelfDispatchOutcome::WakePolicyWritten(_) => {
+            return Err(failure(
+                "owner policy actions are not linked component imports",
+            ));
+        }
     };
     Ok(response.guest_json(body).to_string())
 }
@@ -399,4 +404,22 @@ fn ask_and_wait_bridge_decode_the_engine_spec_without_guest_host_fields() {
     let mut forged: Value = serde_json::from_str(&input).unwrap();
     forged["actor"] = Value::from(id.to_hex());
     assert!(self_call("tasks.ask", &forged.to_string(), 1).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn owner_policy_action_is_unreachable_from_the_guest_imports() {
+    assert!(self_call("dreamer.wake_policy.set", "{}", 1).is_err());
+    let reply = SelfDispatchResponse {
+        outcome: SelfDispatchOutcome::WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy {
+            wake_grain_turns: 1,
+            new_records: 50,
+            longest_wait_secs: 28_800,
+            nightly_secs: 86_400,
+            idle_secs: 1,
+            quiet_weave_secs: 3_600,
+        }),
+        budget: None,
+    };
+    assert!(response(reply).is_err());
 }
