@@ -309,6 +309,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AGENT_WORKFLOW_RECORD",
         "ARTIFACT_PUBLISH_ADMISSION",
         "CLAIM_SUPERSESSION_DIFF",
+        "AUTHORITY_CACHE_GENERATION",
         "AUTHORITY_HOST_ROOT_SLIP_CACHE",
         "AUTHORITY_MESH_MACHINE",
         "AUTH_REVOKED_TOKEN_JTI",
