@@ -183,7 +183,13 @@ pub(crate) fn step_channel_identity_in_txn(
     at: u64,
 ) -> Result<ChannelIdentity> {
     let Some(grant) = current.grant() else {
-        let min_quarantine_secs = resolve_quarantine_floor_in_txn(store, txn, current)?;
+        // Only the Quarantine edge consumes a duration. Other edges must not
+        // be refused because a wait row is missing: they make no wait choice.
+        let min_quarantine_secs = if matches!(step, ChannelIdentityStep::Quarantine { .. }) {
+            resolve_quarantine_floor_in_txn(store, txn, current)?
+        } else {
+            DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS
+        };
         return current.step_with_wait(step, at, min_quarantine_secs);
     };
     let proof = if step.asserts_live_custody() {
@@ -231,11 +237,10 @@ pub(crate) fn resolve_quarantine_floor_in_txn(
         identity.binding().actor_ref(),
     ) {
         WaitResolution::Resolved(wait) => Ok(wait.min_secs),
-        // No row names the class: the caller keeps the value the default
-        // manifest ships, which is what a vault whose owner deleted the row
-        // asked for — not a hold of zero.
-        WaitResolution::Ungoverned => Ok(DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS),
-        WaitResolution::Contradictory => {
+        // Absence is not a zero-second wait or permission to fall back to an
+        // engine constant. The seeded default manifest supplies this row;
+        // losing it makes the lifecycle act fail closed in this snapshot.
+        WaitResolution::Ungoverned | WaitResolution::Contradictory => {
             Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "channel_identity.quarantine wait policy is unresolvable; refusing to step a \
                  lifecycle act under a policy this vault cannot read",

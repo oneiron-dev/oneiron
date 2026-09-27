@@ -224,6 +224,14 @@ fn own_app_home_identity_is_constructible_active_agent_binding() -> Result<()> {
 #[test]
 fn vault_create_transition_and_never_recycle_invariant() -> Result<()> {
     let (_dir, vault) = test_vault();
+    // The generic test-vault fixture intentionally clears the seeded manifest.
+    // This lifecycle test exercises the shipped quarantine row, not an absent
+    // policy (the missing-row fail-closed case has its own regression).
+    crate::test_util::put_policy_manifest_bytes(
+        &vault,
+        crate::gate::default_policy_manifest_id()?,
+        &crate::gate::default_policy_manifest(),
+    )?;
     let id = entity(0x60);
     let identity = sample_identity();
 

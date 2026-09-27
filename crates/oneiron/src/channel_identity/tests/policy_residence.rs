@@ -197,6 +197,34 @@ fn a_holder_row_holds_one_actors_addresses_longer() -> Result<()> {
 }
 
 #[test]
+fn missing_quarantine_policy_row_refuses_instead_of_using_a_code_floor() -> Result<()> {
+    let (_tmp, vault) = test_vault();
+    let id = entity(0x6A);
+    released_identity(&vault, &id)?;
+    install_default_manifest_with(&vault, wait_rows(Vec::new()))?;
+    assert!(
+        vault
+            .step_channel_identity(
+                &id,
+                ChannelIdentityStep::Quarantine {
+                    until: AT + DEFAULT_CHANNEL_IDENTITY_QUARANTINE_MIN_SECS,
+                },
+                AT,
+            )
+            .is_err(),
+        "an absent wait row is not replaced by a hardcoded duration",
+    );
+    assert_eq!(
+        vault
+            .get_channel_identity(&id)?
+            .expect("row remains")
+            .state(),
+        ChannelIdentityState::Released
+    );
+    Ok(())
+}
+
+#[test]
 fn an_unreadable_wait_policy_refuses_the_act_rather_than_shortening_it() -> Result<()> {
     let (_tmp, vault) = test_vault();
     let id = entity(0x64);

@@ -190,7 +190,7 @@ pub enum InboundDisposition {
 impl Custody {
     /// A self-held row at the start of its machine.
     #[must_use]
-    pub const fn requested_self_held(shape: SelfHeldShape) -> Self {
+    pub(super) const fn requested_self_held(shape: SelfHeldShape) -> Self {
         Self::SelfHeld {
             shape,
             lifecycle: SelfHeldLifecycle::Requested,
@@ -334,21 +334,16 @@ impl Custody {
         }
     }
 
-    /// Whether this row may carry an OUTBOUND effect under the RESTRICTIVE
-    /// default posture.
+    /// Capability-only preflight for callers that do not own a policy snapshot.
     ///
-    /// The posture this answers under is the one the default manifest ships
-    /// (`deny` for a delegated row, `require_capability` for a self-held one),
-    /// so it is also the fail-closed answer for a caller that holds no resolved
-    /// manifest. A caller that resolves policy asks `may_send_under` with the
-    /// posture it resolved; a caller that only needs selection hygiene keeps
-    /// asking this.
+    /// This NEVER authorizes an effect: the dispatch door must also resolve
+    /// the vault's `act_policy` in its transaction via [`Self::may_send_under`].
+    /// In particular there is no permanent delegated-class ban here. Current
+    /// delegated grants are read-only, so they lack the send capability, but a
+    /// future outbound grant would still need the manifest row and gate.
     #[must_use]
     pub fn may_send(&self) -> bool {
-        self.may_send_under(match self {
-            Self::SelfHeld { .. } => ActPosture::RequireCapability,
-            Self::Delegated { .. } => ActPosture::Deny,
-        })
+        self.holds_outbound_capability()
     }
 
     /// What this row can do for a message arriving now.

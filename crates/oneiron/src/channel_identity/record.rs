@@ -369,8 +369,9 @@ impl ChannelIdentity {
         self.custody.occupies_assignment_key()
     }
 
-    /// Whether this row may carry an OUTBOUND effect under the RESTRICTIVE
-    /// default posture (see [`Custody::may_send`]).
+    /// Capability-only preflight. A send still requires vault-resident
+    /// `act_policy` and gate authorization at the effect door (see
+    /// [`Custody::may_send`]).
     #[must_use]
     pub fn may_send(&self) -> bool {
         self.custody.may_send()

@@ -6611,9 +6611,9 @@
      "path": "src/channel_identity/custody.rs",
      "purpose": "Custody: WHO holds the account behind a channel identity, the delegated grant handle, the txn-bound proof…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 17,
+      "fn": 16,
       "struct": 1
      }
     },
