@@ -243,6 +243,86 @@ mod tests {
     }
 
     #[test]
+    fn cross_axis_bound_substitution_cannot_consume_nonce_or_mint() -> Result<()> {
+        let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+        let actor = person(&vault, 0xC4)?;
+        let owner = vault.authenticate_owner(actor, "owner", true, GateDecisionId::now())?;
+        let offered = GrantBound::disclosure(
+            AudienceBound::singleton("alice")?,
+            DisclosureClass::new("health")?,
+            DisclosureEnvelope::new(["health".to_owned(), "records".to_owned()])?,
+        )?;
+        let substituted = GrantBound::disclosure(
+            AudienceBound::new(["alice".to_owned(), "health".to_owned()])?,
+            DisclosureClass::new("health")?,
+            DisclosureEnvelope::new(["records".to_owned()])?,
+        )?;
+        let offer =
+            vault.offer_voice_disclosure_grant(actor, "owner", "room", "segment", &offered)?;
+        assert_eq!(offer.bound_digest, offered.digest().to_hex());
+        assert_ne!(offer.bound_digest, substituted.digest().to_hex());
+        let before_receipts = vault.store.gate_decisions(100)?.len();
+        let err = vault
+            .confirm_voice_grant_offer(
+                &owner,
+                &offer.grant_offer_nonce,
+                substituted.clone(),
+                ConsentSurface::Dashboard,
+            )
+            .expect_err("extra audience member must not borrow the offered nonce");
+        assert_eq!(
+            err.kind(),
+            crate::error::ErrorKind::ConsentOwnerNotAuthenticated
+        );
+        assert!(
+            vault
+                .consent_grant(&substituted.digest().to_hex())?
+                .is_none()
+        );
+        assert_eq!(vault.store.gate_decisions(100)?.len(), before_receipts);
+        assert_eq!(
+            pending_count(&vault)?,
+            1,
+            "refused substitution cannot spend nonce"
+        );
+
+        let receipt = vault.confirm_voice_grant_offer(
+            &owner,
+            &offer.grant_offer_nonce,
+            offered.clone(),
+            ConsentSurface::Dashboard,
+        )?;
+        assert_eq!(
+            receipt.grant_ref().as_deref(),
+            Some(offer.bound_digest.as_str())
+        );
+        assert_eq!(
+            vault
+                .consent_grant(&offer.bound_digest)?
+                .expect("offered grant")
+                .grant
+                .bound(),
+            &offered,
+        );
+        assert!(
+            vault
+                .consent_grant(&substituted.digest().to_hex())?
+                .is_none()
+        );
+        assert!(
+            vault
+                .confirm_voice_grant_offer(
+                    &owner,
+                    &offer.grant_offer_nonce,
+                    offered,
+                    ConsentSurface::Dashboard,
+                )
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn retired_owner_cannot_confirm_cached_offer_or_spend_nonce() -> Result<()> {
         let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
         let actor = person(&vault, 0xC1)?;
