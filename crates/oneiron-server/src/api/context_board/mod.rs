@@ -319,6 +319,10 @@ pub(crate) async fn context_board_hydrate(
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
     // never filled with fabricated grant or budget data.
+    // Stage prefix bytes and epoch under one session lock. The response may
+    // still fail the full token-budget check below; on failure neither moves.
+    let mut runs = server.self_brief_sessions.lock().await;
+    let mut staged_prefix = None;
     let self_brief = if let (Some(actor_ref), Some(session_id)) = (
         auth.principal_ref()
             .filter(|_| auth.actor_class() == Some("agent")),
@@ -327,33 +331,27 @@ pub(crate) async fn context_board_hydrate(
         let actor = oneiron::EntityId::from_hex(actor_ref).map_err(|_| {
             crate::error::ApiError::bad_request("invalid agent actor", Some("session"))
         })?;
-        let mut runs = server.self_brief_sessions.lock().await;
-        if let Some(run) = runs.get_mut(&(actor, session_id.to_owned())) {
-            let placed = if run.emitted_epoch.is_none() {
-                let card = run
-                    .render
-                    .turn_one(&server.vault, &run.state, &observed_reads);
-                if card.is_ok() {
-                    run.emitted_epoch = Some(run.epoch);
+        let key = (actor, session_id.to_owned());
+        if let Some(run) = runs.get_mut(&key) {
+            if run.emitted_epoch.is_none() || run.emitted_epoch != Some(run.epoch) {
+                let mut candidate = run.render.clone();
+                let card = if run.emitted_epoch.is_none() {
+                    candidate.turn_one(&server.vault, &run.state, &observed_reads)
+                } else {
+                    candidate.fold(&server.vault, &run.state, &observed_reads)
                 }
-                Some(card)
-            } else if run.emitted_epoch != Some(run.epoch) {
-                let card = run.render.fold(&server.vault, &run.state, &observed_reads);
-                if card.is_ok() {
-                    run.emitted_epoch = Some(run.epoch);
-                }
+                .map_err(|error| super::core_engine_error("self brief failed", error))?;
+                staged_prefix = Some((key, candidate, run.epoch));
                 Some(card)
             } else if req.describe_self {
                 Some(
                     run.render
-                        .describe_self(&server.vault, &run.state, &observed_reads),
+                        .describe_self(&server.vault, &run.state, &observed_reads)
+                        .map_err(|error| super::core_engine_error("self brief failed", error))?,
                 )
             } else {
                 None
-            };
-            placed
-                .transpose()
-                .map_err(|error| super::core_engine_error("self brief failed", error))?
+            }
         } else {
             None
         }
@@ -387,6 +385,14 @@ pub(crate) async fn context_board_hydrate(
             .into());
         }
     }
+    if let Some((key, render, epoch)) = staged_prefix {
+        let run = runs
+            .get_mut(&key)
+            .expect("run remains locked through response validation");
+        run.render = render;
+        run.emitted_epoch = Some(epoch);
+    }
+    drop(runs);
     if let Some(mut reads) = session_read_set(
         &server,
         caller,
@@ -445,6 +451,9 @@ pub(crate) async fn describe_self_for_auth(
         .render
         .describe_self(&server.vault, &run.state, &read_set)
         .map_err(|error| super::core_engine_error("self brief failed", error))?;
-    serde_json::to_value(card)
+    let tail = card.tail.ok_or_else(|| {
+        crate::error::ApiError::internal_server_error("self brief tail is missing")
+    })?;
+    serde_json::to_value(oneiron::task_verb::TaskDescription::SelfCard { tail })
         .map_err(|_| crate::error::ApiError::internal_server_error("self brief encoding failed"))
 }

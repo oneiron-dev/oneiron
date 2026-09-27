@@ -99,6 +99,31 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
             b"agent",
         )
         .unwrap();
+    let world = seeded_test_entity_id(0x2631_0002);
+    server
+        .vault
+        .put_entity(
+            &world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"world",
+        )
+        .unwrap();
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .open_standing_block(&owner, actor, world, "identity", 64)
+        .unwrap();
     let mut state = SelfBriefState {
         self_ref: actor,
         principal: actor,
@@ -133,7 +158,7 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
         .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
         .await
         .unwrap();
-    let request = |describe_self| {
+    let with_budget = |describe_self, token_budget| {
         core_request_with_authz(
             "POST",
             "/v1/core/context-board",
@@ -141,9 +166,14 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
                 "scope=core:read;principal_ref={};actor_class=agent",
                 actor.to_hex()
             )),
-            Some(&json!({"session":{"session_id":"brief-session"}, "describe_self":describe_self})),
+            Some(&json!({"session":{"session_id":"brief-session"},
+                "standing":{"world_ref":world.to_hex(),"token_budget":token_budget},
+                "describe_self":describe_self})),
         )
     };
+    let request = |describe_self| with_budget(describe_self, 65_536);
+    let (status, rejected_open) = route_json(server.clone(), with_budget(false, 64)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected_open}");
     let (status, open) = route_json(server.clone(), request(false)).await;
     assert_eq!(status, StatusCode::OK, "{open}");
     let cached = open["self_brief"]["prefix"].as_str().unwrap().to_owned();
@@ -184,12 +214,63 @@ async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{described}");
-    assert!(described["prefix"].is_null());
+    assert_eq!(described["kind"], "self_card");
     assert_eq!(described["tail"].as_str(), Some(tail));
+    let decoded: oneiron::task_verb::TaskDescription = serde_json::from_value(described).unwrap();
+    assert_eq!(
+        decoded,
+        oneiron::task_verb::TaskDescription::SelfCard {
+            tail: tail.to_owned()
+        }
+    );
+
+    // The shipped SDK must decode the *live* authenticated facade response,
+    // not merely the route's raw JSON. Bind a real holder key and socket.
+    let (slip, holder) = crate::test_credentials::credential(
+        &server,
+        &format!(
+            "scope=core:read;principal_ref={};actor_class=agent",
+            actor.to_hex()
+        ),
+    );
+    let credential = format!(
+        "v2.cred.{}.{}",
+        slip.to_token().unwrap().strip_prefix("v2.slip.").unwrap(),
+        holder
+            .to_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let host = server.clone();
+    let serving =
+        tokio::spawn(async move { axum::serve(listener, crate::build_app(host)).await.unwrap() });
+    let result = tokio::task::spawn_blocking(move || {
+        let client = oneiron_remote::OneironClient::connect(&url, &credential).unwrap();
+        client.agent_verb(
+            "describe",
+            json!({"self":true,"session_id":"brief-session"}),
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    serving.abort();
+    let sdk_card: oneiron::task_verb::TaskDescription = serde_json::from_value(result).unwrap();
+    assert_eq!(
+        sdk_card,
+        oneiron::task_verb::TaskDescription::SelfCard {
+            tail: tail.to_owned()
+        }
+    );
     server
         .install_self_brief_session(actor, "brief-session".into(), 2, state)
         .await
         .unwrap();
+    let (status, rejected_fold) = route_json(server.clone(), with_budget(false, 64)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected_fold}");
     let (status, folded) = route_json(server.clone(), request(false)).await;
     assert_eq!(status, StatusCode::OK, "{folded}");
     assert_eq!(folded["self_brief"]["prefix"].as_str(), Some(tail));

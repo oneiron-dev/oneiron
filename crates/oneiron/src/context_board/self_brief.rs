@@ -227,7 +227,7 @@ impl SelfBriefState {
 
 /// Per-run prefix custody. `describe_self` appends to the tail, leaving the
 /// cached bytes untouched until `fold` deliberately replaces the prefix.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SelfBriefSession {
     cached_prefix: Option<String>,
 }

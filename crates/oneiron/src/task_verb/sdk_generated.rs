@@ -173,6 +173,14 @@ pub fn mcp_arguments_schema_from_input(
                 "task_ref".to_owned(),
                 schema.pointer("/properties/task_ref")?.clone(),
             );
+            properties.insert(
+                "self".to_owned(),
+                schema.pointer("/properties/self")?.clone(),
+            );
+            properties.insert(
+                "session_id".to_owned(),
+                schema.pointer("/properties/session_id")?.clone(),
+            );
             &[]
         }
         "tasks.create" => {

@@ -217,7 +217,7 @@ impl AgentVerb {
             Self::BoardSubscribe => Some(&["scopes"]),
             Self::BoardUnsubscribe => Some(&["scopes"]),
             Self::Cancel => Some(&["task_ref"]),
-            Self::Describe => Some(&["task_ref"]),
+            Self::Describe => Some(&["task_ref", "self", "session_id"]),
             Self::TasksCreate => Some(&["spec", "label"]),
             Self::TasksUpdate => Some(&["task_ref"]),
             Self::TasksAsk => Some(&["spec"]),
