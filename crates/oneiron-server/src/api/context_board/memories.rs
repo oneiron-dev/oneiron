@@ -72,11 +72,11 @@ pub(crate) struct ContextBoardSessionControls {
 /// Companion scope that influences MEMORIES assembly.
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardCompanionControls {
-    /// Optional person entity id (32 hex) or opaque person label.
+    /// Optional PERSON identity (32-hex entity id) or opaque person label.
     #[serde(default, rename = "person_ref", alias = "personRef")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     person_ref: Option<String>,
-    /// Optional persona entity id (32 hex) or opaque persona label.
+    /// Optional other endpoint of the relationship (32-hex entity id) or opaque label.
     #[serde(default, rename = "persona_ref", alias = "personaRef")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     persona_ref: Option<String>,
@@ -150,15 +150,15 @@ pub(crate) struct ContextBoardCompanionAssembly {
     /// Effective companion scope selected from active companion records.
     #[schema(example = "personal")]
     scope: Option<String>,
-    /// Active record class that selected the companion scope.
+    /// Active relationship record that selected the companion scope.
     #[serde(rename = "scope_source")]
-    #[schema(example = "persona_and_relationship_records")]
+    #[schema(example = "relationship_record")]
     scope_source: Option<String>,
-    /// Optional person entity id for companion-aware assembly metadata.
+    /// Optional PERSON identity used for companion-aware assembly metadata.
     #[serde(rename = "person_ref")]
     #[schema(example = "11111111111111111111111111111111")]
     person_ref: Option<String>,
-    /// Optional persona entity id for companion-aware assembly metadata.
+    /// Optional other relationship endpoint used for companion-aware assembly metadata.
     #[serde(rename = "persona_ref")]
     #[schema(example = "22222222222222222222222222222222")]
     persona_ref: Option<String>,
@@ -348,34 +348,21 @@ pub(crate) fn resolve_companion_assembly(
     let relationship_ref = person_ref.zip(persona_ref);
     let mut expressions = oneiron::CompanionExpressionRegister::new();
     let resolution = if let Some(expression) = requested_expression {
-        let seed_resolution = register.resolve_companion_scope(
-            &expressions,
-            person_ref,
-            persona_ref,
-            relationship_ref,
-        );
-        if let Some(key) = seed_resolution
-            .relationship_key
-            .as_ref()
-            .or(seed_resolution.persona_key.as_ref())
-        {
+        let seed_resolution =
+            register.resolve_companion_scope(&expressions, person_ref, relationship_ref);
+        if let Some(key) = seed_resolution.relationship_key.as_ref() {
             expressions
                 .update(key.clone(), expression)
                 .map_err(|error| {
                     tracing::error!(error = %error, "companion expression registration failed");
                     core_engine_error("companion expression registration failed", error)
                 })?;
-            register.resolve_companion_scope(
-                &expressions,
-                person_ref,
-                persona_ref,
-                relationship_ref,
-            )
+            register.resolve_companion_scope(&expressions, person_ref, relationship_ref)
         } else {
             seed_resolution
         }
     } else {
-        register.resolve_companion_scope(&expressions, person_ref, persona_ref, relationship_ref)
+        register.resolve_companion_scope(&expressions, person_ref, relationship_ref)
     };
     let expression = requested_expression.unwrap_or(resolution.expression);
 
