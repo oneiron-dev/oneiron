@@ -483,4 +483,10 @@ fn stored_branch_session_and_span_bounds_are_proved_at_every_read() {
         .unwrap();
     assert!(vault.scope_summary_covers(&id).is_err());
     assert!(vault.land_header(&id, &trunk, actor, false).is_err());
+    // `drill` routes through the same merge-cover validator. A claim whose
+    // value names the replayed bad summary cannot expose its forged covers.
+    let mut forged_header = vault.get_claim(&header.claim).unwrap().unwrap();
+    forged_header.value = rmpv::Value::from(id.to_hex());
+    let txn = vault.store.env.read_txn().unwrap();
+    assert!(merge_covers_in_txn(&vault, &txn, &forged_header).is_err());
 }
