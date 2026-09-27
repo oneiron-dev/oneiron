@@ -490,7 +490,7 @@ fn rotate_key_rejects_self_rotation() {
 }
 
 #[test]
-fn invalid_signatures_do_not_poison_equivocation_detection() {
+fn invalid_signatures_do_not_enter_fold() {
     let valid = genesis_entry(39, 86_400, 1);
     let valid_hash = authority_entry_hash(&valid).unwrap();
     let mut forged = valid.clone();
@@ -505,12 +505,6 @@ fn invalid_signatures_do_not_poison_equivocation_detection() {
         issue,
         AuthorityFoldIssue::InvalidEntry(hash) if *hash == forged_hash
     )));
-    assert!(
-        !fold
-            .issues
-            .iter()
-            .any(|issue| matches!(issue, AuthorityFoldIssue::EquivocationDetected { .. }))
-    );
 }
 
 #[test]
@@ -551,8 +545,6 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         pending_widens: BTreeMap::new(),
         vetoed_widens: BTreeSet::new(),
         delayed_rotation_veto_revocations: BTreeMap::new(),
-        fork_resolution_revocations: BTreeSet::new(),
-        authority_forks: BTreeMap::new(),
         federation_pacts: BTreeMap::new(),
         federation_confirms: BTreeMap::new(),
         critical_write_confirms: BTreeMap::new(),
@@ -580,15 +572,5 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         &zero,
     );
 
-    let storage = LocalFoldContext::default();
-    let context = storage.context();
-    assert!(
-        active_participant_keys(
-            &state,
-            &entry,
-            authority_entry_hash(&entry).unwrap(),
-            context
-        )
-        .is_err()
-    );
+    assert!(active_participant_keys(&state, &entry).is_err());
 }
