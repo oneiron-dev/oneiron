@@ -65,6 +65,12 @@ pub(super) fn replay_record<T: OutboundTransport>(
             ))
         }
         (IntentState::Pending, None) => {
+            // A refused resume writes nothing. The row stays outcome-free
+            // Pending, which already resolves as unresolved delivery.
+            {
+                let txn = vault.store.env.read_txn().map_err(Error::from)?;
+                verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
+            }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
             // BEFORE a resumed no-wire failure can replace its retry marker.
