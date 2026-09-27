@@ -620,6 +620,47 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
     }
     let (status, _) = route_json(server.clone(), request(&slip, "/v1/core/conversations")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // A matching stored grant cannot widen the record-restricted credential.
+    let person = seeded_test_entity_id(0x0002_4001);
+    let persona = seeded_test_entity_id(0x0002_4002);
+    seed_companion_profile_access(
+        &server,
+        seeded_test_entity_id(0x0002_4003),
+        actor,
+        person,
+        persona,
+    );
+    let compact = "exact stored compact profile";
+    server
+        .vault()
+        .put_psych_profile(
+            &persona,
+            &oneiron::PsychProfile::new(
+                persona,
+                compact,
+                "text",
+                "narrative",
+                vec![seeded_test_entity_id(0x0002_4004)],
+                oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let list_path = format!("/v1/companion/personas?person_ref={}", person.to_hex());
+    let (status, _) = route_json(server.clone(), request(&slip, &list_path)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let mut unrestricted = slip.claims.clone();
+    unrestricted.slip_id = [91; 32];
+    unrestricted.records.clear();
+    let open_slip = server
+        .vault()
+        .mint_capability_slip(&issuer, unrestricted)
+        .unwrap();
+    let (status, listed) = route_json(server.clone(), request(&open_slip, &list_path)).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"][0]["personalityCompact"], compact);
+
     let mut no_read = slip.clone();
     no_read
         .attenuate(

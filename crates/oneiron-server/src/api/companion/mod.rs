@@ -5,6 +5,7 @@
 mod access_grants;
 mod auth;
 mod errors;
+mod lists;
 mod profiles;
 
 pub(crate) use self::access_grants::{
@@ -24,4 +25,10 @@ pub(crate) use self::profiles::{
     CompanionProfileNextAction, CompanionProfilePayload, CompanionProfileRefreshRequest,
     CompanionProfileResponse, CompanionProfileStaleReasonPayload, get_companion_profile,
     refresh_companion_profile,
+};
+
+pub(crate) use self::lists::{
+    __path_list_access_requests, __path_list_personas, AccessRequestListRow,
+    AccessRequestsListResponse, PersonaListQuery, PersonaListRow, PersonasListResponse,
+    list_access_requests, list_personas,
 };

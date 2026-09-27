@@ -1,6 +1,7 @@
 //! Room bodies, membership windows, session presence and audience visibility.
 mod body;
 mod membership;
+mod preview;
 mod session;
 mod visibility;
 

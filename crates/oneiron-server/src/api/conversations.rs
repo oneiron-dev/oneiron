@@ -10,8 +10,8 @@ use super::collect_live_entity_page;
 use super::core_body_for_write;
 use super::core_engine_error;
 use super::core_entity_timestamps;
-use super::core_list_entities_by_type;
 use super::core_list_limit;
+use super::count_live_entities_by_type;
 use super::encode_core_body;
 use super::is_deleted_shell_for_core_list;
 use super::json_payload;
@@ -42,8 +42,8 @@ use axum::response::Json;
 use oneiron::EdgeKind;
 use oneiron::registry::ENTITY_TYPE_CONVERSATION;
 use oneiron::registry::ENTITY_TYPE_TURN;
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -102,6 +102,17 @@ pub(crate) struct CreateConversationRequest {
     actor: Option<oneiron::EntityId>,
 }
 
+/// A list row keeps the existing view projection and adds one optional preview.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct ConversationListRow {
+    #[serde(flatten)]
+    entity: Map<String, Value>,
+    #[serde(rename = "lastMessageSnippet", default)]
+    last_message_snippet: Option<String>,
+}
+
+pub(crate) type ConversationsListResponse = PaginatedResponse<ConversationListRow>;
+
 /// List conversation entities, optionally filtered by effective kind and external id.
 #[utoipa::path(
     get,
@@ -119,7 +130,7 @@ pub(crate) async fn list_core_conversations(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<ConversationListQuery>, QueryRejection>,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
+) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let query = query_params(query)?;
@@ -130,7 +141,7 @@ pub(crate) async fn list_core_conversations(
         count_mode: query.count_mode,
     };
     if query.kind.is_none() && query.external_id.is_none() {
-        return core_list_entities_by_type(&server.vault, ENTITY_TYPE_CONVERSATION, params);
+        return list_conversations_unfiltered(&server.vault, params);
     }
     let after = params
         .after
@@ -146,7 +157,7 @@ pub(crate) async fn list_core_conversations(
             core_list_limit(params.limit),
         )
         .map_err(|e| core_engine_error("conversation list failed", e))?;
-    let items = project_entity_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
+    let items = project_conversation_ids(&server.vault, ids, params.view.unwrap_or(View::Summary))?;
     let meta = match params.count_mode {
         CountMode::None => ResponseMeta::none(),
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
@@ -177,6 +188,67 @@ pub(crate) async fn list_core_conversations(
         next.map(|id| id.to_hex()),
         meta,
     )))
+}
+
+/// The generic list projection's `standard` view omits ids. Keep the
+/// in-memory ids from the page so every view can receive its preview.
+fn list_conversations_unfiltered(
+    vault: &oneiron::Vault,
+    params: CoreListQuery,
+) -> Result<Json<ConversationsListResponse>, EnvelopedApiError> {
+    let after = params
+        .after
+        .as_deref()
+        .map(|id| parse_entity_id_param(id, "after"))
+        .transpose()?;
+    let (ids, next) = collect_live_entity_page(
+        vault,
+        after,
+        core_list_limit(params.limit),
+        |after, limit| {
+            vault
+                .entities_by_type_page(ENTITY_TYPE_CONVERSATION, after, limit)
+                .map_err(|e| core_engine_error("conversation list failed", e).into())
+        },
+    )?;
+    let items = project_conversation_ids(vault, ids, params.view.unwrap_or(View::Summary))?;
+    let meta = match params.count_mode {
+        CountMode::None => ResponseMeta::none(),
+        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
+        CountMode::Exact => ResponseMeta::new(
+            count_live_entities_by_type(vault, ENTITY_TYPE_CONVERSATION)?,
+            CountMode::Exact,
+        ),
+    };
+    Ok(Json(PaginatedResponse::new(items, next, meta)))
+}
+
+fn project_conversation_ids(
+    vault: &oneiron::Vault,
+    ids: Vec<oneiron::EntityId>,
+    view: View,
+) -> Result<Vec<ConversationListRow>, EnvelopedApiError> {
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        if is_deleted_shell_for_core_list(vault, &id)? {
+            continue;
+        }
+        let Some(item) = projection::project_entity(vault, &id, view)
+            .map_err(|e| core_engine_error("conversation projection failed", e))?
+        else {
+            continue;
+        };
+        let Value::Object(entity) = item else {
+            continue;
+        };
+        items.push(ConversationListRow {
+            entity,
+            last_message_snippet: vault
+                .conversation_last_message_snippet(&id)
+                .map_err(|e| core_engine_error("conversation preview failed", e))?,
+        });
+    }
+    Ok(items)
 }
 
 /// Create a conversation entity.
