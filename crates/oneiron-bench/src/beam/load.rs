@@ -82,13 +82,15 @@ pub(super) fn load_dataset(
             .map(|row| oneiron::count_context_pack_tokens(&row.text) as u64)
             .sum()
     };
+    let total_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    loaded.offline_ingest_us = total_us.saturating_sub(loaded.offline_index_build_us);
     loaded.offline = super::report_model::CostComponentReport {
         token_source: super::report_model::TokenAccountingSource::TokenizerCount,
         tokenizer_id: Some(oneiron::DEFAULT_CONTEXT_PACK_TOKENIZER_ID.into()),
         input_tokens: tokens,
         output_tokens: 0,
         target_tokens: 0,
-        elapsed_us: started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+        elapsed_us: total_us,
         cost_usd: 0.0,
     };
     Ok(loaded)
@@ -130,7 +132,12 @@ pub(super) fn load_fixture_dataset(
             batch = batch.vector(&id, &vector);
         }
     }
+    let index_started = std::time::Instant::now();
     batch.commit()?;
+    let index_us = index_started
+        .elapsed()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
 
     let mut query_vector_by_case_id = BTreeMap::new();
     for case in &fixture.cases {
@@ -142,6 +149,8 @@ pub(super) fn load_fixture_dataset(
 
     Ok(LoadedDataset {
         offline: super::report::not_applicable_cost(),
+        offline_ingest_us: 0,
+        offline_index_build_us: index_us,
         ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: fixture.fixture_id.clone(),
@@ -324,6 +333,7 @@ pub(super) fn load_run_jsonl_dataset(
         contract_records.insert(record.question_id.clone(), record);
     }
 
+    let index_started = std::time::Instant::now();
     batch.commit()?;
     // Optional corpus-authored statements are inputs, never gold or extracted
     // judge labels. Materialize through the ordinary claim door after sources.
@@ -378,6 +388,10 @@ pub(super) fn load_run_jsonl_dataset(
         }
     }
 
+    let index_us = index_started
+        .elapsed()
+        .as_micros()
+        .min(u128::from(u64::MAX)) as u64;
     for case_id in &manifest.case_ids {
         if !case_seen.contains(case_id.as_str()) {
             return Err(BeamError::MissingCase {
@@ -393,6 +407,8 @@ pub(super) fn load_run_jsonl_dataset(
     let dataset_revision = dataset_revision.unwrap_or_else(|| "unknown".to_owned());
     Ok(LoadedDataset {
         offline: super::report::not_applicable_cost(),
+        offline_ingest_us: 0,
+        offline_index_build_us: index_us,
         ppr_vad_fixture: None,
         report: DatasetLoadReport {
             dataset_id: dataset_id.clone(),

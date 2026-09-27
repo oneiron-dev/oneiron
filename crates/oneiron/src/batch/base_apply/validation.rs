@@ -24,21 +24,21 @@ pub(super) fn validate_put_type(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    (mut entity_type, mut data): (u8, Vec<u8>),
+    (mut entity_type, data): (u8, &mut Vec<u8>),
     allow_maintenance: bool,
     allow_reserved_predicate: bool,
     hub_sync_imported: bool,
-) -> Result<(u8, Vec<u8>)> {
+) -> Result<u8> {
     // Replay/import resolves GLOBAL identity before local-byte validation.
     // Foreign byte and generation never select the destination kind.
     if allow_maintenance
         && allow_reserved_predicate
         && crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle
     {
-        let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(&data)?;
+        let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(data)?;
         let (local_handle, local_envelope) = store.remap_pack_instance_in_txn(wtxn, &source)?;
         entity_type = local_handle;
-        data = local_envelope.to_bytes()?;
+        *data = local_envelope.to_bytes()?;
     }
     if hub_sync_imported
         && (entity_type != ENTITY_TYPE_SKILL || allow_maintenance || allow_reserved_predicate)
@@ -69,17 +69,17 @@ pub(super) fn validate_put_type(
         && allow_reserved_predicate
         && entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
     {
-        validate_replicated_custody_put(store, wtxn, id, &data)?;
+        validate_replicated_custody_put(store, wtxn, id, data)?;
     }
     if crate::registry::zone_of(entity_type) == crate::registry::TypeByteZone::PackHandle {
         store.validate_pack_handle_in_txn(wtxn, entity_type)?;
-        store.validate_pack_instance_in_txn(wtxn, entity_type, &data)?;
+        store.validate_pack_instance_in_txn(wtxn, entity_type, data)?;
     } else if allow_maintenance {
         store.validate_entity_type(entity_type)?;
     } else {
         store.validate_public_entity_type(entity_type)?;
     }
-    Ok((entity_type, data))
+    Ok(entity_type)
 }
 
 /// The FACET a NOTE or ASSET put at `id` is born under: the batch mask, else

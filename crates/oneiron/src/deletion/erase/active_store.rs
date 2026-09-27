@@ -63,9 +63,9 @@ impl Vault {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
         crate::note::erase::purge(self, wtxn, id)?;
-        bm25::deindex_text(&self.store, wtxn, id)?;
+        self.port_retrieval_clear_text_for_soft_erase(wtxn, id)?;
         crate::vault::entity_revision::remove_entity_revisions(&self.store, wtxn, id)?;
-        delete_from_phonetic_postings(&self.store, wtxn, id)?;
+        self.port_retrieval_clear_phonetic_for_soft_erase(wtxn, id)?;
         crate::code_revision::delete_code_revision_lifecycle_in_txn(&self.store, wtxn, id)?;
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::origin::lfs::delete_lfs_lifecycle_in_txn(&self.store, wtxn, id)?;
@@ -76,10 +76,9 @@ impl Vault {
             ppr::increment_graph_version(&self.store, wtxn)?;
         }
         self.store.clear_pending_embedding(wtxn, id)?;
-        let entity_had_vector = self.store.vectors.delete(wtxn, id.as_bytes())?;
+        let entity_had_vector = self.port_retrieval_clear_vector_for_soft_erase(wtxn, id)?;
         let mut had_vector =
             hint_had_vector | entity_had_vector | blob_cleanup.had_vector | room_had_vector;
-        crate::hnsw::hnsw_deindex(&self.store, wtxn, id)?;
 
         crate::skill_hub::remove_hub_package_in_txn(&self.store, wtxn, id)?;
         crate::agent_def::remove_birth_custody_in_txn(&self.store, wtxn, id)?;

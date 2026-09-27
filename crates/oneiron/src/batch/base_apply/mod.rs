@@ -4,6 +4,7 @@ use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use heed::RwTxn;
+use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
@@ -17,6 +18,70 @@ mod validation;
 use self::edge::apply_edge_op;
 use self::indexes::{apply_text_index_update, finalize_batch_indexes};
 use self::validation::{birth_stamp_target, take_lapse_decisions, validate_put_type};
+
+// Holds promotion's independent journal clone until apply completes. The
+// iterator retains every unconsumed op on early return; per-op payloads that
+// move into match arms get a Zeroizing owner at the point of consumption.
+struct ReplayOps {
+    ops: Vec<BatchOp>,
+    replay: bool,
+}
+
+impl Drop for ReplayOps {
+    fn drop(&mut self) {
+        if self.replay {
+            for op in &mut self.ops {
+                crate::session_overlay::zeroize_batch_op_payload(op);
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for ReplayOps {
+    type Target = Vec<BatchOp>;
+    fn deref(&self) -> &Self::Target {
+        &self.ops
+    }
+}
+
+struct ReplayIter {
+    remaining: std::vec::IntoIter<BatchOp>,
+    replay: bool,
+}
+
+impl Iterator for ReplayIter {
+    type Item = BatchOp;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining.next()
+    }
+}
+
+impl Drop for ReplayIter {
+    fn drop(&mut self) {
+        if self.replay {
+            for op in self.remaining.as_mut_slice() {
+                crate::session_overlay::zeroize_batch_op_payload(op);
+            }
+        }
+    }
+}
+
+/// Check the decode point while this replay op still owns its buffers. On
+/// pre-match errors no match arm takes ownership, so scrub here before return.
+fn prepare_replay_op(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    bindings: &mut VecDeque<ClaimMaterialization>,
+    op: &mut BatchOp,
+    origin: BaseWriteOrigin<'_>,
+) -> Result<Option<ClaimMaterialization>> {
+    let result = check_decode_point_taint_guard(store, op, origin)
+        .and_then(|()| consume_claim_materialization(store, txn, bindings, op, origin));
+    if result.is_err() && matches!(origin, BaseWriteOrigin::PromoteReplay(_)) {
+        crate::session_overlay::zeroize_batch_op_payload(op);
+    }
+    result
+}
 
 /// Materializes the already-authorized CLAIM puts from a session-bundle merge.
 ///
@@ -78,6 +143,8 @@ pub(super) fn apply_ops_with_origin(
     gate_mode: ApplyOpsGateMode,
     origin: BaseWriteOrigin<'_>,
 ) -> Result<()> {
+    let replay = matches!(origin, BaseWriteOrigin::PromoteReplay(_));
+    let mut ops = ReplayOps { ops, replay };
     let hub_admission = gate_mode.hub_admission;
     let birth_mask = gate_mode.birth_mask;
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -98,7 +165,12 @@ pub(super) fn apply_ops_with_origin(
     // parent slot BEFORE the overlay is built, so the winner add and the stored
     // losers' deletes are one atomic strict batch — cardinality is already one
     // when `validate_child_of_batch` runs, and no bytes stage in between.
-    let ops = resolve_replicated_child_of_slots(store, &*wtxn, ops)?;
+    // Promotion contains only public attribution edges; it cannot carry the
+    // replicated ChildOf arm that this resolver rewrites. Keep its owned
+    // buffers in the scrub guard even on an error before the op loop.
+    if !replay {
+        ops.ops = resolve_replicated_child_of_slots(store, &*wtxn, std::mem::take(&mut ops.ops))?;
+    }
     let child_of_overlay = ChildOfBatchOverlay::from_ops(&ops);
     let habit_streak_candidates =
         habit_streak_recompute_candidates(store, &*wtxn, &ops, &child_of_overlay)?;
@@ -134,30 +206,33 @@ pub(super) fn apply_ops_with_origin(
     #[cfg(feature = "sync")]
     let mut pending_embedding_enqueue_priorities = HashMap::<EntityId, u8>::new();
     let companion_retired_histories = companion_retired_histories_in_batch(&ops)?;
-
-    for (op_index, op) in ops.into_iter().enumerate() {
+    let iter = ReplayIter {
+        remaining: std::mem::take(&mut ops.ops).into_iter(),
+        replay,
+    };
+    for (op_index, mut op) in iter.enumerate() {
         // K4: the op-decode point, inside the applying transaction. Every arm
         // below decodes an op that may carry overlay ids, so this is where
         // membership is judged — before the arm can stage a byte.
-        check_decode_point_taint_guard(store, &op, origin)?;
         let materialization =
-            consume_claim_materialization(store, &*wtxn, &mut claim_materializations, &op, origin)?;
+            prepare_replay_op(store, &*wtxn, &mut claim_materializations, &mut op, origin)?;
         match op {
             BatchOp::Put {
                 id,
                 mut entity_type,
                 occurred,
                 learned_at,
-                mut data,
+                data,
                 allow_maintenance,
                 allow_reserved_predicate,
                 hub_sync_imported,
             } => {
-                (entity_type, data) = validate_put_type(
+                let mut data = Zeroizing::new(data);
+                entity_type = validate_put_type(
                     store,
                     wtxn,
                     &id,
-                    (entity_type, data),
+                    (entity_type, &mut data),
                     allow_maintenance,
                     allow_reserved_predicate,
                     hub_sync_imported,
@@ -446,6 +521,8 @@ pub(super) fn apply_ops_with_origin(
                 vector,
                 pending_embedding_token,
             } => {
+                let vector = Zeroizing::new(vector);
+                let pending_embedding_token = Zeroizing::new(pending_embedding_token);
                 let same_batch_token = pending_embedding_token
                     .as_deref()
                     .or_else(|| pending_embedding_tokens_written.get(&id).map(Vec::as_slice));
@@ -476,6 +553,7 @@ pub(super) fn apply_ops_with_origin(
                 had_graph_mutation |= apply_edge_op(store, wtxn, op)?;
             }
             BatchOp::Text { id, fields } => {
+                let fields = Zeroizing::new(fields);
                 apply_text_index_update(
                     store,
                     wtxn,

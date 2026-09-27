@@ -51,24 +51,8 @@ impl Vault {
             || crate::agent_def::birth_custody_exists_in_txn(&self.store, txn, id)?
             || crate::receipt::receipt_archive_custody_exists(&self.store, txn, id)?
             || self.store.entities.get(txn, id.as_bytes())?.is_some()
-            || self.store.vectors.get(txn, id.as_bytes())?.is_some()
-            || self.store.text_forward.get(txn, id.as_bytes())?.is_some()
-            || self.store.text_meta.get(txn, id.as_bytes())?.is_some()
-            || self
-                .store
-                .text_doc_field_lengths
-                .get(txn, id.as_bytes())?
-                .is_some()
-            || self
-                .store
-                .phonetic_forward
-                .get(txn, id.as_bytes())?
-                .is_some()
-            || self
-                .store
-                .short_ids_reverse
-                .get(txn, id.as_bytes())?
-                .is_some()
+            || self.port_retrieval_delete_scope_exists(txn, id)?
+            || self.port_short_id_mapping_exists(txn, id)?
         {
             return Ok(true);
         }

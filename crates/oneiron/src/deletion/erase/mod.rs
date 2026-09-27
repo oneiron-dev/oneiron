@@ -9,8 +9,6 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
 use crate::batch::deindex_entity;
 use crate::batch::deindex_lexical_query_hints_for_target;
-use crate::batch::delete_from_phonetic_postings;
-use crate::bm25;
 use crate::claim::ClaimSubject;
 use crate::edge::EdgeConfirmationStatus;
 use crate::edge::EdgeProvenanceFlags;
@@ -21,6 +19,7 @@ use crate::identity_topology::{
     StoredIdentityOpAction, decode_identity_topology_event_body,
     encode_identity_topology_event_body,
 };
+use crate::ports::{RetrievalIndexMaintenance, ShortIdStoreMaintenance};
 use crate::ppr;
 use crate::provenance::EdgeRef;
 use crate::provenance::PREDICATE_EDGE_PROVENANCE;

@@ -124,7 +124,9 @@ fn delete_references_amp_ident(statement: &str, name: &str) -> bool {
 }
 
 fn open_test_vault() -> (tempfile::TempDir, Vault) {
-    crate::test_util::open_test_vault_with(VaultConfig::device())
+    let mut config = VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
+    crate::test_util::open_test_vault_with(config)
 }
 
 fn entity_id(byte: u8) -> EntityId {
@@ -1530,13 +1532,193 @@ fn search_falls_back_to_bootstrap_when_blend_weight_table_is_corrupt() -> Result
     Ok(())
 }
 
+fn record_confirmed_retrieval_end_outcome(
+    vault: &Vault,
+    run_id: RetrievalRunId,
+    activated_memory_id: [u8; 16],
+) -> Result<()> {
+    vault.record_retrieval_end_outcome(RetrievalEndOutcome {
+        run_id,
+        key: "beam.reward".to_owned(),
+        turn_id: [7; 16],
+        activated_memory_id,
+        gate_score: 1.0,
+        confirmed_fact_hit: true,
+        latency_scale_us: 1,
+        cost_weight: 0.0,
+        metadata: BTreeMap::new(),
+    })
+}
+
+#[test]
+fn shaped_retrieval_end_outcome_gates_hit_and_charges_run_hops() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let run_id = RetrievalRunId::now();
+    let memory_id = *entity_id(0x48).as_bytes();
+    let mut run = RetrievalRunRecord::new(
+        run_id,
+        RetrievalAction::Pipeline,
+        100,
+        10,
+        vec![RetrievalSignal::Text],
+        vec![RetrievalScoreBreakdown {
+            result_id: memory_id,
+            final_rank: 1,
+            final_score: 1.0,
+            components: vec![RetrievalScoreComponent {
+                signal: RetrievalSignal::Recency,
+                rank: 1,
+                score: 1.0,
+            }],
+            access_factor: None,
+        }],
+        1,
+        0,
+        None,
+    );
+    run.state.hops = 2;
+    run.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
+    vault.store.record_retrieval_run(&run)?;
+
+    // Intermediate/caller-chosen reward must never train the offline updater.
+    vault.record_retrieval_outcome(RetrievalOutcome {
+        run_id,
+        key: "intermediate".to_owned(),
+        reward: Some(100.0),
+        accepted: Some(true),
+        metadata: BTreeMap::new(),
+    })?;
+    let config = RetrievalBlendTuningConfig {
+        max_runs: 1,
+        learning_rate: 0.1,
+        min_reward_count: 1,
+    };
+    assert!(matches!(
+        vault.tune_retrieval_blend_weights(config),
+        Err(Error::InvalidConfig(_))
+    ));
+
+    let mut label = RetrievalEndOutcome {
+        run_id,
+        key: "terminal".to_owned(),
+        turn_id: [7; 16],
+        activated_memory_id: memory_id,
+        gate_score: 0.5,
+        confirmed_fact_hit: true,
+        latency_scale_us: 40,
+        cost_weight: 0.1,
+        metadata: BTreeMap::new(),
+    };
+    for (gate, turn, memory) in [
+        (0.0, [7; 16], memory_id),
+        (1.1, [7; 16], memory_id),
+        (0.5, [9; 16], memory_id),
+        (0.5, [7; 16], [9; 16]),
+    ] {
+        label.gate_score = gate;
+        label.turn_id = turn;
+        label.activated_memory_id = memory;
+        assert!(matches!(
+            vault.record_retrieval_end_outcome(label.clone()),
+            Err(Error::InvalidConfig(_))
+        ));
+    }
+    label.gate_score = 0.5;
+    label.turn_id = [7; 16];
+    label.activated_memory_id = memory_id;
+    label.latency_scale_us = 0;
+    assert!(matches!(
+        vault.record_retrieval_end_outcome(label.clone()),
+        Err(Error::InvalidConfig(_))
+    ));
+    label.latency_scale_us = 40;
+    assert_eq!(vault.retrieval_outcomes(run_id)?.len(), 1);
+    label.gate_score = 0.5;
+    label.turn_id = [7; 16];
+    label.activated_memory_id = memory_id;
+    vault.record_retrieval_end_outcome(label.clone())?;
+    let outcome = vault.retrieval_outcomes(run_id)?;
+    let terminal = outcome
+        .iter()
+        .find(|o| o.key == "terminal")
+        .expect("terminal label");
+    assert!((terminal.reward.expect("computed reward") - 0.275).abs() < 1e-6);
+    assert!(terminal.reward_evidence.is_some());
+    let updated = vault.tune_retrieval_blend_weights(config)?;
+    assert_eq!(updated.data_window.outcome_count, 1);
+
+    // A correction is still an end label, but never a confirmed-fact hit.
+    label.key = "correction".to_owned();
+    label.confirmed_fact_hit = false;
+    vault.record_retrieval_end_outcome(label)?;
+    let correction = vault
+        .retrieval_outcomes(run_id)?
+        .into_iter()
+        .find(|o| o.key == "correction")
+        .expect("correction label");
+    assert!((correction.reward.expect("cost-only reward") + 0.225).abs() < 1e-6);
+    Ok(())
+}
+
+#[test]
+fn raw_reward_collision_preserves_terminal_label_for_tuning() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let run_id = RetrievalRunId::now();
+    let memory_id = *entity_id(0x4e).as_bytes();
+    let mut run = RetrievalRunRecord::new(
+        run_id,
+        RetrievalAction::Pipeline,
+        100,
+        10,
+        vec![RetrievalSignal::Text],
+        vec![RetrievalScoreBreakdown {
+            result_id: memory_id,
+            final_rank: 1,
+            final_score: 1.0,
+            components: vec![RetrievalScoreComponent {
+                signal: RetrievalSignal::Recency,
+                rank: 1,
+                score: 1.0,
+            }],
+            access_factor: None,
+        }],
+        1,
+        0,
+        None,
+    );
+    run.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
+    vault.store.record_retrieval_run(&run)?;
+    record_confirmed_retrieval_end_outcome(&vault, run_id, memory_id)?;
+    let original = vault.retrieval_outcomes(run_id)?;
+    let collision = vault.record_retrieval_outcome(RetrievalOutcome {
+        run_id,
+        key: "beam.reward".to_owned(),
+        reward: Some(100.0),
+        accepted: Some(true),
+        metadata: BTreeMap::new(),
+    });
+    assert!(matches!(collision, Err(Error::InvalidConfig(_))));
+    assert_eq!(vault.retrieval_outcomes(run_id)?, original);
+    let tuned = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig::default())?;
+    assert_eq!(tuned.data_window.outcome_count, 1);
+    Ok(())
+}
+
 #[test]
 fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let run_id = RetrievalRunId::now();
     let positive = entity_id(0x48);
     let negative = entity_id(0x49);
-    let record = RetrievalRunRecord::new(
+    let mut record = RetrievalRunRecord::new(
         run_id,
         RetrievalAction::Pipeline,
         100,
@@ -1584,14 +1766,13 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
         0,
         None,
     );
+    record.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&record)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
-        run_id,
-        key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
-        metadata: BTreeMap::new(),
-    })?;
+    record_confirmed_retrieval_end_outcome(&vault, run_id, *positive.as_bytes())?;
 
     let before = vault.retrieval_blend_weight_table()?;
     let updated = vault.tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
@@ -1619,7 +1800,7 @@ fn retrieval_blend_tuning_updates_weight_table_from_rewarded_breakdowns() -> Res
 fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let run_id = RetrievalRunId::now();
-    let record = RetrievalRunRecord::new(
+    let mut record = RetrievalRunRecord::new(
         run_id,
         RetrievalAction::Pipeline,
         200,
@@ -1640,14 +1821,13 @@ fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()>
         0,
         None,
     );
+    record.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&record)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
-        run_id,
-        key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
-        metadata: BTreeMap::new(),
-    })?;
+    record_confirmed_retrieval_end_outcome(&vault, run_id, *entity_id(0x4F).as_bytes())?;
 
     let before = vault.retrieval_blend_weight_table()?;
     let expected_once =
@@ -1684,7 +1864,7 @@ fn concurrent_retrieval_blend_tuning_applies_both_gradient_steps() -> Result<()>
 fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let completed_run_id = RetrievalRunId::now();
-    let completed = RetrievalRunRecord::new(
+    let mut completed = RetrievalRunRecord::new(
         completed_run_id,
         RetrievalAction::Pipeline,
         300,
@@ -1705,14 +1885,13 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
         0,
         None,
     );
+    completed.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&completed)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
-        run_id: completed_run_id,
-        key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
-        metadata: BTreeMap::new(),
-    })?;
+    record_confirmed_retrieval_end_outcome(&vault, completed_run_id, *entity_id(0x4A).as_bytes())?;
 
     std::thread::sleep(std::time::Duration::from_millis(2));
     let provisional_run_id = RetrievalRunId::now();
@@ -1760,7 +1939,7 @@ fn retrieval_blend_tuning_max_runs_counts_completed_runs_not_provisional_rows() 
 fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let blend_run_id = RetrievalRunId::now();
-    let blend = RetrievalRunRecord::new(
+    let mut blend = RetrievalRunRecord::new(
         blend_run_id,
         RetrievalAction::Pipeline,
         500,
@@ -1781,18 +1960,17 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
         0,
         None,
     );
+    blend.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&blend)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
-        run_id: blend_run_id,
-        key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
-        metadata: BTreeMap::new(),
-    })?;
+    record_confirmed_retrieval_end_outcome(&vault, blend_run_id, *entity_id(0x4C).as_bytes())?;
 
     std::thread::sleep(std::time::Duration::from_millis(2));
     let text_only_run_id = RetrievalRunId::now();
-    let text_only = RetrievalRunRecord::new(
+    let mut text_only = RetrievalRunRecord::new(
         text_only_run_id,
         RetrievalAction::VaultSearch,
         600,
@@ -1813,14 +1991,13 @@ fn retrieval_blend_tuning_counts_only_blend_contributing_rewards() -> Result<()>
         0,
         None,
     );
+    text_only.turn = Some(RetrievalTurn {
+        turn_id: [7; 16],
+        episode_id: [8; 16],
+        turn_idx: 0,
+    });
     vault.store.record_retrieval_run(&text_only)?;
-    vault.record_retrieval_outcome(RetrievalOutcome {
-        run_id: text_only_run_id,
-        key: "beam.reward".to_owned(),
-        reward: Some(1.0),
-        accepted: Some(true),
-        metadata: BTreeMap::new(),
-    })?;
+    record_confirmed_retrieval_end_outcome(&vault, text_only_run_id, *entity_id(0x4D).as_bytes())?;
 
     let error = vault
         .tune_retrieval_blend_weights(RetrievalBlendTuningConfig {
@@ -2013,6 +2190,230 @@ fn invalid_fast_dims_fails_closed_at_open() -> Result<()> {
             "fast_dims {fd}: got {err:?}",
         );
     }
+    Ok(())
+}
+
+#[test]
+fn orcb_claim_hot_values_are_ciphertext_with_exterior_first_append_key() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("vault");
+    let vault = Vault::open(&path, VaultConfig::device())?;
+    let claim = [0x37; 16];
+    let mut first = claim_bound_gate_decision(synthetic_gate_decision_id(0x91, 1), 1, &claim);
+    first.actor_ref = Some("private-canary-claim-value".to_owned());
+    let second = claim_bound_gate_decision(synthetic_gate_decision_id(0x92, 2), 2, &claim);
+    let unbound = gate_decision(synthetic_gate_decision_id(0x93, 3), 3, None);
+    append_gate_decisions(&vault, &[first.clone(), second.clone(), unbound.clone()])?;
+
+    let rtxn = vault.store.env.read_txn()?;
+    let raw = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(first.decision_id))?
+        .expect("first value")
+        .into_owned();
+    let raw_second = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(second.decision_id))?
+        .expect("second value")
+        .into_owned();
+    let raw_unbound = vault
+        .store
+        .vault_meta
+        .get(&rtxn, &gate_decision_key(unbound.decision_id))?
+        .expect("unbound value")
+        .into_owned();
+    assert!(raw.starts_with(b"ORCB"));
+    assert!(raw_second.starts_with(b"ORCB"));
+    assert!(
+        !raw.windows(26)
+            .any(|bytes| bytes == b"private-canary-claim-value")
+    );
+    assert_eq!(
+        raw_unbound,
+        encode_gate_decision(&unbound)?,
+        "only erasure-target rows encrypt"
+    );
+    assert_eq!(
+        vault.store.gate_decision_in_txn(&rtxn, first.decision_id)?,
+        Some(first.clone())
+    );
+    assert_eq!(
+        vault
+            .store
+            .find_gate_decision_id_in_txn(&rtxn, |row| row == &first)?,
+        Some(first.decision_id)
+    );
+    assert_eq!(
+        vault
+            .store
+            .gate_decisions_page_in_txn(&rtxn, None, 3)?
+            .len(),
+        3
+    );
+    drop(rtxn);
+
+    let key_dir = dir.path().join(".vault.gate-decision-keys");
+    assert!(
+        !key_dir.starts_with(&path),
+        "keys cannot enter the vault image"
+    );
+    let keys: Vec<_> = std::fs::read_dir(&key_dir)?.collect::<std::io::Result<_>>()?;
+    assert_eq!(
+        keys.len(),
+        1,
+        "a claim shares its first-append key across rows"
+    );
+    assert_eq!(std::fs::read(keys[0].path())?.len(), 32);
+    drop(vault);
+    let reopened = Vault::open(&path, VaultConfig::device())?;
+    assert_eq!(
+        gate_decision_primary(&reopened, first.decision_id)?,
+        Some(first.clone())
+    );
+    std::fs::remove_dir_all(key_dir)?;
+    assert!(
+        gate_decision_primary(&reopened, first.decision_id).is_err(),
+        "an old LMDB image cannot decrypt after its exterior key is destroyed"
+    );
+    drop(reopened);
+    Ok(())
+}
+
+#[test]
+fn orcb_ciphertext_requires_key_and_authenticated_header() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let first = claim_bound_gate_decision(synthetic_gate_decision_id(0x94, 1), 1, &[0x39; 16]);
+    append_gate_decisions(&vault, std::slice::from_ref(&first))?;
+    let mut wtxn = vault.store.env.write_txn()?;
+    let mut raw = vault
+        .store
+        .vault_meta
+        .get(&wtxn, &gate_decision_key(first.decision_id))?
+        .expect("encrypted value")
+        .into_owned();
+    raw[6] ^= 1; // Claim-id AAD: cannot retarget the value to another claim.
+    vault
+        .store
+        .vault_meta
+        .put(&mut wtxn, &gate_decision_key(first.decision_id), &raw)?;
+    wtxn.commit()?;
+    let rtxn = vault.store.env.read_txn()?;
+    assert!(
+        vault
+            .store
+            .gate_decision_in_txn(&rtxn, first.decision_id)
+            .is_err()
+    );
+    assert!(
+        vault
+            .store
+            .for_each_gate_decision_in_txn(&rtxn, |_| Ok(()))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_first_append_recovers_unpublished_and_linked_temporary_keys() -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let custody = dir.path().join(".vault.gate-decision-keys");
+    std::fs::DirBuilder::new().mode(0o700).create(&custody)?;
+    let unfinished = [0x41; 16];
+    let linked = [0x42; 16];
+    let first_temp = custody.join(format!(
+        ".{}-0123456789abcdef.pending",
+        crate::entity_id::bytes_to_hex_lower(&unfinished)
+    ));
+    std::fs::write(&first_temp, b"short, unpublished key")?;
+    let linked_temp = custody.join(format!(
+        ".{}-0123456789abcdef.pending",
+        crate::entity_id::bytes_to_hex_lower(&linked)
+    ));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    std::io::Write::write_all(&mut options.open(&linked_temp)?, &[0x77; 32])?;
+    let linked_final = custody.join(crate::entity_id::bytes_to_hex_lower(&linked));
+    std::fs::hard_link(&linked_temp, &linked_final)?;
+    let a = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 1), 1, &unfinished);
+    let b = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 2), 2, &linked);
+    append_gate_decisions(&vault, &[a.clone(), b.clone()])?;
+    assert_eq!(gate_decision_primary(&vault, a.decision_id)?, Some(a));
+    assert_eq!(gate_decision_primary(&vault, b.decision_id)?, Some(b));
+    assert!(!first_temp.exists());
+    assert!(!linked_temp.exists());
+    assert_eq!(std::fs::read(linked_final)?, [0x77; 32]);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_never_replaces_a_published_short_key() -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device())?;
+    let custody = dir.path().join(".vault.gate-decision-keys");
+    std::fs::DirBuilder::new().mode(0o700).create(&custody)?;
+    let claim = [0x43; 16];
+    let final_key = custody.join(crate::entity_id::bytes_to_hex_lower(&claim));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true).mode(0o600);
+    options.open(&final_key)?;
+    let decision = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, 3), 3, &claim);
+    assert!(append_gate_decisions(&vault, std::slice::from_ref(&decision)).is_err());
+    assert!(std::fs::read(&final_key)?.is_empty());
+    assert!(gate_decision_primary(&vault, decision.decision_id)?.is_none());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn orcb_non_utf8_sibling_vaults_have_independent_keys() -> Result<()> {
+    use std::os::unix::ffi::OsStringExt;
+    let dir = tempfile::tempdir()?;
+    let mut vaults = Vec::new();
+    let claim = [0x44; 16];
+    for (suffix, id) in [(0xff, 4), (0xfe, 5)] {
+        let path = dir
+            .path()
+            .join(std::ffi::OsString::from_vec(vec![b'v', suffix]));
+        let vault = Vault::open(path, VaultConfig::device())?;
+        let decision = claim_bound_gate_decision(synthetic_gate_decision_id(0x95, id), id, &claim);
+        append_gate_decisions(&vault, std::slice::from_ref(&decision))?;
+        vaults.push((vault, decision));
+    }
+    let paths: Vec<_> = std::fs::read_dir(dir.path())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<_>>()?;
+    let key_paths: Vec<_> = paths
+        .into_iter()
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                use std::os::unix::ffi::OsStrExt;
+                name.as_bytes().ends_with(b".gate-decision-keys")
+            })
+        })
+        .collect();
+    assert_eq!(key_paths.len(), 2);
+    let key_name = crate::entity_id::bytes_to_hex_lower(&claim);
+    assert_ne!(
+        std::fs::read(key_paths[0].join(&key_name))?,
+        std::fs::read(key_paths[1].join(&key_name))?
+    );
+    std::fs::remove_file(key_paths[0].join(&key_name))?;
+    let readable = vaults
+        .iter()
+        .filter(|(vault, decision)| gate_decision_primary(vault, decision.decision_id).is_ok())
+        .count();
+    assert_eq!(
+        readable, 1,
+        "retiring one vault must not retire its sibling"
+    );
     Ok(())
 }
 

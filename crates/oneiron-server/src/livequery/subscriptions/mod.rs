@@ -8,6 +8,7 @@ use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
 pub(super) const MAX_SUBSCRIPTIONS: usize = 128;
@@ -125,8 +126,65 @@ struct Subscription {
     budget: Reservation,
     ring: VecDeque<Push>,
     bytes: usize,
+    /// Cursors already issued whose payloads were coalesced away. Bodies
+    /// never live here, but a delayed cumulative ACK still names a real push.
+    coalesced: VecDeque<Cursor>,
+    coalesced_bytes: usize,
     acked: Option<Cursor>,
     needs_resync: bool,
+}
+
+impl Subscription {
+    /// Retire owner-feed payloads without retiring the exact cursors that
+    /// named them. Capacity/budget overflow becomes an explicit gap, never a
+    /// silent loss of ACK eligibility.
+    fn coalesce_owner_ring(&mut self) -> Result<bool, AppError> {
+        let mut added = Vec::new();
+        let mut added_bytes = 0usize;
+        for push in &self.ring {
+            let cursor = &push.cursor;
+            if self.acked.as_ref() == Some(cursor)
+                || self.coalesced.back() == Some(cursor)
+                || added.last() == Some(cursor)
+            {
+                continue;
+            }
+            added_bytes = added_bytes.saturating_add(cursor_size(cursor)?);
+            added.push(cursor.clone());
+        }
+        let total = self.coalesced_bytes.saturating_add(added_bytes);
+        if self.coalesced.len().saturating_add(added.len()) > LIVEQUERY_RING_CAPACITY
+            || total > MAX_RING_BYTES
+            || self
+                .budget
+                .resize(self.metadata_bytes + total.max(4096))
+                .is_err()
+        {
+            self.coalesced.clear();
+            self.coalesced_bytes = 0;
+            self.ring.clear();
+            self.bytes = 0;
+            return Ok(false);
+        }
+        self.coalesced.extend(added);
+        self.coalesced_bytes = total;
+        self.ring.clear();
+        self.bytes = 0;
+        Ok(true)
+    }
+
+    fn recalculate_coalesced_bytes(&mut self) -> Result<(), AppError> {
+        self.coalesced_bytes = self.coalesced.iter().try_fold(0usize, |total, cursor| {
+            Ok::<usize, AppError>(total.saturating_add(cursor_size(cursor)?))
+        })?;
+        Ok(())
+    }
+}
+
+fn cursor_size(cursor: &Cursor) -> Result<usize, AppError> {
+    serde_json::to_vec(cursor)
+        .map(|bytes| bytes.len())
+        .map_err(|_| state_error())
 }
 
 /// Owned by one bound logical session; keep this owner across socket
@@ -139,6 +197,7 @@ pub(crate) struct LiveQueries {
     state: Mutex<State>,
     invalidations: Mutex<VecDeque<(String, MaterializedDiffSummary, OriginMark)>>,
     invalidation_gap: AtomicBool,
+    last_owner_feed_poll: Mutex<Instant>,
 }
 
 struct State {
@@ -201,7 +260,16 @@ impl LiveQueries {
             }),
             invalidations: Mutex::new(VecDeque::new()),
             invalidation_gap: AtomicBool::new(false),
+            last_owner_feed_poll: Mutex::new(Instant::now()),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn owner_feed_poll_now(&self) {
+        *self
+            .last_owner_feed_poll
+            .lock()
+            .expect("owner feed poll lock") = Instant::now() - Duration::from_secs(2);
     }
 
     pub(crate) fn control(&self, request: SubRequest) -> Result<Vec<Push>, AppError> {
@@ -255,6 +323,27 @@ impl LiveQueries {
                 .map_err(|_| AppError::bad_request("invalid worldRef", Some("scopedView")))?;
         }
         let mut state = self.state.lock().map_err(|_| state_error())?;
+        // Owner-feed snapshots contain claim bodies. Never replay a retained
+        // body after a reconnect: policy may have narrowed while this slip
+        // remained live. A gap + newly scoped snapshot is the safe resume.
+        if channel == Channel::OwnerFeed
+            && let Some(sub) = state.subs.get(&id)
+        {
+            if sub.view != view || sub.channel != channel {
+                return Err(AppError::bad_request(
+                    "subscription id is already open",
+                    Some("subscriptionId"),
+                ));
+            }
+            if cursor.is_none() {
+                return Err(AppError::bad_request(
+                    "subscription is already open",
+                    Some("subscriptionId"),
+                ));
+            }
+            state.subs.remove(&id);
+            state.reindex();
+        }
         if let Some(sub) = state.subs.get_mut(&id) {
             if sub.view != view || sub.channel != channel {
                 return Err(AppError::bad_request(
@@ -293,7 +382,8 @@ impl LiveQueries {
             ));
         }
         let derived = self.source.derive(&view, channel)?;
-        if let Some(cursor) = cursor
+        if channel != Channel::OwnerFeed
+            && let Some(cursor) = cursor
             && self.source.can_resume(cursor)?
             && let Some(mut replay) = self.source.replay(&view, channel, cursor)?
         {
@@ -343,6 +433,8 @@ impl LiveQueries {
                         budget,
                         ring: replay.iter().cloned().collect(),
                         bytes,
+                        coalesced: VecDeque::new(),
+                        coalesced_bytes: 0,
                         acked: Some(cursor.clone()),
                         needs_resync: false,
                     },
@@ -404,6 +496,8 @@ impl LiveQueries {
                 budget,
                 ring: pushes.iter().cloned().collect(),
                 bytes,
+                coalesced: VecDeque::new(),
+                coalesced_bytes: 0,
                 acked: None,
                 needs_resync: false,
             },
@@ -423,15 +517,28 @@ impl LiveQueries {
         if sub.acked.as_ref() == Some(cursor) {
             return Ok(());
         }
+        if let Some(position) = sub.coalesced.iter().position(|issued| issued == cursor) {
+            // The old body is gone, but this exact cursor was issued. ACK it
+            // cumulatively without consuming the newer pending ring payload.
+            sub.coalesced.drain(..=position);
+            sub.recalculate_coalesced_bytes()?;
+            sub.budget
+                .resize(sub.metadata_bytes + (sub.bytes + sub.coalesced_bytes).max(4096))?;
+            sub.acked = Some(cursor.clone());
+            return Ok(());
+        }
         let position = sub
             .ring
             .iter()
             .rposition(|p| &p.cursor == cursor)
             .ok_or_else(|| AppError::bad_request("unknown ack cursor", Some("cursor")))?;
         sub.ring.drain(..=position);
+        // ACK of a newer ring cursor also consumes earlier coalesced cursors.
+        sub.coalesced.retain(|issued| issued.batch > cursor.batch);
+        sub.recalculate_coalesced_bytes()?;
         sub.bytes = push_bytes(sub.ring.make_contiguous())?;
         sub.budget
-            .resize(sub.bytes.max(4096) + sub.metadata_bytes)?;
+            .resize(sub.metadata_bytes + (sub.bytes + sub.coalesced_bytes).max(4096))?;
         sub.acked = Some(cursor.clone());
         Ok(())
     }
@@ -444,7 +551,71 @@ impl LiveQueries {
     }
 
     pub(crate) fn buffered(&self) -> Result<Vec<Push>, AppError> {
-        let state = self.state.lock().map_err(|_| state_error())?;
+        let mut state = self.state.lock().map_err(|_| state_error())?;
+        let owner_ids: Vec<_> = state
+            .subs
+            .iter()
+            .filter_map(|(id, sub)| {
+                (sub.channel == Channel::OwnerFeed && !sub.needs_resync).then_some(*id)
+            })
+            .collect();
+        for id in owner_ids {
+            let sub = &state.subs[&id];
+            let derived = self.source.derive(&sub.view, sub.channel)?;
+            let fingerprint = fingerprint(&derived.value)?;
+            // Even a queued snapshot from before a policy change is unsafe.
+            // Compare EVERY retained result with a fresh scoped projection,
+            // not merely the last fingerprint, before socket delivery.
+            if fingerprint != sub.current
+                || sub.ring.iter().any(|push| {
+                    push.result
+                        .as_ref()
+                        .is_some_and(|result| result != &derived.value)
+                })
+            {
+                let cursor = state.cursor(derived.cursor)?;
+                let push = Push {
+                    subscription_id: id,
+                    cursor: cursor.clone(),
+                    kind: "data",
+                    result: Some(derived.value),
+                };
+                let bytes = push_bytes(std::slice::from_ref(&push))?;
+                let sub = state.subs.get_mut(&id).ok_or_else(state_error)?;
+                sub.current = fingerprint;
+                sub.dependencies = derived.dependencies;
+                // Owner feeds are a coalesced latest-state projection. This
+                // drops old bodies after either a local edit OR a policy
+                // narrowing, then emits only the newly authorized value.
+                // Neither transition requires the client to resubscribe.
+                let retained = sub.coalesce_owner_ring()?;
+                if retained
+                    && bytes.saturating_add(sub.coalesced_bytes) <= MAX_RING_BYTES
+                    && sub
+                        .budget
+                        .resize(sub.metadata_bytes + (bytes + sub.coalesced_bytes).max(4096))
+                        .is_ok()
+                {
+                    sub.ring.push_back(push);
+                    sub.bytes = bytes;
+                } else {
+                    // Only a true payload/cursor/budget overflow needs a gap.
+                    sub.ring.clear();
+                    sub.coalesced.clear();
+                    sub.coalesced_bytes = 0;
+                    sub.ring.push_back(Push {
+                        subscription_id: id,
+                        cursor,
+                        kind: "gap",
+                        result: None,
+                    });
+                    sub.bytes = push_bytes(sub.ring.make_contiguous())?;
+                    sub.budget
+                        .resize(sub.metadata_bytes + sub.bytes.max(4096))?;
+                    sub.needs_resync = true;
+                }
+            }
+        }
         Ok(state
             .subs
             .values()
@@ -487,6 +658,11 @@ impl LiveQueries {
                     continue;
                 }
                 for id in ids {
+                    // The synthetic local-LMDB poll is not a Loro change.
+                    // It must never re-derive unrelated recall/receipt subs.
+                    if path == "owner-feed" && state.subs[id].channel != Channel::OwnerFeed {
+                        continue;
+                    }
                     if !relevant
                         && !self.source.membership_changed(
                             &state.subs[id].view,
@@ -529,14 +705,30 @@ impl LiveQueries {
             self.source
                 .record(&sub.view, sub.channel, std::slice::from_ref(&push))?;
             let bytes = push_bytes(std::slice::from_ref(&push))?;
-            if sub.ring.len() >= LIVEQUERY_RING_CAPACITY
-                || sub.bytes.saturating_add(bytes) > MAX_RING_BYTES
+            let retained = if sub.channel == Channel::OwnerFeed {
+                // Retire the old body, not its issued cursor. A delayed ACK
+                // remains valid until an explicit bounded-retention gap.
+                sub.coalesce_owner_ring()?
+            } else {
+                true
+            };
+            if !retained
+                || sub.ring.len() >= LIVEQUERY_RING_CAPACITY
+                || sub
+                    .bytes
+                    .saturating_add(bytes)
+                    .saturating_add(sub.coalesced_bytes)
+                    > MAX_RING_BYTES
                 || sub
                     .budget
-                    .resize(sub.metadata_bytes + (sub.bytes + bytes).max(4096))
+                    .resize(
+                        sub.metadata_bytes + (sub.bytes + bytes + sub.coalesced_bytes).max(4096),
+                    )
                     .is_err()
             {
                 sub.ring.clear();
+                sub.coalesced.clear();
+                sub.coalesced_bytes = 0;
                 let gap = Push {
                     subscription_id: id,
                     cursor,
@@ -558,118 +750,7 @@ impl LiveQueries {
     }
 }
 
-impl LiveQueries {
-    /// Drive from the server's subscription loop, OUTSIDE Observer B.
-    /// Facade reads such as recall may persist retrieval telemetry; doing
-    /// that inside the materializer callback would re-enter Loro.
-    pub(crate) fn refresh(&self) -> Result<(), AppError> {
-        let changes = {
-            let mut pending = self.invalidations.lock().map_err(|_| state_error())?;
-            std::mem::take(&mut *pending)
-        };
-        if self.invalidation_gap.swap(false, Ordering::AcqRel) {
-            self.require_resync();
-            return Ok(());
-        }
-        let mut ready = Vec::new();
-        for (path, diff, by) in changes {
-            match self.source.ready(&diff, &by) {
-                Ok(true) => ready.push((path, diff, by)),
-                Ok(false) => self.on_materialized(&path, &diff, &by),
-                Err(error) => {
-                    self.require_resync();
-                    return Err(error);
-                }
-            }
-        }
-        if let Err(error) = self.materialized(&ready) {
-            self.require_resync();
-            return Err(error);
-        }
-        Ok(())
-    }
-
-    fn require_resync(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            for (id, sub) in &mut state.subs {
-                if let Some(cursor) = sub
-                    .ring
-                    .back()
-                    .map(|p| p.cursor.clone())
-                    .or_else(|| sub.acked.clone())
-                {
-                    sub.ring.clear();
-                    sub.ring.push_back(Push {
-                        subscription_id: *id,
-                        cursor,
-                        kind: "gap",
-                        result: None,
-                    });
-                    sub.bytes = push_bytes(sub.ring.make_contiguous()).unwrap_or(4096);
-                    let _ = sub.budget.resize(sub.metadata_bytes + sub.bytes.max(4096));
-                }
-                sub.needs_resync = true;
-            }
-        }
-    }
-}
-
-impl LiveQueryTee for LiveQueries {
-    fn on_materialized(&self, path: &str, diff: &MaterializedDiffSummary, by: &OriginMark) {
-        let Ok(mut pending) = self.invalidations.lock() else {
-            self.invalidation_gap.store(true, Ordering::Release);
-            return;
-        };
-        // Bound invalidation metadata independently of every subscription
-        // ring. An overflow loses history explicitly, never silently.
-        let bytes: usize = pending
-            .iter()
-            .map(|(path, diff, by)| {
-                path.len()
-                    + by.origin.as_ref().map_or(0, String::len)
-                    + 128
-                    + diff
-                        .containers
-                        .iter()
-                        .map(|path| path.len() + 32)
-                        .sum::<usize>()
-            })
-            .sum();
-        let changed_paths = diff.containers.as_slice();
-        let incoming = path.len()
-            + by.origin.as_ref().map_or(0, String::len)
-            + 128
-            + changed_paths
-                .iter()
-                .map(|path| path.len() + 32 + 66)
-                .sum::<usize>();
-        if pending.len() >= LIVEQUERY_RING_CAPACITY || bytes.saturating_add(incoming) > 64 * 1024 {
-            pending.clear();
-            self.invalidation_gap.store(true, Ordering::Release);
-            return;
-        }
-        // Entity-indexed subscriptions need the key delta even on an ordinary
-        // commit. Bound it before cloning, and normalize deletion publications
-        // that still originate from the window transport.
-        let mut containers: BTreeSet<String> = changed_paths.iter().cloned().collect();
-        for changed in changed_paths {
-            if (changed.contains("/entities/") || changed.contains("/tombstones/"))
-                && let Some(id) = changed.rsplit('/').next()
-                && let Ok(id) = oneiron::EntityId::from_hex(id)
-            {
-                containers.insert(format!("e:{}", id.to_hex()));
-            }
-        }
-        pending.push_back((
-            path.to_owned(),
-            MaterializedDiffSummary {
-                containers: containers.into_iter().collect(),
-                bytes: diff.bytes,
-            },
-            by.clone(),
-        ));
-    }
-}
+mod delivery;
 
 fn push_bytes(pushes: &[Push]) -> Result<usize, AppError> {
     pushes.iter().try_fold(0usize, |bytes, push| {

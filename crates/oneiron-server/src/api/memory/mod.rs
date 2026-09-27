@@ -87,6 +87,19 @@ pub(crate) struct CoreMemoryTimelineRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Object>)]
     item: Option<Value>,
+    /// Before/after views bound to exact retained revisions captured with
+    /// each accepted supersession. Missing/erased pins never fall back to live bodies.
+    changes: Vec<CoreMemoryChange>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreMemoryChange {
+    before_id: String,
+    after_id: String,
+    #[schema(value_type = Object)]
+    before: Value,
+    #[schema(value_type = Object)]
+    after: Value,
 }
 
 /// Stable row state in a memory timeline.
@@ -266,6 +279,24 @@ pub(crate) async fn core_memory_timeline(
     Ok(Json(response))
 }
 
+/// Owner-facing durable watch flag for one claim entry. The SAVED_QUERY
+/// definition, not the connection, is the flag's source of truth.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreMemoryWatchResponse {
+    watched: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query_ref: Option<String>,
+}
+
+mod watch;
+pub(crate) use self::watch::{
+    __path_core_memory_watch_disable, __path_core_memory_watch_enable,
+    __path_core_memory_watch_read,
+};
+pub(super) use self::watch::{
+    core_memory_watch_disable, core_memory_watch_enable, core_memory_watch_read,
+};
+
 /// Execute a named memory verb after resolving it to a typed vault operation.
 #[utoipa::path(
     post,
@@ -441,18 +472,14 @@ pub(crate) fn core_memory_timeline_response(
 ) -> Result<CoreMemoryTimelineResponse, ApiError> {
     let timeline = result.value;
     let mut narrowing = result.receipt;
-    let ids: Vec<_> = timeline
-        .records
-        .iter()
-        .filter(|record| record.state != oneiron::MemoryTimelineRecordState::Deleted)
-        .map(|record| record.id)
-        .collect();
     let projected = read
-        .get_entities_parts_with_receipt(&ids, Some(&narrowing.applied.as_filter()))
+        .memory_timeline_parts_with_receipt(&timeline.records, Some(&narrowing.applied.as_filter()))
         .map_err(|error| core_engine_error("core memory timeline projection failed", error))?;
     narrowing.restrict_with(&projected.receipt);
-    let mut parts: std::collections::BTreeMap<_, _> = ids
-        .into_iter()
+    let mut parts: std::collections::BTreeMap<_, _> = timeline
+        .records
+        .iter()
+        .map(|record| record.id)
         .zip(projected.value)
         .filter_map(|(id, body)| body.map(|body| (id, body)))
         .collect();
@@ -527,7 +554,58 @@ pub(crate) fn core_memory_timeline_response(
                 .map(|id| id.to_hex())
                 .collect(),
             item,
+            changes: Vec::new(),
         });
+    }
+    let content_visible: std::collections::BTreeSet<_> = records
+        .iter()
+        .filter(|record| record.item.is_some())
+        .map(|record| record.id.clone())
+        .collect();
+    for record in &mut records {
+        if !content_visible.contains(&record.id) {
+            continue;
+        }
+        let after_id = oneiron::EntityId::from_hex(&record.id)
+            .map_err(|_| ApiError::internal_server_error("timeline successor id"))?;
+        for before_id in &record.supersedes {
+            if !content_visible.contains(before_id) {
+                continue;
+            }
+            let old_id = oneiron::EntityId::from_hex(before_id)
+                .map_err(|_| ApiError::internal_server_error("timeline predecessor id"))?;
+            let pinned = read
+                .memory_supersession_parts_with_receipt(
+                    &old_id,
+                    &after_id,
+                    Some(&narrowing.applied.as_filter()),
+                )
+                .map_err(|error| core_engine_error("core memory pinned change failed", error))?;
+            narrowing.restrict_with(&pinned.receipt);
+            let Some(((before_kind, before_at, before_body), (after_kind, after_at, after_body))) =
+                pinned.value
+            else {
+                continue;
+            };
+            record.changes.push(CoreMemoryChange {
+                before_id: before_id.clone(),
+                after_id: record.id.clone(),
+                before: projection::project_entity_parts(
+                    &old_id,
+                    before_kind,
+                    before_at,
+                    &before_body,
+                    view,
+                ),
+                after: projection::project_entity_parts(
+                    &after_id,
+                    after_kind,
+                    after_at,
+                    &after_body,
+                    view,
+                ),
+            });
+        }
     }
     let visible: std::collections::BTreeSet<_> =
         records.iter().map(|record| record.id.clone()).collect();

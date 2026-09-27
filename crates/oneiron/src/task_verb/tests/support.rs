@@ -27,7 +27,7 @@ impl DescribeArms for Memory<'_> {
     }
 }
 
-pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
+pub(in crate::task_verb) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
     (dir, vault)
@@ -61,7 +61,7 @@ pub(super) fn task_entity_census_by_role(
         .count()
 }
 
-pub(super) fn put_person(vault: &Vault, id: EntityId) {
+pub(in crate::task_verb) fn put_person(vault: &Vault, id: EntityId) {
     vault
         .put_entity(
             &id,
@@ -73,7 +73,7 @@ pub(super) fn put_person(vault: &Vault, id: EntityId) {
         .expect("put actor");
 }
 
-pub(super) fn own_agent(vault: &Vault) -> EntityId {
+pub(in crate::task_verb) fn own_agent(vault: &Vault) -> EntityId {
     let actor = EntityId::from_bytes([0xE1; 16]).expect("actor id");
     put_person(vault, actor);
     actor
