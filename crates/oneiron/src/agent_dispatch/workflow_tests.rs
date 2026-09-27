@@ -530,3 +530,90 @@ fn a_workflow_point_claim_stamps_the_recorded_clock() -> Result<()> {
     assert_eq!(queue.get(leaf)?.expect("leaf").state, AttemptState::Queued);
     Ok(())
 }
+
+#[test]
+fn workflow_child_project_transition_and_later_release_recheck_live_ancestor() -> Result<()> {
+    let (_dir, vault) = crate::test_util::open_test_vault_with(VaultConfig::default());
+    let agent = fixture(&vault, AgentCeiling::Proposed, "project-workflow")?;
+    let root = vault.root_project()?;
+    let leader = EntityId::from_hex(&vault.project(root)?.unwrap().leader)?;
+    let child = EntityId::now();
+    vault.put_project(
+        child,
+        &crate::workspace_roster::ProjectRecord::new(child, Some(root), root, leader),
+        1,
+    )?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xA8)?;
+    let dispatcher = AgentDispatcher::new(&vault);
+    let mut initial = request(AgentDispatchTarget::Custom(agent), None);
+    initial.dedupe_key = None;
+    let AgentDispatchOutcome::Dispatched(parent) = dispatcher.dispatch(initial)? else {
+        panic!("parent")
+    };
+    let parent_lease = claimed(&AttemptQueue::new(&vault), 11)?;
+    assert_eq!(parent_lease.id, parent.attempt.id);
+    deliver(
+        &AttemptQueue::new(&vault),
+        &parent_lease,
+        "project:parent",
+        12,
+    )?;
+    let workflow_id = EntityId::now();
+    vault.save_workflow(
+        &workflow_id,
+        &WorkflowDefinition::new("project-depth", vec![agent, agent])?,
+        2,
+    )?;
+    let input = request(
+        AgentDispatchTarget::Workflow(workflow_id),
+        Some(parent.attempt.id),
+    );
+    let spawn = AgentSpawnContext::default().with_project(child);
+    vault.set_project_depth(root, 0, &writer, 3)?;
+    assert_eq!(
+        dispatcher
+            .dispatch_with_context(input.clone(), spawn.clone())
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput
+    );
+    vault.set_project_depth(root, 2, &writer, 4)?;
+    let status = workflow(dispatcher.dispatch_with_context(input.clone(), spawn.clone())?);
+    let first = AttemptQueue::new(&vault).get(status.active_step)?.unwrap();
+    assert_eq!(
+        codec::record_dispatch_input(&first)
+            .unwrap()
+            .depth_remaining,
+        Some(1)
+    );
+    let queued = AttemptQueue::new(&vault).list()?.len();
+    vault.set_project_depth(root, 0, &writer, 5)?;
+    assert_eq!(
+        workflow(dispatcher.dispatch_with_context(input, spawn)?)
+            .attempt
+            .id,
+        status.attempt.id,
+        "identical workflow retry does not re-admit at live depth zero"
+    );
+    let first = claimed(&AttemptQueue::new(&vault), 21)?;
+    assert_eq!(first.id, status.active_step);
+    deliver(&AttemptQueue::new(&vault), &first, "project:first", 22)?;
+    assert_eq!(
+        dispatcher
+            .advance_workflow(status.attempt.id, 23)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), queued);
+    Ok(())
+}

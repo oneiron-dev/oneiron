@@ -709,7 +709,7 @@
      "purpose": "Dispatch domain types, outcome enums, and pinned key/sentinel constants",
      "surface": {
       "const": 7,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 5,
       "fn": 7,
       "struct": 7
@@ -740,7 +740,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow.rs",
@@ -1342,7 +1342,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -32984,7 +32984,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ProjectRecord",
@@ -32995,7 +32995,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 8,
       "struct": 3
      }
@@ -33007,7 +33007,7 @@
      "path": "src/workspace_roster/project/projection.rs",
      "purpose": "The write-time projector shared by local batches and sync materialization",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {

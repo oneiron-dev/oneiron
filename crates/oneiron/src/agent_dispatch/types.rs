@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 11] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 12] = [
     "schema_version",
     "target",
     "agent_def",
@@ -40,6 +40,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 11] = [
     "context_from",
     "depth_remaining",
     "project_ref",
+    "spawn_intent",
     "scope",
     "healer_case",
 ];
@@ -61,7 +62,8 @@ pub(super) const KEY_CONTEXT_FROM: &str = AGENT_DISPATCH_INPUT_KEYS[6];
 pub(super) const KEY_DEPTH_REMAINING: &str = AGENT_DISPATCH_INPUT_KEYS[7];
 
 pub(super) const KEY_PROJECT_REF: &str = AGENT_DISPATCH_INPUT_KEYS[8];
-pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[9];
+pub(super) const KEY_SPAWN_INTENT: &str = AGENT_DISPATCH_INPUT_KEYS[9];
+pub(super) const KEY_SCOPE: &str = AGENT_DISPATCH_INPUT_KEYS[10];
 
 /// The seeded root project's default depth (for existing callers inspecting
 /// the baseline). Dispatch reads the live project row, not this constant.
@@ -126,6 +128,8 @@ pub struct AgentDispatchInput {
     pub depth_remaining: Option<u8>,
     /// The responsibility space whose live depth row bounds this spawn.
     pub project_ref: Option<EntityId>,
+    /// Hash of the normalized caller request, separate from the live depth snapshot.
+    pub spawn_intent: Option<String>,
     /// Exact branch-resource restriction, never a replacement for live authority.
     /// An absent value grants no branch-resource access.
     pub scope: Option<crate::llm::Scope>,
@@ -143,6 +147,7 @@ impl AgentDispatchInput {
             context_from: Vec::new(),
             depth_remaining: None,
             project_ref: None,
+            spawn_intent: None,
             scope: None,
         }
     }

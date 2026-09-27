@@ -80,6 +80,44 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     Ok(ids)
 }
 
+/// Every project put, including raw batches and sync replay, reaches this
+/// snapshot-bound check. Only the owner edit door can mint the one-use proof
+/// for the exact old entity row and new body in this SAME write transaction.
+pub(crate) fn validate_project_depth_change(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    bytes: &[u8],
+) -> Result<()> {
+    let body: ProjectRecord = rmp_serde::from_slice(bytes).map_err(|_| invalid())?;
+    let Some(raw) = store.entities.get(txn, id.as_bytes())? else {
+        // A newly minted project has no prior owner edit. Edits arrive later
+        // through the typed door, not by choosing a wider birth value.
+        return if body.depth == DEFAULT_PROJECT_DEPTH {
+            Ok(())
+        } else {
+            Err(invalid())
+        };
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
+    if header.entity_type != kind || raw.len() == ENTITY_METADATA_HEADER_LEN {
+        return Err(invalid());
+    }
+    let old: ProjectRecord =
+        rmp_serde::from_slice(&raw[ENTITY_METADATA_HEADER_LEN..]).map_err(|_| invalid())?;
+    if old.depth == body.depth {
+        return Ok(());
+    }
+    let key = depth_edit_key(id);
+    let expected = depth_edit_digest(&raw, bytes);
+    if store.vault_meta.get(txn, &key)?.as_deref() != Some(expected.as_slice()) {
+        return Err(invalid());
+    }
+    store.vault_meta.delete(txn, &key)?;
+    Ok(())
+}
+
 pub(crate) fn reconcile_project_rooms(
     store: &Store,
     config: &crate::VaultConfig,

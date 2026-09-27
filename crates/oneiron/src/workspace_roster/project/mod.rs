@@ -5,7 +5,10 @@ mod projection;
 pub(crate) use deletion::deindex_project_room;
 #[cfg(test)]
 mod tests;
-pub(crate) use projection::{reconcile_project_rooms, validate_project_body, validate_room_body};
+pub(crate) use projection::{
+    reconcile_project_rooms, validate_project_body, validate_project_depth_change,
+    validate_room_body,
+};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
@@ -17,11 +20,24 @@ use std::collections::BTreeSet;
 /// Preferred slot in an otherwise empty compiled-pack registry. Existing
 /// vaults can assign another slot; use Vault::project_type_byte for the binding.
 pub const PROJECT_TYPE_BYTE: u8 = 103;
-pub(super) const DEFAULT_PROJECT_DEPTH: u8 = 10;
+const DEFAULT_PROJECT_DEPTH: u8 = 10;
 const PACK: &str = "oneiron.project";
 const ROOT: &[u8] = b"project.root.v1";
 pub(super) const ROOM_PROJECT: &[u8] = b"project.room_owner.v1/";
 const CHANGES: &[u8] = b"project.room_changes.v1/";
+const DEPTH_EDIT: &[u8] = b"project.depth_edit.v1/";
+
+fn depth_edit_key(id: EntityId) -> Vec<u8> {
+    [DEPTH_EDIT, id.as_bytes()].concat()
+}
+
+fn depth_edit_digest(old: &[u8], new: &[u8]) -> [u8; 32] {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"project.depth_edit.v1");
+    hash.update(old);
+    hash.update(new);
+    *hash.finalize().as_bytes()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,7 +191,22 @@ impl Vault {
             self.verify_owner_write_actor_in_txn(txn, authenticated_owner)?;
             let mut body: ProjectRecord = record(&self.store, txn, id, self.project_type_byte()?)?
                 .ok_or(Error::EntityNotFound)?;
+            let previous_depth = body.depth;
             body.depth = depth;
+            let bytes = encode(&body)?;
+            let proof_key = depth_edit_key(id);
+            if previous_depth != depth {
+                if self.store.vault_meta.get(txn, &proof_key)?.is_some() {
+                    return Err(invalid());
+                }
+                let old = self
+                    .store
+                    .entities
+                    .get(txn, id.as_bytes())?
+                    .ok_or(Error::EntityNotFound)?;
+                let digest = depth_edit_digest(&old, &bytes);
+                self.store.vault_meta.put(txn, &proof_key, &digest)?;
+            }
             self.batch_in()
                 .put(
                     &id,
@@ -185,9 +216,14 @@ impl Vault {
                         end: now,
                     },
                     now,
-                    &encode(&body)?,
+                    &bytes,
                 )
                 .apply(txn)?;
+            if self.store.vault_meta.get(txn, &proof_key)?.is_some() {
+                return Err(Error::InvariantViolation(
+                    "project depth proof not consumed",
+                ));
+            }
             Ok(())
         })
     }

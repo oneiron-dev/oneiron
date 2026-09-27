@@ -3717,3 +3717,56 @@ fn packing_withholds_edges_that_touch_a_device_only_world_row() -> Result<()> {
     assert!(!named);
     Ok(())
 }
+
+#[test]
+fn forward_rematerialization_quarantines_in_range_project_depth_edit() -> Result<()> {
+    let (_dir, vault) = test_vault();
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB2)?;
+    vault.set_project_depth(root, 0, &writer, 2)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let mut forged = vault.project(root)?.unwrap();
+    forged.depth = 12;
+    let window_key = WindowKey::new("2026-03");
+    let doc = create_window_doc("remote", &window_key);
+    let stamp = window_key.start_timestamp().expect("window start") + 60;
+    doc.get_map("entities")
+        .insert(
+            root.to_hex().as_str(),
+            make_entity_blob(
+                vault.project_type_byte()?,
+                stamp,
+                &rmp_serde::to_vec_named(&forged).unwrap(),
+            )
+            .as_slice(),
+        )
+        .expect("insert remote project body");
+    doc.commit();
+    assert_eq!(
+        forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?,
+        0
+    );
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    assert!(
+        quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}

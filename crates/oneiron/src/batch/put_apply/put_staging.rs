@@ -295,6 +295,7 @@ pub(super) fn validate_scope_carriers(
         for referenced in crate::workspace_roster::validate_project_body(id, data)? {
             super::reject_overlay_member_base_write(store, &referenced, origin)?;
         }
+        crate::workspace_roster::validate_project_depth_change(store, wtxn, id, entity_type, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_CONVERSATION {
         crate::workspace_roster::validate_room_body(store, wtxn, id, data)?;

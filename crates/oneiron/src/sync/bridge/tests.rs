@@ -4012,3 +4012,51 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+#[test]
+fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> crate::Result<()> {
+    let vault = test_vault();
+    let root = vault.root_project()?;
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"owner",
+    )?;
+    let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB1)?;
+    vault.set_project_depth(root, 0, &writer, 2)?;
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    let mut forged = vault.project(root)?.unwrap();
+    forged.depth = 12;
+    let doc = LoroDoc::new();
+    let materializer = Arc::new(Materializer::new());
+    let _subscription = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    map_insert_bytes(
+        &doc.get_map("entities"),
+        &root.to_hex(),
+        &entity_blob(
+            vault.project_type_byte()?,
+            TimeRange { start: 3, end: 3 },
+            3,
+            &rmp_serde::to_vec_named(&forged).unwrap(),
+        ),
+    )?;
+    doc.commit();
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    assert!(
+        crate::sync::quarantine::quarantined_records(&vault)?
+            .iter()
+            .any(|(_, record)| record.reason_code == "InvalidProjectBody")
+    );
+    Ok(())
+}

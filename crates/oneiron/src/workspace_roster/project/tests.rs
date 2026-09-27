@@ -309,3 +309,106 @@ fn raw_project_depth_outside_projection_bound_is_rejected() -> Result<()> {
     assert_eq!(vault.project(root)?.unwrap().depth, DEFAULT_PROJECT_DEPTH);
     Ok(())
 }
+
+#[test]
+fn in_range_depth_cannot_be_changed_through_generic_or_replicated_puts() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    let root = vault.root_project()?;
+    let original = vault.project(root)?.unwrap();
+    let kind = vault.project_type_byte()?;
+    let mut forged = original.clone();
+    forged.depth = 0;
+    let bytes = encode(&forged)?;
+    let range = TimeRange { start: 8, end: 8 };
+    assert_eq!(
+        vault.put_project(root, &forged, 8).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(
+        vault
+            .batch()
+            .put(&root, kind, range, 8, &bytes)
+            .commit()
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    #[cfg(feature = "sync")]
+    assert_eq!(
+        vault
+            .with_write_txn(|txn| {
+                vault
+                    .batch_in()
+                    .put_replicated(&root, kind, range, 8, &bytes)
+                    .apply(txn)
+            })
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(vault.project(root)?, Some(original.clone()));
+
+    let child = EntityId::now();
+    let leader = EntityId::from_hex(&original.leader)?;
+    let mut nondefault_birth = ProjectRecord::new(child, Some(root), root, leader);
+    nondefault_birth.depth = 12;
+    assert_eq!(
+        vault
+            .put_project(child, &nondefault_birth, 9)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert!(vault.project(child)?.is_none());
+
+    let person = EntityId::now();
+    vault.put_entity(
+        &person,
+        crate::registry::ENTITY_TYPE_PERSON,
+        range,
+        8,
+        b"owner",
+    )?;
+    let owner = crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human);
+    let revoke = crate::subject_model::tests::authorization::root_owner(&vault, owner, 0xA5)?;
+    vault.set_project_depth(root, 0, &owner, 10)?;
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    vault.put_authority_log_entry(
+        &revoke,
+        TimeRange {
+            start: 102,
+            end: 102,
+        },
+        102,
+    )?;
+    forged.depth = 12;
+    #[cfg(feature = "sync")]
+    let bytes = encode(&forged)?;
+    assert_eq!(
+        vault
+            .set_project_depth(root, 12, &owner, 11)
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::WriteConcurrentWithRevocation
+    );
+    assert_eq!(
+        vault.put_project(root, &forged, 11).unwrap_err().kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    #[cfg(feature = "sync")]
+    assert_eq!(
+        vault
+            .with_write_txn(|txn| {
+                vault
+                    .batch_in()
+                    .put_replicated(&root, kind, range, 11, &bytes)
+                    .apply(txn)
+            })
+            .unwrap_err()
+            .kind(),
+        crate::error::ErrorKind::InvalidProjectBody
+    );
+    assert_eq!(vault.project(root)?.unwrap().depth, 0);
+    Ok(())
+}

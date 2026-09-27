@@ -721,3 +721,40 @@ fn workflow_widen_revalidates_settled_siblings_and_keeps_structural_refusals() -
     assert_eq!(AttemptQueue::new(&case.vault).list()?, before);
     Ok(())
 }
+
+#[test]
+fn parked_widen_replay_obeys_live_project_depth_before_dispatch() -> Result<()> {
+    let (_dir, vault) = open_board_vault();
+    let approver = owner(&vault, test_id(0xA0))?;
+    let row = put_row(&vault, 0xB3, "widen.depth", AgentCeiling::Auto)?;
+    chat_turn(&vault)?;
+    let board = board(&vault, approver.actor(), row);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let parent = dispatched(dispatcher.dispatch_with_context(
+        input(row, board, "parent"),
+        AgentSpawnContext::default().with_context_spec(ContextSpec::excluded()),
+    )?);
+    let proposal = proposed(dispatcher.dispatch_with_context(
+        input(row, parent.attempt.id, "project-depth-widen"),
+        request(),
+    )?);
+    let writer = crate::write_envelope::WriteActor::new(approver.actor(), EdgeActorClass::Human);
+    let root = vault.root_project()?;
+    vault.set_project_depth(root, 0, &writer, 4)?;
+    let before = AttemptQueue::new(&vault).list()?.len();
+    assert_eq!(
+        dispatcher
+            .approve_context_widen(&approver, &proposal, 5)
+            .unwrap_err()
+            .kind(),
+        ErrorKind::InvalidAgentDispatchInput
+    );
+    assert_eq!(AttemptQueue::new(&vault).list()?.len(), before);
+    vault.set_project_depth(root, 10, &writer, 6)?;
+    let landed = dispatched(dispatcher.approve_context_widen(&approver, &proposal, 7)?);
+    assert_eq!(
+        landed.input.depth_remaining,
+        Some(parent.input.depth_remaining.unwrap() - 1)
+    );
+    Ok(())
+}

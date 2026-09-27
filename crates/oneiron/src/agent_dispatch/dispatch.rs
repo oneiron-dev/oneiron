@@ -12,7 +12,6 @@ use crate::dreamer_runner::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::attenuation::child_depth_from;
 use super::codec::{agent_dispatch_status, encode_agent_dispatch_input, record_dispatch_input};
 use super::types::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatchOutcome, AgentDispatchTarget,
@@ -23,6 +22,26 @@ use crate::error::ArtifactError;
 /// Dispatch adapter over an already-open vault (house pattern:
 /// `RunTreeAdapter::new`, `DreamerRunnerStore::new`). The OF-334 verb home is
 /// [`AgentDispatcher::dispatch`]; there is deliberately no `Vault` alias.
+/// Identity of the caller's normalized request, not of the mutable project row.
+fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Result<String> {
+    let target = input.target.agent_definition_ref()?.to_hex();
+    let bytes = serde_json::to_vec(&(
+        target,
+        &spawn.healer_case,
+        &spawn.context_spec,
+        &spawn.context_from,
+        &spawn.depth_remaining,
+        &spawn.project_ref,
+        &spawn.scope,
+    ))
+    .map_err(|_| {
+        Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "spawn context cannot be encoded",
+        ))
+    })?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
 pub struct AgentDispatcher<'a> {
     pub(super) vault: &'a Vault,
     pub(super) runner: DreamerRunnerStore<'a>,
@@ -82,6 +101,9 @@ impl<'a> AgentDispatcher<'a> {
             context_spec: spawn.context_spec.map(normalize_context_spec),
             ..spawn
         };
+        if let Some(existing) = self.existing_dispatch_for_retry(&input, &spawn)? {
+            return Ok(existing);
+        }
         // Zero rejects HERE, before the descriptor is resolved, before any fork
         // row is registered, and before anything is enqueued. The in-transaction
         // computation below is the authority; this is the ordering guarantee.
@@ -111,6 +133,50 @@ impl<'a> AgentDispatcher<'a> {
         Ok(outcome)
     }
 
+    /// A pending dedupe hit predates today's live depth row. Compare only the
+    /// normalized caller intent and return its already-persisted snapshot;
+    /// never re-admit it as a new spawn or rewrite its depth.
+    fn existing_dispatch_for_retry(
+        &self,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> Result<Option<AgentDispatchOutcome>> {
+        let Some(key) = &input.dedupe_key else {
+            return Ok(None);
+        };
+        let key = format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}");
+        let Some(row) = AttemptQueue::new(self.vault)
+            .pending_dedupe(crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND, &key)?
+        else {
+            return Ok(None);
+        };
+        let payload = decode_dreamer_attempt_payload(&row.payload)?;
+        let status = agent_dispatch_status(crate::dreamer_runner::DreamerAttemptStatus {
+            attempt: row,
+            payload,
+        })?;
+        if input.parent_attempt.is_none() && status.input.target != input.target {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "existing dedupe row targets a different agent",
+            )));
+        }
+        let existing_parent =
+            decode_dreamer_attempt_payload(&status.attempt.payload)?.parent_attempt;
+        if existing_parent != input.parent_attempt {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "existing dedupe row belongs to a different parent",
+            )));
+        }
+        if status.input.spawn_intent.as_deref() != Some(spawn_intent_digest(input, spawn)?.as_str())
+            || status.attempt.run_id != input.run_id
+        {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "existing dedupe row carries a different spawn context",
+            )));
+        }
+        Ok(Some(AgentDispatchOutcome::Existing(status)))
+    }
+
     /// Dispatches an in-process child that REALIZES a TASK: identical to
     /// [`Self::dispatch`] except the queued attempt carries the TASK backlink,
     /// and the caller owns the transaction so the TASK and its realizing
@@ -131,6 +197,9 @@ impl<'a> AgentDispatcher<'a> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchOutcome> {
+        if let Some(existing) = self.existing_dispatch_for_retry(&input, &spawn)? {
+            return Ok(existing);
+        }
         let requested_parent = input.parent_attempt;
         let dispatch_input = self.prepare_dispatch_in_txn(wtxn, input.clone(), spawn)?;
         let encoded = encode_agent_dispatch_input(&dispatch_input)?;
@@ -143,7 +212,7 @@ impl<'a> AgentDispatcher<'a> {
                 dedupe_key: input
                     .dedupe_key
                     .map(|key| format!("{AGENT_DISPATCH_ATTEMPT_TYPE}:{key}")),
-                run_id: input.run_id,
+                run_id: input.run_id.clone(),
                 now: input.now,
             },
             task_ref.map(|task_ref| task_ref.to_hex()),
@@ -196,15 +265,10 @@ impl<'a> AgentDispatcher<'a> {
                         "existing dedupe row belongs to a different parent",
                     )));
                 }
-                // The dedupe key names the INTENT, so the persisted row must
-                // carry the SAME effective spawn input; a different one is a
-                // typed error, never a silent reuse.
-                if status.input.healer_case != dispatch_input.healer_case
-                    || status.input.context_spec != dispatch_input.context_spec
-                    || status.input.context_from != dispatch_input.context_from
-                    || status.input.depth_remaining != dispatch_input.depth_remaining
-                    || status.input.project_ref != dispatch_input.project_ref
-                    || status.input.scope != dispatch_input.scope
+                // Depth is a live snapshot, not caller intent: an owner edit
+                // cannot turn the same request into a different dedupe key.
+                if status.input.spawn_intent != dispatch_input.spawn_intent
+                    || status.attempt.run_id != input.run_id
                 {
                     return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                         "existing dedupe row carries a different spawn context",
@@ -223,6 +287,7 @@ impl<'a> AgentDispatcher<'a> {
         spawn: AgentSpawnContext,
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
+        let spawn_intent = spawn_intent_digest(&input, &spawn)?;
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -298,6 +363,7 @@ impl<'a> AgentDispatcher<'a> {
             context_from: spawn.context_from,
             depth_remaining,
             project_ref: Some(project_ref),
+            spawn_intent: Some(spawn_intent),
             scope,
         })
     }
@@ -366,63 +432,89 @@ impl<'a> AgentDispatcher<'a> {
         parent_attempt: Option<AttemptId>,
         requested_project: Option<EntityId>,
     ) -> Result<(EntityId, u8)> {
-        let parent = parent_attempt
-            .map(|id| {
-                let row = AttemptQueue::new(self.vault).get_in_txn(txn, id)?;
-                if let Some(row) = &row {
-                    super::workflow_record::reject_wrapper_parent(row)?;
-                }
-                Ok::<_, Error>(row.and_then(|row| record_dispatch_input(&row)))
-            })
-            .transpose()?
-            .flatten();
         let root = self.vault.project_for_spawn_in_txn(txn, None)?.0;
-        let parent_project = parent
-            .as_ref()
-            .and_then(|input| input.project_ref)
-            .unwrap_or(root);
+        let mut parent_project = root;
+        let mut has_parent_input = false;
+        let mut parent_limit = CONTEXT_PROJECTION_MAX_ANCESTORS as u8;
+        let mut cursor = parent_attempt;
+        let mut seen = std::collections::HashSet::new();
+        let mut distance = 0u8;
+        while let Some(attempt) = cursor {
+            if usize::from(distance) >= CONTEXT_PROJECTION_MAX_ANCESTORS || !seen.insert(attempt) {
+                return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "project depth ancestor bound or cycle",
+                )));
+            }
+            let row = AttemptQueue::new(self.vault).get_in_txn(txn, attempt)?;
+            if let Some(row) = &row {
+                super::workflow_record::reject_wrapper_parent(row)?;
+            }
+            let input = row.as_ref().and_then(record_dispatch_input);
+            if distance == 0 {
+                has_parent_input = input.is_some();
+                parent_limit = input
+                    .as_ref()
+                    .and_then(|input| input.depth_remaining)
+                    .unwrap_or(super::types::AGENT_DISPATCH_COMPAT_DEPTH_CAP);
+                parent_project = input
+                    .as_ref()
+                    .and_then(|input| input.project_ref)
+                    .unwrap_or(root);
+            } else if input.is_none() {
+                if row.is_none() {
+                    return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "project depth ancestor is missing",
+                    )));
+                }
+                break; // Non-agent board/legacy parent has no project slice to fold.
+            }
+            let ancestor_project = input
+                .as_ref()
+                .and_then(|input| input.project_ref)
+                .unwrap_or(root);
+            let (_, live) = self
+                .vault
+                .project_for_spawn_in_txn(txn, Some(ancestor_project))?;
+            let live_remaining = live.depth.checked_sub(distance).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("project ancestor depth is exhausted"),
+            ))?;
+            parent_limit = parent_limit.min(live_remaining);
+            cursor = match (row, input) {
+                (Some(row), Some(_)) => {
+                    decode_dreamer_attempt_payload(&row.payload)?.parent_attempt
+                }
+                _ => None, // Schema-v1/non-dispatch parent uses the compatibility cap.
+            };
+            distance += 1;
+        }
         let (id, project) = self.vault.project_for_spawn_in_txn(
             txn,
             requested_project.or_else(|| parent_attempt.map(|_| parent_project)),
         )?;
-        if id != root && (parent_attempt.is_none() || parent.is_none()) {
+        if id != root && (parent_attempt.is_none() || !has_parent_input) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "a project spawn requires a real parent in its ancestor project",
             )));
         }
-        let ceiling = match parent_attempt {
-            None => project.depth,
-            Some(_) if id == parent_project => {
-                project.depth.checked_sub(1).ok_or(Error::Artifact(
-                    ArtifactError::InvalidAgentDispatchInput("project depth is exhausted"),
-                ))?
-            }
-            Some(_) if project.parent.as_deref() == Some(&parent_project.to_hex()) => project.depth,
-            Some(_) => {
+        if parent_attempt.is_some() {
+            if id != parent_project && project.parent.as_deref() != Some(&parent_project.to_hex()) {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "project is not a child of the parent project",
                 )));
             }
-        };
-        let bound = match parent_attempt {
-            None => CONTEXT_PROJECTION_MAX_ANCESTORS as u8,
-            Some(_) => child_depth_from(parent)?,
-        };
-        Ok((id, ceiling.min(bound)))
+            parent_limit = parent_limit.checked_sub(1).ok_or(Error::Artifact(
+                ArtifactError::InvalidAgentDispatchInput("project depth is exhausted"),
+            ))?;
+        }
+        Ok((id, project.depth.min(parent_limit)))
     }
 
-    /// The depth budget a child of `parent_attempt` must be persisted with.
-    ///
-    /// Reads the parent's persisted [`AgentDispatchInput`]. A stored `Some(0)`
-    /// is the exhausted lineage and REJECTS here, before any fork registration,
-    /// context resolution, or enqueue — so zero cannot enqueue another level.
-    ///
-    /// # Errors
-    ///
-    /// [`ArtifactError::InvalidAgentDispatchInput`](crate::error::ArtifactError::InvalidAgentDispatchInput) when the parent's budget is
-    /// exhausted.
+    /// The live depth a child of `parent_attempt` may persist, after folding
+    /// the stored slice with every ancestor project's current depth.
     pub fn child_depth_remaining(&self, parent_attempt: AttemptId) -> Result<u8> {
-        child_depth_from(self.parent_dispatch_input(parent_attempt)?)
+        let txn = self.vault.store.env.read_txn()?;
+        self.project_depth_limit_in_txn(&txn, Some(parent_attempt), None)
+            .map(|(_, depth)| depth)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller

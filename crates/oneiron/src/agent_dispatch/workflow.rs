@@ -24,6 +24,23 @@ impl AgentDispatcher<'_> {
             context_spec: spawn.context_spec.map(normalize_context_spec),
             ..spawn
         };
+        if let Some(key) = input.dedupe_key.as_deref() {
+            let txn = self.vault.store.env.read_txn()?;
+            if let Some(bytes) = self.vault.store.vault_meta.get(&txn, &dedupe_key(key))? {
+                let id = crate::attempt_queue::AttemptId::from_bytes(&bytes)?;
+                let row = AttemptQueue::new(self.vault)
+                    .get_in_txn(&txn, id)?
+                    .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
+                let record = self.read_workflow(&txn, &row)?;
+                let (_, expected) = self.workflow_intent(&txn, &input, &spawn)?;
+                if record.intent != expected {
+                    return Err(invalid("workflow dedupe key names a different intent"));
+                }
+                return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
+                    self.workflow_status_from(row, &record)?,
+                )));
+            }
+        }
         // A wrapper is inert and cannot stand in for an actual authority parent.
         if let Some(parent) = input.parent_attempt {
             self.parent_dispatch_input(parent)?
@@ -42,26 +59,19 @@ impl AgentDispatcher<'_> {
         Ok(outcome)
     }
 
-    /// The approval caller carries a private, already-validated parent projection.
-    /// No persisted override is read before its transaction has committed. Both
-    /// paths still check declared and resolved narrowing for EVERY real leaf.
-    pub(super) fn dispatch_workflow_in_txn(
+    fn workflow_intent(
         &self,
-        txn: &mut heed::RwTxn<'_>,
-        input: DispatchAgent,
-        spawn: AgentSpawnContext,
-        approved_parent: Option<&PreparedParentContext>,
-    ) -> Result<AgentDispatchOutcome> {
+        txn: &heed::RoTxn<'_>,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+    ) -> Result<(
+        crate::agent_def::workflow::WorkflowDefinition,
+        WorkflowIntent,
+    )> {
         let AgentDispatchTarget::Workflow(id) = input.target else {
             return Err(invalid("workflow dispatch requires a workflow target"));
         };
         let definition = self.workflow_definition_in_txn(txn, id)?;
-        if let Some(parent) = input.parent_attempt {
-            let parent_input = self
-                .parent_dispatch_input_in_txn(txn, parent)?
-                .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
-            super::attenuation::child_depth_from(Some(parent_input))?;
-        }
         let intent = WorkflowIntent {
             workflow_ref: id.to_hex(),
             definition: crate::agent_def::workflow::encode_workflow(&definition)?,
@@ -76,6 +86,26 @@ impl AgentDispatcher<'_> {
             depth_remaining: spawn.depth_remaining,
             project_ref: spawn.project_ref.map(|id| id.to_hex()),
         };
+        Ok((definition, intent))
+    }
+
+    /// The approval caller carries a private, already-validated parent projection.
+    /// No persisted override is read before its transaction has committed. Both
+    /// paths still check declared and resolved narrowing for EVERY real leaf.
+    pub(super) fn dispatch_workflow_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        approved_parent: Option<&PreparedParentContext>,
+    ) -> Result<AgentDispatchOutcome> {
+        let (definition, intent) = self.workflow_intent(txn, &input, &spawn)?;
+        if let Some(parent) = input.parent_attempt {
+            let parent_input = self
+                .parent_dispatch_input_in_txn(txn, parent)?
+                .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
+            super::attenuation::child_depth_from(Some(parent_input))?;
+        }
         // Validate all leaves while the writer serializes revocation. Resolution
         // opens read snapshots, so finish it before any fork or queue mutation.
         for step in &definition.steps {
