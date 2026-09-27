@@ -415,13 +415,10 @@ fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Resul
 }
 
 #[test]
-fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Result<()> {
-    use crate::claim::{ClaimSource, ScopedReadActorKey};
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
-    use crate::edge::EdgeActorClass;
+fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() -> Result<()> {
+    use crate::claim::ScopedReadActorKey;
     let (_dir, vault, unrelated) = fixture();
     let person = crate::test_util::entity(0x64);
-    let persona = crate::test_util::entity(0x65);
     vault.put_entity(
         &person,
         ENTITY_TYPE_PERSON,
@@ -429,29 +426,11 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         1,
         b"person",
     )?;
-    let provenance = CompanionProvenance::new(
-        person,
-        EdgeActorClass::Human,
-        ClaimSource::UserStated,
-        ClaimApprovalStatus::Approved,
-        rmpv::Value::from("origin"),
-    );
-    vault.create_companion_record(
-        &crate::test_util::entity(0x66),
-        &CompanionRecord::persona(
-            CompanionScope::personal(person),
-            persona,
-            rmpv::Value::from("persona"),
-            provenance,
-            crate::federation::Sensitivity::Private,
-        ),
-        1,
-    )?;
     let user_claim = crate::test_util::entity(0x67);
-    let persona_claim = crate::test_util::entity(0x68);
+    let second_user_claim = crate::test_util::entity(0x68);
     let unrelated_claim = crate::test_util::entity(0x69);
     claim(&vault, user_claim, person, "user")?;
-    claim(&vault, persona_claim, persona, "persona")?;
+    claim(&vault, second_user_claim, person, "second user")?;
     claim(&vault, unrelated_claim, unrelated, "other user")?;
     crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex(), "reader"]);
     let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
@@ -464,7 +443,7 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         .max_field_chars(0)
         .run()?;
     let prefix = pack.l2_base.expect("implicit personal prefix");
-    assert_eq!(prefix.evidence_ids(), &[user_claim, persona_claim]);
+    assert_eq!(prefix.evidence_ids(), &[user_claim, second_user_claim]);
     assert!(!prefix.evidence_ids().contains(&unrelated_claim));
     let delegated = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -479,7 +458,7 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         .run()?;
     assert_eq!(
         pack.l2_base.unwrap().evidence_ids(),
-        &[user_claim, persona_claim]
+        &[user_claim, second_user_claim]
     );
     let unbound = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -509,41 +488,32 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
 
 #[test]
 fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
-    use crate::claim::ClaimSource;
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
-    use crate::edge::EdgeActorClass;
     let (_dir, vault, _) = fixture();
-    let provenance = CompanionProvenance::new(
-        crate::test_util::entity(0x77),
-        EdgeActorClass::Human,
-        ClaimSource::UserStated,
-        ClaimApprovalStatus::Approved,
-        rmpv::Value::from("origin"),
-    );
-    let first_persona = crate::test_util::entity(0x80);
-    for n in 0..9_u8 {
-        vault.create_companion_record(
-            &crate::test_util::entity(0x90 + n),
-            &CompanionRecord::persona(
-                CompanionScope::neutral(),
-                crate::test_util::entity(0x80 + n),
-                rmpv::Value::from("persona"),
-                provenance.clone(),
-                crate::federation::Sensitivity::Public,
-            ),
-            1,
-        )?;
-    }
-    claim(&vault, crate::test_util::entity(0xA0), first_persona, "one")?;
+    let first_person = crate::test_util::entity(0x80);
+    vault.put_entity(
+        &first_person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let subjects: Vec<_> = (0..9_u8)
+        .map(|n| crate::test_util::entity(0x80 + n))
+        .collect();
+    claim(&vault, crate::test_util::entity(0xA0), first_person, "one")?;
     assert!(vault.context_pack().run()?.l2_base.is_none());
     assert!(
         vault
             .context_pack()
-            .l2_summary_subjects(&[first_persona])
+            .l2_summary_subjects(&[first_person])
             .run()?
             .l2_base
             .is_some()
     );
+    assert!(matches!(
+        vault.context_pack().l2_summary_subjects(&subjects).run(),
+        Err(crate::Error::InvalidConfig(_))
+    ));
 
     let (_dir, vault, _) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -567,42 +537,14 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
 }
 
 #[test]
-fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()> {
-    use crate::claim::ClaimSource;
-    use crate::companion::{CompanionProvenance, CompanionRecord, CompanionScope};
-    use crate::edge::EdgeActorClass;
+fn unscoped_owner_discovers_its_person_claims_not_a_strangers() -> Result<()> {
     let (_dir, vault, stranger) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    let owner_persona = crate::test_util::entity(0xB0);
-    let stranger_persona = crate::test_util::entity(0xB1);
-    let provenance = CompanionProvenance::new(
-        owner,
-        EdgeActorClass::Human,
-        ClaimSource::UserStated,
-        ClaimApprovalStatus::Approved,
-        rmpv::Value::from("origin"),
-    );
-    for (id, person, persona) in [
-        (crate::test_util::entity(0xB2), owner, owner_persona),
-        (crate::test_util::entity(0xB3), stranger, stranger_persona),
-    ] {
-        vault.create_companion_record(
-            &id,
-            &CompanionRecord::persona(
-                CompanionScope::personal(person),
-                persona,
-                rmpv::Value::from("persona"),
-                provenance.clone(),
-                crate::federation::Sensitivity::Public,
-            ),
-            1,
-        )?;
-    }
     let owner_claim = crate::test_util::entity(0xB4);
     let stranger_claim = crate::test_util::entity(0xB5);
-    claim(&vault, owner_claim, owner_persona, "owner persona")?;
-    claim(&vault, stranger_claim, stranger_persona, "stranger persona")?;
-    let base = vault.context_pack().run()?.l2_base.expect("owner persona");
+    claim(&vault, owner_claim, owner, "owner identity")?;
+    claim(&vault, stranger_claim, stranger, "stranger identity")?;
+    let base = vault.context_pack().run()?.l2_base.expect("owner identity");
     assert_eq!(base.evidence_ids(), &[owner_claim]);
     assert!(!base.evidence_ids().contains(&stranger_claim));
     Ok(())

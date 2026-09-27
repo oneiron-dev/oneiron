@@ -13,7 +13,10 @@ mod types;
 
 pub use ladder::*;
 pub use policy::*;
-pub use seat::*;
+pub use seat::{
+    DecisionSeat as RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatPhase, SeatRequest,
+    decide_at_remote_seat,
+};
 pub use types::*;
 
 #[cfg(test)]
