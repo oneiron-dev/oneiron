@@ -321,6 +321,7 @@ impl AccessGrant {
         principal: EntityId,
         space: EntityId,
         capability: AccessGrantCapability,
+        record: &crate::federation::Scope,
         now: u64,
     ) -> bool {
         let scoped = match self.scope {
@@ -329,7 +330,9 @@ impl AccessGrant {
             | AccessGrantScope::RelationshipClaims { space_ref } => space_ref == space,
             _ => false,
         };
-        self.validate().is_ok()
+        self.authority_scope
+            .admits("read", record, &crate::federation::Scope::top())
+            && self.validate().is_ok()
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal
             && self.capability == capability
