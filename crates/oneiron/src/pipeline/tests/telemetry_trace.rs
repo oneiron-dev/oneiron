@@ -192,7 +192,21 @@ fn weak_evidence_abstains() -> Result<()> {
         .context_pack()
         .search_text("", 10)
         .search_vector(&query, 10)
-        .run()?;
+        .corpus_snapshot_ref("eval://corpus/weak-evidence")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let row = vault
+        .retrieval_run(pack.run_id.expect("captured"))?
+        .unwrap();
+    assert!(
+        row.replay_inputs.is_some(),
+        "abstention still records its input"
+    );
+    assert!(
+        row.pack_output.is_some(),
+        "abstention still records its pack"
+    );
+    let pack = pack.value;
 
     assert!(
         pack.results.is_empty(),

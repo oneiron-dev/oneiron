@@ -18,7 +18,7 @@ use super::super::hydration::hydrate_entity;
 use super::super::psych_mirror::{PsychProfilePackSection, psych_profile_pack_section};
 use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
-    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
+    discard_failed_context_pack_telemetry, finalize_context_pack_telemetry, raw_pack_output,
 };
 use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
 use super::super::validation::{
@@ -63,6 +63,17 @@ impl<'a> ContextPackBuilder<'a> {
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
+        let pack_output = match run
+            .capture_replay
+            .then(|| raw_pack_output(&run.pack))
+            .transpose()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                discard_failed_context_pack_telemetry(run.telemetry, run.telemetry_run_id);
+                return Err(error);
+            }
+        };
         let telemetry_run_id = finalize_context_pack_telemetry(
             run.telemetry,
             run.telemetry_run_id,
@@ -71,6 +82,7 @@ impl<'a> ContextPackBuilder<'a> {
             run.pack.stats.claims_suppressed,
             &surfaced_result_ids,
             context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+            pack_output,
         )?;
         Ok((
             RetrievalWithTelemetry {
@@ -115,6 +127,7 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry: run.telemetry,
             total_in_scope: run.total_in_scope,
             clamped_out: run.clamped_out,
+            capture_replay: run.capture_replay,
         })
     }
 
@@ -143,6 +156,7 @@ impl<'a> ContextPackBuilder<'a> {
         {
             pipeline = pipeline.capture_retrieval_trace(false);
         }
+        let capture_replay = pipeline.captures_replay();
         // Captured BEFORE the run, from the same door the pipeline registers
         // the provisional row through, and carried on every outcome — so the
         // finalize and the failure discard both reach the row that was
@@ -491,6 +505,7 @@ impl<'a> ContextPackBuilder<'a> {
                 telemetry,
                 total_in_scope,
                 clamped_out,
+                capture_replay,
             })
         })();
 
@@ -536,6 +551,11 @@ impl<'a> ContextPackBuilder<'a> {
             telemetry.stats.claims_suppressed,
             &telemetry.result_ids,
             serialized_context_pack_empty_reason(&run.pack, &telemetry),
+            run.capture_replay
+                .then(|| crate::store::RetrievalPackOutput {
+                    format: format!("{:?}", config.format),
+                    bytes: bytes.clone(),
+                }),
         )?;
         Ok(RetrievalWithTelemetry {
             retrieval_quality: run.pack.retrieval_quality,

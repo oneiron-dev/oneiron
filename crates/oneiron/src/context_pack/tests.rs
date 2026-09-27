@@ -2717,6 +2717,7 @@ fn context_pack_provisional_telemetry_hidden_until_finalization() -> Result<()> 
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
     )?;
     assert_eq!(finalized_run_id, Some(run_id));
 
@@ -2882,6 +2883,7 @@ fn context_pack_telemetry_finalization_failure_returns_no_run_id() -> Result<()>
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
     )?;
 
     assert_eq!(
@@ -2957,6 +2959,7 @@ fn a_rooms_context_pack_fails_when_its_finalize_cannot_land() -> Result<()> {
         run.pack.stats.claims_suppressed,
         &surfaced_result_ids,
         context_pack_empty_reason(&run.pack, &surfaced_result_ids),
+        None,
     )
     .expect_err("a room's failed finalize fails the retrieval");
     assert_eq!(
@@ -3824,6 +3827,8 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         record.trace.is_some(),
         "owner-alone trace capture stays unchanged"
     );
+    assert!(record.replay_inputs.is_some());
+    assert!(record.pack_output.is_some());
 
     // Clamped assembly: NO stage trace exists at all, so per_channel, fused,
     // blended, and reranked can never retain ids the clamp removed.
@@ -3840,6 +3845,8 @@ fn clamped_assemblies_persist_no_retrieval_stage_trace() -> Result<()> {
         record.trace.is_none(),
         "a clamped assembly persists no retrieval stage trace"
     );
+    assert!(record.replay_inputs.is_none());
+    assert!(record.pack_output.is_none());
     // The finalized telemetry record itself carries only post-clamp ids.
     assert!(record.result_ids.contains(party.as_bytes()));
     assert!(

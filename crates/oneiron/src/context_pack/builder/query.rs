@@ -326,6 +326,18 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Associates the retrieval run with a caller turn for ordered lookup.
+    pub fn retrieval_turn(mut self, turn: crate::store::RetrievalTurn) -> Self {
+        self.pipeline = self.pipeline.retrieval_turn(turn);
+        self
+    }
+
+    /// Binds captured retrieval inputs to an immutable host-owned corpus snapshot.
+    pub fn corpus_snapshot_ref(mut self, snapshot_ref: impl Into<String>) -> Self {
+        self.pipeline = self.pipeline.corpus_snapshot_ref(snapshot_ref);
+        self
+    }
+
     pub fn capture_retrieval_trace(mut self, enabled: bool) -> Self {
         self.pipeline = self.pipeline.capture_retrieval_trace(enabled);
         self

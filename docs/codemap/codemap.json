@@ -11269,7 +11269,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 2,
-      "fn": 55,
+      "fn": 57,
       "struct": 1
      }
     },
@@ -11423,7 +11423,7 @@
      "path": "src/context_pack/telemetry.rs",
      "purpose": "Finalize or discard the retrieval-run row a pack assembly registered",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -23415,7 +23415,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PipelineBuilder"
@@ -23423,9 +23423,20 @@
      "path": "src/pipeline/builder.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
-      "fn": 46,
+      "crate-vis": 7,
+      "fn": 43,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/builder_capture.rs",
+     "purpose": "Retrieval telemetry capture and turn context options on the pipeline builder",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
      }
     },
     {
@@ -23789,7 +23800,17 @@
      "path": "src/pipeline/trace/mod.rs",
      "purpose": "Retrieval trace recording and deterministic replay fork-hashing",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/trace/replay_inputs.rs",
+     "purpose": "Opt-in replay input capture from the resolved query, never from a fork hash",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -29203,6 +29224,8 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RetrievalPackOutput",
+      "RetrievalReplayInputs",
       "RetrievalState",
       "RetrievalTurn"
      ],
@@ -29210,11 +29233,11 @@
      "purpose": "Query-free retrieval context, preserved verbatim for offline replay",
      "surface": {
       "crate-vis": 2,
-      "struct": 2
+      "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/store/retrieval_telemetry/state_tests.rs",
@@ -34589,9 +34612,9 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 50,
+     "files": 52,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
@@ -35037,9 +35060,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 8,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2069,
+   "source_files": 2071,
    "test_files": 710
   },
   "oneiron-android": {

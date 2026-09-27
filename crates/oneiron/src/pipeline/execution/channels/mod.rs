@@ -24,7 +24,9 @@ use super::super::capabilities::{memory_candidate_count, partition_capabilities}
 use super::super::channels::execute_phonetic;
 use super::super::corpus_filter::CorpusFilter;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
-use super::super::trace::{record_ppr_cache_outcome, retrieval_trace_fused_scores};
+use super::super::trace::{
+    capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
+};
 use super::super::types::{ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, RelMode};
 use super::super::world_authority::resolve_active_world_authority;
 use super::types::{HydeAttemptOverrides, RetrievalTxnOutput, pending_vectors_for_scores};
@@ -82,6 +84,10 @@ impl PipelineBuilder<'_> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "replay inputs must be captured under the same retrieval read transaction as the trace"
+    )]
     fn run_retrieval_snapshot(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -373,6 +379,7 @@ impl PipelineBuilder<'_> {
                     access_factors: HashMap::new(),
                     rerank_merged_components: None,
                     retrieval_trace: None,
+                    replay_inputs: None,
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: true,
                 });
@@ -613,6 +620,22 @@ impl PipelineBuilder<'_> {
             } else {
                 None
             };
+            let replay_inputs = capture_retrieval_trace.then(|| {
+                capture_replay_inputs(
+                    self,
+                    bm25_config,
+                    blend_weights,
+                    authority_filter,
+                    world_authority.as_ref(),
+                    hyde_expansion,
+                    overrides.extra_text_queries,
+                    overrides.widen_channel_limits,
+                    overrides.skip_ret01_abstain,
+                    occurred_range,
+                    temporal_now,
+                    rerank_query,
+                )
+            });
             let mut revisions = HashMap::new();
             for hit in &scores {
                 if let Some(revision) = self.vault.indexed_revision_in_txn(rtxn, &hit.id)? {
@@ -636,6 +659,7 @@ impl PipelineBuilder<'_> {
                 access_factors: blend_access_factors,
                 rerank_merged_components,
                 retrieval_trace,
+                replay_inputs,
                 ppr_expand_executed,
                 early_empty_no_telemetry: false,
             })

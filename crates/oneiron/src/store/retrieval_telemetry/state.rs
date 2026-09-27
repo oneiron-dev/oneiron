@@ -106,3 +106,21 @@ pub struct RetrievalTurn {
     pub episode_id: [u8; 16],
     pub turn_idx: u64,
 }
+
+/// Replay inputs are captured only with retrieval tracing. The snapshot reference
+/// names an immutable corpus supplied by the caller (for example an eval corpus
+/// manifest); it is not a hash of the query or a reference to a mutable vault.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalReplayInputs {
+    pub query: serde_json::Value,
+    pub config: serde_json::Value,
+    pub corpus_snapshot_ref: Option<String>,
+}
+
+/// Exact serialized output bytes for a finalized context-pack run. The format
+/// identifies the representation; raw structured packs use the JSON renderer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RetrievalPackOutput {
+    pub format: String,
+    pub bytes: Vec<u8>,
+}

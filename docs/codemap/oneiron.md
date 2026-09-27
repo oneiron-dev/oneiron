@@ -902,7 +902,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/builder/assembly.rs` | src | m | 8 fn · 2 crate-vis | — | Executing a configured builder: the retrieval run, hydration, validation, and every run_* terminal |
 | `src/context_pack/builder/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | The fluent [`ContextPackBuilder`] query API and its assembly pipeline |
 | `src/context_pack/builder/pack_run.rs` | src | s | 2 struct · 4 fn · 6 crate-vis | SerializedContextPack, UnfinalizedContextPack | What a pack run produces and how its telemetry row is finalized or discarded |
-| `src/context_pack/builder/query.rs` | src | m | 1 struct · 55 fn · 2 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
+| `src/context_pack/builder/query.rs` | src | m | 1 struct · 57 fn · 2 crate-vis | ContextPackBuilder | The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration |
 | `src/context_pack/builder/scoped.rs` | src | s | 1 crate-vis | — | Candidate narrowing passthrough to the existing retrieval pipeline |
 | `src/context_pack/capability_tests.rs` | test | s | — | — | Actual retrieval split: turn discoveries cannot displace memory rows |
 | `src/context_pack/edge_walk.rs` | src | s | 8 crate-vis | — | Edge loading and multi-hop neighbor expansion during pack assembly |
@@ -915,7 +915,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_pack/psych_mirror.rs` | src | s | 1 struct · 1 enum · 3 fn | PsychProfilePackSection, PsychProfilePackStaleReason | Psych-mirror salience and entropy scoring, plus the stored-profile pack section it feeds |
 | `src/context_pack/quarantine.rs` | src | s | 7 crate-vis | — | Sync-quarantine rows read during pack assembly, and the index that excludes quarantined entities from a pack |
 | `src/context_pack/source_ranking.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | SourceRankingPolicy | PACK data for provenance-aware claim ordering |
-| `src/context_pack/telemetry.rs` | src | s | 2 crate-vis | — | Finalize or discard the retrieval-run row a pack assembly registered |
+| `src/context_pack/telemetry.rs` | src | s | 3 crate-vis | — | Finalize or discard the retrieval-run row a pack assembly registered |
 | `src/context_pack/tests.rs` | test | XL | — | — | — |
 | `src/context_pack/tests/criticality.rs` | test | s | — | — | Manifest criticality is a read-time priority and a narrowing selector only |
 | `src/context_pack/tests/source_ranking.rs` | test | s | — | — | Source ranking is PACK data and cannot widen visibility or scope |
@@ -1885,7 +1885,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/authority_tests.rs` | test | L | 1 crate-vis | — | ONE-1388 adapter tests |
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | s | 2 crate-vis | — | — |
-| `src/pipeline/builder.rs` | src | L | 1 struct · 46 fn · 9 crate-vis | PipelineBuilder | — |
+| `src/pipeline/builder.rs` | src | m | 1 struct · 43 fn · 7 crate-vis | PipelineBuilder | — |
+| `src/pipeline/builder_capture.rs` | src | s | 4 fn · 3 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 1 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
 | `src/pipeline/capabilities.rs` | src | s | 8 crate-vis | — | Capability candidates have a separate turn budget, never the memory budget |
 | `src/pipeline/channels.rs` | src | m | 11 crate-vis | — | — |
@@ -1924,7 +1925,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/tests/telemetry_trace.rs` | test | L | — | — | Retrieval telemetry, outcome records, and trace capture/fork-hash pins |
 | `src/pipeline/tests/temporal.rs` | test | m | — | — | Temporal index scans, sigma scoring, widening, and contiguity pins |
 | `src/pipeline/tests/world_access.rs` | test | L | 11 crate-vis | — | World-access authority tiers, strict decoding, and bitemporal precedence |
-| `src/pipeline/trace/mod.rs` | src | s | 2 crate-vis | — | Retrieval trace recording and deterministic replay fork-hashing |
+| `src/pipeline/trace/mod.rs` | src | s | 3 crate-vis | — | Retrieval trace recording and deterministic replay fork-hashing |
+| `src/pipeline/trace/replay_inputs.rs` | src | s | 1 crate-vis | — | Opt-in replay input capture from the resolved query, never from a fork hash |
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
 | `src/pipeline/types.rs` | src | m | 10 struct · 5 enum · 12 fn · 5 const · 32 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +7 | — |
@@ -2375,8 +2377,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/retrieval_telemetry/blend_tuning.rs` | src | m | 2 fn · 4 crate-vis | — | Reward-weighted retrieval-blend tuning: weight-table methods, codecs, validators, and gradient math |
 | `src/store/retrieval_telemetry/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Retrieval telemetry: run records, trace fork index, outcome rows, and reward-weighted blend-weight tuning |
 | `src/store/retrieval_telemetry/run_store.rs` | src | m | 3 fn · 23 crate-vis | — | Retrieval-run, outcome, and trace-fork persistence: `Store` and `SessionStoreView` methods, staging bodies… |
-| `src/store/retrieval_telemetry/state.rs` | src | s | 2 struct · 2 crate-vis | RetrievalState, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
-| `src/store/retrieval_telemetry/state_tests.rs` | test | s | — | — | — |
+| `src/store/retrieval_telemetry/state.rs` | src | s | 4 struct · 2 crate-vis | RetrievalPackOutput, RetrievalReplayInputs, RetrievalState, RetrievalTurn | Query-free retrieval context, preserved verbatim for offline replay |
+| `src/store/retrieval_telemetry/state_tests.rs` | test | m | — | — | — |
 | `src/store/retrieval_telemetry/turn_index.rs` | src | s | 3 fn · 3 crate-vis | — | Ordered by-turn projection of independent retrieval runs |
 | `src/store/retrieval_telemetry/types.rs` | src | m | 13 struct · 4 enum · 9 fn · 1 type · 11 crate-vis | RetrievalAction, RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalBlendWeights, RetrievalOutcome, RetrievalOutcomeRecord +9 | Retrieval-telemetry record, trace, signal, and blend-weight types |
 | `src/store/root_directory.rs` | src | s | 5 crate-vis | — | Descriptor-bound directory identity shared by store opens and writer leases |
