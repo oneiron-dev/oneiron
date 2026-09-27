@@ -170,10 +170,15 @@ impl Vault {
                 },
                 publisher: ask.publisher.identity().to_owned(),
                 permissions: ask.permissions.clone(),
-                qualification_report_hash: ask.qualification.as_ref().map(|q| q.report_hash.clone()),
+                qualification_report_hash: ask
+                    .qualification
+                    .as_ref()
+                    .map(|q| q.report_hash.clone()),
                 runtime: if status == PackInstallStatus::Active {
                     ask.qualification.as_ref().and_then(|q| q.runtime.clone())
-                } else { None },
+                } else {
+                    None
+                },
                 sections: source.sections().to_vec(),
                 predicates: source.manifest.predicates.iter().cloned().collect(),
                 kinds: source.manifest.kinds.iter().cloned().collect(),
