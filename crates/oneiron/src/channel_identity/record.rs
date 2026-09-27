@@ -63,6 +63,18 @@ pub struct ChannelIdentity {
     manifest_ref: Option<EntityId>,
 }
 
+/// Validated codec input after the wire key set selected a custody variant.
+pub(super) struct StoredIdentityParts {
+    pub(super) auth_mode: ChannelAuthMode,
+    pub(super) channel: String,
+    pub(super) address_or_handle: String,
+    pub(super) binding: ChannelIdentityBinding,
+    pub(super) custody: Custody,
+    pub(super) state_changed_at: u64,
+    pub(super) reputation_ref: Option<EntityId>,
+    pub(super) manifest_ref: Option<EntityId>,
+}
+
 impl ChannelIdentity {
     /// Constructs a requested SELF-HELD identity row before provider
     /// fulfillment starts.
@@ -189,25 +201,16 @@ impl ChannelIdentity {
     /// key set its schema version selects, so this takes the finished value
     /// rather than loose fields: a body whose shape and custody keys disagree
     /// fails at the key-set check, not here.
-    pub(super) fn from_stored_parts(
-        auth_mode: ChannelAuthMode,
-        channel: String,
-        address_or_handle: String,
-        binding: ChannelIdentityBinding,
-        custody: Custody,
-        state_changed_at: u64,
-        reputation_ref: Option<EntityId>,
-        manifest_ref: Option<EntityId>,
-    ) -> Result<Self> {
+    pub(super) fn from_stored_parts(parts: StoredIdentityParts) -> Result<Self> {
         let identity = Self {
-            auth_mode,
-            channel,
-            address_or_handle,
-            binding,
-            custody,
-            state_changed_at,
-            reputation_ref,
-            manifest_ref,
+            auth_mode: parts.auth_mode,
+            channel: parts.channel,
+            address_or_handle: parts.address_or_handle,
+            binding: parts.binding,
+            custody: parts.custody,
+            state_changed_at: parts.state_changed_at,
+            reputation_ref: parts.reputation_ref,
+            manifest_ref: parts.manifest_ref,
         };
         identity.validate()?;
         Ok(identity)

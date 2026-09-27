@@ -69,8 +69,13 @@ fn release_local_delegated_identity(
     address: &str,
     grant: crate::channel_identity::DelegatedGrant,
     binding: crate::channel_identity::ChannelIdentityBinding,
-) -> Result<crate::channel_identity::ChannelIdentity> {
-    use crate::channel_identity::{ChannelIdentityState, DelegatedProvisionRequest};
+) -> Result<(
+    crate::channel_identity::ChannelIdentity,
+    crate::channel_identity::ChannelIdentity,
+)> {
+    use crate::channel_identity::{
+        ChannelIdentityFulfillment, ChannelIdentityStep, DelegatedProvisionRequest,
+    };
 
     vault.provision_delegated_identity(
         &id,
@@ -82,27 +87,14 @@ fn release_local_delegated_identity(
         },
         learned_at,
     )?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &id,
-        ChannelIdentityState::PendingFulfillment,
-        Some(crate::channel_identity::ChannelIdentityFulfillment::Manual),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Manual),
         learned_at + 1,
-        None,
     )?;
-    vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Active,
-        None,
-        learned_at + 2,
-        None,
-    )?;
-    vault.transition_channel_identity(
-        &id,
-        ChannelIdentityState::Released,
-        None,
-        learned_at + 3,
-        None,
-    )
+    let active = vault.step_channel_identity(&id, ChannelIdentityStep::Fulfill, learned_at + 2)?;
+    let retired = vault.step_channel_identity(&id, ChannelIdentityStep::Release, learned_at + 3)?;
+    Ok((retired, active))
 }
 
 /// Pinned 25-byte entity envelope: type u8 + occurred_start/end u64 BE +
@@ -1631,7 +1623,7 @@ fn forward_rematerialization_quarantines_forged_shell_and_continues_edge_pass() 
 #[test]
 fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() -> Result<()> {
     use crate::channel_identity::{
-        ChannelIdentity, ChannelIdentityShape, ChannelIdentityState, encode_channel_identity_body,
+        ChannelIdentity, ChannelIdentityState, encode_channel_identity_body,
     };
 
     let (_dir, vault) = test_vault();
@@ -1641,7 +1633,7 @@ fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() ->
     let (grant, binding) =
         delegated_identity_fixture(&vault, "member-custody", address, learned_at)?;
     let retired_id = EntityId::from_bytes([0xB1; 16])?;
-    let retired = release_local_delegated_identity(
+    let (retired, peer_identity) = release_local_delegated_identity(
         &vault,
         retired_id,
         learned_at,
@@ -1649,18 +1641,14 @@ fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() ->
         grant.clone(),
         binding,
     )?;
-    assert_eq!(retired.state, ChannelIdentityState::Released);
+    assert_eq!(retired.state(), ChannelIdentityState::Released);
     // The local custody record remains active and really covers this mailbox;
     // it is not missing custody that makes the peer's row invalid.
     vault.verify_delegated_custody("email", address, &grant)?;
 
-    // A peer can encode a structurally valid ACTIVE row by hand. It names the
-    // just-freed key and the receiver's locally valid custody record, but it
-    // has no local provision/bind/fulfillment history.
-    let mut peer_identity = retired;
-    peer_identity.state = ChannelIdentityState::Active;
-    peer_identity.state_changed_at = learned_at + 4;
-    peer_identity.shape = ChannelIdentityShape::DelegatedGrant;
+    // A peer can replay the byte-exact ACTIVE body this vault previously held
+    // under a fresh id. It names the freed key and locally valid custody, but
+    // the peer did not perform this vault's provision/bind/fulfillment.
     let peer_body = encode_channel_identity_body(&peer_identity)?;
     let peer_id = EntityId::from_bytes([0xB2; 16])?;
 
@@ -1699,7 +1687,7 @@ fn replicated_delegated_channel_identity_is_rejected_after_local_retirement() ->
     assert_eq!(
         vault
             .get_channel_identity(&self_held_id)?
-            .map(|row| row.state),
+            .map(|row| row.state()),
         Some(ChannelIdentityState::Active),
         "self-held active identity replication stays supported"
     );

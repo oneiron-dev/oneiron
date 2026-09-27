@@ -113,7 +113,7 @@ pub(super) fn by_assignment(
         .transpose()?;
     if let Some((id, row)) = &occupant
         && matches!(
-            row.state,
+            row.state(),
             ChannelIdentityState::Active
                 | ChannelIdentityState::Rotating
                 | ChannelIdentityState::Released
@@ -124,7 +124,7 @@ pub(super) fn by_assignment(
     }
     if let Some(id) = slot.predecessor {
         let row = read_indexed_row(store, txn, key, id)?;
-        if row.is_delegated() && row.state == ChannelIdentityState::Released {
+        if row.is_delegated() && row.state() == ChannelIdentityState::Released {
             return Ok(Some((id, row)));
         }
     }
@@ -162,15 +162,15 @@ pub(crate) fn maintain_assignment_put(
         }
         let old = decode_channel_identity_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
         if old.assignment_key() != key
-            || old.shape != next.shape
-            || old.grant != next.grant
-            || old.binding != next.binding
+            || old.shape() != next.shape()
+            || old.grant() != next.grant()
+            || old.binding() != next.binding()
         {
             return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
                 "channel identity assignment, custody and binding are immutable",
             )));
         }
-    } else if next.is_delegated() && next.state != ChannelIdentityState::Requested {
+    } else if next.is_delegated() && next.state() != ChannelIdentityState::Requested {
         return Err(Error::Record(RecordError::InvalidChannelIdentityBody(
             "delegated identity must be born Requested",
         )));

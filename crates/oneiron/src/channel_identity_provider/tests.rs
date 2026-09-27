@@ -886,15 +886,18 @@ fn gmail_unparseable_from_is_digest_stamped_and_still_routes() -> Result<()> {
         serde_json::from_str(&serialized).expect("typed inbound deserializes");
     assert_eq!(decoded, inbound);
 
-    let mut receiving = ChannelIdentity::requested(
+    let receiving = ChannelIdentity::requested(
         EMAIL_CHANNEL,
         GMAIL_MAILBOX,
         SelfHeldShape::DedicatedAddress,
         ChannelIdentityBinding::agent(entity(0xC9)),
         1_800_000_000,
-    );
-    receiving.state = ChannelIdentityState::Active;
-    receiving.pending_fulfillment = None;
+    )
+    .step(
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
+        1_800_000_001,
+    )?
+    .step(ChannelIdentityStep::Fulfill, 1_800_000_002)?;
     let receiving_ref = entity(0xC8);
     vault.create_channel_identity(&receiving_ref, &receiving)?;
 

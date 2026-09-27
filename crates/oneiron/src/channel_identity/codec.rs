@@ -34,7 +34,7 @@ use super::lifecycle::ChannelIdentityState;
 
 use super::auth_mode::ChannelAuthMode;
 use super::keys::PREDICATE_CHANNEL_IDENTITY_AUTH_MODE;
-use super::record::ChannelIdentity;
+use super::record::{ChannelIdentity, StoredIdentityParts};
 
 use super::shape::ChannelIdentityShape;
 use crate::error::RecordError;
@@ -333,8 +333,8 @@ pub(super) fn decode_channel_identity_value(value: &Value) -> Result<ChannelIden
         delegated_grant,
         state_changed_at,
     )?;
-    ChannelIdentity::from_stored_parts(
-        required_string(entries, "auth_mode")?.parse()?,
+    ChannelIdentity::from_stored_parts(StoredIdentityParts {
+        auth_mode: required_string(entries, "auth_mode")?.parse()?,
         channel,
         address_or_handle,
         binding,
@@ -342,7 +342,7 @@ pub(super) fn decode_channel_identity_value(value: &Value) -> Result<ChannelIden
         state_changed_at,
         reputation_ref,
         manifest_ref,
-    )
+    })
 }
 
 pub(super) fn decode_delegated_grant(entries: &[(Value, Value)]) -> Result<DelegatedGrant> {

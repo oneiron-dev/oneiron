@@ -67,16 +67,16 @@ fn sample_identity_stored(custody: Custody) -> ChannelIdentity {
 
 /// [`sample_identity`] carrying a chosen custody value and binding.
 fn sample_identity_bound(custody: Custody, binding: ChannelIdentityBinding) -> ChannelIdentity {
-    ChannelIdentity::from_stored_parts(
-        ChannelAuthMode::ApiKey,
-        "email".to_owned(),
-        "agent@example.com".to_owned(),
+    ChannelIdentity::from_stored_parts(StoredIdentityParts {
+        auth_mode: ChannelAuthMode::ApiKey,
+        channel: "email".to_owned(),
+        address_or_handle: "agent@example.com".to_owned(),
         binding,
         custody,
-        1_800_000_000,
-        Some(entity(0xB1)),
-        Some(entity(0xC1)),
-    )
+        state_changed_at: 1_800_000_000,
+        reputation_ref: Some(entity(0xB1)),
+        manifest_ref: Some(entity(0xC1)),
+    })
     .expect("sample identity")
 }
 
@@ -284,16 +284,16 @@ fn malformed_channel_identity_bodies_fail_closed() {
 
     // A blank address cannot be assigned onto a built row any more, so the
     // refusal is proved at the door that can still present one: the decoder's.
-    let err = ChannelIdentity::from_stored_parts(
-        ChannelAuthMode::ApiKey,
-        "email".to_owned(),
-        " ".to_owned(),
-        ChannelIdentityBinding::agent(entity(0x51)),
-        Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
-        1_800_000_000,
-        None,
-        None,
-    )
+    let err = ChannelIdentity::from_stored_parts(StoredIdentityParts {
+        auth_mode: ChannelAuthMode::ApiKey,
+        channel: "email".to_owned(),
+        address_or_handle: " ".to_owned(),
+        binding: ChannelIdentityBinding::agent(entity(0x51)),
+        custody: Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+        state_changed_at: 1_800_000_000,
+        reputation_ref: None,
+        manifest_ref: None,
+    })
     .expect_err("blank address rejected");
     assert_eq!(err.kind(), ErrorKind::InvalidChannelIdentityBody);
 }
@@ -512,16 +512,16 @@ fn delegated_births_outside_requested_are_refused_at_the_store() -> Result<()> {
     // by field any more — so the birth law is proved against exactly what a
     // hostile replica can hand the store.
     let delegated = |grant: DelegatedGrant, lifecycle: DelegatedLifecycle| {
-        ChannelIdentity::from_stored_parts(
-            ChannelAuthMode::OAuth,
-            EMAIL_CHANNEL.to_owned(),
-            "member@member-owned.example".to_owned(),
-            ChannelIdentityBinding::agent(entity(0x51)),
-            Custody::Delegated { grant, lifecycle },
-            1_800_000_000,
-            None,
-            None,
-        )
+        ChannelIdentity::from_stored_parts(StoredIdentityParts {
+            auth_mode: ChannelAuthMode::OAuth,
+            channel: EMAIL_CHANNEL.to_owned(),
+            address_or_handle: "member@member-owned.example".to_owned(),
+            binding: ChannelIdentityBinding::agent(entity(0x51)),
+            custody: Custody::Delegated { grant, lifecycle },
+            state_changed_at: 1_800_000_000,
+            reputation_ref: None,
+            manifest_ref: None,
+        })
     };
     let crafted = delegated(grant, DelegatedLifecycle::Active)?;
     let err = vault
@@ -613,16 +613,16 @@ fn channel_auth_modes_register_without_credential_material() -> Result<()> {
         ChannelAuthMode::OAuth,
     ] {
         let (_dir, vault) = test_vault();
-        let identity = ChannelIdentity::from_stored_parts(
-            mode,
-            "email".to_owned(),
-            "agent@example.com".to_owned(),
-            ChannelIdentityBinding::agent(entity(0x51)),
-            Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
-            1_800_000_000,
-            None,
-            None,
-        )?;
+        let identity = ChannelIdentity::from_stored_parts(StoredIdentityParts {
+            auth_mode: mode,
+            channel: "email".to_owned(),
+            address_or_handle: "agent@example.com".to_owned(),
+            binding: ChannelIdentityBinding::agent(entity(0x51)),
+            custody: Custody::requested_self_held(SelfHeldShape::DedicatedAddress),
+            state_changed_at: 1_800_000_000,
+            reputation_ref: None,
+            manifest_ref: None,
+        })?;
         let id = entity(0xD1);
         vault.create_channel_identity(&id, &identity)?;
         assert_eq!(vault.get_channel_identity(&id)?, Some(identity.clone()));
@@ -685,15 +685,13 @@ fn assignment_two_slots_route_retiring_predecessor_until_reconsent_is_active() -
         grant: grant.clone(),
     };
     vault.provision_delegated_identity(&first, request(entity(0x51)), 100)?;
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &first,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         101,
-        None,
     )?;
-    vault.transition_channel_identity(&first, ChannelIdentityState::Active, None, 102, None)?;
-    vault.transition_channel_identity(&first, ChannelIdentityState::Released, None, 103, None)?;
+    vault.step_channel_identity(&first, ChannelIdentityStep::Fulfill, 102)?;
+    vault.step_channel_identity(&first, ChannelIdentityStep::Release, 103)?;
     vault.provision_delegated_identity(&second, request(entity(0x52)), u64::MAX - 1)?;
     // Deliberately skewed timestamps do not decide precedence. Requested and
     // pending re-consent cannot shadow a released row's in-flight mail.
@@ -703,12 +701,10 @@ fn assignment_two_slots_route_retiring_predecessor_until_reconsent_is_active() -
             .map(|(id, _)| id),
         Some(first)
     );
-    vault.transition_channel_identity(
+    vault.step_channel_identity(
         &second,
-        ChannelIdentityState::PendingFulfillment,
-        Some(ChannelIdentityFulfillment::Api),
+        ChannelIdentityStep::Bind(ChannelIdentityFulfillment::Api),
         u64::MAX - 1,
-        None,
     )?;
     assert_eq!(
         vault
@@ -716,13 +712,7 @@ fn assignment_two_slots_route_retiring_predecessor_until_reconsent_is_active() -
             .map(|(id, _)| id),
         Some(first)
     );
-    vault.transition_channel_identity(
-        &second,
-        ChannelIdentityState::Active,
-        None,
-        u64::MAX,
-        None,
-    )?;
+    vault.step_channel_identity(&second, ChannelIdentityStep::Fulfill, u64::MAX)?;
     assert_eq!(
         vault
             .channel_identity_by_assignment(EMAIL_CHANNEL, mailbox)?

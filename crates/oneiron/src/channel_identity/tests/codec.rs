@@ -65,16 +65,16 @@ fn delegated_or_self_held_sample(
     } else {
         (ChannelAuthMode::ApiKey, "agent@example.com")
     };
-    ChannelIdentity::from_stored_parts(
+    ChannelIdentity::from_stored_parts(StoredIdentityParts {
         auth_mode,
-        "email".to_owned(),
-        address.to_owned(),
+        channel: "email".to_owned(),
+        address_or_handle: address.to_owned(),
         binding,
         custody,
-        1_800_000_000,
-        None,
-        None,
-    )
+        state_changed_at: 1_800_000_000,
+        reputation_ref: None,
+        manifest_ref: None,
+    })
     .expect("codec fixture row")
 }
 
