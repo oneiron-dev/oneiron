@@ -1,7 +1,7 @@
 //! Real Git repositories and loopback static HTTP fixtures; no mocked adapter calls.
 use super::*;
 use crate::{
-    attempt_queue::{AttemptQueue, EnqueueAttempt, EnqueueOutcome},
+    attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome, EnqueueAttempt, EnqueueOutcome},
     entity_id::EntityId,
     error::{ErrorKind, Result},
 };
@@ -652,7 +652,25 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
     else {
         panic!("fresh attempt");
     };
-    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 31)?;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "marketplace.scan-reimport",
+        ClaimAttempt {
+            lease_owner: "hub-worker".into(),
+            now: 31,
+        },
+    )?
+    else {
+        panic!("leased attempt");
+    };
+    assert_eq!(leased.id, attempt.id);
+    let loaded = vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "hub-worker",
+        leased.attempt_count,
+        "hub-model@1",
+        31,
+    )?;
     assert_eq!(
         loaded.record.approval_status,
         crate::claim::ClaimApprovalStatus::Auto
@@ -799,7 +817,29 @@ fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs()
                 else {
                     panic!("fresh attempt");
                 };
-                assert!(vault.load_attempt_skill_pack(attempt.id, &id, 23).is_err());
+                let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+                    "inactive.marketplace",
+                    ClaimAttempt {
+                        lease_owner: "hub-worker".into(),
+                        now: 23,
+                    },
+                )?
+                else {
+                    panic!("leased attempt");
+                };
+                assert_eq!(leased.id, attempt.id);
+                assert!(
+                    vault
+                        .load_attempt_skill_pack(
+                            attempt.id,
+                            &id,
+                            "hub-worker",
+                            leased.attempt_count,
+                            "hub-model@1",
+                            23,
+                        )
+                        .is_err()
+                );
             }
         }
         assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
@@ -1131,7 +1171,25 @@ fn fit_ready_scanner_signal_does_not_create_a_second_admission_gate() -> Result<
     else {
         panic!("fresh attempt");
     };
-    let loaded = vault.load_attempt_skill_pack(attempt.id, &id, 30)?;
+    let ClaimOutcome::Claimed(leased) = queue.claim_kind(
+        "marketplace.scan-review",
+        ClaimAttempt {
+            lease_owner: "hub-worker".into(),
+            now: 30,
+        },
+    )?
+    else {
+        panic!("leased attempt");
+    };
+    assert_eq!(leased.id, attempt.id);
+    let loaded = vault.load_attempt_skill_pack(
+        attempt.id,
+        &id,
+        "hub-worker",
+        leased.attempt_count,
+        "hub-model@1",
+        30,
+    )?;
     assert_eq!(
         loaded.record.approval_status,
         crate::claim::ClaimApprovalStatus::Auto
@@ -1155,7 +1213,14 @@ fn fit_ready_scanner_signal_does_not_create_a_second_admission_gate() -> Result<
     vault.set_marketplace_blocked_hash(&owner, hash, false)?;
     assert_eq!(
         vault
-            .load_attempt_skill_pack(attempt.id, &id, 31)?
+            .load_attempt_skill_pack(
+                attempt.id,
+                &id,
+                "hub-worker",
+                leased.attempt_count,
+                "hub-model@1",
+                31,
+            )?
             .record
             .lifecycle_status,
         SkillLifecycle::Active
