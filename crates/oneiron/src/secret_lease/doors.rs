@@ -48,6 +48,7 @@ impl Vault {
         let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
         admit_record_use(&rec, effector, CustodyTier::T0Doored, &floor)?;
+        crate::credential_door::admit_materialization_in_txn(&self.store, &wtxn, effector, None)?;
         let generation = rec.rotation_generation;
         let value = read_value_for_ref_in_txn(self, &wtxn, &id, effector)?;
         // The value bytes are owned; nothing was written. Release the write
