@@ -58,8 +58,8 @@ mod predicate_grammar;
 mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
-    claim_ids_for_predicate_in_txn, maintain_claim_projection_index,
-    pending_claim_ids_for_producer_in_txn, remove_claim_projection_index,
+    claim_ids_for_predicate_in_txn, maintain_claim_projection_index, producer_prefix,
+    remove_claim_projection_index,
 };
 mod put;
 mod read;
@@ -85,6 +85,7 @@ pub use scope_stamp::{
 };
 pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
 pub use scoped_read::*;
+pub(crate) use scoped_read::{ReadAdmission, admit_stored_edge_in};
 pub use source_trust::*;
 pub use status::*;
 pub(crate) use write_target::validate_claim_write_target_in_txn;

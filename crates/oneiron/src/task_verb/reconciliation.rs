@@ -71,7 +71,7 @@ impl Vault {
             self,
             txn,
             owner,
-            crate::unix_seconds_now(),
+            self.now_recorded_at(),
             TaskCreateRateLimit::default(),
         )?;
         let spec = Value::Map(vec![

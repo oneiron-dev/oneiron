@@ -76,7 +76,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/presentation.rs` | src | s | 9 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/facade.rs` | src | m | 2 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
-| `src/api/facade/tests.rs` | test | m | — | — | — |
+| `src/api/facade/tests.rs` | test | L | — | — | — |
 | `src/api/git_http/gate.rs` | src | s | 9 crate-vis | — | Authentication gate and service canonicalization for Git smart-HTTP |
 | `src/api/git_http/mod.rs` | src | s | 1 crate-vis | — | Git smart-HTTP routes (ARCH-0068 Phase A, ONE-1908) |
 | `src/api/git_http/routes.rs` | src | s | 9 crate-vis | — | Git smart-HTTP routes and per-service RPC handlers |
@@ -101,11 +101,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | m | 16 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/envelope.rs` | src | s | 14 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | m | 6 crate-vis | — | Execute-code and board-verb executors |
-| `src/api/mcp_gateway/facade_verbs.rs` | src | L | 23 crate-vis | — | Facade-backed MCP verb executors |
+| `src/api/mcp_gateway/facade_verbs/ask.rs` | src | s | 2 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/calendar.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/mod.rs` | src | m | 22 crate-vis | — | Facade-backed MCP verb executors |
+| `src/api/mcp_gateway/facade_verbs/nav.rs` | src | s | 2 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/read.rs` | src | s | 1 crate-vis | — | — |
+| `src/api/mcp_gateway/facade_verbs/tests.rs` | test | s | — | — | — |
 | `src/api/mcp_gateway/memory_response.rs` | src | s | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/mcp_gateway/tasks_response.rs` | src | m | 8 crate-vis | — | Tasks verb and response shaping |
-| `src/api/memory.rs` | src | L | 20 crate-vis | — | — |
+| `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | — |
+| `src/api/memory/watch.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | m | 19 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
 | `src/api/memory_reason/deep_admission.rs` | src | s | 9 crate-vis | — | — |
 | `src/api/memory_reason/deep_admission/tests.rs` | test | s | — | — | — |
@@ -182,10 +188,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/init.rs` | src | m | 1 fn | — | First-run embedder choice, using the same config and provider as serve |
 | `src/commands/tests.rs` | test | L | — | — | — |
 | `src/commands/writer_lease_tests.rs` | test | s | — | — | — |
-| `src/config/embedder.rs` | src | m | 5 struct · 4 enum · 7 fn · 6 const · 2 crate-vis | EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant, EndpointEmbedderConfig +1 | The `[embedder]` section: provider selection and the keys each provider reads |
-| `src/config/embedder_tests.rs` | test | s | — | — | Resolution rows for the `[embedder]` section |
+| `src/config/embedder.rs` | src | m | 6 struct · 5 enum · 7 fn · 6 const · 2 crate-vis | AutoDevicePrecedence, EmbedderArgs, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant +3 | The `[embedder]` section: provider selection and the keys each provider reads |
+| `src/config/embedder_tests.rs` | test | m | — | — | Resolution rows for the `[embedder]` section |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
-| `src/config/merge.rs` | src | m | 1 struct · 5 fn | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
+| `src/config/merge.rs` | src | m | 1 struct · 5 fn · 1 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
 | `src/config/mod.rs` | src | s | 5 mod · 4 re-export | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/privacy_tests.rs` | test | m | — | — | — |
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
@@ -225,7 +231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/lfs_chunks.rs` | src | s | 1 crate-vis | — | Versioned owner-authenticated chunk requests, disjoint from selector window mode |
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 2 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
-| `src/handler/note_socket_tests.rs` | test | m | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
+| `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 11 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
 | `src/handler/window_sync.rs` | src | s | 4 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
@@ -245,7 +251,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/routing.rs` | src | s | 3 crate-vis | — | Private routing header for the EXISTING server broadcast channel |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |
 | `src/livequery/source.rs` | src | m | 3 crate-vis | — | Authority-bound coarse projection |
-| `src/livequery/subscriptions.rs` | src | L | 20 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
+| `src/livequery/subscriptions/delivery.rs` | src | s | 1 crate-vis | — | — |
+| `src/livequery/subscriptions/mod.rs` | src | m | 19 crate-vis | — | Coarse derivation, retained rings and cumulative cursor acknowledgements |
 | `src/livequery/test_wire.rs` | src | s | 4 crate-vis | — | Socket fixture codec |
 | `src/livequery/tests.rs` | test | m | — | — | — |
 | `src/livequery/wire.rs` | src | s | 11 crate-vis | — | Version-8 app envelopes |
@@ -330,7 +337,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
 | `tests/it/mcp_booking.rs` | test | m | — | — | ONE-1819 [BK-08] MCP-side gates for `oneiron.book` |
 | `tests/it/mcp_oracle.rs` | test | m | — | — | Context Board forward test oracle — MCP surface + packaging arms, epic ONE-1692, relocated from the engine… |
-| `tests/it/remote_pairing.rs` | test | s | — | — | A paired `oneiron_remote::OneironClient` against the real router |
+| `tests/it/remote_pairing.rs` | test | m | — | — | A paired `oneiron_remote::OneironClient` against the real router |
 | `tests/it/skills_pack.rs` | test | m | — | — | — |
 | `tests/it/ws_sync.rs` | test | XL | — | — | WebSocket integration tests for the sync server (ONE-1129) |
 | `tests/it_esign_public.rs` | test | m | — | — | The public path and signing API are separate from hosted device leases |
