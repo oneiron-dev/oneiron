@@ -27,6 +27,22 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "examples/meeting_audio_import.rs",
+     "purpose": "Host-run meeting-audio adapter: one file to a normalized artifact, never a consent grant",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "examples/meeting_audio_import/tests.rs",
+     "purpose": "Packaged adapter acceptance tests and host-policy regression fixtures",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -18958,7 +18974,7 @@
      "purpose": "Immutable producer artifact and one approval for the complete import batch",
      "surface": {
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -18969,7 +18985,7 @@
      "path": "src/ingest/meeting_audio/cleanup.rs",
      "purpose": "Conservative fix-don't-invent cleanup with no lexical or speaker edits",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -19088,7 +19104,7 @@
      "path": "src/ingest/meeting_audio/provenance.rs",
      "purpose": "Input-bound inference receipts; validation is not a claim of measured quality",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -19119,7 +19135,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/ingest/meeting_audio/tests/algorithms.rs",
@@ -19164,6 +19180,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AllowedWordCorrection",
       "AsrOutput",
       "AsrPackRequest",
       "AsrRole",
@@ -19176,10 +19193,12 @@
       "BulkImportBinding",
       "BulkImportReceipt",
       "CleanupOutput",
+      "CleanupPolicy",
       "CleanupRequest",
       "GlobalDiarization",
       "InferenceExecution",
       "InferenceProvenance",
+      "LanguageCorrectionRules",
       "MeetingAudioHost",
       "Pcm16",
       "ProcessingTier",
@@ -19197,7 +19216,7 @@
      "surface": {
       "enum": 4,
       "fn": 2,
-      "struct": 21,
+      "struct": 24,
       "trait": 2
      }
     },
@@ -36918,8 +36937,8 @@
    },
    "over_bar": 2,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2190,
-   "test_files": 743
+   "source_files": 2191,
+   "test_files": 744
   },
   "oneiron-android": {
    "files": [
