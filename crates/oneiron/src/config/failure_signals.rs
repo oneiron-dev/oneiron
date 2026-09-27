@@ -2,6 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
+mod samples;
+pub use samples::{
+    RedactionKind, RedactionSpan, Tier2Redactor, Tier2Sample, capture_tier2_samples,
+    read_tier2_samples,
+};
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeploymentTier {
