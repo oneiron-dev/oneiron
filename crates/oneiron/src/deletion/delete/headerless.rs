@@ -121,6 +121,15 @@ impl Vault {
             id,
             tombstone.reason,
         )?;
+        if reason == DeleteReason::UserDelete {
+            // A headerless soft deletion still retires proposals. Its
+            // cancellation and this evidence must become visible together.
+            self.store.sync_state.put(
+                &mut wtxn,
+                &crate::deletion::identity_soft_delete_key(id),
+                &[],
+            )?;
+        }
         if reason.active_store_hard_purge_v1() {
             // `dt:` local hard-delete marker (pinned: presence-only 25 B
             // `[reason:1][deleted_at:8 LE][request_id:16]` value, GLOBAL

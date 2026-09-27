@@ -274,51 +274,52 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
             }
             IdentityTopologyAction::CancelProposal { proposal } => {
-                let record = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
-                    store, rtxn, proposal,
-                )?;
-                match (
-                    record,
-                    super::store_entity_helpers::identity_topology_event_for_store_in_txn(
-                        store,
-                        rtxn,
-                        &event.event_id,
-                    )?,
-                ) {
-                    (Some(proposed), Some(cancel)) => {
-                        match (proposed.action.to_fold_action(), cancel.action) {
-                            (
-                                IdentityTopologyAction::Apply(op),
-                                super::stored_event::StoredIdentityOpAction::ProposalCancellation {
-                                    participant,
-                                    ..
-                                },
-                            ) => {
-                                proposed.approval == ClaimApprovalStatus::Proposed
-                                    && op.participants().contains(&participant)
-                                    && (store
+                // A deferred reference may later materialize as a *different*
+                // kind. That invalid cancellation stays ineffective rather
+                // than making every unrelated fold fail to decode a PERSON.
+                if identity_topology_entity_type_for_store_in_txn(store, rtxn, proposal)?
+                    != Some(ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+                {
+                    false
+                } else {
+                    let proposed =
+                        super::store_entity_helpers::identity_topology_event_for_store_in_txn(
+                            store, rtxn, proposal,
+                        )?
+                        .ok_or(crate::error::Error::CorruptedIndex(
+                            "identity topology event index",
+                        ))?;
+                    match (proposed.action.to_fold_action(), &record.action) {
+                        (
+                            IdentityTopologyAction::Apply(op),
+                            super::stored_event::StoredIdentityOpAction::ProposalCancellation {
+                                participant,
+                                ..
+                            },
+                        ) => {
+                            proposed.approval == ClaimApprovalStatus::Proposed
+                                && matches!(
+                                    op,
+                                    IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+                                )
+                                && op.participants().contains(participant)
+                                && (store
+                                    .sync_state
+                                    .get(
+                                        rtxn,
+                                        &crate::deletion::identity_soft_delete_key(participant),
+                                    )?
+                                    .is_some()
+                                    || store
                                         .sync_state
                                         .get(
                                             rtxn,
-                                            &crate::deletion::identity_soft_delete_key(
-                                                &participant,
-                                            ),
+                                            &crate::deletion::local_hard_delete_key(participant),
                                         )?
-                                        .is_some()
-                                        || store
-                                            .sync_state
-                                            .get(
-                                                rtxn,
-                                                &crate::deletion::local_hard_delete_key(
-                                                    &participant,
-                                                ),
-                                            )?
-                                            .is_some())
-                            }
-                            _ => false,
+                                        .is_some())
                         }
+                        _ => false,
                     }
-                    _ => false,
                 }
             }
         };
@@ -329,19 +330,23 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
             || record.actor.is_none()
             || match record.actor {
                 Some(actor) if record.validated_at_write => {
-                    identity_topology_entity_type_for_store_in_txn(
+                    match identity_topology_entity_type_for_store_in_txn(
                         store,
                         rtxn,
                         &actor.entity_ref(),
-                    )?
-                    .is_some()
-                        || store
+                    )? {
+                        Some(kind) => {
+                            crate::provenance::validate_actor_class(kind, actor.actor_class())
+                                .is_ok()
+                        }
+                        None => store
                             .sync_state
                             .get(
                                 rtxn,
                                 &crate::deletion::local_hard_delete_key(&actor.entity_ref()),
                             )?
-                            .is_some()
+                            .is_some(),
+                    }
                 }
                 Some(_) | None => false,
             };

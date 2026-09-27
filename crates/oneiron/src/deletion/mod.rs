@@ -4,6 +4,7 @@ mod coop_request;
 mod delete;
 mod erase;
 mod gate;
+mod identity_event_stamps;
 mod publish;
 mod receipt;
 mod rendezvous;

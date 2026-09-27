@@ -98,10 +98,13 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let events =
+    let effective =
         super::ledger_fold::fold_effective_identity_topology_events_for_store_in_txn(store, rtxn)?;
-    let fold = super::ledger_fold::fold_identity_topology_log(&events);
-    for event in events {
+    let fold = super::ledger_fold::fold_identity_topology_log(&effective);
+    // A deferred proposal is still an open proposal. It cannot appear in
+    // the effective projection until its missing peer arrives, so read raw
+    // records as well when deciding whether a generic delete may tear one.
+    for event in identity_topology_events_for_store_in_txn(store, rtxn)? {
         let Some(record) = identity_topology_event_for_store_in_txn(store, rtxn, &event.event_id)?
         else {
             return Err(Error::CorruptedIndex("identity topology event index"));
@@ -124,6 +127,10 @@ pub(crate) fn guard_batch_identity_delete_in_txn(
             && !fold.resolved_proposals.contains_key(&event.event_id)
             && !fold.moot_proposals.contains(&event.event_id)
             && let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action
+            && matches!(
+                op,
+                IdentityTopologyOp::Merge(_) | IdentityTopologyOp::Split(_)
+            )
             && op.participants().contains(id)
         {
             return Err(Error::Sync(

@@ -12364,7 +12364,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/erase.rs",
@@ -12381,6 +12381,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/identity_event_stamps.rs",
+     "purpose": "Scrub author stamps on the exact topology events an erasure touches",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -34596,9 +34606,9 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ARCH-0038 deletion/redaction contract types"
     },
@@ -35471,9 +35481,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 8,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
+   "source_files": 2095,
    "test_files": 718
   },
   "oneiron-android": {

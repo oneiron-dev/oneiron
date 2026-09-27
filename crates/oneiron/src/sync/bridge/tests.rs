@@ -4037,3 +4037,186 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected.len(), 1);
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
+
+#[test]
+fn deferred_cancellation_target_materializes_as_person_without_poisoning_deletes() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let target = EntityId::from_bytes([0x71; 16]).unwrap();
+    let cancellation = EntityId::from_bytes([0x72; 16]).unwrap();
+    let participant = EntityId::from_bytes([0x73; 16]).unwrap();
+    let unrelated = EntityId::from_bytes([0x74; 16]).unwrap();
+    vault
+        .put_entity(
+            &unrelated,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"unrelated",
+        )
+        .unwrap();
+    let event = StoredIdentityOpEvent {
+        seq: 50,
+        validated_at_write: false,
+        at: 200,
+        actor: None,
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::ProposalCancellation {
+            proposal: target,
+            participant,
+        },
+    };
+    map_insert_bytes(
+        &entities,
+        &cancellation.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &crate::identity_topology::encode_identity_topology_event_body(&event).unwrap(),
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(
+        vault
+            .identity_topology_event(&cancellation)
+            .unwrap()
+            .is_some()
+    );
+    map_insert_bytes(
+        &entities,
+        &target.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: 201,
+                end: 201,
+            },
+            201,
+            b"person target",
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert_eq!(
+        vault.get_entity_type(&target).unwrap(),
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&unrelated).unwrap(),
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+    assert!(
+        vault
+            .open_merge_proposals_for_pair(&participant, &target)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        vault.delete_entity(&unrelated).unwrap(),
+        "an invalid deferred cancellation must not block unrelated deletion"
+    );
+}
+
+#[test]
+fn verified_deferred_merge_does_not_accept_late_mismatched_actor_class() {
+    use crate::identity_topology::{StoredIdentityOpAction, StoredIdentityOpEvent};
+    let vault = test_vault();
+    let doc = LoroDoc::new();
+    let entities = doc.get_map("entities");
+    let materializer = Arc::new(Materializer::new());
+    let _subs = register_observer_b(&doc, &vault, &materializer, "2026-03");
+    let survivor = EntityId::from_bytes([0x61; 16]).unwrap();
+    let source = EntityId::from_bytes([0x62; 16]).unwrap();
+    let actor = EntityId::from_bytes([0x63; 16]).unwrap();
+    let event_id = EntityId::from_bytes([0x70; 16]).unwrap();
+    for id in [&survivor, &source] {
+        vault
+            .put_entity(
+                id,
+                ENTITY_TYPE_TASK,
+                TimeRange { start: 1, end: 1 },
+                1,
+                &task_body(),
+            )
+            .unwrap();
+    }
+    let record = StoredIdentityOpEvent {
+        seq: 50,
+        validated_at_write: true,
+        at: 200,
+        actor: Some(crate::write_envelope::WriteActor::new(
+            actor,
+            EdgeActorClass::System,
+        )),
+        source: ClaimSource::Inferred,
+        approval: ClaimApprovalStatus::Auto,
+        confidence: 1.0,
+        evidence: None,
+        action: StoredIdentityOpAction::Merge {
+            sources: vec![source],
+            survivor,
+        },
+    };
+    map_insert_bytes(
+        &entities,
+        &event_id.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+            TimeRange {
+                start: 200,
+                end: 200,
+            },
+            200,
+            &crate::identity_topology::encode_identity_topology_event_body(&record).unwrap(),
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert!(vault.identity_topology_event(&event_id).unwrap().is_some());
+    assert!(
+        !vault
+            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+    map_insert_bytes(
+        &entities,
+        &actor.to_hex(),
+        &entity_blob(
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: 201,
+                end: 201,
+            },
+            201,
+            b"person actor",
+        ),
+    )
+    .unwrap();
+    doc.commit();
+    assert_eq!(
+        vault.get_entity_type(&actor).unwrap(),
+        Some(crate::registry::ENTITY_TYPE_PERSON)
+    );
+    assert!(
+        !vault
+            .edge_exists(&source, crate::edge::EdgeKind::MergedInto, &survivor)
+            .unwrap()
+    );
+    assert_eq!(
+        vault.entity_lifecycle_state(&source).unwrap(),
+        crate::identity_topology::EntityLifecycleState::Active
+    );
+}

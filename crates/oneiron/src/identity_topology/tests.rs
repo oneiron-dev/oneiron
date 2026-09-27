@@ -5317,3 +5317,109 @@ fn writer_verified_event_arriving_after_author_and_head_erasure_keeps_history_wi
             .expect("read edge")
     );
 }
+
+#[test]
+fn deferred_proposal_participant_cannot_be_batch_deleted_without_a_cancellation() {
+    let (_dir, vault) = open_vault();
+    let source = put_person(&vault, 0x62);
+    let missing_survivor = id(0x61);
+    let proposal = id(0x70);
+    let mut record = replicated_merge_record(vec![source], missing_survivor, 50);
+    record.approval = ClaimApprovalStatus::Proposed;
+    put_identity_event_record(&vault, proposal, &record);
+    assert_eq!(
+        vault
+            .open_merge_proposals_for_pair(&source, &missing_survivor)
+            .expect("deferred proposal is open"),
+        vec![proposal]
+    );
+    let err = vault
+        .batch()
+        .delete(&source)
+        .commit()
+        .expect_err("generic delete cannot silently strand a deferred proposal");
+    assert_eq!(
+        expect_rejection(err),
+        IdentityTopologyRejection::ActiveMergeParticipantDeletion { entity: source }
+    );
+    assert!(
+        vault
+            .read_entity_header(&source)
+            .expect("source header")
+            .is_some()
+    );
+    assert_eq!(
+        vault
+            .open_merge_proposals_for_pair(&source, &missing_survivor)
+            .expect("proposal remains open"),
+        vec![proposal]
+    );
+}
+
+#[test]
+fn headerless_soft_delete_moots_participant_proposal_with_one_receipt() {
+    let (_dir, vault) = open_vault();
+    let survivor = put_person(&vault, 0x61);
+    let source = put_person(&vault, 0x62);
+    let mut write = IdentityOpWrite::auto(ClaimSource::Inferred);
+    write.approval = ClaimApprovalStatus::Proposed;
+    let IdentityOpOutcome::Parked { event: proposal } = vault
+        .apply_identity_topology_op(&merge_op(vec![source], survivor), &write, 200)
+        .expect("park merge")
+    else {
+        panic!("expected proposal")
+    };
+    // Plant exactly the supported headerless-residue shape, not a normal
+    // batch deletion (the public batch door correctly refuses this teardown).
+    vault
+        .with_write_txn(|wtxn| {
+            crate::batch::deindex_entity(&vault.store, wtxn, &source)?;
+            Ok(())
+        })
+        .expect("remove row while leaving parked ledger history");
+    vault
+        .put_vector(&source, &[0.1, 0.2, 0.3, 0.4])
+        .expect("plant headerless vector residue");
+    assert!(
+        vault
+            .read_entity_header(&source)
+            .expect("headerless")
+            .is_none()
+    );
+    let outcome = vault
+        .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserDelete)
+        .expect("delete headerless residue");
+    // `existed` reports removal of an entities row; this fixture has only
+    // indexed residue, so cancellation and its receipt are the useful result.
+    assert!(!outcome.existed);
+    assert!(
+        vault
+            .open_merge_proposals_for_pair(&source, &survivor)
+            .expect("mooted proposal")
+            .is_empty()
+    );
+    let receipts = identity_receipts(&vault);
+    let cancellations: Vec<_> = receipts
+        .iter()
+        .filter(|receipt| receipt.outcome == "proposal_cancellation")
+        .collect();
+    assert_eq!(cancellations.len(), 1);
+    assert_eq!(
+        cancellations[0].fields.get("proposal_ref"),
+        Some(&proposal.to_hex())
+    );
+    assert_eq!(
+        cancellations[0].fields.get("reason").map(String::as_str),
+        Some("participant_deleted")
+    );
+    vault
+        .delete_entity_with_reason(&source, crate::deletion::DeleteReason::UserDelete)
+        .expect("idempotent repeated delete");
+    assert_eq!(
+        identity_receipts(&vault)
+            .iter()
+            .filter(|receipt| receipt.outcome == "proposal_cancellation")
+            .count(),
+        1
+    );
+}
