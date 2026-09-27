@@ -147,4 +147,10 @@ pub trait DeadlineSource {
     /// The earliest upcoming commitment deadline this node could admit, or
     /// `None` when no such timed work exists.
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>>;
+
+    /// Optional post-commit invalidation. Subscribe before the initial read;
+    /// the receiver carries no deadline and never creates a wake pass.
+    fn subscribe_changes(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        None
+    }
 }
