@@ -31,7 +31,7 @@ impl PipelineBuilder<'_> {
             if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {
                 continue;
             }
-            if !claim_matches_corpus(&corpus_scope, &body)? {
+            if !claim_matches_corpus(&corpus_scope, &body) {
                 continue;
             }
             validate_coping_outcome_claim_structure(&body)?;

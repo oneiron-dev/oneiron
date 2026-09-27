@@ -432,7 +432,7 @@ fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
         CorpusScope::Unscoped => fork_hash_str(hasher, "unscoped"),
         CorpusScope::Corpus(id) => {
             fork_hash_str(hasher, "corpus");
-            fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+            fork_hash_raw_bytes(hasher, id.as_bytes());
         }
         CorpusScope::AnyOf(ids) => {
             fork_hash_str(hasher, "any_of");
@@ -441,7 +441,7 @@ fn fork_hash_corpus_scope(hasher: &mut Sha256, scope: &CorpusScope) {
             ids.dedup();
             fork_hash_len(hasher, ids.len());
             for id in ids {
-                fork_hash_raw_bytes(hasher, id.entity_id().as_bytes());
+                fork_hash_raw_bytes(hasher, id.as_bytes());
             }
         }
     }
