@@ -3535,7 +3535,7 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "mod": 2,
       "re-export": 8
      }
@@ -3573,7 +3573,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EsignNotice"
@@ -3582,7 +3582,6 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
@@ -23114,7 +23113,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "re-export": 1
      }
     },
@@ -23125,9 +23124,9 @@
       "OutboundDispatchPipeline"
      ],
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
-     "purpose": "O2 resolve-gate-window-execute dispatch pipeline: dispatch, verified-actor dispatch, and the dispatch_inner…",
+     "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
      }
@@ -23140,6 +23139,16 @@
      "purpose": "Pending gate-outcome name and gate-vs-manifest policy-risk resolution",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/request_binding.rs",
+     "purpose": "One normalized outbound request and the single ledger replay validator",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -23189,7 +23198,7 @@
      "path": "src/outbound/dispatch_pipeline/vault.rs",
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -23278,7 +23287,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 7
      }
     },
@@ -25850,6 +25859,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/dispatch_observation.rs",
+     "purpose": "Passive OF-327 per-try audit observations; never resend authority",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -25946,7 +25965,7 @@
      "path": "src/receipt/mod.rs",
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 8
      }
     },
@@ -35342,7 +35361,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35468,7 +35487,7 @@
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "receipt": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35841,7 +35860,7 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2115,
+   "source_files": 2117,
    "test_files": 723
   },
   "oneiron-android": {

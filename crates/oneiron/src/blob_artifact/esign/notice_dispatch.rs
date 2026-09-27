@@ -9,135 +9,15 @@ use crate::attempt_queue::{
     EnqueueAttempt, FailAttempt, RetryAttempt,
 };
 use crate::outbound::{
-    OutboundDeliveryWindowDecision, OutboundDispatchError, OutboundDispatchOutcome,
-    OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
+    OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
-use crate::receipt::{ReceiptKind, ReceiptRecord};
+use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const ESIGN_NOTICE_ATTEMPT_KIND: &str = "esign.notice";
-const RECEIPT: &[u8] = b"esign.notice_receipt.v1/";
-
-/// Audit-only receipt source. OF-327's intent ledger remains resend authority.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoticeDispatchRow {
-    version: u8,
-    attempt_ref: String,
-    attempt_count: u32,
-    binding: NoticeRequestBinding,
-    outcome: String,
-    gate_decision_id: Option<String>,
-    gate_outcome: String,
-    gate_reason_codes: Vec<String>,
-    receipt: ReceiptRecord,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NoticeRequestBinding {
-    receipt_id: String,
-    occurred_at: u64,
-    actor_class: String,
-    actor_ref: Option<String>,
-    actor_entity_ref: Option<String>,
-    has_opted_in: bool,
-    has_permission: bool,
-    policy_risk: String,
-    window: OutboundDeliveryWindowDecision,
-    intent: crate::outbound::OutboundIntent,
-}
-fn request_binding(request: &OutboundDispatchRequest) -> NoticeRequestBinding {
-    NoticeRequestBinding {
-        receipt_id: request.receipt_id.clone(),
-        occurred_at: request.occurred_at,
-        actor_class: request.actor.actor_class.clone(),
-        actor_ref: request.actor.actor_ref.clone(),
-        actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
-        has_opted_in: request.gate.has_opted_in,
-        has_permission: request.gate.has_permission,
-        policy_risk: match request.gate.policy_risk {
-            OutboundDispatchPolicyRisk::Normal => "normal",
-            OutboundDispatchPolicyRisk::HoldToProposal => "hold_to_proposal",
-        }
-        .into(),
-        window: request.window_decision.clone(),
-        intent: request.intent.clone(),
-    }
-}
-fn receipt_key(attempt: &AttemptRecord) -> Vec<u8> {
-    [
-        RECEIPT,
-        attempt.id.as_bytes(),
-        attempt.attempt_count.to_be_bytes().as_slice(),
-    ]
-    .concat()
-}
-fn decode_receipt(key: &[u8], bytes: &[u8]) -> Result<NoticeDispatchRow> {
-    let row: NoticeDispatchRow =
-        serde_json::from_slice(bytes).map_err(|_| invalid("notice receipt schema"))?;
-    if !key.starts_with(RECEIPT)
-        || key.len() != RECEIPT.len() + 20
-        || row.version != 1
-        || row.attempt_ref
-            != crate::entity_id::bytes_to_hex_lower(&key[RECEIPT.len()..RECEIPT.len() + 16])
-        || row.attempt_count.to_be_bytes() != key[RECEIPT.len() + 16..]
-        || row.receipt.receipt_kind != ReceiptKind::Outbound
-        || row.receipt.receipt_id != row.binding.receipt_id
-        || row.receipt.occurred_at != row.binding.occurred_at
-    {
-        return Err(invalid("notice receipt binding"));
-    }
-    Ok(row)
-}
-fn stored_receipt(vault: &Vault, attempt: &AttemptRecord) -> Result<Option<NoticeDispatchRow>> {
-    let txn = vault.store.env.read_txn()?;
-    let key = receipt_key(attempt);
-    vault
-        .store
-        .vault_meta
-        .get(&txn, &key)?
-        .map(|bytes| decode_receipt(&key, &bytes))
-        .transpose()
-}
-fn replay_result(row: NoticeDispatchRow) -> Result<OutboundDispatchResult> {
-    let outcome = match row.outcome.as_str() {
-        "delivered_to_channel" => OutboundDispatchOutcome::DeliveredToChannel,
-        "held" => OutboundDispatchOutcome::Held,
-        "degraded" => OutboundDispatchOutcome::Degraded,
-        "suppressed" => OutboundDispatchOutcome::Suppressed,
-        "let_go" => OutboundDispatchOutcome::LetGo,
-        "failed" => OutboundDispatchOutcome::Failed,
-        _ => return Err(invalid("notice receipt outcome")),
-    };
-    Ok(OutboundDispatchResult {
-        outcome,
-        gate_decision_id: row.gate_decision_id,
-        gate_outcome: row.gate_outcome,
-        gate_reason_codes: row.gate_reason_codes,
-        receipt: row.receipt,
-        // Budget and ladder data are live call echoes, never resend authority.
-        effector_budget: None,
-        budget_ladder_events: Vec::new(),
-    })
-}
-/// Queryable outbound audit rows for the unified receipt family.
-/// Unlike the capped attempt-pack source, this source is exhaustive.
-pub(crate) fn notice_dispatch_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
-    let txn = vault.store.env.read_txn()?;
-    vault
-        .store
-        .vault_meta
-        .prefix_iter(&txn, RECEIPT)?
-        .map(|entry| {
-            let (key, bytes) = entry?;
-            Ok(decode_receipt(&key, &bytes)?.receipt)
-        })
-        .collect()
-}
-
 /// Frozen transition intent, staged with its triggering claim. The cloud edge
 /// receives the sealed artifact refs only after the email send gate allows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,35 +200,35 @@ impl Vault {
             "system" => crate::edge::EdgeActorClass::System,
             _ => return Err(invalid("notice actor class").into()),
         };
-        let binding = request_binding(&request);
-        if let Some(prior) = stored_receipt(self, attempt)? {
-            if prior.binding != binding {
-                return Err(invalid("notice replay binding changed").into());
-            }
-            return Ok(replay_result(prior)?);
-        }
-        // A queued completion may be superseded by an authorized reseal.
-        // Retire it before Gate; it must never carry the old PDF to the edge.
-        if let Some(generation) = &notice.generation {
-            let current = self
-                .sealed_esign_document(EntityId::from_hex(&notice.document)?)?
-                .ok_or_else(|| invalid("notice seal missing"))?;
-            if &current.attempt_ref != generation {
-                AttemptQueue::new(self).fail(FailAttempt {
-                    id: attempt.id,
-                    lease_owner: attempt
-                        .lease_owner
-                        .clone()
-                        .ok_or_else(|| invalid("notice lease owner"))?,
-                    attempt_count: attempt.attempt_count,
-                    reason: "superseded_seal".into(),
-                    now: request.occurred_at,
-                })?;
-                return Err(invalid("superseded sealed notice").into());
-            }
-        }
+        let key = DispatchObservationKey {
+            attempt_id: attempt.id,
+            attempt_count: attempt.attempt_count,
+        };
         let now = request.occurred_at;
-        let result = self.dispatch_outbound_intent_with_verified_actor(
+        let preflight = || {
+            // The domain seal generation is checked only for a NEW crossing;
+            // OF-327 owns and validates completed-result replay first.
+            if let Some(generation) = &notice.generation {
+                let current = self
+                    .sealed_esign_document(EntityId::from_hex(&notice.document)?)?
+                    .ok_or_else(|| invalid("notice seal missing"))?;
+                if &current.attempt_ref != generation {
+                    AttemptQueue::new(self).fail(FailAttempt {
+                        id: attempt.id,
+                        lease_owner: attempt
+                            .lease_owner
+                            .clone()
+                            .ok_or_else(|| invalid("notice lease owner"))?,
+                        attempt_count: attempt.attempt_count,
+                        reason: "superseded_seal".into(),
+                        now,
+                    })?;
+                    return Err(invalid("superseded sealed notice").into());
+                }
+            }
+            Ok(())
+        };
+        let recorded = self.dispatch_outbound_intent_with_recorded_observation(
             request,
             &mut NoticeSink {
                 vault: self,
@@ -356,18 +236,16 @@ impl Vault {
                 notice: &notice,
                 now,
             },
-            actor,
-            actor_class,
+            (actor, actor_class),
+            key,
+            preflight,
         )?;
+        if recorded.replayed {
+            return Ok(recorded.result);
+        }
+        let result = recorded.result;
+        let identity = recorded.identity;
         self.with_write_txn(|txn| {
-            let key = receipt_key(attempt);
-            if let Some(prior) = self.store.vault_meta.get(txn, &key)? {
-                let prior = decode_receipt(&key, &prior)?;
-                if prior.binding != binding {
-                    return Err(invalid("notice replay binding changed"));
-                }
-                return replay_result(prior);
-            }
             let queue = AttemptQueue::new(self);
             let lease_owner = attempt
                 .lease_owner
@@ -411,19 +289,7 @@ impl Vault {
                     )?;
                 }
             }
-            let row = NoticeDispatchRow {
-                version: 1,
-                attempt_ref: crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes()),
-                attempt_count: attempt.attempt_count,
-                binding,
-                outcome: result.outcome.as_str().into(),
-                gate_decision_id: result.gate_decision_id.clone(),
-                gate_outcome: result.gate_outcome.clone(),
-                gate_reason_codes: result.gate_reason_codes.clone(),
-                receipt: result.receipt.clone(),
-            };
-            let bytes = serde_json::to_vec(&row).map_err(|_| invalid("notice receipt encoding"))?;
-            self.store.vault_meta.put(txn, &key, &bytes)?;
+            append_dispatch_observation_in_txn(&self.store, txn, key, identity, &result)?;
             Ok(result)
         })
         .map_err(Into::into)

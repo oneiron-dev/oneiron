@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::brief_share::brief_share_receipts;
+use super::dispatch_observation::dispatch_observations;
 use super::grant::{
     StandingOutboundGrantsLens, StandingOutboundGrantsLensQuery, access_grant_receipts,
     federation_share_receipts, outbound_grant_receipts, persona_snapshot_export_receipts,
@@ -103,8 +104,7 @@ impl Vault {
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
         scan.records.extend(durable.records);
-        scan.records
-            .extend(crate::blob_artifact::esign::notice_dispatch_receipts(self)?);
+        scan.records.extend(dispatch_observations(self)?);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
     }
@@ -241,7 +241,7 @@ fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Re
                 .filter(|receipt| query.matches(receipt)),
         );
         records.extend(
-            crate::blob_artifact::esign::notice_dispatch_receipts(vault)?
+            dispatch_observations(vault)?
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );

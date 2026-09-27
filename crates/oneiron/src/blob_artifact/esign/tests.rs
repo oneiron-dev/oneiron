@@ -1805,6 +1805,19 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         EntityId::now(),
         &rmp_serde::to_vec_named(&manifest).unwrap(),
     )?;
+    let put_sender = |sender_id: EntityId| {
+        let mut identity = crate::channel_identity::ChannelIdentity::requested(
+            "email",
+            format!("sender-{}@example.com", sender_id.to_hex()),
+            crate::channel_identity::SelfHeldShape::DedicatedAddress,
+            crate::channel_identity::ChannelIdentityBinding::actor(sender),
+            1_000,
+        );
+        identity.state = crate::channel_identity::ChannelIdentityState::Active;
+        vault.create_channel_identity(&sender_id, &identity)
+    };
+    let original_sender = EntityId::now();
+    put_sender(original_sender)?;
     assert_eq!(vault.sweep_esign_expiry(&[id], doc.expires_at)?, 1);
     assert_eq!(
         AttemptQueue::new(&vault)
@@ -1875,14 +1888,18 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         .unwrap();
     assert_eq!(same_notice, held);
     assert_eq!(retry.state, AttemptState::Leased);
-    let sent = vault
-        .dispatch_esign_notice(&retry, request(&same_notice, 1065, "allow", true, true))
-        .unwrap();
+    let mut initial_send = request(&same_notice, 1065, "allow", true, true);
+    initial_send.channel_identity_ref = Some(original_sender);
+    let sent = vault.dispatch_esign_notice(&retry, initial_send).unwrap();
     assert_eq!(
         sent.outcome,
         OutboundDispatchOutcome::DeliveredToChannel,
         "{sent:?}"
     );
+    // A later sender becoming available must not replace the one the rail froze.
+    let different_sender = EntityId::now();
+    put_sender(different_sender)?;
+    let gates_before = vault.gate_decisions(100)?;
     let replay = vault
         .dispatch_esign_notice(&retry, request(&same_notice, 1065, "allow", true, true))
         .unwrap();
@@ -1896,6 +1913,42 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
             )
             .is_err()
     );
+    let mut same_sender = request(&same_notice, 1065, "allow", true, true);
+    same_sender.channel_identity_ref = Some(original_sender);
+    assert_eq!(
+        vault
+            .dispatch_esign_notice(&retry, same_sender)
+            .unwrap()
+            .receipt,
+        sent.receipt
+    );
+    for mutation in ["sender", "counterparty", "session"] {
+        let mut changed = request(&same_notice, 1065, "allow", true, true);
+        match mutation {
+            "sender" => changed.channel_identity_ref = Some(different_sender),
+            "counterparty" => changed.counterparty_ref = Some("counterparty:different".into()),
+            "session" => changed.originating_session_ref = Some("session:different".into()),
+            _ => unreachable!(),
+        }
+        assert!(
+            matches!(
+                vault.dispatch_esign_notice(&retry, changed),
+                Err(crate::outbound::OutboundDispatchError::Chokepoint(
+                    crate::outbound_intent_ledger::IntentLedgerError::InvalidRecord(_)
+                ))
+            ),
+            "{mutation} must fail at shared replay validation"
+        );
+    }
+    assert_eq!(vault.gate_decisions(100)?, gates_before);
+    assert_eq!(
+        AttemptQueue::new(&vault)
+            .list()?
+            .iter()
+            .filter(|a| a.kind == "esign.delivery")
+            .count(),
+        1
+    );
     let key_id = EntityId::now();
     vault.register_connector_key(
         &key_id,
@@ -1903,12 +1956,9 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
     )?;
     let pending = vault.propose_connector_charter(&key_id, "never send on email", 1067)?;
     vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1068)?;
-    let denied_result = vault
-        .dispatch_esign_notice(
-            &other,
-            request(&other_notice, 1070, "hard-deny", true, true),
-        )
-        .unwrap();
+    let mut denied_request = request(&other_notice, 1070, "hard-deny", true, true);
+    denied_request.channel_identity_ref = Some(original_sender);
+    let denied_result = vault.dispatch_esign_notice(&other, denied_request).unwrap();
     assert_eq!(denied_result.gate_outcome, "deny", "{denied_result:?}");
     assert_eq!(denied_result.outcome, OutboundDispatchOutcome::Suppressed);
     // All three outcomes are audit rows in the public outbound receipt family.
@@ -1933,6 +1983,18 @@ fn transition_mail_is_staged_then_denied_held_retried_and_allowed_via_outbound_g
         assert!(scan.records.contains(entry));
     }
     let vault = reopened;
+    let replay = vault
+        .dispatch_esign_notice(&retry, request(&same_notice, 1065, "allow", true, true))
+        .unwrap();
+    assert_eq!(replay.receipt, expected[1]);
+    let mut wrong_after_reopen = request(&same_notice, 1065, "allow", true, true);
+    wrong_after_reopen.counterparty_ref = Some("counterparty:after-reopen".into());
+    assert!(matches!(
+        vault.dispatch_esign_notice(&retry, wrong_after_reopen),
+        Err(crate::outbound::OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::InvalidRecord(_)
+        ))
+    ));
     let rows = AttemptQueue::new(&vault).list()?;
     assert_eq!(
         rows.iter().filter(|a| a.kind == "esign.delivery").count(),
