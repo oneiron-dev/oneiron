@@ -22,8 +22,10 @@ fn invalid() -> Error {
 pub(super) fn holders_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    now: u64,
+    _claimed_now: u64,
 ) -> Result<Vec<EntityId>> {
+    // Grant expiry is read from the vault clock, not a caller-chosen event time.
+    let now = vault.store.clock.now_recorded_at();
     let Some(raw) = vault.store.vault_meta.get(txn, SHARED_CREATION_KEY)? else {
         let owner = crate::vault::embedded_owner_actor_id()?;
         // A deleted or corrupted personal owner is not silently replaced.

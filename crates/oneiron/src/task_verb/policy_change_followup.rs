@@ -234,6 +234,7 @@ mod tests {
     #[test]
     fn one_receipt_mints_one_human_task_and_cursor_without_a_worker() -> Result<()> {
         let (_dir, vault, author, recipient) = fixture();
+        let before = vault.entities_by_type(ENTITY_TYPE_TASK)?;
         let task = vault.with_write_txn(|txn| {
             let first = enqueue_policy_change_followup_in_txn(
                 &vault,
@@ -257,7 +258,21 @@ mod tests {
         let cursor = human_followup_record(&vault, task)?.expect("follow-up cursor");
         assert_eq!(cursor.assignee_ref, recipient);
         assert_eq!(cursor.stage, HumanFollowupStage::Tracking);
-        assert_eq!(vault.entities_by_type(ENTITY_TYPE_TASK)?, vec![task]);
+        let after = vault.entities_by_type(ENTITY_TYPE_TASK)?;
+        assert!(!before.contains(&task));
+        assert!(after.contains(&task));
+        // Human routing may mint a separate delivery TASK; only one task may
+        // carry this policy receipt as its source.
+        let txn = vault.store.env.read_txn()?;
+        let body = task_body_in_txn(&vault, &txn, task).map_err(task_error)?;
+        assert_eq!(
+            body.spec,
+            Value::Map(vec![(
+                Value::from("source_receipt_ref"),
+                Value::from("receipt:1"),
+            )])
+        );
+        drop(txn);
         assert!(
             crate::attempt_queue::AttemptQueue::new(&vault)
                 .list()?

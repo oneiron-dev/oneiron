@@ -99,6 +99,7 @@ fn owner_lands_add_tighten_loosen_and_revert_with_four_events() -> TestResult {
         policy.active_owner_policy_rows(None)[0].action,
         crate::gate::OwnerRowAction::Block
     );
+    drop(txn);
     assert_eq!(vault.policy_row_change_log()?.len(), 4);
     let events = vault.policy_changed_events()?;
     assert_eq!(events.len(), 4);
@@ -142,13 +143,15 @@ fn admin_without_power_and_agent_both_propose_in_either_direction_first_holder_r
         PolicyRowScope::World("w1".into()),
         true,
     );
-    let proposal = vault
-        .memory(admin.actor(), EdgeActorClass::Human)
-        .propose_policy_row_change(add.clone(), 11)?;
+    let PolicyRowSubmission::Proposed(proposal) =
+        vault.submit_policy_row_change(&admin, add.clone(), 11)?
+    else {
+        panic!("admin without the policy grant must propose");
+    };
     assert_eq!(proposal.holders.len(), 2);
     assert_eq!(vault.policy_row_proposals_for(&owner, 11)?.len(), 1);
     assert_eq!(vault.policy_row_proposals_for(&other, 11)?.len(), 1);
-    assert!(vault.change_policy_row(&admin, add.clone(), 11).is_err());
+    assert!(vault.change_policy_row(&admin, add, 11).is_err());
     assert!(vault.policy_row_change_log()?.is_empty());
     let landed = vault
         .rule_policy_row_proposal(&other, &proposal.proposal_id, true, 12)?
@@ -190,6 +193,14 @@ fn admin_without_power_and_agent_both_propose_in_either_direction_first_holder_r
     assert_eq!(loosen.holders.len(), 3);
     assert_eq!(vault.policy_row_proposals_for(&admin, 15)?.len(), 2);
     assert_eq!(vault.policy_row_change_log()?.len(), 2);
+    let txn = vault.store.env.read_txn()?;
+    let resolved = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    assert_eq!(
+        resolved.active_owner_policy_rows(Some("w1"))[0].action,
+        crate::gate::OwnerRowAction::Warn,
+        "a later holder ruling wins; neither agent proposal edits the row"
+    );
+    drop(txn);
     Ok(())
 }
 
@@ -238,6 +249,35 @@ fn notification_rule_is_data_default_and_override_dials_win() -> TestResult {
         12,
     )?;
     assert_eq!(vault.policy_queued_notifications()?.len(), 1);
+    vault.change_policy_row(
+        &owner,
+        change(
+            "Project override",
+            PolicyRowAction::Block,
+            PolicyRowScope::Project("project-1".into()),
+            true,
+        ),
+        12,
+    )?;
+    assert_eq!(vault.policy_queued_notifications()?.len(), 1);
+    let events = vault.policy_changed_events()?;
+    assert!(
+        events
+            .iter()
+            .any(|e| e.scope == PolicyRowScope::Vault && e.author == owner.actor().to_hex())
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.scope == PolicyRowScope::World("world-1".into())
+                && e.author == owner.actor().to_hex())
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| e.scope == PolicyRowScope::Project("project-1".into())
+                && e.author == owner.actor().to_hex())
+    );
     vault.change_policy_notification_rule(
         &owner,
         PolicyRowScope::Vault,
@@ -267,5 +307,80 @@ fn notification_rule_is_data_default_and_override_dials_win() -> TestResult {
         15,
     )?;
     assert_eq!(vault.policy_queued_notifications()?.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn queued_policy_push_enters_the_existing_human_followup_ladder() -> TestResult {
+    use crate::channel_identity::{
+        ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
+        SelfHeldShape,
+    };
+    use crate::comm::resolve_or_create_comm_party;
+    use crate::counterparty_contact::CounterpartyContactRecord;
+    use crate::human_task::human_followup_record;
+
+    const NOW: u64 = 1_772_600_000;
+    let (_dir, vault, owner) = open()?;
+    let other = resolve_or_create_comm_party(&vault, "policy-holder@example.test")?;
+    let face = EntityId::from_bytes([0x6c; 16])?;
+    vault.create_channel_identity(
+        &face,
+        &ChannelIdentity::requested(
+            "email",
+            "sender@example.test",
+            SelfHeldShape::DedicatedAddress,
+            ChannelIdentityBinding::vault(1),
+            NOW,
+        ),
+    )?;
+    vault.transition_channel_identity(
+        &face,
+        ChannelIdentityState::PendingFulfillment,
+        Some(ChannelIdentityFulfillment::Api),
+        NOW,
+        None,
+    )?;
+    vault.transition_channel_identity(&face, ChannelIdentityState::Active, None, NOW, None)?;
+    vault.create_counterparty_contact(
+        &EntityId::from_bytes([0x6d; 16])?,
+        &CounterpartyContactRecord::user_introduction(face, "policy-holder@example.test", NOW)?,
+    )?;
+    vault.initialize_shared_vault(
+        &owner,
+        56,
+        None,
+        &[
+            InitialSharedMember {
+                member_ref: owner.actor(),
+                role: Some(FederationGrantRole::Owner),
+            },
+            InitialSharedMember {
+                member_ref: other,
+                role: Some(FederationGrantRole::Owner),
+            },
+        ],
+        NOW,
+    )?;
+    let receipt = vault.change_policy_row(
+        &owner,
+        change(
+            "Protect this information",
+            PolicyRowAction::Block,
+            PolicyRowScope::Vault,
+            true,
+        ),
+        NOW,
+    )?;
+    let queued = vault.policy_queued_notifications()?;
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].receipt_id, receipt.receipt_id);
+    assert!(queued[0].followup_task.is_none());
+    assert_eq!(vault.drive_policy_notification_queue(NOW + 1, 10)?, 1);
+    let linked = vault.policy_queued_notifications()?;
+    let task_ref = EntityId::from_hex(linked[0].followup_task.as_deref().expect("follow-up task"))?;
+    let cursor = human_followup_record(&vault, task_ref)?.expect("human follow-up cursor");
+    assert_eq!(cursor.assignee_ref, other);
+    assert_eq!(vault.drive_policy_notification_queue(NOW + 2, 10)?, 0);
     Ok(())
 }

@@ -24980,11 +24980,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "PolicyRowSubmission"
+     ],
      "path": "src/policy_model/owner_rows/mod.rs",
      "purpose": "Holder-governed owner-policy row edits, proposals, events and change log",
      "surface": {
-      "fn": 3,
+      "enum": 1,
+      "fn": 4,
       "re-export": 2
      }
     },
@@ -25006,7 +25009,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/policy_model/owner_rows/tests.rs",
@@ -32448,7 +32451,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/policy_change_followup.rs",

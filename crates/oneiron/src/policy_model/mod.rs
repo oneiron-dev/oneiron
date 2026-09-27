@@ -92,7 +92,7 @@ mod owner_rows;
 pub use crate::gate::{PolicyRowAction, PolicyRowChange, PolicyRowScope};
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationMode, PolicyNotificationRule, PolicyProposalStatus,
-    PolicyRowProposal, PolicyRowReceipt,
+    PolicyRowProposal, PolicyRowReceipt, PolicyRowSubmission,
 };
 mod notice;
 mod pattern;

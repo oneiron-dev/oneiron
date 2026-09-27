@@ -124,13 +124,12 @@ fn read_rule_in(
         };
         let name = field(fields, "scope")?.as_str().ok_or_else(invalid)?;
         let value = field(fields, "delivery")?.as_str().ok_or_else(invalid)?;
-        if name == scope {
-            if found
+        if name == scope
+            && found
                 .replace(PolicyNotificationRule::parse(value)?)
                 .is_some()
-            {
-                return Err(invalid());
-            }
+        {
+            return Err(invalid());
         }
     }
     found.ok_or_else(invalid)
@@ -228,6 +227,9 @@ impl Vault {
     /// Connect queued pushes to the existing TASK human follow-up ladder.
     /// Unreachable holders remain queued and can be retried after contact setup.
     pub fn drive_policy_notification_queue(&self, now: u64, limit: usize) -> Result<usize> {
+        if limit == 0 {
+            return Ok(0);
+        }
         let mut txn = self.store.env.write_txn()?;
         let mut ready = Vec::new();
         for entry in self.store.vault_meta.prefix_iter(&txn, QUEUED)? {
@@ -245,8 +247,13 @@ impl Vault {
             }
         }
         let mut linked = 0;
+        let live_holders = authority::holders_in_txn(self, &txn, now)?;
         for (key, mut row) in ready {
             let recipient = EntityId::from_hex(&row.recipient)?;
+            // Never deliver a policy change to a revoked former holder.
+            if !live_holders.contains(&recipient) {
+                continue;
+            }
             // No route today is not an authorization to cancel the pending push.
             if crate::human_task::resolve_native_human_route_in(self, &txn, recipient).is_err() {
                 continue;

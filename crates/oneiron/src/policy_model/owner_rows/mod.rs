@@ -6,14 +6,52 @@ mod notifications;
 pub use ledger::{PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt};
 pub use notifications::{PolicyNotificationMode, PolicyNotificationRule};
 
-use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowChange;
 use crate::memory::{Memory, MemoryResult};
+use crate::{EntityId, Vault};
 
 fn denied() -> Error {
     Error::InvalidConfig("a live policy-power holder is required".to_owned())
+}
+
+/// Result of one row verb: holders land, everyone else proposes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PolicyRowSubmission {
+    Landed(PolicyRowReceipt),
+    Proposed(PolicyRowProposal),
+}
+
+fn propose_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    author: EntityId,
+    change: PolicyRowChange,
+    now: u64,
+) -> Result<PolicyRowProposal> {
+    if change.row_ref().trim().is_empty()
+        || matches!(change.scope(), crate::gate::PolicyRowScope::World(s) | crate::gate::PolicyRowScope::Project(s) if s.trim().is_empty())
+        || matches!(&change, PolicyRowChange::Add { text, .. } | PolicyRowChange::Edit { text, .. } if text.trim().is_empty())
+    {
+        return Err(Error::InvalidConfig(
+            "invalid owner policy row proposal".to_owned(),
+        ));
+    }
+    let holders = authority::holders_in_txn(vault, txn, now)?;
+    if holders.is_empty() {
+        return Err(denied());
+    }
+    let proposal = PolicyRowProposal {
+        proposal_id: vault.store.clock.entity_id()?.to_hex(),
+        author: author.to_hex(),
+        change,
+        holders: holders.into_iter().map(|id| id.to_hex()).collect(),
+        status: PolicyProposalStatus::Pending,
+        at: now,
+    };
+    ledger::put_proposal_in(vault, txn, &proposal)?;
+    Ok(proposal)
 }
 
 fn land_in_txn(
@@ -35,6 +73,31 @@ fn land_in_txn(
 }
 
 impl Vault {
+    /// One holder-aware verb for human callers. A human with no policy-power
+    /// Grant submits an inert proposal; an authenticated holder lands at once.
+    pub fn submit_policy_row_change(
+        &self,
+        actor: &AuthenticatedOwner,
+        change: PolicyRowChange,
+        now: u64,
+    ) -> Result<PolicyRowSubmission> {
+        let mut txn = self.store.env.write_txn()?;
+        actor.revalidate_in_txn(self, &txn)?;
+        let result = if authority::holders_in_txn(self, &txn, now)?.contains(&actor.actor()) {
+            PolicyRowSubmission::Landed(land_in_txn(self, &mut txn, actor, change, now)?)
+        } else {
+            PolicyRowSubmission::Proposed(propose_in_txn(
+                self,
+                &mut txn,
+                actor.actor(),
+                change,
+                now,
+            )?)
+        };
+        txn.commit()?;
+        Ok(result)
+    }
+
     /// Lands either tightening or loosening immediately under a live holder's power.
     /// Every edit writes its manifest bytes, receipt, event and notification intents
     /// atomically. Another holder may reverse it with a later change.
@@ -107,29 +170,7 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<PolicyRowProposal> {
         self.with_verified_actor_write_txn(|txn| {
-            let holders = authority::holders_in_txn(self.vault(), txn, now)?;
-            if holders.is_empty() {
-                return Err(crate::memory::MemoryError::bad_request(
-                    "policy change has no live holder",
-                ));
-            }
-            let proposal = PolicyRowProposal {
-                proposal_id: self.vault().store.clock.entity_id()?.to_hex(),
-                author: self.actor().to_hex(),
-                change,
-                holders: holders.into_iter().map(|id| id.to_hex()).collect(),
-                status: PolicyProposalStatus::Pending,
-                at: now,
-            };
-            // Exact parser validation before persisting a question: a malformed
-            // policy must never be able to become a holder-approved write.
-            if proposal.change.row_ref().trim().is_empty() {
-                return Err(crate::memory::MemoryError::bad_request(
-                    "empty policy row ref",
-                ));
-            }
-            ledger::put_proposal_in(self.vault(), txn, &proposal)?;
-            Ok(proposal)
+            propose_in_txn(self.vault(), txn, self.actor(), change, now).map_err(Into::into)
         })
     }
 }
