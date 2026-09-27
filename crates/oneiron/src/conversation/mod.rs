@@ -6,8 +6,8 @@ mod roles;
 mod session;
 mod visibility;
 
-pub(crate) use body::validate_put_in_txn;
 pub use body::{ConversationBody, ConversationKind, RoomRole};
+pub(crate) use body::{fresh_id_in_txn, validate_put_in_txn};
 pub(crate) use deletion::erasure_key;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub use session::{SessionMode, SessionPresence};
