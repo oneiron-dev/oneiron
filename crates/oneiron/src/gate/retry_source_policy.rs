@@ -125,13 +125,13 @@ pub(crate) fn resolve(
     let vault_cap = vault_cap.ok_or_else(|| {
         Error::InvalidConfig("missing required Dreamer retry source policy".into())
     })?;
-    let selected = if holder_override && holder_cap.is_some() {
-        holder_cap.expect("matched holder")
+    let selected = if holder_override && let Some(holder_cap) = holder_cap {
+        holder_cap
     } else {
         [holder_cap, scope_cap]
             .into_iter()
             .flatten()
-            .fold(vault_cap, |old, next| old.min(next))
+            .fold(vault_cap, std::cmp::Ord::min)
     };
     Ok(ResolvedRetryBudget {
         max_sources: selected.min(vault_cap),

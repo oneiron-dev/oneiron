@@ -250,10 +250,7 @@ pub(in crate::dreamer_consolidation) fn disagreeing_child_hashes(
                 .iter()
                 .copied()
                 .filter(|locator| locator.source_id() == id)
-                .collect();
-            let cited: Vec<_> = cited
-                .into_iter()
-                .map(|locator| locator.reference())
+                .map(super::super::evidence::EvidenceLocator::reference)
                 .collect();
             let Ok(verified) = resources.verify_evidence_refs(&cited) else {
                 continue;

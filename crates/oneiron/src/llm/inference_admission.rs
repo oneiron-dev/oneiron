@@ -168,10 +168,10 @@ impl InferencePolicySnapshot {
         if locality != request.envelope.locality {
             return Err(invalid("model locality differs from bound transport"));
         }
-        if let Some(row) = &self.registry {
-            if row.catalog.locality != locality {
-                return Err(invalid("registry locality differs from host transport"));
-            }
+        if let Some(row) = &self.registry
+            && row.catalog.locality != locality
+        {
+            return Err(invalid("registry locality differs from host transport"));
         }
         // A local lease must be backed by a registered Local transport, not
         // by caller JSON or an unverified host label.
