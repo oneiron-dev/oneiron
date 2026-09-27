@@ -143,7 +143,7 @@ impl LlmEventBus {
     /// host supplies a clock and a timer stream (including ticks during silence).
     /// Raw listeners still receive exact events; only a committed Done reaches
     /// stages. On source/stage failure subscribers close without a fake terminal.
-    pub async fn drive_with<T, E>(
+    pub(crate) async fn drive_with<T, E>(
         &mut self,
         mut stream: LlmStream<'_>,
         mut ticks: T,
@@ -202,7 +202,7 @@ impl LlmEventBus {
         }
     }
 
-    fn close_without_terminal(&mut self) {
+    pub(crate) fn close_without_terminal(&mut self) {
         self.closed = true;
         for weak in &self.subscribers {
             if let Some(state) = weak.upgrade() {

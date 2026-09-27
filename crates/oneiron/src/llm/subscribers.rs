@@ -12,6 +12,11 @@ pub struct ProgressSubscriber {
     bytes: usize,
 }
 impl ProgressSubscriber {
+    /// Start the clock before the first model event, including provider silence.
+    pub fn start(&mut self, now_ms: u64) {
+        self.last_ms.get_or_insert(now_ms);
+    }
+
     pub fn observe(&mut self, event: &LlmStreamEvent, now_ms: u64) -> Option<ProgressSnapshot> {
         if let LlmStreamEvent::TextDelta { text, .. } = event {
             self.bytes = self.bytes.saturating_add(text.len());

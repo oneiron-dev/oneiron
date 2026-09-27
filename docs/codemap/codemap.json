@@ -19890,7 +19890,8 @@
      "path": "src/llm/bus.rs",
      "purpose": "Ephemeral one-producer fanout",
      "surface": {
-      "fn": 6,
+      "crate-vis": 2,
+      "fn": 5,
       "struct": 2,
       "trait": 1
      }
@@ -20545,7 +20546,7 @@
      "path": "src/llm/subscribers.rs",
      "purpose": "Pure clock-injected progress and voice stages",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -32871,7 +32872,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/stream.rs",

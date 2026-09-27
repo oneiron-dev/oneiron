@@ -127,7 +127,7 @@ fn live_stream_fans_out_raw_deltas_and_timed_voice_chunks_without_durable_progre
                 generation,
                 policy: VoiceChunkPolicy::default()
             },
-            &mut output,
+            |command| output.submit(command),
             |p| reports.push(p)
         ));
         assert!(matches!(
@@ -236,7 +236,7 @@ fn cancelled_terminal_does_not_speak_buffered_tail() {
                 generation,
                 policy: VoiceChunkPolicy::default()
             },
-            &mut output,
+            |command| output.submit(command),
             |_| {},
         ));
         assert!(matches!(
@@ -253,4 +253,338 @@ fn cancelled_terminal_does_not_speak_buffered_tail() {
             TtsCommand::Cancel { generation }
         ]
     );
+}
+
+#[test]
+fn initial_model_silence_emits_zero_byte_progress_without_writes() {
+    struct SilentSource(Arc<AtomicU64>);
+    impl Stream for SilentSource {
+        type Item = LlmResult<LlmStreamEvent>;
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            if self.0.load(Ordering::SeqCst) < 2_100 {
+                return Poll::Pending;
+            }
+            Poll::Ready(Some(Ok(LlmStreamEvent::Done {
+                message: LlmMessage {
+                    role: LlmMessageRole::Assistant,
+                    content: vec![],
+                },
+                usage: LlmUsage::zero(),
+                finish_reason: FinishReason::Stop,
+            })))
+        }
+    }
+    struct SilenceTicks {
+        index: u64,
+        clock: Arc<AtomicU64>,
+    }
+    impl Stream for SilenceTicks {
+        type Item = u64;
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            if self.index >= 2 {
+                return Poll::Pending;
+            }
+            self.index += 1;
+            let now = self.index * 1_000;
+            self.clock.store(now, Ordering::SeqCst);
+            Poll::Ready(Some(now))
+        }
+    }
+    let generation = GenerationEpoch {
+        session: uuid::Uuid::new_v4(),
+        value: 1,
+    };
+    let clock = Arc::new(AtomicU64::new(0));
+    let reports = Arc::new(Mutex::new(Vec::new()));
+    let observed = reports.clone();
+    let ledger = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+    let mut raw = bus.subscribe();
+    let mut output = Output::default();
+    {
+        let mut work = std::pin::pin!(drive_voice_stream(
+            &mut bus,
+            LlmStream::new(SilentSource(clock.clone())),
+            SilenceTicks {
+                index: 0,
+                clock: clock.clone()
+            },
+            || clock.load(Ordering::SeqCst),
+            VoiceStreamConfig {
+                generation,
+                policy: VoiceChunkPolicy::default()
+            },
+            |command| output.submit(command),
+            move |snapshot| observed.lock().unwrap().push(snapshot),
+        ));
+        assert!(matches!(
+            work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        assert_eq!(
+            reports
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| (p.text_bytes, p.terminal))
+                .collect::<Vec<_>>(),
+            [(0, false), (0, false)]
+        );
+        assert!(ledger.lock().unwrap().is_empty());
+        assert!(drain(&mut raw).is_empty());
+        clock.store(2_100, Ordering::SeqCst);
+        assert!(matches!(
+            work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert_eq!(ledger.lock().unwrap().len(), 1);
+    assert_eq!(reports.lock().unwrap().len(), 3);
+    assert!(reports.lock().unwrap()[2].terminal);
+}
+
+#[test]
+fn rejected_start_closes_raw_subscribers_without_terminal_write() {
+    struct RejectStart(Vec<TtsCommand>);
+    impl TtsSeamClient for RejectStart {
+        fn submit(&mut self, command: TtsCommand) -> Result<()> {
+            let reject = matches!(command, TtsCommand::Start { .. });
+            self.0.push(command);
+            if reject {
+                Err(crate::Error::InvalidConfig("start refused".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let generation = GenerationEpoch {
+        session: uuid::Uuid::new_v4(),
+        value: 1,
+    };
+    let ledger = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+    let mut raw = bus.subscribe();
+    let mut output = RejectStart(Vec::new());
+    {
+        let source = LlmStream::new(Source {
+            events: vec![],
+            position: Arc::new(AtomicUsize::new(0)),
+            time: Arc::new(AtomicU64::new(0)),
+        });
+        let mut work = std::pin::pin!(drive_voice_stream(
+            &mut bus,
+            source,
+            Ticks {
+                position: Arc::new(AtomicUsize::new(0)),
+                time: Arc::new(AtomicU64::new(0))
+            },
+            || 0,
+            VoiceStreamConfig {
+                generation,
+                policy: VoiceChunkPolicy::default()
+            },
+            |command| output.submit(command),
+            |_| {},
+        ));
+        assert!(matches!(
+            work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Err(VoiceStreamFailure::Tts(_)))
+        ));
+    }
+    assert_eq!(
+        output.0,
+        [
+            TtsCommand::Start { generation },
+            TtsCommand::Cancel { generation }
+        ]
+    );
+    assert!(matches!(
+        Pin::new(&mut raw).poll_next(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(None)
+    ));
+    drop(bus);
+    assert!(ledger.lock().unwrap().is_empty());
+}
+
+#[test]
+fn request_buffered_adapter_drains_responses_between_twenty_chunks() {
+    use crate::voice_cascade::tts_spikes::{
+        AudioDelivery, AudioEncoding, IrodoriAdapter, ProviderAudio, ProviderConfig,
+        ProviderOperation, ProviderWork, RuntimePins, StreamingCapability, TransportQueue,
+        VoiceContext,
+    };
+    #[derive(Clone)]
+    struct Capture(Arc<Mutex<Vec<ProviderWork>>>);
+    impl TransportQueue for Capture {
+        fn try_submit(&mut self, work: ProviderWork) -> Result<()> {
+            self.0.lock().unwrap().push(work);
+            Ok(())
+        }
+    }
+    struct BufferedSource {
+        sent: usize,
+        drained: Arc<AtomicUsize>,
+    }
+    impl Stream for BufferedSource {
+        type Item = LlmResult<LlmStreamEvent>;
+        fn poll_next(mut self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            if self.sent >= 2 && self.drained.load(Ordering::SeqCst) < (self.sent - 1).min(20) {
+                return Poll::Pending;
+            }
+            let index = self.sent;
+            self.sent += 1;
+            let event = match index {
+                0 => LlmStreamEvent::TextStart {
+                    part_id: "t".into(),
+                },
+                1..=20 => LlmStreamEvent::TextDelta {
+                    part_id: "t".into(),
+                    text: "x.".into(),
+                },
+                21 => LlmStreamEvent::Done {
+                    message: LlmMessage {
+                        role: LlmMessageRole::Assistant,
+                        content: vec![ContentPart::Text {
+                            text: "x.".repeat(20),
+                        }],
+                    },
+                    usage: LlmUsage::zero(),
+                    finish_reason: FinishReason::Stop,
+                },
+                _ => return Poll::Ready(None),
+            };
+            Poll::Ready(Some(Ok(event)))
+        }
+    }
+    struct Responses {
+        adapter: Arc<Mutex<IrodoriAdapter<Capture>>>,
+        queue: Arc<Mutex<Vec<ProviderWork>>>,
+        drained: Arc<AtomicUsize>,
+        generation: GenerationEpoch,
+    }
+    impl Stream for Responses {
+        type Item = u64;
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let index = self.drained.load(Ordering::SeqCst);
+            let submission = {
+                let queue = self.queue.lock().unwrap();
+                queue
+                    .iter()
+                    .find(|work| {
+                        work.sequence == index as u64 + 1
+                            && matches!(
+                                work.operation,
+                                ProviderOperation::Flush {
+                                    buffered_text: Some(_)
+                                }
+                            )
+                    })
+                    .map(|work| work.sequence)
+            };
+            let Some(submission) = submission else {
+                return Poll::Pending;
+            };
+            let frame = self
+                .adapter
+                .lock()
+                .unwrap()
+                .handle_pcm(ProviderAudio {
+                    generation: self.generation,
+                    chunk_index: index as u64,
+                    delivery: AudioDelivery::BufferedResponse { submission },
+                    sample_rate: 24_000,
+                    channels: 1,
+                    encoding: AudioEncoding::Pcm16Le,
+                    bytes: &[1, 0],
+                })
+                .expect("provider response drains one pending slot");
+            assert_eq!(frame.origin.chunk_index, index as u64);
+            self.drained.store(index + 1, Ordering::SeqCst);
+            Poll::Ready(Some(0))
+        }
+    }
+    let generation = GenerationEpoch {
+        session: uuid::Uuid::new_v4(),
+        value: 1,
+    };
+    let queue = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(Mutex::new(
+        IrodoriAdapter::new(
+            ProviderConfig {
+                pins: RuntimePins {
+                    checkpoint: "test-checkpoint".into(),
+                    runtime: "test-runtime".into(),
+                    boot_id: "test-boot".into(),
+                },
+                sample_rate: 24_000,
+                streaming: StreamingCapability::RequestBuffered,
+                voice: VoiceContext::default(),
+            },
+            Capture(queue.clone()),
+        )
+        .unwrap(),
+    ));
+    let drained = Arc::new(AtomicUsize::new(0));
+    let ledger = Arc::new(Mutex::new(Vec::new()));
+    let mut bus = LlmEventBus::new(Box::new(Sink(ledger.clone())));
+    let mut raw = bus.subscribe();
+    {
+        let submission = adapter.clone();
+        let mut work = std::pin::pin!(drive_voice_stream(
+            &mut bus,
+            LlmStream::new(BufferedSource {
+                sent: 0,
+                drained: drained.clone()
+            }),
+            Responses {
+                adapter: adapter.clone(),
+                queue: queue.clone(),
+                drained: drained.clone(),
+                generation
+            },
+            || 0,
+            VoiceStreamConfig {
+                generation,
+                policy: VoiceChunkPolicy::default()
+            },
+            move |command| submission.lock().unwrap().submit(command),
+            |_| {},
+        ));
+        assert!(matches!(
+            work.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Ready(Ok(()))
+        ));
+    }
+    assert_eq!(drained.load(Ordering::SeqCst), 20);
+    let commands = queue.lock().unwrap();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|work| matches!(work.operation, ProviderOperation::Flush { .. }))
+            .count(),
+        20
+    );
+    assert!(matches!(
+        commands.last().unwrap().operation,
+        ProviderOperation::End {
+            buffered_text: None
+        }
+    ));
+    assert!(
+        !commands
+            .iter()
+            .any(|work| matches!(work.operation, ProviderOperation::Cancel))
+    );
+    drop(commands);
+    adapter.lock().unwrap().handle_done(generation).unwrap();
+    let events = drain(&mut raw);
+    assert_eq!(events.len(), 22);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, LlmStreamEvent::TextDelta { text, .. } if text == "x."))
+            .count(),
+        20
+    );
+    assert_eq!(ledger.lock().unwrap().len(), 1);
 }
