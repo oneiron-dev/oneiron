@@ -167,7 +167,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                             self.vault,
                             txn,
                             self.actor,
-                            crate::unix_seconds_now(),
+                            self.vault.now_recorded_at(),
                             super::TaskCreateRateLimit::default(),
                         )?;
                         let id = memory.mint_task_in_txn(
@@ -254,15 +254,19 @@ impl Vault {
     ) -> crate::Result<crate::attempt_queue::EnqueueOutcome> {
         let payload = serde_json::to_vec(&serde_json::json!({"epic": epic.to_hex(), "objective": objective, "constraints": constraints}))
             .map_err(|_| Error::InvariantViolation("wave request encoding"))?;
-        crate::attempt_queue::AttemptQueue::new(self).enqueue(
-            crate::attempt_queue::EnqueueAttempt {
-                kind: WAVE_PLAN_ATTEMPT_KIND.to_owned(),
-                dedupe_key: Some(format!("wave.plan:{}", blake3::hash(&payload).to_hex())),
-                payload,
-                run_id: None,
-                now,
-            },
-        )
+        self.with_write_txn(|txn| {
+            crate::ports::JobQueue::port_job_enqueue(
+                self,
+                txn,
+                crate::attempt_queue::EnqueueAttempt {
+                    kind: WAVE_PLAN_ATTEMPT_KIND.to_owned(),
+                    dedupe_key: Some(format!("wave.plan:{}", blake3::hash(&payload).to_hex())),
+                    payload,
+                    run_id: None,
+                    now,
+                },
+            )
+        })
     }
 
     /// Apply a host-produced cut against the current planning lease. Retries
