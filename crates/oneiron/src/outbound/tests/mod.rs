@@ -1,3 +1,4 @@
+mod connector_qualification;
 mod connector_schedule;
 mod dispatch_budget;
 #[path = "sender_selection/facet_selection.rs"]
@@ -272,7 +273,7 @@ fn exercise_connector_schedule_and_executor() -> crate::Result<()> {
         .into_iter()
         .next()
         .expect("connector execution journals one intent");
-    // email/send is NonIdempotentInterrupt: the sink is not handed the ledger id
+    // Generic email/send has no provider key: the sink is not handed the ledger id
     // as a provider idempotency (dedup) token, even though the ledger row still
     // keys the intent internally.
     assert_eq!(executor.idempotency_keys, vec![None]);
