@@ -192,7 +192,21 @@ fn weak_evidence_abstains() -> Result<()> {
         .context_pack()
         .search_text("", 10)
         .search_vector(&query, 10)
-        .run()?;
+        .corpus_snapshot_ref("eval://corpus/weak-evidence")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let row = vault
+        .retrieval_run(pack.run_id.expect("captured"))?
+        .unwrap();
+    assert!(
+        row.replay_inputs.is_some(),
+        "abstention still records its input"
+    );
+    assert!(
+        row.pack_output.is_some(),
+        "abstention still records its pack"
+    );
+    let pack = pack.value;
 
     assert!(
         pack.results.is_empty(),
@@ -1192,6 +1206,70 @@ fn pipeline_search_fails_closed_on_untrusted_text_index() -> Result<()> {
         matches!(err, Error::CorruptedIndex(_)),
         "expected CorruptedIndex, got {err:?}",
     );
+    Ok(())
+}
+
+#[test]
+fn replay_inputs_never_persist_text_from_any_query_channel() -> Result<()> {
+    struct PrivateHyde;
+    impl HydeExpander for PrivateHyde {
+        fn id(&self) -> &str {
+            "test/private-hyde"
+        }
+        fn expand(&self, _: &HydeRequest) -> Result<HydeExpansion> {
+            Ok(HydeExpansion {
+                grounded_query: "secret grounded query 2182".into(),
+                hypothetical_answer: "secret hypothetical answer 2182".into(),
+                embedding: vec![1.0, 0.0, 0.0, 0.0],
+                subqueries: vec!["secret generated subquery 2182".into()],
+            })
+        }
+        fn assess_evidence(&self, _: &CompletionRequest) -> Result<EvidenceVerdict> {
+            Ok(EvidenceVerdict::Sufficient)
+        }
+    }
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0xC7);
+    put_text_and_vector(&vault, id, "secret text query 2182", [1.0, 0.0, 0.0, 0.0])?;
+    let run = vault
+        .query()
+        .search_text("secret text query 2182", 10)
+        .rerank(
+            &ReversingReranker,
+            RerankOptions {
+                top_n: 2,
+                query: Some("secret rerank override 2182".into()),
+            },
+        )
+        .hyde(
+            &PrivateHyde,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 10,
+                retry_once: true,
+            },
+        )
+        .replay_query_ref("eval://queries/private-2182")
+        .corpus_snapshot_ref("eval://corpus/private-2182")
+        .capture_retrieval_trace(true)
+        .run_with_telemetry()?;
+    let row = vault.retrieval_run(run.run_id.expect("captured"))?.unwrap();
+    let inputs = row.replay_inputs.expect("query-free capture");
+    assert_eq!(
+        inputs.query_ref.as_deref(),
+        Some("eval://queries/private-2182")
+    );
+    assert_eq!(inputs.config["channels"]["hyde_subquery_count"], 1);
+    let encoded = serde_json::to_string(&inputs).unwrap();
+    for text in [
+        "secret text query",
+        "secret rerank override",
+        "secret grounded query",
+        "secret hypothetical answer",
+        "secret generated subquery",
+    ] {
+        assert!(!encoded.contains(text), "raw query leaked through {text}");
+    }
     Ok(())
 }
 

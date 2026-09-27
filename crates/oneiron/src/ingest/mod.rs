@@ -19,7 +19,7 @@ pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
 };
-pub use summary_ladder::DocsSummaryHit;
+pub use summary_ladder::{DocsExpansion, DocsExpansionLevel, DocsSummaryHit};
 mod identity_key;
 pub use identity_key::identity_fields_for_kind;
 pub(crate) use identity_key::reindex_identity_hints;
