@@ -637,37 +637,26 @@ pub(in crate::batch) fn apply_put(
         new_skill_record.as_ref(),
         data,
     )?;
-    // Count authenticated local Proposed submissions, including changed bodies
-    // under an actor-owned claim ID. An exact same-body retry is not new.
-    // Replays and envelope-less system puts cannot be assigned to an actor.
-    if !replicated
-        && decoded_claim_body
-            .as_ref()
-            .is_some_and(|body| body.approval == ClaimApprovalStatus::Proposed)
-        && let Some(envelope) = write_envelope
-    {
-        let threshold = match write_policy {
-            Some(policy) => policy.proposal_check_threshold(),
-            None => crate::gate::resolve_policy_manifest(store, &*wtxn)?.proposal_check_threshold(),
-        };
-        crate::gate::proposal_observation::observe_submission_in_txn(
-            store,
-            wtxn,
-            envelope.actor().entity_ref(),
-            &format!("claim:{}", id.to_hex()),
-            threshold,
+    super::put_staging::observe_claim_proposal_after_put(
+        store,
+        wtxn,
+        id,
+        super::put_staging::ProposalObservation {
+            body: decoded_claim_body.as_ref(),
+            envelope: write_envelope,
+            policy: write_policy,
+            replicated,
             body_changed,
-        )?;
-    }
-    if entity_type == ENTITY_TYPE_TASK {
-        crate::task_verb::index_owner_fact(store, wtxn, &id, Some(data))?;
-        if body_changed {
-            crate::task_verb::note_task_write(store, wtxn, id, data)?;
-        }
-    }
-    if entity_type == crate::registry::ENTITY_TYPE_TURN {
-        crate::conversation_dag::stage_session_carrier(store, wtxn, id, data)?;
-    }
+        },
+    )?;
+    super::put_staging::stage_task_and_turn_post_put(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        body_changed,
+    )?;
     crate::secret_custody::stage_replicated_name_index(store, wtxn, &id, custody_name_index)?;
     if let Some(record) = new_skill_record.as_ref() {
         super::put_staging::stage_skill_index_rows(
@@ -710,34 +699,20 @@ pub(in crate::batch) fn apply_put(
     } else if is_lexical_query_hint_claim {
         delete_short_id_rows_for_id(store, wtxn, &id)?;
     }
-    let mut cleared_pending_embedding = false;
-    let mut had_vector_mutation = false;
-    if is_lexical_query_hint_claim {
-        cleared_pending_embedding = store.clear_pending_embedding(wtxn, &id)?;
-        let had_hnsw = store.hnsw_neighbors.get(wtxn, id.as_bytes())?.is_some();
-        had_vector_mutation = store.vectors.delete(wtxn, id.as_bytes())? || had_hnsw;
-        crate::hnsw::hnsw_deindex(store, wtxn, &id)?;
-    }
-    let pending_embedding_token =
-        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !is_lexical_query_hint_claim {
-            // Mint the new invalidation token even while idle publication is
-            // pending. The worker skips these revisions; old completions must
-            // still observe that their token no longer owns the current body.
-            let has_current_pending = store.has_current_pending_embedding_in_txn(wtxn, &id)?;
-            let has_vector = store.vectors.get(wtxn, id.as_bytes())?.is_some();
-            if !body_changed && has_vector && !has_current_pending {
-                None
-            } else {
-                Some(store.mark_pending_embedding(wtxn, &id, data)?)
-            }
-        } else {
-            None
-        };
+    let embedding = super::put_staging::stage_post_put_embeddings(
+        store,
+        wtxn,
+        &id,
+        entity_type,
+        data,
+        is_lexical_query_hint_claim,
+        body_changed,
+    )?;
     Ok(AppliedPut {
         portable_agent_source,
-        pending_embedding_token,
-        cleared_pending_embedding,
-        had_vector_mutation,
+        pending_embedding_token: embedding.pending_embedding_token,
+        cleared_pending_embedding: embedding.cleared_pending_embedding,
+        had_vector_mutation: embedding.had_vector_mutation,
         is_lexical_query_hint_claim,
         evicted_shell_sources,
     })
