@@ -20203,6 +20203,7 @@
      "path": "src/llm/bus.rs",
      "purpose": "Ephemeral one-producer fanout",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2,
       "trait": 1
@@ -21035,13 +21036,14 @@
      "notable": [
       "ProgressSnapshot",
       "ProgressSubscriber",
+      "VoiceChunkPolicy",
       "VoiceChunker"
      ],
      "path": "src/llm/subscribers.rs",
      "purpose": "Pure clock-injected progress and voice stages",
      "surface": {
-      "fn": 3,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -33439,7 +33441,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade",
      "surface": {
       "mod": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -33580,6 +33582,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceStreamConfig",
+      "VoiceStreamFailure"
+     ],
+     "path": "src/voice_cascade/stream.rs",
+     "purpose": "Live, ephemeral LLM-stream fanout to TTS",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -33616,6 +33633,14 @@
      "kind": "test",
      "notable": [],
      "path": "src/voice_cascade/tests/session.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/voice_cascade/tests/stream.rs",
      "purpose": "—",
      "surface": {}
     },
@@ -36185,7 +36210,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "voice_cascade": {
-     "files": 22,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -36236,8 +36261,8 @@
    },
    "over_bar": 11,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2140,
-   "test_files": 728
+   "source_files": 2141,
+   "test_files": 729
   },
   "oneiron-android": {
    "files": [
@@ -36420,7 +36445,7 @@
      "path": "src/beam/citations.rs",
      "purpose": "Evidence-backed per-number citations",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
