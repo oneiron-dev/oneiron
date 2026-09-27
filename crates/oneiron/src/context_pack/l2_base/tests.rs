@@ -415,11 +415,10 @@ fn implicit_owner_subject_reuses_prefix_and_keeps_fresh_hits_in_delta() -> Resul
 }
 
 #[test]
-fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Result<()> {
+fn implicit_person_subjects_follow_authenticated_scope_not_unrelated_people() -> Result<()> {
     use crate::claim::ScopedReadActorKey;
     let (_dir, vault, unrelated) = fixture();
     let person = crate::test_util::entity(0x64);
-    let facet = crate::test_util::entity(0x66);
     vault.put_entity(
         &person,
         ENTITY_TYPE_PERSON,
@@ -427,18 +426,11 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         1,
         b"person",
     )?;
-    vault.put_persona_scenario(
-        &person,
-        &facet,
-        &serde_json::json!({"mode":"fixture"}),
-        crate::federation::Sensitivity::Private,
-        1,
-    )?;
     let user_claim = crate::test_util::entity(0x67);
-    let persona_claim = crate::test_util::entity(0x68);
+    let second_user_claim = crate::test_util::entity(0x68);
     let unrelated_claim = crate::test_util::entity(0x69);
     claim(&vault, user_claim, person, "user")?;
-    claim(&vault, persona_claim, person, "persona")?;
+    claim(&vault, second_user_claim, person, "second user")?;
     claim(&vault, unrelated_claim, unrelated, "other user")?;
     crate::test_util::authorize_readers(&vault, &[&person.to_hex(), &unrelated.to_hex(), "reader"]);
     let reader = vault.scoped_read(ScopedReadActorKey::new(person.to_hex()).unwrap());
@@ -451,7 +443,7 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         .max_field_chars(0)
         .run()?;
     let prefix = pack.l2_base.expect("implicit personal prefix");
-    assert_eq!(prefix.evidence_ids(), &[user_claim, persona_claim]);
+    assert_eq!(prefix.evidence_ids(), &[user_claim, second_user_claim]);
     assert!(!prefix.evidence_ids().contains(&unrelated_claim));
     let delegated = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -466,7 +458,7 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
         .run()?;
     assert_eq!(
         pack.l2_base.unwrap().evidence_ids(),
-        &[user_claim, persona_claim]
+        &[user_claim, second_user_claim]
     );
     let unbound = vault.scoped_read(
         ScopedReadActorKey::new("reader")
@@ -498,24 +490,16 @@ fn implicit_persona_subjects_follow_companion_scope_not_unrelated_people() -> Re
 fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
     let (_dir, vault, _) = fixture();
     let first_person = crate::test_util::entity(0x80);
-    for n in 0..9_u8 {
-        let person = crate::test_util::entity(0x80 + n);
-        let facet = crate::test_util::entity(0x90 + n);
-        vault.put_entity(
-            &person,
-            ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )?;
-        vault.put_persona_scenario(
-            &person,
-            &facet,
-            &serde_json::json!({"mode":"fixture"}),
-            crate::federation::Sensitivity::Public,
-            1,
-        )?;
-    }
+    vault.put_entity(
+        &first_person,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"person",
+    )?;
+    let subjects: Vec<_> = (0..9_u8)
+        .map(|n| crate::test_util::entity(0x80 + n))
+        .collect();
     claim(&vault, crate::test_util::entity(0xA0), first_person, "one")?;
     assert!(vault.context_pack().run()?.l2_base.is_none());
     assert!(
@@ -526,6 +510,10 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
             .l2_base
             .is_some()
     );
+    assert!(matches!(
+        vault.context_pack().l2_summary_subjects(&subjects).run(),
+        Err(crate::Error::InvalidConfig(_))
+    ));
 
     let (_dir, vault, _) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
@@ -549,26 +537,14 @@ fn implicit_prefix_limits_do_not_fail_an_otherwise_valid_pack() -> Result<()> {
 }
 
 #[test]
-fn unscoped_owner_discovers_its_personal_persona_not_a_strangers() -> Result<()> {
+fn unscoped_owner_discovers_its_person_claims_not_a_strangers() -> Result<()> {
     let (_dir, vault, stranger) = fixture();
     let owner = vault.ensure_embedded_owner_actor().unwrap();
-    for (person, facet) in [
-        (owner, crate::test_util::entity(0xB2)),
-        (stranger, crate::test_util::entity(0xB3)),
-    ] {
-        vault.put_persona_scenario(
-            &person,
-            &facet,
-            &serde_json::json!({"mode":"fixture"}),
-            crate::federation::Sensitivity::Public,
-            1,
-        )?;
-    }
     let owner_claim = crate::test_util::entity(0xB4);
     let stranger_claim = crate::test_util::entity(0xB5);
-    claim(&vault, owner_claim, owner, "owner persona")?;
-    claim(&vault, stranger_claim, stranger, "stranger persona")?;
-    let base = vault.context_pack().run()?.l2_base.expect("owner persona");
+    claim(&vault, owner_claim, owner, "owner identity")?;
+    claim(&vault, stranger_claim, stranger, "stranger identity")?;
+    let base = vault.context_pack().run()?.l2_base.expect("owner identity");
     assert_eq!(base.evidence_ids(), &[owner_claim]);
     assert!(!base.evidence_ids().contains(&stranger_claim));
     Ok(())
