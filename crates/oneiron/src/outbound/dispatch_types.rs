@@ -463,6 +463,10 @@ pub enum OutboundDispatchError {
     UnsupportedCapability(#[from] Box<UnsupportedOutboundCapability>),
     #[error("the facade-bound actor is no longer valid")]
     InvalidBoundActor,
+    #[error("the resident failure rule makes this step result ineligible for effects")]
+    FailureResultIneligible,
+    #[error(transparent)]
+    Step(#[from] crate::llm::DurableStepError),
     #[error(transparent)]
     Engine(#[from] Error),
     #[error(transparent)]

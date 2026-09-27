@@ -89,9 +89,9 @@ pub async fn call_as_step_with_fallbacks(
         && let Some(payload) = row.response_payload.as_deref()
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
+        let failure_policy = failure_policy(ctx.vault, &response)?;
         log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
         step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-        let failure_policy = failure_policy(ctx.vault, &response)?;
         return Ok(StepOutcome::Finished {
             response,
             memoized: true,
@@ -121,6 +121,8 @@ pub async fn call_as_step_with_fallbacks(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
+            let failure_policy =
+                resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
             let trap = open_trap(
                 ctx.vault,
                 ctx,
@@ -136,9 +138,15 @@ pub async fn call_as_step_with_fallbacks(
                 now: ctx.now_s(),
             })?;
             step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-            return Ok(StepOutcome::Trapped(trap));
+            return Ok(StepOutcome::Trapped {
+                trap,
+                failure_policy,
+            });
         }
-        Err(denied) => return Err(LlmError::from(denied).into()),
+        Err(denied) => {
+            let source = LlmError::from(denied);
+            return Err(classified_failure(ctx.vault, source)?);
+        }
     };
 
     // The deadline only gates admission. Once admitted, the provider (and any
@@ -176,7 +184,15 @@ pub async fn call_as_step_with_fallbacks(
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
-            return Err(error);
+            return Err(match error {
+                DurableStepError::Llm(LlmError::Fatal(source))
+                    if matches!(request.envelope.class, CallClass::BestEffort) =>
+                {
+                    DurableStepError::Llm(LlmError::Fatal(source))
+                }
+                DurableStepError::Llm(source) => classified_failure(ctx.vault, source)?,
+                other => other,
+            });
         }
     };
 
@@ -189,7 +205,6 @@ pub async fn call_as_step_with_fallbacks(
     // is idempotent on an already-settled lease, so the happy-path settle stays
     // a no-op once the guard is disarmed.
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
-    let failure_policy = failure_policy(ctx.vault, &response)?;
     ctx.vault.resume_from_slim_on_inbound()?;
 
     let payload = serde_json::to_vec(&response)?;
@@ -202,6 +217,9 @@ pub async fn call_as_step_with_fallbacks(
         ctx.now_ms,
     )?;
 
+    // The response is recoverable before any policy read that can fail. An
+    // error may refuse downstream use, but replay must not re-spend the call.
+    let failure_policy = failure_policy(ctx.vault, &response)?;
     log_terminal_step(ctx, &step_hash, &request, &response, &payload)?;
 
     lease_settle.settle().map_err(LlmError::from)?;
@@ -215,6 +233,48 @@ pub async fn call_as_step_with_fallbacks(
     })
 }
 
+/// Verify a persisted step and consult live resident policy before any
+/// step-derived outbound effect is prepared. A caller-supplied decision is
+/// never an authority: the local memo index and the exact request bind the
+/// result, and the normal outbound Gate still decides the effect.
+pub(crate) fn verified_step_effector_eligible(
+    vault: &crate::Vault,
+    attempt_id: crate::attempt_queue::AttemptId,
+    request: &LlmRequest,
+    effect_actor: crate::entity_id::EntityId,
+) -> DurableStepResult<bool> {
+    let step_hash = request.canonical_hash()?;
+    let claim_id = step_index_lookup(vault, attempt_id, &step_hash)?.ok_or(
+        Error::InvalidClaimBody("step-derived effect requires a completed step"),
+    )?;
+    let body = vault
+        .get_claim(&claim_id)?
+        .ok_or(Error::InvalidClaimBody("dreamer step index claim missing"))?;
+    let decoded = decode_step_claim_value(&body.value)?;
+    if body.predicate != super::types::DREAMER_STEP_PREDICATE
+        || body.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        || body.stale
+        || decoded.attempt_id != attempt_id
+        || decoded.step_hash != step_hash
+        || !super::step_claim::step_claim_binding_is_trusted(&decoded, &body)
+        || !step_claim_matches_request(&decoded, request)?
+    {
+        return Err(Error::InvalidClaimBody("step-derived effect request mismatch").into());
+    }
+    let actor_matches = match body.evidence.as_ref() {
+        Some(rmpv::Value::Map(entries)) => entries.iter().any(|(key, value)| {
+            key.as_str() == Some(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY)
+                && value.as_slice() == Some(effect_actor.as_bytes().as_slice())
+        }),
+        _ => false,
+    };
+    if !actor_matches {
+        return Err(Error::InvalidClaimBody("step-derived effect actor mismatch").into());
+    }
+    let response = load_step_response(vault, &decoded)?;
+    Ok(failure_policy(vault, &response)?.is_none_or(|decision| decision.effector_eligible))
+}
+
 fn failure_policy(
     vault: &crate::Vault,
     response: &LlmResponse,
@@ -222,9 +282,35 @@ fn failure_policy(
     let Some(class) = super::super::fallback_failure_class(response) else {
         return Ok(None);
     };
+    #[cfg(test)]
+    if vault
+        .test_hooks()
+        .take_fail_next_dreamer_failure_policy_read()
+    {
+        return Err(Error::InvariantViolation("injected dreamer failure policy read").into());
+    }
+    Ok(Some(resolve_failure_policy(vault, class)?))
+}
+
+fn classified_failure(
+    vault: &crate::Vault,
+    source: LlmError,
+) -> DurableStepResult<DurableStepError> {
+    let class = super::super::DreamerFailureClass::of(&source);
+    let failure_policy = resolve_failure_policy(vault, class)?;
+    Ok(DurableStepError::ClassifiedLlm {
+        source,
+        failure_policy,
+    })
+}
+
+fn resolve_failure_policy(
+    vault: &crate::Vault,
+    class: super::super::DreamerFailureClass,
+) -> DurableStepResult<super::super::DreamerFailureDecision> {
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
-    Ok(Some(policy.dreamer_failure_decision(class)))
+    Ok(policy.dreamer_failure_decision(class))
 }
 
 fn settle_failed_usage(guard: &BudgetGuard, lease: &super::BudgetLease, usage: &super::LlmUsage) {

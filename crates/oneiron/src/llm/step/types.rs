@@ -168,6 +168,14 @@ pub enum DurableStepError {
     Engine(#[from] Error),
     #[error(transparent)]
     Llm(#[from] LlmError),
+    /// The step's sole retry authority has exhausted or refused this call.
+    /// The decision records the resident rule without granting a new route.
+    #[error("classified LLM failure: {source}")]
+    ClassifiedLlm {
+        #[source]
+        source: LlmError,
+        failure_policy: super::super::DreamerFailureDecision,
+    },
     #[error("durable step canonicalization failed: {0}")]
     Canonical(#[from] serde_json::Error),
     #[error(transparent)]
@@ -353,5 +361,9 @@ pub enum StepOutcome {
         /// Restrictive policy for a deterministic failure result; never an authority grant.
         failure_policy: Option<super::super::DreamerFailureDecision>,
     },
-    Trapped(TrapRef),
+    Trapped {
+        trap: TrapRef,
+        /// Budget-denial policy, resolved before parking this attempt.
+        failure_policy: super::super::DreamerFailureDecision,
+    },
 }

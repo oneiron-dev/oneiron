@@ -18,7 +18,7 @@
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{LazyLock, Mutex};
 
@@ -51,11 +51,23 @@ pub(crate) struct TestHooks {
     /// sync on this vault. The durability fence is what the count proves, so
     /// the reader wants an exact delta and now gets one.
     force_sync_calls: AtomicUsize,
+    /// One-shot failure after a durable fallback is saved, before policy resolution.
+    fail_next_dreamer_failure_policy_read: AtomicBool,
     /// One-shot stage boundary for deadline tests; never shared across vaults.
     pub(crate) after_retrieval_text: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl TestHooks {
+    pub(crate) fn arm_fail_next_dreamer_failure_policy_read(&self) {
+        self.fail_next_dreamer_failure_policy_read
+            .store(true, Ordering::Release);
+    }
+
+    pub(crate) fn take_fail_next_dreamer_failure_policy_read(&self) -> bool {
+        self.fail_next_dreamer_failure_policy_read
+            .swap(false, Ordering::AcqRel)
+    }
+
     /// Installs the one-shot rendezvous consumed when a delete of `target`
     /// reaches `step` on this vault. Any other step, or any other entity,
     /// passes straight through.

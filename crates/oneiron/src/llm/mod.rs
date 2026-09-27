@@ -54,6 +54,7 @@ pub use step::{
 pub(crate) use step::{
     consume_step_wait_in_txn, deindex_dreamer_step_claim, index_dreamer_step_claim_for_put,
     open_step_wait_in_txn, register_detached_step_in_txn, signal_step_wait_in_txn,
+    verified_step_effector_eligible,
 };
 
 pub use budget::{

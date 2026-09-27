@@ -20181,7 +20181,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -20192,7 +20192,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 5
      }
     },
@@ -20228,7 +20228,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -22667,7 +22667,7 @@
      "purpose": "Vault facade seams for dispatching outbound intents",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -22873,6 +22873,14 @@
      "notable": [],
      "path": "src/outbound/tests/space_posting.rs",
      "purpose": "Owner presentation must ride the ordinary gate, frozen payload and recovery",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/outbound/tests/step_failure.rs",
+     "purpose": "A stored durable failure must be eligible before its outbound effect is prepared",
      "surface": {}
     },
     {
@@ -29417,7 +29425,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -34633,7 +34641,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35133,7 +35141,7 @@
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2073,
-   "test_files": 713
+   "test_files": 714
   },
   "oneiron-android": {
    "files": [

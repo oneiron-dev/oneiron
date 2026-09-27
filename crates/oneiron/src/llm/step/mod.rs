@@ -25,6 +25,7 @@ mod types;
 // one level deeper `super` is this module, so it re-exports them unchanged.
 use super::{BudgetLease, BudgetSettlement, LlmUsage};
 
+pub(crate) use self::execute::verified_step_effector_eligible;
 pub use self::execute::{call_as_step, call_as_step_with_fallbacks};
 pub use self::peer_wait::{
     PeerResultWaitBinding, reconcile_peer_result_signals, register_peer_result_wait,

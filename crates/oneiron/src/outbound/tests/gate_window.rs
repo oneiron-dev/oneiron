@@ -270,6 +270,10 @@ fn dispatch_pipeline_rejects_unsupported_verbs_before_execution() {
         OutboundDispatchError::InvalidBoundActor => {
             panic!("unexpected facade-bound actor validation")
         }
+        OutboundDispatchError::FailureResultIneligible => {
+            panic!("unexpected failure policy denial")
+        }
+        OutboundDispatchError::Step(error) => panic!("unexpected step error: {error}"),
         OutboundDispatchError::Engine(error) => panic!("unexpected engine error: {error}"),
         OutboundDispatchError::Chokepoint(error) => {
             panic!("unexpected chokepoint error: {error}")

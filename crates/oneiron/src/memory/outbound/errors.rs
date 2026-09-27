@@ -62,6 +62,16 @@ pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) ->
             "the bound actor is no longer authorized for outbound dispatch",
             &["Refresh the actor binding and retry."],
         ),
+        OutboundDispatchError::FailureResultIneligible => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the durable step failure is not eligible for an effect",
+            &[],
+        ),
+        OutboundDispatchError::Step(error) => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!("durable step verification failed: {error}"),
+            &[],
+        ),
         OutboundDispatchError::UnsupportedCapability(capability) => MemoryError::bad_request_with(
             format!("unsupported outbound capability: {capability}"),
             &["Use a registered channel/verb pair from the connector manifest."],

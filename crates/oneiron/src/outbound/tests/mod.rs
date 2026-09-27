@@ -9,6 +9,7 @@ mod quiet_window;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
+mod step_failure;
 
 use super::*;
 use crate::delivery_window::DeliveryWindowDecision;

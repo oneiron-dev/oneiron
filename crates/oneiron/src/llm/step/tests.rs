@@ -429,6 +429,7 @@ fn durable_fatal_unknown_fallback_is_typed() -> Result<()> {
 #[test]
 fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
     let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("budget", "budget_trap", true, false)])?;
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
     let backend = ScriptedBackend::new(Vec::new()); // must never be called
@@ -436,10 +437,24 @@ fn budget_denied_opens_budget_trap_and_parks() -> Result<()> {
 
     let outcome = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
         .expect("trap outcome is Ok");
-    let StepOutcome::Trapped(trap) = outcome else {
+    let StepOutcome::Trapped {
+        trap,
+        failure_policy,
+    } = outcome
+    else {
         panic!("expected trapped step");
     };
     assert_eq!(trap.kind, DreamerTrapKind::Budget);
+    assert_eq!(
+        failure_policy.class,
+        crate::llm::DreamerFailureClass::Budget
+    );
+    assert_eq!(
+        failure_policy.route,
+        crate::llm::DreamerFailureRoute::BudgetTrap
+    );
+    assert!(failure_policy.consolidation_eligible);
+    assert!(!failure_policy.effector_eligible);
     assert_eq!(backend.calls(), 0);
 
     // The created trap claim exists and decodes.
@@ -2060,9 +2075,7 @@ fn fatal_runs_declared_rule_and_memoizes_nonempty_outcome() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn fatal_fallback_carries_resident_policy_on_first_run_and_replay() -> Result<()> {
-    let (_dir, vault) = open_vault();
+fn install_failure_rules(vault: &Vault, rows: &[(&str, &str, bool, bool)]) -> Result<()> {
     let mut manifest =
         rmpv::decode::read_value(&mut crate::gate::default_policy_manifest().as_slice())
             .expect("default manifest");
@@ -2071,26 +2084,67 @@ fn fatal_fallback_carries_resident_policy_on_first_run_and_replay() -> Result<()
     };
     entries.push((
         rmpv::Value::from("dreamer_failure_rules"),
-        rmpv::Value::Array(vec![rmpv::Value::Map(vec![
-            (rmpv::Value::from("failure"), rmpv::Value::from("fatal")),
-            (rmpv::Value::from("route"), rmpv::Value::from("fallback")),
-            (
-                rmpv::Value::from("consolidation_eligible"),
-                rmpv::Value::Boolean(true),
-            ),
-            (
-                rmpv::Value::from("effector_eligible"),
-                rmpv::Value::Boolean(false),
-            ),
-        ])]),
+        rmpv::Value::Array(
+            rows.iter()
+                .map(|(class, route, consolidation, effector)| {
+                    rmpv::Value::Map(vec![
+                        (rmpv::Value::from("failure"), rmpv::Value::from(*class)),
+                        (rmpv::Value::from("route"), rmpv::Value::from(*route)),
+                        (
+                            rmpv::Value::from("consolidation_eligible"),
+                            rmpv::Value::Boolean(*consolidation),
+                        ),
+                        (
+                            rmpv::Value::from("effector_eligible"),
+                            rmpv::Value::Boolean(*effector),
+                        ),
+                    ])
+                })
+                .collect(),
+        ),
     ));
     let mut data = Vec::new();
     rmpv::encode::write_value(&mut data, &manifest).expect("encode policy");
     crate::test_util::put_policy_manifest_bytes(
-        &vault,
+        vault,
         crate::gate::default_policy_manifest_id()?,
         &data,
-    )?;
+    )
+}
+
+#[test]
+fn retryable_exhaustion_returns_resident_decision_after_one_retry_authority() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("retryable", "retry", false, true)])?;
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let backend = ScriptedBackend::new(vec![Err(RetryableLlmError::ServerError.into()); 4]);
+    let guard = guard_with_limit(10_000);
+    let error = block_on(call_as_step(&ctx, &backend, &guard, request_fixture()))
+        .expect_err("retry authority exhausted");
+    let DurableStepError::ClassifiedLlm {
+        source: LlmError::Retryable(RetryableLlmError::ServerError),
+        failure_policy,
+    } = error
+    else {
+        panic!("expected classified retryable error")
+    };
+    assert_eq!(
+        failure_policy.class,
+        crate::llm::DreamerFailureClass::Retryable
+    );
+    assert_eq!(failure_policy.route, crate::llm::DreamerFailureRoute::Retry);
+    assert!(!failure_policy.consolidation_eligible);
+    assert!(failure_policy.effector_eligible);
+    assert_eq!(backend.calls(), 4);
+    assert_eq!(guard.read().reserved_units, 0);
+    Ok(())
+}
+
+#[test]
+fn fatal_fallback_carries_resident_policy_on_first_run_and_replay() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    install_failure_rules(&vault, &[("fatal", "fallback", true, false)])?;
     let fixture = step_fixture(&vault, 10)?;
     let ctx = ctx(&vault, &fixture, 10_000);
     let backend = ScriptedBackend::new(vec![Err(FatalLlmError::Auth.into())]);
@@ -2163,9 +2217,14 @@ fn schema_correction_rechecks_budget_before_another_paid_call() -> Result<()> {
     };
     assert!(matches!(
         block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
-        Err(DurableStepError::Llm(LlmError::BudgetDenied(
-            crate::llm::BudgetDenied::Exhausted
-        )))
+        Err(DurableStepError::ClassifiedLlm {
+            source: LlmError::BudgetDenied(crate::llm::BudgetDenied::Exhausted),
+            failure_policy: crate::llm::DreamerFailureDecision {
+                class: crate::llm::DreamerFailureClass::Budget,
+                route: crate::llm::DreamerFailureRoute::BudgetTrap,
+                ..
+            }
+        })
     ));
     assert_eq!(backend.calls(), 1);
     assert_eq!(guard.read().used_units, 150);
@@ -2419,6 +2478,68 @@ fn corrective_spend_survives_fatal_fallback_and_memo_replay() -> Result<()> {
     assert_eq!(response, replay);
     assert_eq!(backend.calls(), 2);
     assert_eq!(guard.read().used_units, 150);
+    Ok(())
+}
+
+#[test]
+fn policy_read_failure_replays_saved_fallback_without_spending_again() -> Result<()> {
+    let (_dir, vault) = open_vault();
+    let fixture = step_fixture(&vault, 10)?;
+    let ctx = ctx(&vault, &fixture, 10_000);
+    let guard = guard_with_limit(10_000);
+    let backend = ScriptedBackend::new(vec![
+        Ok(response_fixture("not json")),
+        Err(FatalLlmError::Auth.into()),
+    ]);
+    let mut request = request_fixture();
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({"type":"object"}),
+    };
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version":1,"rows":[{"failure":"auth","value":{"verdict":"hold"}}]}),
+            ),
+        },
+    };
+    let hash = request.canonical_hash().expect("hash");
+    vault
+        .test_hooks()
+        .arm_fail_next_dreamer_failure_policy_read();
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request.clone())),
+        Err(DurableStepError::Engine(Error::InvariantViolation(
+            "injected dreamer failure policy read"
+        )))
+    ));
+    let saved = step_state_read(&vault, fixture.attempt_id, &hash)?.expect("recoverable step");
+    assert_eq!(saved.progression, StepProgression::ResponseReceived);
+    assert!(saved.response_payload.is_some());
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    assert_eq!(guard.read().reserved_units, 0);
+
+    let StepOutcome::Finished {
+        response,
+        memoized: true,
+        failure_policy: Some(policy),
+        ..
+    } = block_on(call_as_step(&ctx, &backend, &guard, request.clone())).expect("saved response")
+    else {
+        panic!("stored fallback did not replay");
+    };
+    assert_eq!(response.usage.input.total, 100);
+    assert_eq!(response.usage.output.total, 50);
+    assert_eq!(policy.class, crate::llm::DreamerFailureClass::Fatal);
+    assert_eq!(backend.calls(), 2);
+    assert_eq!(guard.read().used_units, 150);
+    assert!(step_state_read(&vault, fixture.attempt_id, &hash)?.is_none());
+    assert!(matches!(
+        block_on(call_as_step(&ctx, &backend, &guard, request)),
+        Ok(StepOutcome::Finished { memoized: true, .. })
+    ));
+    assert_eq!(backend.calls(), 2);
     Ok(())
 }
 

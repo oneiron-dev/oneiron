@@ -495,7 +495,7 @@ pub(crate) fn index_dreamer_step_claim_for_put(
 ///   the dreamer runner surface AND the SAME attempt id the claim value
 ///   carries, so a body cannot buy a memo row for an attempt it does not
 ///   belong to.
-fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
+pub(super) fn step_claim_binding_is_trusted(decoded: &DecodedStepClaim, body: &ClaimBody) -> bool {
     if ModelId::new(decoded.model_id.clone()).is_err()
         || decoded.purpose.is_empty()
         || !is_lowercase_hex_digest(&decoded.params_hash)
