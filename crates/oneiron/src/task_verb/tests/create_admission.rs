@@ -58,6 +58,59 @@ fn task_creation_is_counted_and_receipted_at_every_rate() {
 }
 
 #[test]
+fn sdk_create_is_receipted_after_a_zero_rate_limit_and_ask_is_not_rate_refused() {
+    let (_dir, vault) = open_vault();
+    let actor = own_agent(&vault);
+    let memory = vault.memory(actor, EdgeActorClass::Agent);
+    memory
+        .tasks_create_with_rate_limit(
+            &spec(120),
+            TaskCreateRateLimit {
+                limit: 0,
+                window_seconds: u64::MAX,
+            },
+        )
+        .unwrap();
+    let counted = vault.task_create_count(actor, u64::MAX).unwrap();
+    // More than the SDK's default 10-slot ceiling in one window still mints
+    // and receipts every task, instead of returning a rate refusal.
+    for index in 0..12 {
+        let receipt = crate::task_verb::sdk::invoke(
+            &memory,
+            "tasks.create",
+            serde_json::json!({"spec": index, "label": "another task"}),
+        )
+        .unwrap();
+        assert_eq!(receipt["effected"], true);
+        assert!(receipt["task_ref"].is_string());
+    }
+    memory
+        .tasks_create_with_rate_limit(
+            &spec(120),
+            TaskCreateRateLimit {
+                limit: 0,
+                window_seconds: u64::MAX,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        vault.task_create_count(actor, u64::MAX).unwrap(),
+        counted + 1
+    );
+    let question = consult_turn(&vault, 0x81);
+    let ask = crate::task_verb::sdk::invoke(
+        &memory,
+        "tasks.ask",
+        serde_json::json!({
+            "who": {"responder": {"human": {"actor_ref": actor}}},
+            "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []},
+        }),
+    )
+    .unwrap();
+    assert!(ask["handle"]["group_ref"].is_string());
+}
+
+#[test]
 fn create_refuses_a_label_the_board_cannot_render() {
     let (_dir, vault) = open_vault();
     let label = "x".repeat(crate::context_board::TASK_LABEL_MAX_BYTES + 1);
