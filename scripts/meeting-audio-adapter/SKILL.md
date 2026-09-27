@@ -26,8 +26,13 @@ must have exactly one `{{TRANSCRIPT_JSON}}` placeholder. It asks for one JSON
 `{"texts":[...]}` array, one nonblank correction per turn, with punctuation
 and ASR-only fixes; no invented words, changed speaker IDs or facts. The
 engine permits a one-for-one word correction only when the ASR port supplies
-an acoustic candidate from the hash-bound speech pack. Raw words, clocks and
-speaker IDs remain unchanged; without a candidate, lexical edits refuse. The host pins exact prompt bytes and hash in its runtime profile
+an acoustic candidate from the hash-bound speech pack **and** a permitted
+source/target spelling pair in the selected language's cleanup policy. The
+policy also names protected polarity tokens and suffixes (including
+contractions and negative forms); either side of a protected pair refuses.
+An unknown language or unlisted pair refuses lexical edits, while cosmetic
+punctuation remains available. Raw words, clocks and speaker IDs remain
+unchanged. The host pins exact prompt bytes and hash in its runtime profile
 (`scripts/meeting-audio-runtime.md`); no fixed product prompt lives in Rust.
 
 The resident agent also chooses policy for E1/E3 experiments and the
@@ -85,13 +90,21 @@ secret). For example, replace **every** placeholder:
 }
 ```
 
-`policy_manifest` can point to a host-owned JSON object with `vault` and
-`holder` rows. Each row may set `glossary_max_bytes`, `glossary_max_terms`,
-`glossary_max_term_bytes` and `stage_timeout_seconds`. Absent rows inherit
-`scripts/meeting-audio-adapter/policy-defaults.json`. The vault can adjust
-shipped workload defaults within the independent protocol ceilings; the holder
-may narrow but never exceed the vault. No glossary sizes or inference deadlines
-are hard-coded as product policy in Rust.
+`policy_manifest` can point to a host-owned JSON object with `vault`,
+`holder` and optional `precedence` rows. The shipped precedence is
+`{"layers":["shipped","vault","holder"],"mode":"nested_narrowing","holder_cap":"vault"}`.
+The host may select `{"layers":["shipped","vault"],...}` to disable holder
+participation; a supplied holder row then refuses. The resolver evaluates the
+selected layers in order. Each override may set `glossary_max_bytes`,
+`glossary_max_terms`, `glossary_max_term_bytes`, `stage_timeout_seconds`, or a
+complete `cleanup` object with `max_candidates_per_word`,
+`max_candidate_bytes` and `language_rules`. A language rule has
+`protected_tokens`, `protected_suffixes`, and `allowed_pairs` of `{from,to}`.
+The vault may adjust shipped defaults within protocol ceilings. A holder may
+only lower bounds, remove permitted pairs/languages, or add protections;
+widening a vault right refuses. Absent rows inherit
+`scripts/meeting-audio-adapter/policy-defaults.json`. The agent writes
+language-specific correction policy and glossary, not Rust constants.
 
 Run from the repository root, with an owned target and a timeout:
 

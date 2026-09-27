@@ -1,6 +1,8 @@
 //! Typed host ports for file decoding, inference, routing and explicit import consent.
 
-use serde::Serialize;
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
 
 use super::{AudioError, AudioResult};
 
@@ -110,6 +112,32 @@ impl BatchDefault {
     }
 }
 
+/// Host-supplied cleanup policy; no lexical correction is admitted without a
+/// language rule, an explicitly allowed source/target pair and an acoustic
+/// candidate from the same ASR pack. Unknown languages fail closed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupPolicy {
+    pub max_candidates_per_word: usize,
+    pub max_candidate_bytes: usize,
+    pub language_rules: BTreeMap<String, LanguageCorrectionRules>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LanguageCorrectionRules {
+    pub protected_tokens: Vec<String>,
+    pub protected_suffixes: Vec<String>,
+    pub allowed_pairs: Vec<AllowedWordCorrection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowedWordCorrection {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProducerOptions {
     /// Immutable domain data only. There is no previous-transcript input.
@@ -117,6 +145,8 @@ pub struct ProducerOptions {
     pub batch_default: BatchDefault,
     /// Expected OF-133 full-file diarizer; a different receipt must refuse.
     pub diarization_model_id: String,
+    /// None means cosmetic-only; populated policy is resolved by the host.
+    pub cleanup_policy: Option<CleanupPolicy>,
     pub local_only: bool,
 }
 

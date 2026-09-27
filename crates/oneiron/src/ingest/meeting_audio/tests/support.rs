@@ -25,6 +25,9 @@ pub(super) enum Fault {
     MissingTrack,
     InventedCleanup,
     AcousticCorrection,
+    AcousticContraction,
+    AcousticCurlyContraction,
+    AcousticJapaneseNegation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +71,42 @@ pub(super) fn options() -> ProducerOptions {
             model_id: "fixture-asr".into(),
         },
         diarization_model_id: FIXTURE_DIARIZER_MODEL.into(),
+        cleanup_policy: Some(CleanupPolicy {
+            max_candidates_per_word: 16,
+            max_candidate_bytes: 256,
+            language_rules: std::collections::BTreeMap::from([
+                (
+                    "English".into(),
+                    LanguageCorrectionRules {
+                        protected_tokens: vec!["not".into(), "no".into(), "never".into()],
+                        protected_suffixes: vec!["n't".into(), "n’t".into()],
+                        allowed_pairs: [
+                            ("allice", "Alice"),
+                            ("can't", "can"),
+                            ("don’t", "do"),
+                            ("not", "now"),
+                        ]
+                        .into_iter()
+                        .map(|(from, to)| AllowedWordCorrection {
+                            from: from.into(),
+                            to: to.into(),
+                        })
+                        .collect(),
+                    },
+                ),
+                (
+                    "Japanese".into(),
+                    LanguageCorrectionRules {
+                        protected_tokens: Vec::new(),
+                        protected_suffixes: vec!["ではない".into(), "ない".into(), "ません".into()],
+                        allowed_pairs: vec![AllowedWordCorrection {
+                            from: "安全ではない".into(),
+                            to: "安全です".into(),
+                        }],
+                    },
+                ),
+            ]),
+        }),
         local_only: false,
     }
 }
@@ -224,8 +263,14 @@ impl MeetingAudioHost for FixtureHost {
             words.push(AsrWord {
                 start_ms,
                 end_ms: start_ms + 100,
-                text: if self.fault == Fault::AcousticCorrection && index == 0 {
-                    "allice"
+                text: if index == 0 {
+                    match self.fault {
+                        Fault::AcousticCorrection => "allice",
+                        Fault::AcousticContraction => "can't",
+                        Fault::AcousticCurlyContraction => "don’t",
+                        Fault::AcousticJapaneseNegation => "安全ではない",
+                        _ => "hello",
+                    }
                 } else if index % 2 == 0 {
                     "hello"
                 } else {
@@ -233,8 +278,14 @@ impl MeetingAudioHost for FixtureHost {
                 }
                 .into(),
                 confidence: Some(0.9),
-                acoustic_candidates: if self.fault == Fault::AcousticCorrection && index == 0 {
-                    vec!["Alice".into()]
+                acoustic_candidates: if index == 0 {
+                    match self.fault {
+                        Fault::AcousticCorrection => vec!["Alice".into()],
+                        Fault::AcousticContraction => vec!["can".into()],
+                        Fault::AcousticCurlyContraction => vec!["do".into()],
+                        Fault::AcousticJapaneseNegation => vec!["安全です".into()],
+                        _ => Vec::new(),
+                    }
                 } else {
                     Vec::new()
                 },
@@ -329,9 +380,13 @@ impl MeetingAudioHost for FixtureHost {
         if self.fault == Fault::InventedCleanup {
             texts[0] = "Approved the budget.".into();
         }
-        if self.fault == Fault::AcousticCorrection {
-            texts[0] = "Alice.".into();
-        }
+        texts[0] = match self.fault {
+            Fault::AcousticCorrection => "Alice.".into(),
+            Fault::AcousticContraction => "Can.".into(),
+            Fault::AcousticCurlyContraction => "Do.".into(),
+            Fault::AcousticJapaneseNegation => "安全です。".into(),
+            _ => texts[0].clone(),
+        };
         Ok(CleanupOutput {
             texts,
             provenance: provenance("cleanup-call", "fixture-cleanup", request.input_sha256),

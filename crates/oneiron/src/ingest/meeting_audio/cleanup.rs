@@ -4,7 +4,9 @@ use std::collections::HashMap;
 
 use serde::Serialize;
 
-use super::{AudioError, AudioResult, TranscriptTurn, TranscriptWord};
+use super::{
+    AudioError, AudioResult, CleanupPolicy, LanguageCorrectionRules, TranscriptTurn, TranscriptWord,
+};
 
 pub(super) struct AcousticCandidate {
     pub words: Vec<String>,
@@ -77,6 +79,25 @@ fn lexical_tokens(text: &str) -> Vec<String> {
     tokens
 }
 
+fn correction_allowed(rules: &LanguageCorrectionRules, from: &str, to: &str) -> bool {
+    let protected = |token: &str| {
+        rules
+            .protected_tokens
+            .iter()
+            .any(|value| token == value.to_lowercase())
+            || rules
+                .protected_suffixes
+                .iter()
+                .any(|value| !value.is_empty() && token.ends_with(&value.to_lowercase()))
+    };
+    !protected(from)
+        && !protected(to)
+        && rules
+            .allowed_pairs
+            .iter()
+            .any(|pair| lexical_tokens(&pair.from) == [from] && lexical_tokens(&pair.to) == [to])
+}
+
 /// A cleanup model alone is never evidence for lexical replacement. Only a
 /// 1:1 acoustic alternative from the same hash-bound ASR pack can correct a
 /// single word. Raw words, clocks, speakers and source IDs never change.
@@ -85,6 +106,8 @@ pub(super) fn apply_cleanup(
     texts: Vec<String>,
     words: &[TranscriptWord],
     candidates: &HashMap<String, AcousticCandidate>,
+    language_hint: Option<&str>,
+    policy: Option<&CleanupPolicy>,
 ) -> AudioResult<Vec<AcceptedCorrection>> {
     if turns.len() != texts.len() {
         return Err(AudioError::CleanupChangedTurns);
@@ -98,6 +121,9 @@ pub(super) fn apply_cleanup(
         if validate_cleanup(&turn.text, text).is_ok() {
             continue;
         }
+        let rules = language_hint
+            .and_then(|lang| policy.and_then(|p| p.language_rules.get(lang)))
+            .ok_or(AudioError::CleanupInventedContent)?;
         let original = lexical_tokens(&turn.text);
         let cleaned = lexical_tokens(text);
         if original.is_empty()
@@ -118,11 +144,10 @@ pub(super) fn apply_cleanup(
             if original[index] == cleaned[index] {
                 continue;
             }
-            // Polarity-bearing source words are never silently corrected.
-            // A candidate alone cannot establish semantic safety.
-            if matches!(original[index].as_str(), "not" | "no" | "never" | "n't")
-                || matches!(cleaned[index].as_str(), "not" | "no" | "never" | "n't")
-            {
+            // Acoustic provenance is necessary but insufficient. The host's
+            // language-specific policy must permit this exact lexical pair
+            // and exclude polarity-bearing tokens/suffixes on both sides.
+            if !correction_allowed(rules, &original[index], &cleaned[index]) {
                 return Err(AudioError::CleanupInventedContent);
             }
             let candidate = candidates

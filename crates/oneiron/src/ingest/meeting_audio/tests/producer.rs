@@ -216,7 +216,9 @@ fn saved_artifact_reloads_exact_bytes_and_waits_for_bulk_owner_consent() {
 #[test]
 fn acoustic_word_correction_keeps_raw_word_clock_and_rejects_unbacked_cleanup() {
     let mut host = FixtureHost::small(Fault::AcousticCorrection);
-    let artifact = produce_meeting_transcript(&file(), &options(), &mut host).unwrap();
+    let mut input = file();
+    input.language_hint = Some("English");
+    let artifact = produce_meeting_transcript(&input, &options(), &mut host).unwrap();
     let document: Value = serde_json::from_str(artifact.json()).unwrap();
     assert_eq!(document["words"][0]["text"], "allice");
     assert_eq!(document["turns"][0]["text"], "Alice.");
@@ -253,6 +255,25 @@ fn acoustic_word_correction_keeps_raw_word_clock_and_rejects_unbacked_cleanup() 
         produce_meeting_transcript(&file(), &options(), &mut unsupported).unwrap_err(),
         AudioError::CleanupInventedContent
     );
+}
+
+#[test]
+fn acoustic_negation_candidates_refuse_contractions_and_japanese_reversal() {
+    for (fault, language) in [
+        (Fault::AcousticContraction, "English"),
+        (Fault::AcousticCurlyContraction, "English"),
+        (Fault::AcousticJapaneseNegation, "Japanese"),
+    ] {
+        let mut host = FixtureHost::small(fault);
+        let mut input = file();
+        input.language_hint = Some(language);
+        assert_eq!(
+            produce_meeting_transcript(&input, &options(), &mut host).unwrap_err(),
+            AudioError::CleanupInventedContent,
+            "{fault:?}"
+        );
+        assert!(host.requests.contains(&HostRequest::Cleanup));
+    }
 }
 
 #[test]

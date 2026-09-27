@@ -1,6 +1,29 @@
 {
-  "glossary_max_bytes": 262144,
-  "glossary_max_terms": 512,
-  "glossary_max_term_bytes": 1024,
-  "stage_timeout_seconds": 900
+  "precedence": {
+    "layers": ["shipped", "vault", "holder"],
+    "mode": "nested_narrowing",
+    "holder_cap": "vault"
+  },
+  "limits": {
+    "glossary_max_bytes": 262144,
+    "glossary_max_terms": 512,
+    "glossary_max_term_bytes": 1024,
+    "stage_timeout_seconds": 900,
+    "cleanup": {
+      "max_candidates_per_word": 16,
+      "max_candidate_bytes": 256,
+      "language_rules": {
+        "English": {
+          "protected_tokens": ["not", "no", "never", "cannot"],
+          "protected_suffixes": ["n't", "n’t"],
+          "allowed_pairs": []
+        },
+        "Japanese": {
+          "protected_tokens": [],
+          "protected_suffixes": ["ではない", "ない", "ません"],
+          "allowed_pairs": []
+        }
+      }
+    }
+  }
 }

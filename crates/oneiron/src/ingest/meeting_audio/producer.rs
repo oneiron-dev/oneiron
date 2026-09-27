@@ -93,11 +93,17 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
             if word.start_ms < previous_pack_end
                 || word.end_ms > pack.audio_ms
                 || word.text.trim().is_empty()
-                || word.acoustic_candidates.len() > 16
                 || word
                     .acoustic_candidates
                     .iter()
-                    .any(|candidate| candidate.trim().is_empty() || candidate.len() > 256)
+                    .any(|candidate| candidate.trim().is_empty())
+                || options.cleanup_policy.as_ref().is_some_and(|policy| {
+                    word.acoustic_candidates.len() > policy.max_candidates_per_word
+                        || word
+                            .acoustic_candidates
+                            .iter()
+                            .any(|candidate| candidate.len() > policy.max_candidate_bytes)
+                })
                 || word.confidence.is_some_and(|confidence| {
                     !confidence.is_finite() || !(0.0..=1.0).contains(&confidence)
                 })
@@ -149,8 +155,14 @@ pub fn produce_meeting_transcript<H: MeetingAudioHost + ?Sized>(
         input_sha256: &cleanup_hash,
     })?;
     validate_receipt(&cleanup.provenance, &cleanup_hash, &mut invocation_ids)?;
-    let accepted_corrections =
-        apply_cleanup(&mut turns, cleanup.texts, &words, &acoustic_candidates)?;
+    let accepted_corrections = apply_cleanup(
+        &mut turns,
+        cleanup.texts,
+        &words,
+        &acoustic_candidates,
+        file.language_hint,
+        options.cleanup_policy.as_ref(),
+    )?;
     let cleanup_policy = if accepted_corrections.is_empty() {
         "lexical_content_preserving_v1"
     } else {
@@ -234,6 +246,9 @@ fn validate_options(file: &AudioFile<'_>, options: &ProducerOptions) -> AudioRes
             .is_some_and(|hint| hint.trim().is_empty())
         || options.batch_default.model_id().trim().is_empty()
         || options.diarization_model_id.trim().is_empty()
+        || options.cleanup_policy.as_ref().is_some_and(|policy| {
+            policy.max_candidates_per_word == 0 || policy.max_candidate_bytes == 0
+        })
         || options.glossary.iter().any(|entry| entry.trim().is_empty())
         || matches!(&options.batch_default, BatchDefault::MeasuredE1 { evidence_ref, .. }
             if evidence_ref.trim().is_empty())

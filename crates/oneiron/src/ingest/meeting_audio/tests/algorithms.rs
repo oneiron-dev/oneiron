@@ -2,6 +2,7 @@ use super::super::alignment::make_turns;
 use super::super::cleanup::{AcousticCandidate, apply_cleanup};
 use super::super::packing::{packed_audio, source_times};
 use super::super::*;
+use super::support::options;
 
 fn span(start_ms: u64, end_ms: u64) -> SpeechSpan {
     SpeechSpan { start_ms, end_ms }
@@ -242,7 +243,9 @@ fn cleanup_rejects_invention_deletion_reorder_symbol_changes_and_word_joining() 
             &mut turns,
             vec!["Hello!".into(), "yes".into()],
             &words,
-            &Default::default()
+            &Default::default(),
+            None,
+            None,
         ),
         Err(AudioError::CleanupInventedContent)
     );
@@ -252,7 +255,9 @@ fn cleanup_rejects_invention_deletion_reorder_symbol_changes_and_word_joining() 
             &mut turns,
             vec!["hello not".into()],
             &words,
-            &Default::default()
+            &Default::default(),
+            None,
+            None,
         ),
         Err(AudioError::CleanupChangedTurns)
     );
@@ -273,11 +278,25 @@ fn acoustic_candidates_never_allow_negation_loss_or_extra_words() {
         },
     )]);
     assert!(matches!(
-        apply_cleanup(&mut turns, vec!["now".into()], &raw, &candidates),
+        apply_cleanup(
+            &mut turns,
+            vec!["now".into()],
+            &raw,
+            &candidates,
+            Some("English"),
+            options().cleanup_policy.as_ref()
+        ),
         Err(AudioError::CleanupInventedContent)
     ));
     assert!(matches!(
-        apply_cleanup(&mut turns, vec!["not now".into()], &raw, &candidates),
+        apply_cleanup(
+            &mut turns,
+            vec!["not now".into()],
+            &raw,
+            &candidates,
+            Some("English"),
+            options().cleanup_policy.as_ref()
+        ),
         Err(AudioError::CleanupInventedContent)
     ));
     assert_eq!(turns, before);
