@@ -15877,13 +15877,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentKind",
+      "AgentSurface",
+      "ExportVersionedComponent",
       "FailureClassV1",
-      "FailureSignalCounts",
       "FailureSignalDimensions",
+      "FailureSignalInput",
       "FailureTaxonomy",
       "Tier1FailureCount",
       "VersionedComponent"
@@ -15891,13 +15893,14 @@
      "path": "src/failure_signals.rs",
      "purpose": "Content-free, versioned tier-1 agent failure counts",
      "surface": {
-      "enum": 3,
-      "fn": 4,
-      "struct": 4
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 8,
+      "struct": 5
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/failure_signals/tests.rs",
@@ -34901,7 +34904,7 @@
     "failure_signals": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Content-free, versioned tier-1 agent failure counts"
     },
