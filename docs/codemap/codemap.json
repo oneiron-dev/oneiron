@@ -12923,7 +12923,7 @@
      "path": "src/dreamer_consolidation/failure_rules.rs",
      "purpose": "Resident-owned v1 failure rules for the two Dreamer consolidation call sites",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -12961,7 +12961,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
       "re-export": 9
      }
@@ -13198,7 +13198,9 @@
      "notable": [],
      "path": "src/dreamer_consolidation/tests/prior_heads.rs",
      "purpose": "Real executor -> sealed sink -> durable evidence/provenance fixture",
-     "surface": {}
+     "surface": {
+      "crate-vis": 1
+     }
     },
     {
      "bucket": "L",
@@ -21998,7 +22000,7 @@
      "path": "src/off_record/lifecycle/executor.rs",
      "purpose": "Second OffRecordSession block: executor witness doors, routed shells and executor traps",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {

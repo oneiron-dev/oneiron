@@ -13,7 +13,7 @@ struct Fixture {
     run: DreamerRunContext,
 }
 
-fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
+pub(super) fn policy(vault: &Vault, reader: EntityId, auto: bool) -> Result<()> {
     let row = Value::Map(vec![
         ("max_auto_sensitivity".into(), 3_u64.into()),
         ("receipted".into(), true.into()),
