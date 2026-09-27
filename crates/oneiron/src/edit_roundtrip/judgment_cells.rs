@@ -71,15 +71,28 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
     let mut capture: Option<&'static str> = None;
     let mut in_sheet_data = false;
     let mut row: Option<u32> = None;
+    let mut depth = 0usize;
+    let mut root_seen = false;
     loop {
-        match reader.read_event().map_err(|_| invalid())? {
-            Event::Start(tag) if sheet_tag(&reader, &tag, "sheetData") => {
+        let event = reader.read_event().map_err(|_| invalid())?;
+        if let Event::Start(tag) = &event {
+            depth += 1;
+            if depth == 1 {
+                if root_seen || !sheet_tag(&reader, tag, "worksheet") {
+                    return Err(invalid());
+                }
+                root_seen = true;
+            }
+        }
+        let ended = matches!(&event, Event::End(_));
+        match event {
+            Event::Start(tag) if depth == 2 && sheet_tag(&reader, &tag, "sheetData") => {
                 if in_sheet_data {
                     return Err(invalid());
                 }
                 in_sheet_data = true;
             }
-            Event::Start(tag) if sheet_tag(&reader, &tag, "row") && in_sheet_data => {
+            Event::Start(tag) if depth == 3 && sheet_tag(&reader, &tag, "row") && in_sheet_data => {
                 if row.is_some() {
                     return Err(invalid());
                 }
@@ -91,7 +104,7 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
                         .map_err(|_| invalid())?,
                 );
             }
-            Event::Start(tag) if sheet_tag(&reader, &tag, "c") && row.is_some() => {
+            Event::Start(tag) if depth == 4 && sheet_tag(&reader, &tag, "c") && row.is_some() => {
                 if current.is_some() {
                     return Err(invalid());
                 }
@@ -103,7 +116,7 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
                 }
                 current = Some((cell, attrs.get("t").cloned(), String::new(), false));
             }
-            Event::Empty(tag) if sheet_tag(&reader, &tag, "c") && row.is_some() => {
+            Event::Empty(tag) if depth == 3 && sheet_tag(&reader, &tag, "c") && row.is_some() => {
                 if current.is_some() {
                     return Err(invalid());
                 }
@@ -157,13 +170,17 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
             Event::End(tag) if matches!(tag.local_name().as_ref(), "v" | "t") => {
                 capture = None;
             }
-            Event::End(tag) if tag.local_name().as_ref() == "row" && row.is_some() => {
+            Event::End(tag)
+                if depth == 3 && tag.local_name().as_ref() == "row" && row.is_some() =>
+            {
                 if current.is_some() {
                     return Err(invalid());
                 }
                 row = None;
             }
-            Event::End(tag) if tag.local_name().as_ref() == "sheetData" && in_sheet_data => {
+            Event::End(tag)
+                if depth == 2 && tag.local_name().as_ref() == "sheetData" && in_sheet_data =>
+            {
                 if row.is_some() {
                     return Err(invalid());
                 }
@@ -173,8 +190,11 @@ fn sheet_cells(bytes: &[u8], bundle: &SheetAnswerBundle) -> Result<BTreeMap<Cell
             Event::Eof => break,
             _ => {}
         }
+        if ended {
+            depth = depth.checked_sub(1).ok_or_else(invalid)?;
+        }
     }
-    if current.is_some() || row.is_some() || in_sheet_data {
+    if current.is_some() || row.is_some() || in_sheet_data || depth != 0 || !root_seen {
         return Err(invalid());
     }
     Ok(cells)
@@ -435,6 +455,7 @@ mod tests {
             r#"<worksheet><sheetData/><extLst><c r="B2" t="inlineStr"><is><t>Ready &amp; Yes</t></is></c></extLst></worksheet>"#,
             r#"<worksheet><sheetData><row r="2"><x:c xmlns:x="urn:other" r="B2" t="inlineStr"><x:is><x:t>Ready &amp; Yes</x:t></x:is></x:c></row></sheetData></worksheet>"#,
             r#"<worksheet><sheetData><row r="3"><c r="B2" t="inlineStr"><is><t>Ready &amp; Yes</t></is></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData/><extLst><sheetData><row r="2"><c r="B2" t="inlineStr"><is><t>Ready &amp; Yes</t></is></c></row></sheetData></extLst></worksheet>"#,
         ] {
             assert!(
                 verify_sheet_answer_bytes(&bundle, Some(&source), Some(&package(fake, true)))
