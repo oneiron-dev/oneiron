@@ -17,9 +17,15 @@ pub(in crate::beam) struct OfflineStages {
 }
 
 pub(super) fn elapsed_cost(elapsed_us: u64) -> CostComponentReport {
-    let mut cost = super::super::report::not_applicable_cost();
-    cost.elapsed_us = elapsed_us;
-    cost
+    CostComponentReport {
+        token_source: TokenAccountingSource::ElapsedOnly,
+        tokenizer_id: None,
+        input_tokens: 0,
+        output_tokens: 0,
+        target_tokens: 0,
+        elapsed_us,
+        cost_usd: 0.0,
+    }
 }
 
 // Provider receipts are produced by the same pinned session as the answerer.
@@ -47,7 +53,7 @@ pub(super) fn offline_provider_cost(
 pub(super) fn offline_totals(
     stages: &OfflineStages,
     questions: usize,
-) -> BeamResult<(CostComponentReport, CostComponentReport)> {
+) -> BeamResult<(CostComponentReport, CostComponentReport, OfflineStages)> {
     let parts = [
         &stages.ingest,
         &stages.extraction,
@@ -88,12 +94,23 @@ pub(super) fn offline_totals(
     if !total.cost_usd.is_finite() || questions == 0 {
         return Err(overflow());
     }
-    let mut amortized = total.clone();
+    let amortized = amortize(&total, questions);
+    let stages_amortized = OfflineStages {
+        ingest: amortize(&stages.ingest, questions),
+        extraction: amortize(&stages.extraction, questions),
+        dreamer_consolidation: amortize(&stages.dreamer_consolidation, questions),
+        index_build: amortize(&stages.index_build, questions),
+    };
+    Ok((total, amortized, stages_amortized))
+}
+
+fn amortize(cost: &CostComponentReport, questions: usize) -> CostComponentReport {
+    let mut result = cost.clone();
     let n = questions as u64;
-    amortized.input_tokens = amortized.input_tokens.div_ceil(n);
-    amortized.output_tokens = amortized.output_tokens.div_ceil(n);
-    amortized.target_tokens = amortized.target_tokens.div_ceil(n);
-    amortized.elapsed_us = amortized.elapsed_us.div_ceil(n);
-    amortized.cost_usd /= questions as f64;
-    Ok((total, amortized))
+    result.input_tokens = result.input_tokens.div_ceil(n);
+    result.output_tokens = result.output_tokens.div_ceil(n);
+    result.target_tokens = result.target_tokens.div_ceil(n);
+    result.elapsed_us = result.elapsed_us.div_ceil(n);
+    result.cost_usd /= questions as f64;
+    result
 }

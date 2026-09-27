@@ -100,6 +100,7 @@ pub(super) struct MeasuredReport {
     pub chat_cost_accuracy_points: Vec<AccuracyCostPoint>,
     pub agency_lift: BTreeMap<String, f64>,
     pub offline_stages: OfflineStages,
+    pub offline_stages_amortized: OfflineStages,
     pub offline_total: CostComponentReport,
     pub offline_amortized: CostComponentReport,
     pub amortized_question_count: usize,
@@ -320,9 +321,12 @@ pub(super) fn run_with_session(
         one.case_ids = vec![id.clone()];
         let receipt_start = session.receipts().len();
         let loaded = load_dataset(&vault, &one, None)?;
-        offline_ingest.elapsed_us = offline_ingest
-            .elapsed_us
-            .saturating_add(loaded.offline.elapsed_us);
+        offline_ingest.elapsed_us = offline_ingest.elapsed_us.saturating_add(
+            loaded
+                .offline
+                .elapsed_us
+                .saturating_sub(loaded.offline_index_build_us),
+        );
         offline_index.elapsed_us = offline_index
             .elapsed_us
             .saturating_add(loaded.offline_index_build_us);
@@ -548,7 +552,8 @@ pub(super) fn run_with_session(
         )?,
         index_build: offline_index,
     };
-    let (offline, offline_amortized) = offline_totals(&stages, plan.amortized_question_count)?;
+    let (offline, offline_amortized, stages_amortized) =
+        offline_totals(&stages, plan.amortized_question_count)?;
     let mut points = Vec::new();
     for effort in &plan.efforts {
         for arm in &plan.answerers {
@@ -648,6 +653,7 @@ pub(super) fn run_with_session(
         chroma_card_id: plan.chroma.as_ref().map(|c| c.card_id.clone()),
         agency_lift: lift,
         offline_stages: stages,
+        offline_stages_amortized: stages_amortized,
         offline_total: offline.clone(),
         offline_amortized,
         amortized_question_count: plan.amortized_question_count,

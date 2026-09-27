@@ -220,8 +220,29 @@ fn measured_shared_scaffold_has_real_costs_solo_rows_and_no_chat_lift() {
     );
     assert!(report.offline_stages.index_build.elapsed_us > 0);
     assert_eq!(
-        report.offline_stages.extraction.token_source,
-        TokenAccountingSource::NotApplicable
+        report.offline_stages.index_build.token_source,
+        TokenAccountingSource::ElapsedOnly
+    );
+    assert_eq!(
+        report.offline_stages_amortized.index_build,
+        report.offline_stages.index_build
+    );
+    for absent in [
+        &report.offline_stages.extraction,
+        &report.offline_stages.dreamer_consolidation,
+        &report.offline_stages_amortized.extraction,
+        &report.offline_stages_amortized.dreamer_consolidation,
+    ] {
+        assert_eq!(*absent, super::super::report::not_applicable_cost());
+    }
+    let wire = serde_json::to_value(&report).unwrap();
+    assert_eq!(
+        wire["offline_stages"]["index_build"]["tokenSource"],
+        "elapsed_only"
+    );
+    assert_eq!(
+        wire["offline_stages"]["extraction"]["tokenSource"],
+        "not_applicable"
     );
     assert_eq!(report.offline_amortized, report.offline_total);
     assert_eq!(
@@ -587,12 +608,26 @@ fn offline_provider_receipt_prices_nonzero_usage() {
         dreamer_consolidation: super::super::report::not_applicable_cost(),
         index_build: elapsed_cost(6),
     };
-    let (total, amortized) = offline_totals(&stages, 2).unwrap();
+    let (total, amortized, per_stage) = offline_totals(&stages, 2).unwrap();
     assert_eq!(total.input_tokens, 120);
     assert_eq!(amortized.input_tokens, 60);
     assert_eq!(amortized.cost_usd, charged.cost_usd / 2.0);
     assert_eq!(amortized.elapsed_us, total.elapsed_us.div_ceil(2));
     assert_eq!(total.token_source, TokenAccountingSource::Mixed);
+    assert_eq!(per_stage.extraction.input_tokens, 50);
+    assert_eq!(per_stage.extraction.output_tokens, 2);
+    assert_eq!(per_stage.extraction.cost_usd, charged.cost_usd / 2.0);
+    assert_eq!(per_stage.ingest.input_tokens, 10);
+    assert_eq!(per_stage.ingest.elapsed_us, 4);
+    assert_eq!(per_stage.index_build.elapsed_us, 3);
+    assert_eq!(
+        per_stage.index_build.token_source,
+        TokenAccountingSource::ElapsedOnly
+    );
+    assert_eq!(
+        per_stage.dreamer_consolidation,
+        super::super::report::not_applicable_cost()
+    );
 }
 
 #[test]
@@ -632,6 +667,22 @@ fn measured_two_case_ingest_amortizes_measured_tokens_and_index_time() {
     assert_eq!(
         report.offline_amortized.input_tokens,
         report.offline_total.input_tokens / 2
+    );
+    assert_eq!(
+        report.offline_stages_amortized.ingest.input_tokens,
+        report.offline_stages.ingest.input_tokens / 2
+    );
+    assert_eq!(
+        report.offline_stages_amortized.ingest.elapsed_us,
+        report.offline_stages.ingest.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(
+        report.offline_stages_amortized.index_build.elapsed_us,
+        report.offline_stages.index_build.elapsed_us.div_ceil(2)
+    );
+    assert_eq!(
+        report.offline_stages_amortized.index_build.token_source,
+        TokenAccountingSource::ElapsedOnly
     );
     assert_eq!(
         report.offline_amortized.elapsed_us,
