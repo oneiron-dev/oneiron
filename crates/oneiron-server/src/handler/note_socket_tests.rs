@@ -551,7 +551,9 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         super::documents::document_delivery(&server, &state, &stale_receipt).unwrap(),
         vec![stale_receipt.clone()]
     );
-    vault.delete_entity(&source).unwrap();
+    vault
+        .delete_entity_with_options(&source, oneiron::DeleteEntityOptions { purge: true })
+        .unwrap();
     assert!(vault.note_document(note).unwrap().pins.is_empty());
     assert_eq!(
         super::documents::document_delivery(&server, &state, &notice)
