@@ -124,7 +124,8 @@ def native_boundary(row, language):
         tail = napi_result(row['output']) if typed else 'serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))'
         body = f'{setup} let output = {call}.map_err(facade_error)?; {tail}'
     else:
-        body = f'{setup} let output = py.detach(|| {call}).map_err(raise)?; encode(&output)'
+        encode_output = 'encode_recall(&output)' if row['name'] == 'recall' else 'encode(&output)'
+        body = f'{setup} let output = py.detach(|| {call}).map_err(raise)?; {encode_output}'
     return head + body + '}\n'
 
 def ts_wire_type(row):
