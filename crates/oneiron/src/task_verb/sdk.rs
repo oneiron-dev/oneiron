@@ -86,6 +86,10 @@ pub struct TaskRequest {
 pub struct DescribeRequest {
     #[serde(default)]
     pub task_ref: Option<String>,
+    #[serde(default, rename = "self")]
+    pub self_target: bool,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

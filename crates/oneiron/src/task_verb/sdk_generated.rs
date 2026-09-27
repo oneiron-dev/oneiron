@@ -424,13 +424,19 @@ pub fn describe(
     memory: &Memory<'_>,
     input: DescribeRequest,
 ) -> MemoryResult<crate::task_verb::TaskDescription> {
-    memory.describe(
-        input
-            .task_ref
-            .as_deref()
-            .map(crate::EntityId::from_hex)
-            .transpose()?,
-    )
+    Ok(if input.self_target {
+        Err(MemoryError::bad_request(
+            "describe(self) requires a bound run session",
+        ))?
+    } else {
+        memory.describe(
+            input
+                .task_ref
+                .as_deref()
+                .map(crate::EntityId::from_hex)
+                .transpose()?,
+        )?
+    })
 }
 pub fn tasks_create(
     memory: &Memory<'_>,

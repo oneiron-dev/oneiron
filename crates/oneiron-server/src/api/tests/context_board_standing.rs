@@ -76,3 +76,122 @@ async fn registered_agent_floor_is_enforced_at_session_entry() {
     let (status, _) = route_json(server.clone(), request(&body, false)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+/// A trusted host installs the live run snapshot; the request never carries
+/// grant, class or budget values. Exercise the actual HTTP context assembly.
+#[tokio::test]
+async fn host_bound_self_brief_opens_updates_tail_and_folds_prefix() {
+    use oneiron::context_board::{ClassLimit, ClassVerdict, CommunicationLimits, SelfBriefState};
+    use oneiron::federation::Scope;
+    use oneiron::llm::{BudgetExhaustionPolicy, BudgetRead};
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".into()),
+        ..Default::default()
+    });
+    let actor = seeded_test_entity_id(0x2631_0001);
+    server
+        .vault
+        .put_entity(
+            &actor,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"agent",
+        )
+        .unwrap();
+    let mut state = SelfBriefState {
+        self_ref: actor,
+        principal: actor,
+        cast: vec![actor],
+        grant_revision: 7,
+        effective_scope: Scope::top(),
+        communication: CommunicationLimits {
+            scope: Scope::default(),
+            recipients: vec![],
+            max_messages: Some(2),
+        },
+        classes: vec![ClassLimit {
+            class: "send".into(),
+            verdict: ClassVerdict::WouldAsk,
+        }],
+        budget_lease_id: "lease".into(),
+        budget: BudgetRead {
+            attempt_id: "run".into(),
+            limit_units: 100,
+            cap_units: 100,
+            used_units: 20,
+            reserved_units: 10,
+            remaining_units: 70,
+            on_budget_exhausted: BudgetExhaustionPolicy::Suspend,
+            fired_thresholds: vec![],
+        },
+        clock_ms: 123,
+        skill_index: vec![],
+        working_set: vec![],
+    };
+    server
+        .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
+        .await
+        .unwrap();
+    let request = |describe_self| {
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=agent",
+                actor.to_hex()
+            )),
+            Some(&json!({"session":{"session_id":"brief-session"}, "describe_self":describe_self})),
+        )
+    };
+    let (status, open) = route_json(server.clone(), request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{open}");
+    let cached = open["self_brief"]["prefix"].as_str().unwrap().to_owned();
+    assert!(cached.contains("\"remaining_units\":70"));
+    assert!(cached.contains("\"would_ask\""));
+    state.grant_revision = 8;
+    state.budget.remaining_units = 20;
+    state.budget.reserved_units = 15;
+    state.classes[0].verdict = ClassVerdict::Deny;
+    server
+        .install_self_brief_session(actor, "brief-session".into(), 1, state.clone())
+        .await
+        .unwrap();
+    let (status, mid) = route_json(server.clone(), request(true)).await;
+    assert_eq!(status, StatusCode::OK, "{mid}");
+    assert!(mid["self_brief"]["prefix"].is_null());
+    let tail = mid["self_brief"]["tail"].as_str().unwrap();
+    assert!(tail.contains("\"remaining_units\":20"));
+    assert!(tail.contains("\"deny\""));
+    let (status, stable) = route_json(server.clone(), request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{stable}");
+    assert!(
+        stable.get("self_brief").is_none(),
+        "no prefix rewrite mid-epoch"
+    );
+    assert_ne!(tail, cached);
+    let (status, described) = route_json(
+        server.clone(),
+        core_request_with_authz(
+            "POST",
+            "/v1/core/facade/describe",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=agent",
+                actor.to_hex()
+            )),
+            Some(&json!({"self":true,"session_id":"brief-session"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{described}");
+    assert!(described["prefix"].is_null());
+    assert_eq!(described["tail"].as_str(), Some(tail));
+    server
+        .install_self_brief_session(actor, "brief-session".into(), 2, state)
+        .await
+        .unwrap();
+    let (status, folded) = route_json(server.clone(), request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{folded}");
+    assert_eq!(folded["self_brief"]["prefix"].as_str(), Some(tail));
+    assert!(folded["self_brief"]["tail"].is_null());
+}

@@ -105,7 +105,7 @@
       "name": "describe",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
-      "call": "memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)?",
+      "call": "if input.self_target { Err(MemoryError::bad_request(\"describe(self) requires a bound run session\"))? } else { memory.describe(input.task_ref.as_deref().map(crate::EntityId::from_hex).transpose()?)? }",
       "scope": "Read",
       "mcp": "tool-first",
       "mcp_fields": {

@@ -74,6 +74,8 @@ def remote_boundary(row):
         declaration = ', '.join(a['name'] + ': ' + ARGUMENTS[a['kind']]['rust'] for a in args)
         if binding.get('assemble'):
             fields = ', '.join(a['name'] + ': ' + ARGUMENTS[a['kind']]['field'].format(name=a['name']) for a in args)
+            if row['name'] == 'describe':
+                fields += ', ..Default::default()'
             setup = f'let input = {rust_type(row["input"])} {{ {fields} }};'
             value = '&input'
         else:
@@ -318,6 +320,9 @@ def outputs():
         # The typed result path consumes facade_input; invoke decodes its own input.
         validation = (f'oneiron::task_verb::sdk::validate_input("{r["name"]}", &value)?;\n         '
                       if 'rows' in r.get('admission', {}).get('readable', []) else '')
+        if r['name'] == 'describe':
+            validation += "if value.get(\"self\").and_then(serde_json::Value::as_bool) == Some(true) { "
+            validation += "return Ok(Json(crate::api::context_board::describe_self_for_auth(&server, &auth, &value).await?)); } "
         server += f'''async fn {method}(auth: CoreAuth, State(server): State<Arc<SyncServer>>, payload: Result<Json<serde_json::Value>, JsonRejection>) -> Result<Json<serde_json::Value>, FacadeApiError> {{
         auth.require(CoreScope::{r["scope"]})?;
         {'auth.require_unrestricted_record_scope()?;' if r.get('admission', {}).get('unrestricted_record_scope') else ''}

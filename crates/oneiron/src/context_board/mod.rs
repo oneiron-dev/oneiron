@@ -27,7 +27,7 @@ pub use history::{
 };
 pub use self_brief::{
     BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief,
-    SelfBrief, SelfBriefInput,
+    SelfBrief, SelfBriefInput, SelfBriefSession, SelfBriefState,
 };
 mod memories;
 mod memories_frame;

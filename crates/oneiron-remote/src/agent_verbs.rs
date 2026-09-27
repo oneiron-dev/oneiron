@@ -151,6 +151,7 @@ impl OneironClient {
     ) -> Result<oneiron::task_verb::TaskDescription, MemoryError> {
         let input = oneiron::task_verb::sdk::DescribeRequest {
             task_ref: task_ref.map(str::to_owned),
+            ..Default::default()
         };
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(

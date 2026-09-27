@@ -88,16 +88,25 @@ impl AssembledContext {
         }
     }
 
-    /// Attach the same typed describe(self) card to the correct context surface.
-    #[must_use]
-    pub fn with_self_brief(
+    /// Assemble the live run's self brief through the session's prefix custody.
+    /// A mid-run read never returns a prefix replacement.
+    pub fn assemble_self(
         mut self,
-        brief: &super::self_brief::SelfBrief,
+        vault: &crate::Vault,
+        state: &super::self_brief::SelfBriefState,
+        read_set: &super::SessionReadSet,
+        session: &mut super::self_brief::SelfBriefSession,
         placement: super::self_brief::BriefPlacement,
-    ) -> Self {
-        self.self_brief = Some(super::self_brief::PlacedSelfBrief::assemble(
-            brief, placement,
-        ));
-        self
+    ) -> crate::Result<Self> {
+        self.self_brief = Some(match placement {
+            super::self_brief::BriefPlacement::TurnOne => {
+                session.turn_one(vault, state, read_set)?
+            }
+            super::self_brief::BriefPlacement::Fold => session.fold(vault, state, read_set)?,
+            super::self_brief::BriefPlacement::MidRun => {
+                session.describe_self(vault, state, read_set)?
+            }
+        });
+        Ok(self)
     }
 }

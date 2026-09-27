@@ -94,9 +94,7 @@ impl SelfBrief {
             let loaded_hash = input
                 .read_set
                 .loaded_skills()
-                .any(|(loaded_id, version)| {
-                    loaded_id == record.skill_id && version == record.version
-                })
+                .any(|(loaded_id, version)| loaded_id == id.to_hex() && version == record.version)
                 .then(|| hash.clone())
                 .flatten();
             skills.push(BriefSkillRow {
@@ -133,7 +131,20 @@ impl SelfBrief {
             .expect("self brief is a struct")
             .remove("skills")
             .expect("self brief always carries skill index rows");
-        format!("<skills>{skills}</skills>\n<identity>{identity}</identity>")
+        // JSON escapes quotes, but not XML delimiters. Encode those as JSON
+        // unicode escapes so a class or label cannot close either block.
+        let safe = |value: &serde_json::Value| {
+            value
+                .to_string()
+                .replace('&', "\\u0026")
+                .replace('<', "\\u003c")
+                .replace('>', "\\u003e")
+        };
+        format!(
+            "<skills>{}</skills>\n<identity>{}</identity>",
+            safe(&skills),
+            safe(&identity)
+        )
     }
 }
 
@@ -168,6 +179,111 @@ impl PlacedSelfBrief {
                 tail: Some(text),
             },
         }
+    }
+}
+
+/// Host-owned run snapshot. Only the host that resolved the grant and budget
+/// can create this state; an HTTP request never supplies any authority fields.
+#[derive(Debug, Clone)]
+pub struct SelfBriefState {
+    pub self_ref: EntityId,
+    pub principal: EntityId,
+    pub cast: Vec<EntityId>,
+    pub grant_revision: u64,
+    pub effective_scope: Scope,
+    pub communication: CommunicationLimits,
+    pub classes: Vec<ClassLimit>,
+    pub budget_lease_id: String,
+    pub budget: BudgetRead,
+    pub clock_ms: u64,
+    pub skill_index: Vec<EntityId>,
+    pub working_set: Vec<EntityId>,
+}
+
+impl SelfBriefState {
+    /// Resolve skill records and claims afresh for each render, against the
+    /// session's read set rather than a previously rendered prompt.
+    pub fn describe(&self, vault: &Vault, read_set: &SessionReadSet) -> Result<SelfBrief> {
+        SelfBrief::describe(
+            vault,
+            SelfBriefInput {
+                self_ref: self.self_ref,
+                principal: self.principal,
+                cast: &self.cast,
+                grant_revision: self.grant_revision,
+                effective_scope: &self.effective_scope,
+                communication: &self.communication,
+                classes: &self.classes,
+                budget_lease_id: &self.budget_lease_id,
+                budget: &self.budget,
+                clock_ms: self.clock_ms,
+                skill_index: &self.skill_index,
+                read_set,
+                working_set: &self.working_set,
+            },
+        )
+    }
+}
+
+/// Per-run prefix custody. `describe_self` appends to the tail, leaving the
+/// cached bytes untouched until `fold` deliberately replaces the prefix.
+#[derive(Debug, Default)]
+pub struct SelfBriefSession {
+    cached_prefix: Option<String>,
+}
+
+impl SelfBriefSession {
+    pub fn turn_one(
+        &mut self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+    ) -> Result<PlacedSelfBrief> {
+        self.cached_prefix = Some(state.describe(vault, read_set)?.render());
+        Ok(PlacedSelfBrief {
+            prefix: self.cached_prefix.clone(),
+            tail: None,
+        })
+    }
+
+    pub fn fold(
+        &mut self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+    ) -> Result<PlacedSelfBrief> {
+        if self.cached_prefix.is_none() {
+            return Err(crate::Error::InvariantViolation(
+                "self brief fold before turn one",
+            ));
+        }
+        self.cached_prefix = Some(state.describe(vault, read_set)?.render());
+        Ok(PlacedSelfBrief {
+            prefix: self.cached_prefix.clone(),
+            tail: None,
+        })
+    }
+
+    pub fn describe_self(
+        &self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+    ) -> Result<PlacedSelfBrief> {
+        if self.cached_prefix.is_none() {
+            return Err(crate::Error::InvariantViolation(
+                "self brief describe before turn one",
+            ));
+        }
+        Ok(PlacedSelfBrief {
+            prefix: None,
+            tail: Some(state.describe(vault, read_set)?.render()),
+        })
+    }
+
+    #[must_use]
+    pub fn cached_prefix(&self) -> Option<&str> {
+        self.cached_prefix.as_deref()
     }
 }
 

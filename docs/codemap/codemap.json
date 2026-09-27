@@ -11111,18 +11111,20 @@
       "CommunicationLimits",
       "PlacedSelfBrief",
       "SelfBrief",
-      "SelfBriefInput"
+      "SelfBriefInput",
+      "SelfBriefSession",
+      "SelfBriefState"
      ],
      "path": "src/context_board/self_brief.rs",
      "purpose": "Typed turn-one self projection shared by the prefix and mid-run describe call",
      "surface": {
       "enum": 2,
-      "fn": 3,
-      "struct": 6
+      "fn": 8,
+      "struct": 8
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/context_board/self_brief/tests.rs",
@@ -39721,7 +39723,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -42348,8 +42350,8 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 8,
-      "fn": 4,
+      "crate-vis": 9,
+      "fn": 5,
       "struct": 1
      }
     },
