@@ -39,6 +39,12 @@ impl HostSlipIssuer {
     pub fn binding_key(&self) -> [u8; 32] {
         self.signing.verifying_key().to_bytes()
     }
+    pub(super) fn sign_mesh(&self, transcript: &[u8]) -> [u8; 64] {
+        self.signing.sign(transcript).to_bytes()
+    }
+    pub(super) fn sign_slip(&self, transcript: &[u8]) -> Vec<u8> {
+        self.signing.sign(transcript).to_bytes().to_vec()
+    }
     pub(super) fn secret(&self) -> &[u8] {
         &self.secret
     }
@@ -185,7 +191,7 @@ impl Vault {
             actor_class: None,
             org_ref: None,
         };
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(
             issuer,
             &fold,
@@ -248,6 +254,25 @@ impl Vault {
             signature,
         )
     }
+    /// Verify an uncaveated slip against only its logged issuing host key.
+    /// A caveated slip needs the private MAC root and must use the issuer door.
+    pub fn verify_capability_slip_with_host_key(
+        &self,
+        host_key: &AuthorityKey,
+        slip: &CapabilitySlip,
+        challenge: &[u8],
+        signature: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        slip.verify_with_host_key(
+            host_key,
+            &fold,
+            self.instant_in_txn(&txn)?.secs(),
+            challenge,
+            signature,
+        )
+    }
     /// Verify a transport proof without consuming its nonce, using the same
     /// vault clock and signed challenge as atomic request admission.
     pub fn verify_capability_slip_request(
@@ -289,7 +314,7 @@ impl Vault {
         if claims.issued_at > now || claims.expires_at <= now {
             return Err(invalid_authority());
         }
-        let slip = CapabilitySlip::mint(claims.clone(), issuer.secret())?;
+        let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let entry = next_entry(
             issuer,
             &fold,
@@ -315,10 +340,25 @@ impl Vault {
         Ok(slip)
     }
     pub fn revoke_capability_slip(&self, issuer: &HostSlipIssuer, slip_id: [u8; 32]) -> Result<()> {
+        self.revoke_capability_slip_once(issuer, slip_id).map(drop)
+    }
+    /// Appends a signed revocation once per slip id. `true` means this call
+    /// appended the first explicit revoke; expiry, ancestor revocation, or an
+    /// absent mint does not prevent a first tombstone for a late mint.
+    pub fn revoke_capability_slip_once(
+        &self,
+        issuer: &HostSlipIssuer,
+        slip_id: [u8; 32],
+    ) -> Result<bool> {
         let mut txn = self.store.env.write_txn()?;
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        if fold.slips.explicit_revoked.contains(&slip_id) {
+            return Ok(false);
+        }
         self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
         txn.commit()?;
-        Ok(())
+        Ok(true)
     }
     /// Verifies the binding and burns single-use authority before returning it.
     /// Request nonce consumption is transactionally shared with SlipConsume.
