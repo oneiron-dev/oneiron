@@ -1,10 +1,31 @@
 # Engine audit lanes
 
-Pins are in `tools.json`. The CI compiler lanes use sccache 0.15.0, a persistent
-host cache plus shared GitHub cache storage keyed by OS, architecture, Rust pin
-and lockfile. Full-tier nextest commands are unchanged. `--show-stats` records
-hit counts. Do not infer speedup from the existence of the configuration: retain
-repeat-build logs and compare clean-checkout wall times.
+Pins are in `tools.json`. The CI compiler lanes use sccache 0.15.0 with GitHub
+Actions cache storage, in addition to each runner's persistent host target dir.
+`SCCACHE_GHA_VERSION` namespaces entries by OS, architecture, the Rust toolchain
+file, and Cargo.lock; the pinned setup action exposes GitHub's cache runtime
+token to sccache. Full-tier nextest commands are unchanged. `--show-stats`
+records hit counts in each compiler job. The setup action also prints its
+post-run statistics.
+
+A scoped workflow-only PR compiles no crates and cannot demonstrate hits. Run
+`gh workflow run ci.yml -R oneiron-dev/oneiron --ref <branch> -f cache_proof=true`
+for a controlled proof on the approved Mac mini runner. The two jobs use
+its unique `mini` capability label so their artifact paths and compiler inputs
+match; the retired Arch runners are offline. This dispatch skips the
+normal full gate; the two dedicated jobs run serially. The first builds
+`oneiron-vault-contract` (small enough for busy runners) from a fresh run-owned
+target without sccache (host-target-only
+baseline), then deletes only that run-owned target and populates the shared
+GitHub cache from the same source and target path. The second job starts a new
+compiler daemon and another empty artifact target at the same path, then
+builds with the same shared namespace. It fails unless Rust hits are positive
+and repeat wall time is less than baseline. Each job retains a JSON artifact
+with run URL, revision, runner, namespace, command, timing, and cache stats.
+Neither job deletes or changes the runner's persistent `CARGO_TARGET_DIR`.
+See the linked run receipts for actual results; a warm host target is not a
+cache-hit proof. The local `cache-baseline.json` proves only host-local
+cold-artifact reuse, not CI shared-cache speedup.
 
 `python3 scripts/audit/cache.py` measures three serial `cargo check` builds of
 oneiron-server (including the core): uncached, cache population, and repeat. Each

@@ -86,6 +86,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
+            linkedin_sandbox_policy: self.request.linkedin_sandbox_policy.as_ref(),
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
