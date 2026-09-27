@@ -25655,7 +25655,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 90,
+      "crate-vis": 91,
       "enum": 1,
       "fn": 10,
       "struct": 6
@@ -28884,7 +28884,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -28925,6 +28925,22 @@
      "surface": {
       "crate-vis": 5,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GoalAxisKind",
+      "GoalAxisScore",
+      "GoalAxisSpec"
+     ],
+     "path": "src/skill_optimize/gate/goal_axis.rs",
+     "purpose": "Goal-axis replay scores",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "struct": 2
      }
     },
     {
@@ -35274,7 +35290,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 15,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -35472,7 +35488,7 @@
    },
    "over_bar": 9,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 2094,
+   "source_files": 2095,
    "test_files": 718
   },
   "oneiron-android": {

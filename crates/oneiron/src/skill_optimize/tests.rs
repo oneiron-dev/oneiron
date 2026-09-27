@@ -3715,7 +3715,7 @@ fn set_row_field(entries: &mut [(Value, Value)], key: &str, value: &Value) {
 }
 
 #[test]
-fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
+fn a_verdict_row_is_schema_v5_and_every_older_row_fails_closed() -> Result<()> {
     let (_tmp, vault) = temp_vault();
     let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.losing");
     let scorer = StubScorer::improving();
@@ -3729,7 +3729,7 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
     assert_eq!(
         skill_edit_verdict(&vault, &proposal)?.expect("a standing verdict"),
         accepted,
-        "a v4 row round-trips with measurements and bound proposal tier"
+        "a v5 row round-trips with measurements, goal axes and bound tier"
     );
     assert_eq!(accepted.proposal_tier, Some(SkillGovernanceTier::Standard));
 
@@ -3757,9 +3757,20 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
         ErrorKind::CorruptedIndex
     );
 
-    // …and so is the retired disposition, whatever schema claims to carry it.
+    // V4 has measurements but no goal vector. It cannot authorize an edit.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "v", &Value::from(4u64));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("v4 has no scored goal vector")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+
+    // …and so is the retired disposition, whatever schema claims to carry it.
+    rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
+        set_row_field(entries, "v", &Value::from(5u64));
         set_row_field(
             entries,
             "disposition",
@@ -3775,9 +3786,9 @@ fn a_verdict_row_is_schema_v4_and_every_older_row_fails_closed() -> Result<()> {
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
         set_row_field(entries, "disposition", &Value::from("accepted"));
     });
-    // A judged v4 verdict cannot carry an absent or nil audit pair.
+    // A judged v5 verdict cannot carry an absent or nil audit pair.
     rewrite_verdict_row(&vault, |entries: &mut [(Value, Value)]| {
-        set_row_field(entries, "v", &Value::from(4u64));
+        set_row_field(entries, "v", &Value::from(5u64));
         set_row_field(entries, "measurements", &Value::Nil);
     });
     assert_eq!(
@@ -4659,5 +4670,259 @@ fn a_large_outcome_history_keeps_world_labels_aligned_at_all_gate_doors() -> Res
         stored(&vault, &proposal).lifecycle_status,
         SkillLifecycle::Active
     );
+    Ok(())
+}
+
+// ONE-2114: a headline win is not an admission when any goal axis regresses.
+struct VectorScorer {
+    primary: (f32, f32),
+    floor: (f32, f32),
+    cost: (f32, f32),
+    seen: RefCell<Vec<(String, String, Vec<String>)>>,
+}
+
+impl VectorScorer {
+    fn new(primary: (f32, f32), floor: (f32, f32), cost: (f32, f32)) -> Self {
+        Self {
+            primary,
+            floor,
+            cost,
+            seen: RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl HeldOutReplayScorer for VectorScorer {
+    fn score(&self, _: &HeldOutReplayCase<'_>) -> Result<f32> {
+        panic!("a multi-axis scorer cannot fall back to a scalar")
+    }
+    fn goal_axes(&self, _: &HeldOutReplayCase<'_>) -> Result<Vec<GoalAxisSpec>> {
+        Ok(vec![
+            GoalAxisSpec {
+                name: "quality".into(),
+                kind: GoalAxisKind::Primary,
+            },
+            GoalAxisSpec {
+                name: "safety".into(),
+                kind: GoalAxisKind::Floor,
+            },
+            GoalAxisSpec {
+                name: "human_minutes".into(),
+                kind: GoalAxisKind::Cost,
+            },
+        ])
+    }
+    fn score_goal_axis(&self, case: &HeldOutReplayCase<'_>, axis: &GoalAxisSpec) -> Result<f32> {
+        self.seen.borrow_mut().push((
+            axis.name.clone(),
+            case.instructions.to_owned(),
+            case.held_out_receipts.to_vec(),
+        ));
+        let (before, after) = match axis.name.as_str() {
+            "quality" => self.primary,
+            "safety" => self.floor,
+            "human_minutes" => self.cost,
+            _ => panic!("unknown axis"),
+        };
+        Ok(if case.instructions == TARGET_DESC {
+            before
+        } else {
+            after
+        })
+    }
+    fn structural_audit(&self, _: &str, _: &str) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn blind_preference(&self, _: &str, _: &[String]) -> Result<Vec<BlindPreference>> {
+        Ok(vec![BlindPreference {
+            pair_ref: "pair".into(),
+            preferred: PreferredResponse::First,
+        }])
+    }
+    fn contrastive_audit(&self, _: &HeldOutReplayCase<'_>, _: &[BlindPreference]) -> Result<f32> {
+        Ok(0.5)
+    }
+    fn predict_task_success(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<f32>> {
+        Ok(vec![0.5; case.held_out_receipts.len()])
+    }
+}
+
+#[test]
+fn goal_vector_dominance_admits_rejects_regressions_and_defers_tradeoffs() -> Result<()> {
+    for (label, primary, floor, cost, expected) in [
+        (
+            "dominates",
+            (0.4, 0.7),
+            (0.8, 0.8),
+            (0.5, 0.6),
+            SkillEditDisposition::Accepted,
+        ),
+        (
+            "dominated",
+            (0.7, 0.4),
+            (0.8, 0.8),
+            (0.6, 0.5),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "tie",
+            (0.4, 0.4),
+            (0.8, 0.8),
+            (0.5, 0.5),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "floor",
+            (0.4, 0.9),
+            (0.8, 0.7),
+            (0.5, 0.6),
+            SkillEditDisposition::Rejected,
+        ),
+        (
+            "cost",
+            (0.4, 0.9),
+            (0.8, 0.8),
+            (0.6, 0.5),
+            SkillEditDisposition::NeedsTradeoffDecision,
+        ),
+        (
+            "quality_cost_tradeoff",
+            (0.7, 0.4),
+            (0.8, 0.8),
+            (0.5, 0.7),
+            SkillEditDisposition::NeedsTradeoffDecision,
+        ),
+    ] {
+        let (_tmp, vault) = temp_vault();
+        let (skill, proposal) =
+            losing_skill_with_proposal(&vault, &format!("oneiron.skill.vector.{label}"));
+        let scorer = VectorScorer::new(primary, floor, cost);
+        let verdict = score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &scorer,
+            wake(&vault, label, 10),
+            900,
+        )?;
+        assert_eq!(verdict.disposition, expected, "{label}");
+        assert_eq!(verdict.accepted, expected.admits(), "{label}");
+        assert_eq!(verdict.goal_axes["quality"].before, primary.0);
+        assert_eq!(verdict.goal_axes["quality"].after, primary.1);
+        assert_eq!(verdict.goal_axes["safety"].kind, GoalAxisKind::Floor);
+        assert_eq!(verdict.goal_axes["human_minutes"].kind, GoalAxisKind::Cost);
+        assert_eq!(
+            scorer.seen.borrow().len(),
+            6,
+            "both bodies on all three axes"
+        );
+        let reserved = held_out_receipts(&vault, &skill)?;
+        assert!(
+            scorer
+                .seen
+                .borrow()
+                .iter()
+                .all(|(_, _, receipts)| *receipts == reserved)
+        );
+        assert_eq!(
+            skill_edit_verdict(&vault, &proposal)?.unwrap().goal_axes,
+            verdict.goal_axes
+        );
+        let receipt = verdict_receipt(&vault, &verdict);
+        let projected: std::collections::BTreeMap<String, GoalAxisScore> =
+            serde_json::from_str(&receipt.fields["skill_edit_goal_axes"]).expect("receipt vector");
+        assert_eq!(projected, verdict.goal_axes);
+        if expected == SkillEditDisposition::NeedsTradeoffDecision {
+            assert_eq!(
+                stored(&vault, &proposal).approval_status,
+                ClaimApprovalStatus::Proposed
+            );
+            assert_eq!(
+                score_gate_skill_edit_in_cycle(
+                    &vault,
+                    &proposal,
+                    &UnreachableScorer,
+                    wake(&vault, "tradeoff-retry", 20),
+                    901,
+                )?,
+                verdict,
+                "a pending tradeoff is not re-scored in a later cycle"
+            );
+            assert_eq!(
+                skill_edit_verdicts_for_proposal(&vault, &proposal)?.len(),
+                1
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_goal_axis_score_aborts_without_a_verdict() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.nan");
+    let scorer = VectorScorer::new((0.4, 0.7), (0.8, f32::NAN), (0.5, 0.6));
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(&vault, &proposal, &scorer, wake(&vault, "nan", 10), 900)
+            .expect_err("invalid floor score must fail closed")
+            .kind(),
+        ErrorKind::InvalidSkillBody
+    );
+    assert!(skill_edit_verdicts_for_proposal(&vault, &proposal)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn an_accepted_vector_cannot_be_rewritten_to_regress_a_floor() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (_, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.corrupt");
+    score_gate_skill_edit_in_cycle(
+        &vault,
+        &proposal,
+        &VectorScorer::new((0.4, 0.7), (0.8, 0.8), (0.5, 0.6)),
+        wake(&vault, "vector-corrupt", 10),
+        900,
+    )?;
+    rewrite_verdict_row(&vault, |entries| {
+        let axes = serde_json::json!({
+            "quality": {"kind":"primary","before":0.4,"after":0.7},
+            "safety": {"kind":"floor","before":0.8,"after":0.7},
+            "human_minutes": {"kind":"cost","before":0.5,"after":0.6}
+        });
+        set_row_field(entries, "goal_axes", &Value::from(axes.to_string()));
+    });
+    assert_eq!(
+        skill_edit_verdicts(&vault)
+            .expect_err("accepted floor regression is corrupt")
+            .kind(),
+        ErrorKind::CorruptedIndex
+    );
+    Ok(())
+}
+
+#[test]
+fn a_protected_goal_tradeoff_refuses_instead_of_waiting_open() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let (skill, proposal) = losing_skill_with_proposal(&vault, "oneiron.skill.vector.protected");
+    let mut marked = stored(&vault, &skill);
+    marked.governance_tier = Some(SkillGovernanceTier::Identity);
+    vault.update_skill_record(&skill, &marked, t(500), 501)?;
+    assert_eq!(
+        score_gate_skill_edit_in_cycle(
+            &vault,
+            &proposal,
+            &VectorScorer::new((0.4, 0.9), (0.8, 0.8), (0.6, 0.5)),
+            wake(&vault, "protected-tradeoff", 10),
+            900,
+        )
+        .expect_err("protected tier outranks tradeoff")
+        .kind(),
+        ErrorKind::InvalidSkillBody,
+    );
+    let verdict = skill_edit_verdict(&vault, &proposal)?.expect("durable refusal");
+    assert_eq!(
+        verdict.disposition,
+        SkillEditDisposition::RefusedProtectedTier
+    );
+    assert_eq!(verdict.goal_axes["human_minutes"].after, 0.5);
     Ok(())
 }

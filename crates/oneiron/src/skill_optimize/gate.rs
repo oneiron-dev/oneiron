@@ -7,8 +7,8 @@
 //!        ├─ score gate ─┬─ held-out receipts, recomputed HERE
 //!        │              ├─ a standing acceptance over the same basis is
 //!        │              │  RETURNED, not re-scored (retries are free)
-//!        │              ├─ judged replay: score(current) vs score(proposed)
-//!        │              ├─ strict  after > before  (ties reject)
+//!        │              ├─ judged replay: score both bodies on each goal axis
+//!        │              ├─ vector dominance (ties and floor regressions reject; tradeoffs await a decision)
 //!        │              ├─ commit-time: held-out set recomputed and compared
 //!        │              ├─ accept-time governance_tier recheck
 //!        │              └─ per-cycle ACCEPT cap, counted in PROPOSALS
@@ -39,12 +39,11 @@
 //! ONE-1448 skips any skill with an open `candidate + proposed` revision,
 //! because an unanswered proposal is a question already put to a human. So a
 //! ruling that ANSWERS a proposal — a rejection, a tie, any refusal — moves it
-//! to `approval: rejected` in the same transaction as the verdict row. Exactly
-//! ONE durable disposition leaves the record open, and it is the cap deferral
-//! ([`SkillEditDisposition::DeferredCycleCap`]): the budget was spent, which
-//! says nothing about the proposal, so a later cycle picks it up. A terminal
-//! answer that left the record open would wedge that skill out of the
-//! optimization loop permanently on one tie.
+//! to `approval: rejected` in the same transaction as the verdict row. A cap
+//! deferral leaves the proposal open for a later cycle; a mixed non-floor
+//! tradeoff leaves it open for an external preference decision. The gate never
+//! auto-admits that tradeoff or pretends it is a terminal rejection. A terminal
+//! answer left open would wedge the skill on one tie.
 //!
 //! When the WORLD moves under an in-flight call instead — the reserved
 //! evidence changes while the scorer is thinking, or a terminal reason read
@@ -119,7 +118,7 @@ use crate::error::{Error, ErrorKind, Result};
 use crate::llm::CallPurpose;
 use crate::receipt::{
     FIELD_SKILL_EDIT_ACCEPTED_VERDICT, FIELD_SKILL_EDIT_CYCLE, FIELD_SKILL_EDIT_DISPOSITION,
-    FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
+    FIELD_SKILL_EDIT_GOAL_AXES, FIELD_SKILL_EDIT_HELD_OUT_COUNT, FIELD_SKILL_EDIT_HELD_OUT_DIGEST,
     FIELD_SKILL_EDIT_HELD_OUT_RECEIPTS, FIELD_SKILL_EDIT_HELD_OUT_TRUNCATED,
     FIELD_SKILL_EDIT_MEASUREMENTS, FIELD_SKILL_EDIT_MISSING_SOURCES, FIELD_SKILL_EDIT_PROPOSAL,
     FIELD_SKILL_EDIT_PROPOSAL_DIGEST, FIELD_SKILL_EDIT_SCORE_AFTER, FIELD_SKILL_EDIT_SCORE_BEFORE,
@@ -136,6 +135,7 @@ use crate::temporal::TimeRange;
 mod admission;
 mod basis;
 mod decision;
+mod goal_axis;
 mod ledger;
 mod measurement;
 mod verdict;
@@ -150,6 +150,7 @@ pub use basis::{
 pub use decision::{
     score_gate_skill_edit, score_gate_skill_edit_in_cycle, score_gate_skill_edit_with_scorer,
 };
+pub use goal_axis::{GoalAxisKind, GoalAxisScore, GoalAxisSpec};
 pub use ledger::{
     is_skill_edit_verdict_receipt, skill_edit_verdict, skill_edit_verdicts,
     skill_edit_verdicts_for_proposal,
@@ -181,6 +182,7 @@ use basis::{
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
 use decision::{close_answered_proposal_in_txn, readable_target, standing_verdict_in_txn};
+use goal_axis::{dominates, floor_regressed, is_tradeoff, score_goal_axes, validate_goal_vector};
 use ledger::{record_verdict_in_txn, verdict_rows_in_txn};
 use measurement::{measure, validate_measurements, world_labels_digest};
 
@@ -224,7 +226,8 @@ const SPLIT_DOMAIN: &[u8] = b"skill_optimize:heldout:v1\0";
 /// data rather than ordering (the `edit_distance::escalation` posture).
 pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 
-/// Bumped by OF-214 (v3 → v4: audited measurements and bound world labels).
+/// Bumped by ONE-2114 (v4 → v5: the scored goal vector and dominance).
+/// OF-214 introduced v4 audited measurements and bound world labels.
 /// Earlier repairs: MATERIAL-10 (v1 → v2: a v1 row carries no binding
 /// digests, so a reader that accepted one would be trusting an acceptance
 /// nobody can check the body of) and again by the MATERIAL-6 repair (v2 → v3: a
@@ -233,9 +236,9 @@ pub(super) const VERDICT_PREFIX: &[u8] = b"skill_optimize/verdict/v1\0";
 /// `deferred_evidence_changed` disposition).
 ///
 /// Prerelease, and the honest answer to an unbindable row is to refuse it
-/// rather than to grow a second code path for it: every v1/v2/v3 row decodes as
+/// rather than to grow a second code path for it: every v1/v2/v3/v4 row decodes as
 /// [`Error::CorruptedIndex`]. There is no shim and no migration.
-const VERDICT_SCHEMA_VERSION: u64 = 4;
+const VERDICT_SCHEMA_VERSION: u64 = 5;
 const KEY_SCHEMA_VERSION: &str = "v";
 const KEY_PROPOSAL: &str = "proposal";
 const KEY_SKILL: &str = "skill";
@@ -254,6 +257,7 @@ const KEY_ACCEPTED_VERDICT: &str = "accepted_verdict";
 const KEY_MISSING_SOURCES: &str = "missing_sources";
 const KEY_AT: &str = "at";
 const KEY_MEASUREMENTS: &str = "measurements";
+const KEY_GOAL_AXES: &str = "goal_axes";
 
 /// Domain separator of the canonical SKILL-body content digest.
 const BODY_DIGEST_DOMAIN: &[u8] = b"skill_optimize:body:v1\0";

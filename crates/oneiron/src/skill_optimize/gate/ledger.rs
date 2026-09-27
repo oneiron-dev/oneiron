@@ -18,6 +18,16 @@ pub(super) fn record_verdict_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdict: &HeldOutVerdict,
 ) -> Result<()> {
+    if verdict.measurements.is_some() {
+        validate_goal_vector(&verdict.goal_axes)?;
+        if verdict.disposition.admits() && !dominates(&verdict.goal_axes) {
+            return Err(invalid(
+                "an accepted verdict must dominate on every goal axis",
+            ));
+        }
+    } else if !verdict.goal_axes.is_empty() {
+        return Err(invalid("an unscored verdict cannot carry goal axes"));
+    }
     if let Some(measurements) = &verdict.measurements {
         validate_measurements(measurements, verdict.held_out_count)?;
     } else if verdict.disposition != SkillEditDisposition::RefusedStaleTarget
@@ -39,6 +49,13 @@ pub(super) fn record_verdict_in_txn(
         (Value::from(KEY_SKILL), Value::from(verdict.skill.to_hex())),
         (Value::from(KEY_BEFORE), Value::F32(verdict.before)),
         (Value::from(KEY_AFTER), Value::F32(verdict.after)),
+        (
+            Value::from(KEY_GOAL_AXES),
+            Value::from(
+                serde_json::to_string(&verdict.goal_axes)
+                    .map_err(|_| invalid("goal vector encode failed"))?,
+            ),
+        ),
         (
             Value::from(KEY_DISPOSITION),
             Value::from(verdict.disposition.as_str()),
@@ -200,7 +217,29 @@ fn decode_verdict(key: &[u8], raw: &[u8]) -> Result<HeldOutVerdict> {
     {
         return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
     }
+    let goal_axes: BTreeMap<String, GoalAxisScore> = serde_json::from_str(
+        field(KEY_GOAL_AXES)
+            .and_then(Value::as_str)
+            .ok_or(Error::CorruptedIndex(VERDICT_ROW_LABEL))?,
+    )
+    .map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+    if measurements.is_some() {
+        validate_goal_vector(&goal_axes).map_err(|_| Error::CorruptedIndex(VERDICT_ROW_LABEL))?;
+        if disposition.admits() && !dominates(&goal_axes) {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+        let headline = goal_axes
+            .values()
+            .find(|axis| axis.kind == GoalAxisKind::Primary)
+            .expect("validated primary axis");
+        if score(KEY_BEFORE)? != headline.before || score(KEY_AFTER)? != headline.after {
+            return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+        }
+    } else if !goal_axes.is_empty() {
+        return Err(Error::CorruptedIndex(VERDICT_ROW_LABEL));
+    }
     Ok(HeldOutVerdict {
+        goal_axes,
         before: score(KEY_BEFORE)?,
         after: score(KEY_AFTER)?,
         measurements,
@@ -442,6 +481,12 @@ fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {
             verdict.held_out_digest.clone(),
         ),
     ]);
+    if !verdict.goal_axes.is_empty() {
+        fields.insert(
+            FIELD_SKILL_EDIT_GOAL_AXES.to_owned(),
+            serde_json::to_string(&verdict.goal_axes).expect("validated goal vector serializes"),
+        );
+    }
     if let Some(measurements) = &verdict.measurements {
         fields.insert(
             FIELD_SKILL_EDIT_MEASUREMENTS.to_owned(),

@@ -242,8 +242,13 @@ fn rule_on_proposal(
         &inputs.outcomes,
         &blind,
     )?;
-    let before = validate_score(scorer.score(&current_case)?)?;
-    let after = validate_score(scorer.score(&proposed_case)?)?;
+    let goal_axes = score_goal_axes(scorer, &current_case, &proposed_case)?;
+    let headline = goal_axes
+        .values()
+        .find(|axis| axis.kind == GoalAxisKind::Primary)
+        .expect("validated primary axis");
+    let before = headline.before;
+    let after = headline.after;
 
     // The scored set has done its work; what the row keeps of it is the bounded
     // display list, and the basis keeps the rest.
@@ -266,6 +271,7 @@ fn rule_on_proposal(
         let mut verdict = HeldOutVerdict {
             before,
             after,
+            goal_axes: goal_axes.clone(),
             measurements: Some(measurements),
             accepted: false,
             id: vault.store.clock.entity_id()?,
@@ -292,8 +298,7 @@ fn rule_on_proposal(
             current.as_ref(),
             cycle,
             &basis,
-            before,
-            after,
+            &goal_axes,
         )?;
         verdict.accepted = verdict.disposition.admits();
         record_verdict_in_txn(vault, wtxn, &verdict)?;
@@ -439,8 +444,7 @@ fn decide_in_txn(
     current: Option<&SkillRecord>,
     cycle: &SkillEditCycle,
     basis: &ScoredBasis,
-    before: f32,
-    after: f32,
+    goal_axes: &BTreeMap<String, GoalAxisScore>,
 ) -> Result<SkillEditDisposition> {
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
@@ -498,13 +502,14 @@ fn decide_in_txn(
             "world outcome labels moved while the judge was measuring",
         ));
     }
-    // Strict improvement, and evaluated BEFORE the tier and cap arms so a
-    // regression is reported as the regression it is rather than as whatever
-    // else was also wrong. No epsilon (blueprint note: the anti-Goodhart
-    // floor), and a TIE lives on this branch. Written as `<=` rather than a
-    // negated `>` because both scalars are already validated finite, so the
-    // two are equivalent and this one reads as the rule it is.
-    if after <= before {
+    // A floor regression never votes as a tradeoff, regardless of gains on
+    // other axes. Pure ties and dominated vectors are final rejections.
+    // Mixed non-floor gains and losses need a separate preference decision;
+    // only strict vector dominance reaches automatic admission.
+    if floor_regressed(goal_axes) {
+        return Ok(SkillEditDisposition::Rejected);
+    }
+    if !dominates(goal_axes) && !is_tradeoff(goal_axes) {
         return Ok(SkillEditDisposition::Rejected);
     }
     // Accept-time recheck. ONE-1448 already excluded protected tiers at
@@ -533,6 +538,11 @@ fn decide_in_txn(
         && proposal_tier == target_tier;
     if !bound {
         return Ok(SkillEditDisposition::RefusedProtectedTier);
+    }
+    // A mixed vector may reach the preference ladder only after both tier
+    // checks. Otherwise a protected candidate could remain open indefinitely.
+    if is_tradeoff(goal_axes) {
+        return Ok(SkillEditDisposition::NeedsTradeoffDecision);
     }
     let cap = cycle_cap_in_txn(vault, wtxn)?;
     if accepted_in_cycle_in_txn(vault, wtxn, cycle, proposal)? >= cap {
@@ -577,18 +587,20 @@ fn accepted_in_cycle_in_txn(
 /// then refused at the admission door has been answered, and the superseded
 /// acceptance is history rather than a live permission.
 ///
-/// Two rulings qualify, and both are answers a REDELIVERY must return rather
-/// than re-earn:
+/// Three rulings qualify, and each is a result a REDELIVERY must return
+/// rather than re-earn:
 ///
 /// - a standing ACCEPTANCE over exactly this basis, whatever cycle it was ruled
 ///   in — an acceptance keeps the cycle it was ruled in, and a duplicate
 ///   arriving under another label must not revoke it;
+/// - a tradeoff needing a decision, on the same basis in any cycle: asking the
+///   judge again cannot replace the pending preference with another score;
 /// - a standing CAP DEFERRAL over exactly this basis AND this same cycle. The
 ///   cycle equality is load-bearing in the other direction: a deferral from
 ///   wake X says nothing about wake Y, so a genuine later-cycle pickup still
 ///   re-scores and is counted against the cycle that picked it up.
 ///
-/// Returning the standing row is what makes delivery idempotent on BOTH arms:
+/// Returning the standing row is what makes delivery idempotent on all arms:
 /// no second replay is paid, no second row is appended, and the cap is neither
 /// re-spent nor re-measured.
 fn standing_ruling_in_txn(
@@ -602,6 +614,7 @@ fn standing_ruling_in_txn(
         standing_verdict_in_txn(vault, rtxn, proposal)?.filter(|verdict| {
             basis.matches(verdict)
                 && (verdict.disposition.admits()
+                    || verdict.disposition == SkillEditDisposition::NeedsTradeoffDecision
                     || (verdict.disposition == SkillEditDisposition::DeferredCycleCap
                         && verdict.cycle == cycle.as_str()))
         }),
@@ -641,6 +654,7 @@ fn refusal(
     HeldOutVerdict {
         before: 0.0,
         after: 0.0,
+        goal_axes: BTreeMap::new(),
         measurements: None,
         accepted: false,
         id,

@@ -15,10 +15,15 @@ use super::*;
 pub enum SkillEditDisposition {
     /// Strict improvement, unprotected tier, within cap.
     Accepted,
-    /// `after <= before`. Ties live here: there is no epsilon.
+    /// A floor regression, a dominated vector or a full tie; no epsilon.
     Rejected,
+    /// Non-floor gain and loss on different axes. No automatic decision is
+    /// authorized; a host can route this typed, vector-bearing receipt through
+    /// the preference / decision / responsible-person ladder. The proposal
+    /// remains open until that decision is made outside this gate.
+    NeedsTradeoffDecision,
     /// Improving, but this cycle already spent its accepts. The proposal stays
-    /// OPEN — a later cycle may admit it. The ONLY durable open disposition.
+    /// OPEN — a later cycle may score it under a fresh cap.
     DeferredCycleCap,
     /// Identity- or alignment-tier at accept time, on the TARGET or on the
     /// PROPOSAL itself — protected, ambiguous, or moved since the basis was
@@ -48,6 +53,7 @@ impl SkillEditDisposition {
         match self {
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
+            Self::NeedsTradeoffDecision => "needs_tradeoff_decision",
             Self::DeferredCycleCap => "deferred_cycle_cap",
             Self::RefusedProtectedTier => "refused_protected_tier",
             Self::RefusedStaleTarget => "refused_stale_target",
@@ -61,6 +67,7 @@ impl SkillEditDisposition {
         match value {
             "accepted" => Some(Self::Accepted),
             "rejected" => Some(Self::Rejected),
+            "needs_tradeoff_decision" => Some(Self::NeedsTradeoffDecision),
             "deferred_cycle_cap" => Some(Self::DeferredCycleCap),
             // "deferred_evidence_changed" is deliberately ABSENT: the evidence
             // race is a retryable abort that commits nothing, so a row
@@ -90,25 +97,20 @@ impl SkillEditDisposition {
 
     /// Whether the proposal remains an open question a later cycle may answer.
     ///
-    /// Exactly ONE ruling leaves it open, and it is the cap deferral: a ruling
-    /// that says nothing about the proposal except that this wake's budget was
-    /// already spent. A rejection and a refusal are both ANSWERS — the evidence
-    /// said no — and re-asking them next wake would be the nagging ONE-1448's
-    /// open-question rule already refuses.
+    /// A cap deferral says only that this wake's budget was spent; a tradeoff
+    /// waits for an external preference decision. Neither is a final answer.
+    /// A rejection or refusal closes the proposal so the loop may try another
+    /// draft rather than nag on the same rejected edit.
     ///
-    /// A raced snapshot is NOT on this list, because it is not a ruling at all:
-    /// it commits nothing and returns [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
-    /// the proposal in its pre-call state. A second durable open class would
-    /// have grown one more row on every raced retry and made "open" mean two
-    /// different things.
+    /// A raced snapshot is NOT on this list: it commits nothing and returns
+    /// [`ArtifactError::SkillEditGateRetry`](crate::error::ArtifactError::SkillEditGateRetry), leaving
+    /// the proposal in its pre-call state.
     ///
-    /// The complement is [`Self::closes_proposal`], and every answer that is
-    /// not this deferral closes: a terminal ruling that left the record
-    /// `candidate + proposed` would wedge the skill forever, because the
-    /// drafting job skips a skill with an open proposed revision.
+    /// The complement is [`Self::closes_proposal`]: terminal rulings close,
+    /// because the drafting job skips a skill with an open proposed revision.
     #[must_use]
     pub const fn leaves_proposal_open(self) -> bool {
-        matches!(self, Self::DeferredCycleCap)
+        matches!(self, Self::DeferredCycleCap | Self::NeedsTradeoffDecision)
     }
 
     /// Whether this ruling ANSWERS the proposal, and so must close it.
@@ -123,7 +125,7 @@ impl SkillEditDisposition {
 
     /// Whether the caller is told by an `Err` as well as by the ledger.
     ///
-    /// Reject and defer are ordinary answers a loop keeps running after, so
+    /// Reject, defer and tradeoff are ordinary outcomes, so
     /// they return `Ok`. A refusal says the proposal should never have reached
     /// the gate in this shape, so it is also a typed error.
     pub(super) const fn is_refusal(self) -> bool {
@@ -171,6 +173,8 @@ pub struct HeldOutVerdict {
     pub before: f32,
     /// Score of the PROPOSED instructions over the same reserved evidence.
     pub after: f32,
+    /// Complete scored goal vector. Empty only on an unscored stale-target refusal.
+    pub goal_axes: BTreeMap<String, GoalAxisScore>,
     /// Both receipt-only audits and judge agreement with available world labels.
     /// None only when a terminal refusal happened before any judging.
     pub measurements: Option<JudgeMeasurements>,
