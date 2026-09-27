@@ -51,6 +51,7 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
             placeholder: String::new(),
         },
         theme: ThemeTokens(serde_json::json!({"owner-data": [null, 7]})),
+        landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
             event_type: EventTypeKey("intro-call".to_owned()),
             start_after_secs: 10,

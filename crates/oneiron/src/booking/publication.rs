@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::booking::agent_api::BookingAvailabilityInput;
 use crate::booking::{
-    BookingError, ConstraintFieldConfig, EventTypeCard, EventTypeKey, MAX_BOOKING_WINDOW_SECS,
-    ThemeTokens,
+    BookingError, BookingLandingContent, ConstraintFieldConfig, EventTypeCard, EventTypeKey,
+    MAX_BOOKING_WINDOW_SECS, ThemeTokens,
 };
 use crate::claim::{ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable};
 use crate::edge::EdgeActorClass;
@@ -90,6 +90,7 @@ pub struct BookingPagePublication {
     pub event_config_hashes: BTreeMap<String, String>,
     pub constraint_field: ConstraintFieldConfig,
     pub theme: ThemeTokens,
+    pub landing: BookingLandingContent,
     pub initial_availability: PublicBookingAvailability,
 }
 
@@ -108,6 +109,9 @@ impl BookingPagePublication {
             &self.theme,
         )
         .map_err(|_| "public booking presentation exceeds lens bounds")?;
+        self.landing
+            .validate()
+            .map_err(|_| "public booking landing content is invalid")?;
         if self.event_config_hashes.len() != self.event_types.len() {
             return Err("public booking must bind every event configuration");
         }

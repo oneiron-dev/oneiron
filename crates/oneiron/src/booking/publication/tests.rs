@@ -98,6 +98,7 @@ fn publication() -> BookingPagePublication {
             placeholder: String::new(),
         },
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
+        landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
             event_type: EventTypeKey("event".to_owned()),
             start_after_secs: 10,
@@ -540,4 +541,38 @@ fn public_booking_publication_requires_current_rooted_owner_authority() {
             .code,
         MEMORY_CODE_OWNER_BINDING_REQUIRED
     );
+}
+
+#[test]
+fn public_landing_content_is_checked_at_write_and_read_codec() {
+    let mut publication = publication();
+    publication.landing = crate::booking::BookingLandingContent {
+        photo_path: Some("/assets/portrait.jpg".to_owned()),
+        intro: "Owner-authored introduction".to_owned(),
+        faq: vec![crate::booking::BookingFaq {
+            question: "What next?".into(),
+            answer: "Prepare.".into(),
+        }],
+        prep_path: Some("/assets/prep.pdf".to_owned()),
+        preconfirm_field_keys: vec!["topic".into()],
+    };
+    let (_dir, vault) = open();
+    let owner = vault.memory(id(2), EdgeActorClass::Human);
+    owner
+        .claim_upsert(&input(publication.clone()))
+        .expect("valid owner copy");
+    assert_eq!(
+        load_public_booking_page(&vault, id(1), 150)
+            .expect("live")
+            .expect("page")
+            .landing,
+        publication.landing
+    );
+    let mut invalid = publication;
+    invalid.landing.prep_path = Some("//other.example/prep".into());
+    assert!(encode_public_booking_page_value(&invalid).is_err());
+    assert!(owner.claim_upsert(&input(invalid.clone())).is_err());
+    let encoded = rmp_serde::to_vec_named(&invalid).expect("raw invalid bytes");
+    let raw = rmpv::decode::read_value(&mut std::io::Cursor::new(encoded)).expect("raw value");
+    assert!(decode_public_booking_page_value(&raw).is_err());
 }

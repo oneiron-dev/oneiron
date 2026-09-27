@@ -21,7 +21,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/lifecycle.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/booking/offerability.rs` | src | s | 1 crate-vis | — | — |
 | `src/api/booking/page_token.rs` | src | s | 4 crate-vis | — | — |
-| `src/api/booking/public.rs` | src | s | 6 crate-vis | — | Anonymous, published-capability-only booking transport |
+| `src/api/booking/public.rs` | src | m | 6 crate-vis | — | Anonymous, published-capability-only booking transport |
 | `src/api/booking/public_availability.rs` | src | s | 5 crate-vis | — | Query-bound slot cache |
 | `src/api/booking/public_availability_tests.rs` | test | s | — | — | — |
 | `src/api/booking/public_fixture.rs` | src | m | 30 crate-vis | — | Shared fixtures for tests that enter the real public router |
