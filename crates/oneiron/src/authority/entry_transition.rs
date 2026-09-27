@@ -283,6 +283,16 @@ pub(super) fn fold_entry_state(
         if !state_has_authority_consent_for_entry(&eventual_state, entry, context, hash) {
             return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
         }
+        // Record eligibility before a later veto (or fixed-point pass) can
+        // remove this pending row from the final fold. Cache expiry must still
+        // revisit whether that veto is valid at the target's deadline.
+        if let (Some(observer), Some(deadline)) =
+            (context.deadline_observer, pending_widen.eligible_at_secs)
+        {
+            observer.set(Some(
+                observer.get().map_or(deadline, |old| old.min(deadline)),
+            ));
+        }
         state.pending_widens.insert(hash, pending_widen);
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
