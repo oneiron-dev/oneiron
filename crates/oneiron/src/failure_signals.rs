@@ -7,10 +7,12 @@ use std::sync::Mutex;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod policy;
+
 use crate::config::failure_signals::FailureSignalConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::LlmRole;
+use crate::llm::{LlmRole, ModelId};
 use crate::vault::LiveEntityRow;
 
 /// Graduating `Other` requires a new taxonomy variant and version; never
@@ -74,8 +76,9 @@ pub struct FailureSignalInput {
     pub agent: VersionedComponent,
     /// Required for system agents; pinned to the compiled seeded roster.
     pub agent_ref: Option<EntityId>,
-    /// Only code-registered role defaults have public platform model revisions.
-    pub model_role: LlmRole,
+    /// Terminal runner step cited by the diagnostic, if this failure came
+    /// from an LLM execution. None exports an honest unattributed model.
+    pub model_step_ref: Option<EntityId>,
 }
 
 /// Only keyed, per-vault opaque tokens enter the export. The secret key stays
@@ -100,6 +103,8 @@ pub struct FailureSignalDimensions {
     detector_id: Option<String>,
     /// UTC Unix-hour start (seconds since epoch).
     ts_bucket: i64,
+    /// Exact resolution so a live policy change cannot merge unlike buckets.
+    bucket_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,6 +144,16 @@ impl FailureSignalDimensions {
     pub const fn ts_bucket(&self) -> i64 {
         self.ts_bucket
     }
+    #[must_use]
+    pub const fn bucket_seconds(&self) -> u64 {
+        self.bucket_seconds
+    }
+}
+
+#[derive(Default)]
+struct VerifiedIdentity {
+    agent: Option<VersionedComponent>,
+    model: Option<ModelId>,
 }
 
 /// One open vault's in-memory counts. Neither the key nor raw input is exported.
@@ -171,15 +186,16 @@ impl FailureSignalCounts {
         &self,
         config: FailureSignalConfig,
         input: FailureSignalInput,
-        registered_agent: Option<VersionedComponent>,
+        verified: VerifiedIdentity,
+        policy: policy::Resolved,
         observed_at: i64,
         detector_id: &str,
     ) -> Result<()> {
         if !config.exports() {
             return Ok(());
         }
-        let ts_bucket = bucket_start(observed_at)?;
-        if !bounded(&input.agent) {
+        let ts_bucket = bucket_start(observed_at, policy.bucket_seconds)?;
+        if !bounded(&input.agent, policy.max_component_bytes) {
             return Err(Error::InvalidConfig(
                 "failure signal component must be a bounded identifier".into(),
             ));
@@ -188,7 +204,7 @@ impl FailureSignalCounts {
             taxonomy: input.taxonomy,
             agent_surface: input.agent_surface,
             agent_kind: input.agent_kind,
-            agent: if let Some(identity) = registered_agent {
+            agent: if let Some(identity) = verified.agent {
                 ExportVersionedComponent {
                     name: identity.name,
                     version: identity.version,
@@ -196,7 +212,7 @@ impl FailureSignalCounts {
             } else {
                 component(self, b"agent", &input.agent)
             },
-            model: platform_model(input.model_role),
+            model: executed_model(self, verified.model.as_ref()),
             engine: ExportVersionedComponent {
                 name: "oneiron".into(),
                 version: env!("CARGO_PKG_VERSION").into(),
@@ -208,6 +224,7 @@ impl FailureSignalCounts {
                 },
             ),
             ts_bucket,
+            bucket_seconds: policy.bucket_seconds,
         };
         let mut counts = self
             .counts
@@ -238,11 +255,38 @@ impl FailureSignalCounts {
     }
 }
 
-fn platform_model(role: LlmRole) -> ExportVersionedComponent {
-    let id = role.default_model_id();
-    ExportVersionedComponent {
-        name: format!("{}/{}", id.provider(), id.name()),
-        version: id.revision().to_owned(),
+fn executed_model(
+    counts: &FailureSignalCounts,
+    model: Option<&ModelId>,
+) -> ExportVersionedComponent {
+    let Some(model) = model else {
+        return ExportVersionedComponent {
+            name: "unattributed".into(),
+            version: "unattributed".into(),
+        };
+    };
+    // Only compiled public model IDs are cleartext. A host's override may be
+    // arbitrary/private metadata, so it remains an opaque per-vault identity.
+    let registered = [
+        LlmRole::Orchestrator,
+        LlmRole::Subagent,
+        LlmRole::Summarizer,
+    ]
+    .into_iter()
+    .any(|role| role.default_model_id_str() == model.as_str());
+    if registered {
+        ExportVersionedComponent {
+            name: format!("{}/{}", model.provider(), model.name()),
+            version: model.revision().to_owned(),
+        }
+    } else {
+        ExportVersionedComponent {
+            name: counts.token(
+                b"model.name",
+                &format!("{}/{}", model.provider(), model.name()),
+            ),
+            version: counts.token(b"model.version", model.revision()),
+        }
     }
 }
 
@@ -261,10 +305,10 @@ fn registered_detector(id: &str) -> Option<&'static str> {
     IDS.into_iter().find(|registered| *registered == id)
 }
 
-fn bounded(component: &VersionedComponent) -> bool {
+fn bounded(component: &VersionedComponent, max_bytes: u64) -> bool {
     [&component.name, &component.version]
         .into_iter()
-        .all(|s| !s.is_empty() && s.len() <= 256)
+        .all(|s| !s.is_empty() && u64::try_from(s.len()).is_ok_and(|n| n <= max_bytes))
 }
 fn component(
     counts: &FailureSignalCounts,
@@ -280,10 +324,17 @@ fn component(
         version: counts.token(&version_domain, &value.version),
     }
 }
-fn bucket_start(observed_at: i64) -> Result<i64> {
+fn bucket_start(observed_at: i64, bucket_seconds: u64) -> Result<i64> {
+    let width = i64::try_from(bucket_seconds)
+        .map_err(|_| Error::ArithmeticOverflow("failure signal bucket width"))?;
+    if width == 0 {
+        return Err(Error::InvalidConfig(
+            "failure signal bucket width must be positive".into(),
+        ));
+    }
     observed_at
-        .div_euclid(3600)
-        .checked_mul(3600)
+        .div_euclid(width)
+        .checked_mul(width)
         .ok_or(Error::ArithmeticOverflow("failure signal hour bucket"))
 }
 
@@ -326,27 +377,23 @@ impl crate::Vault {
                 "failure signal diagnostic address changed",
             ));
         }
-        // A materialized diagnostic alone is not proof that its observation
-        // was on record. Every cited source must itself be a live base row;
-        // an overlay-only source (even one whose room has since closed) fails.
-        // Receipt/telemetry-only source families need their own positive
-        // ledger witness before they can enter this export door.
-        if event.evidence_refs.is_empty() {
-            return Err(Error::InvalidConfig(
-                "failure signal requires on-record source evidence".into(),
-            ));
-        }
-        for source in event.evidence_refs.iter().chain(event.actor_ref.iter()) {
-            if self.store.off_record_sessions.contains_entity(source)?
-                || !matches!(
-                    crate::vault::live_entity_row_in_txn(&self.store, &rtxn, source)?,
-                    LiveEntityRow::Live { .. }
+        crate::self_heal::tier1_source::verify(&self.store, &rtxn, &event, input.model_step_ref)?;
+        let verified_model = input
+            .model_step_ref
+            .map(|step| {
+                crate::llm::verified_executed_model(
+                    self,
+                    &rtxn,
+                    &step,
+                    event.replay.run_ref.as_deref().unwrap_or_default(),
                 )
-            {
-                return Err(Error::InvalidConfig(
-                    "failure signal source is not a live base entity".into(),
-                ));
-            }
+            })
+            .transpose()?
+            .flatten();
+        if input.model_step_ref.is_some() && verified_model.is_none() {
+            return Err(Error::InvalidConfig(
+                "failure signal requires a verified terminal model step".into(),
+            ));
         }
         // heed permits only one read slot per thread on this handle. The
         // source check is complete; release its snapshot before resolving the
@@ -376,19 +423,44 @@ impl crate::Vault {
                 version: version.to_owned(),
             })
         } else {
-            if input.agent_ref.is_some() {
-                return Err(Error::InvalidConfig(
-                    "custom failure signal cannot claim a seeded agent".into(),
-                ));
+            if let Some(id) = input.agent_ref {
+                if crate::agent_def::system_export_identity(&id)?.is_some() {
+                    return Err(Error::InvalidConfig(
+                        "custom failure signal cannot claim a seeded agent".into(),
+                    ));
+                }
+                let stored = self.get_agent_definition(&id)?.ok_or(Error::InvalidConfig(
+                    "custom failure signal agent is absent".into(),
+                ))?;
+                if stored.agent_id != input.agent.name || stored.version != input.agent.version {
+                    return Err(Error::InvalidConfig(
+                        "custom failure signal agent identity differs from stored definition"
+                            .into(),
+                    ));
+                }
             }
             None
+        };
+        let policy = {
+            let txn = self.store.env.read_txn()?;
+            let manifest = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+            if manifest.diagnostics().loaded_manifest_forces_fail_closed() {
+                return Err(Error::InvalidConfig(
+                    "failure signal policy manifest malformed".into(),
+                ));
+            }
+            policy::resolve(&manifest.failure_signal_policy, input.agent_ref)
         };
         let observed_at = i64::try_from(event.valid_from)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
         self.store.diagnostics.failure_signals.record(
             self.config.failure_signals,
             input,
-            registered_agent,
+            VerifiedIdentity {
+                agent: registered_agent,
+                model: verified_model,
+            },
+            policy,
             observed_at,
             &event.detector_id,
         )

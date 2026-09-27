@@ -43,6 +43,30 @@ pub(super) fn hash_policy_frontier_v0(
     // manifest contributes no decoded rows at all and its malformed-ness is
     // already frontier-relevant through `hash_diagnostics`.
     hash_budget_policy_table(hasher, &resolution.budget_policy);
+    if !resolution.failure_signal_policy.is_empty() {
+        hash_str(hasher, "failure_signal_policy");
+        hash_len(hasher, resolution.failure_signal_policy.len());
+        for row in &resolution.failure_signal_policy {
+            use crate::failure_signals::policy::{Precedence, Scope};
+            match row.scope {
+                Scope::Default => hash_str(hasher, "default"),
+                Scope::Vault => hash_str(hasher, "vault"),
+                Scope::Holder(id) => {
+                    hash_str(hasher, "holder");
+                    hash_bytes(hasher, id.as_bytes());
+                }
+            }
+            hash_u64(hasher, row.bucket_seconds);
+            hash_u64(hasher, row.max_component_bytes);
+            hash_str(
+                hasher,
+                match row.precedence {
+                    Precedence::NestedNarrowing => "nested_narrowing",
+                    Precedence::HolderOverride => "holder_override",
+                },
+            );
+        }
+    }
     if let Some(bounds) = resolution.diagnostic_bounds {
         hash_str(hasher, "diagnostic_bounds");
         hash_u64(hasher, bounds.window_secs);

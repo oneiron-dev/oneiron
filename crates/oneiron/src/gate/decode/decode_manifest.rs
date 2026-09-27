@@ -57,6 +57,7 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) auto_checker: Option<String>,
     pub(in crate::gate) budget_policy: BudgetPolicyTable,
     pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(in crate::gate) proposal_check_threshold: Option<u64>,
     pub(in crate::gate) unsupported_schema: bool,
     pub(in crate::gate) engine_version_floor: bool,
@@ -102,6 +103,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_AUTO_CHECKER_KEY
                 | POLICY_BUDGET_POLICY_KEY
                 | "diagnostic_bounds"
+                | crate::failure_signals::policy::POLICY_KEY
                 | "proposal_check_threshold"
         ) {
             return None;
@@ -232,6 +234,13 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         }
     };
 
+    let failure_signal_policy =
+        match single_map_value(&entries, crate::failure_signals::policy::POLICY_KEY) {
+            MapValue::Missing => Vec::new(),
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => crate::failure_signals::policy::decode(value)?,
+        };
+
     let proposal_check_threshold = match single_map_value(&entries, "proposal_check_threshold") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
@@ -267,6 +276,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         auto_checker,
         budget_policy,
         diagnostic_bounds,
+        failure_signal_policy,
         proposal_check_threshold,
         unsupported_schema,
         engine_version_floor,

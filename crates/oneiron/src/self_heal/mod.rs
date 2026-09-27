@@ -51,6 +51,7 @@ mod diagnostic_codec;
 mod event;
 mod invariant_canonical;
 pub mod scheduled;
+pub(crate) mod tier1_source;
 pub(crate) mod untrusted_text;
 
 pub mod healer_host;

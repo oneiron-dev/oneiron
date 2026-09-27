@@ -48,7 +48,9 @@ pub(crate) use self::step_only::{
     signal_step_wait_in_txn,
 };
 
-pub(crate) use self::step_claim::{deindex_dreamer_step_claim, index_dreamer_step_claim_for_put};
+pub(crate) use self::step_claim::{
+    deindex_dreamer_step_claim, index_dreamer_step_claim_for_put, verified_executed_model,
+};
 
 #[cfg(test)]
 mod step_only_tests;

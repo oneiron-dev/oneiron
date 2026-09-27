@@ -93,6 +93,7 @@ pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,
     SafeguardModelBindingError,
 };
+pub(crate) use self::step::verified_executed_model;
 
 #[cfg(test)]
 mod tests;
