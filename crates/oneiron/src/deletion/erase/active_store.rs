@@ -119,6 +119,11 @@ impl Vault {
             .ok_or(Error::CorruptedIndex("entity metadata"))?;
         let payload = entity_record[..ENTITY_METADATA_HEADER_LEN].to_vec();
         let changed = entity_record.len() > ENTITY_METADATA_HEADER_LEN;
+        // Soft erase keeps the reply edges but removes the TURN body. Both
+        // local UserDelete and replayed soft tombstones pass through here.
+        if header.entity_type == crate::registry::ENTITY_TYPE_TURN {
+            crate::conversation_dag::invalidate_thread_meta_for_turn_put(&self.store, wtxn, *id)?;
+        }
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row
         // here before the body is gone (ONE-1741: scan verdicts anchor to the
