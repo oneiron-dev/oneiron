@@ -165,6 +165,7 @@ pub fn refresh_question(
                         principal,
                         providers: p.proposal.providers.clone(),
                         band: record.definition.dial.band,
+                        band_version: 0,
                     },
                     human_ask: None,
                 },

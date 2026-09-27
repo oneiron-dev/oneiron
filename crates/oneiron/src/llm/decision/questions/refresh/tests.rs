@@ -89,6 +89,7 @@ fn arrival_schedule_manual_version_and_pause() -> TestResult {
     let first = refresh_due_questions(&vault, actor, 4, |r, u, s| Ok(propose(r, u, s)))?.answers;
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].decision.receipt.question_version, 1);
+    assert_eq!(first[0].decision.receipt.band_version, 0);
     assert_eq!(
         first[0].frontier,
         *blake3::hash(&vault.get_raw(&unit)?.expect("source")).as_bytes()
