@@ -531,7 +531,7 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
         changes
             .render()
             .join("\n")
-            .contains("code_auto_install_disabled")
+            .contains("code_auto_install_off")
     );
     let mut forged = vault.get_skill_record(&id)?.unwrap();
     forged.lifecycle_status = SkillLifecycle::Active;
@@ -657,6 +657,151 @@ fn marketplace_code_and_rules_hits_remain_candidate_until_policy_allows() -> Res
         loaded.record.approval_status,
         crate::claim::ClaimApprovalStatus::Auto
     );
+    Ok(())
+}
+
+#[test]
+fn inactive_reimports_preserve_local_state_and_report_no_install_from_two_hubs() -> Result<()> {
+    use crate::{claim::ClaimApprovalStatus, skill::SkillLifecycle};
+    for inactive in [
+        SkillLifecycle::Stale,
+        SkillLifecycle::Quarantined,
+        SkillLifecycle::Superseded,
+    ] {
+        let tree = files("fixture.inactive", "1", "Preserve this skill.");
+        let servers = [
+            StaticHttp::new(routes(&tree)),
+            StaticHttp::new(routes(&tree)),
+        ];
+        let temp = tempfile::tempdir()?;
+        let vault = crate::Vault::open(temp.path(), crate::VaultConfig::default())?;
+        let owner_id = EntityId::now();
+        let at = crate::TimeRange { start: 10, end: 10 };
+        vault.put_entity(
+            &owner_id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            at,
+            10,
+            b"owner",
+        )?;
+        let owner = vault.authenticate_owner(
+            owner_id,
+            "principal:inactive",
+            true,
+            crate::store::GateDecisionId::now(),
+        )?;
+        let mut sources = Vec::new();
+        for server in &servers {
+            let hub_id = EntityId::now();
+            vault.configure_skill_hub(
+                &owner,
+                &hub_id,
+                &SkillHubRecord::new(
+                    SkillHubKind::HttpIndex,
+                    server.index_url(),
+                    SkillHubTrustTier::Verified,
+                    HubSyncPolicy::ContentHashFrozen,
+                )?,
+                at,
+                10,
+            )?;
+            let publisher = vault.admit_skill_publisher(&owner, "publisher:inactive", hub_id)?;
+            let adapter = HttpEndpointSkillHubAdapter::new(hub_id, &server.index_url())?;
+            let reference = HubRef::new(
+                hub_id,
+                "fixture",
+                HubPin::ContentHash(adapter.discover()?[0].content_hash.to_hex()),
+            )?;
+            sources.push((adapter, reference, publisher));
+        }
+        let (adapter, reference, publisher) = &sources[0];
+        let id = vault.import_marketplace_skill_from_adapter(
+            adapter, reference, publisher, &ReadyFit, at, 10,
+        )?;
+        let mut record = vault.get_skill_record(&id)?.expect("installed skill");
+        match inactive {
+            SkillLifecycle::Stale => {
+                record.lifecycle_status = SkillLifecycle::Stale;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
+            SkillLifecycle::Quarantined => {
+                record.lifecycle_status = SkillLifecycle::Quarantined;
+                record.approval_status = ClaimApprovalStatus::Approved;
+                vault.update_skill_record(&id, &record, at, 11)?;
+            }
+            SkillLifecycle::Superseded => {
+                let successor = EntityId::now();
+                let mut newer = super::folder::package_from_files(files(
+                    "fixture.inactive",
+                    "2",
+                    "New revision.",
+                ))?
+                .record;
+                newer.source = crate::claim::ClaimSource::UserStated;
+                newer.content_hash = None;
+                vault.put_skill_record(&successor, &newer, at, 11)?;
+                newer.lifecycle_status = SkillLifecycle::Active;
+                vault.update_skill_record(&successor, &newer, at, 12)?;
+                vault.supersede_skill_record(&id, &successor, at, 13)?;
+            }
+            _ => unreachable!(),
+        }
+        for (adapter, source, publisher) in &sources {
+            for fit in [MarketplaceFit::Ready, MarketplaceFit::Ask] {
+                assert_eq!(
+                    vault.import_marketplace_skill_from_adapter(
+                        adapter,
+                        source,
+                        publisher,
+                        &FixedFit(fit),
+                        at,
+                        20,
+                    )?,
+                    id
+                );
+                let receipt = vault
+                    .hub_import_receipt(&id, source)?
+                    .expect("source receipt");
+                assert_eq!(receipt.installed_as.as_str(), inactive.as_str());
+                let reason = match inactive {
+                    SkillLifecycle::Stale => InstallHoldReason::Stale,
+                    SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
+                    SkillLifecycle::Superseded => InstallHoldReason::Superseded,
+                    _ => unreachable!(),
+                };
+                assert_eq!(
+                    receipt.disposition,
+                    InstallDisposition::NotInstalled(reason)
+                );
+                assert_eq!(
+                    vault.get_skill_record(&id)?.unwrap().lifecycle_status,
+                    inactive
+                );
+                assert!(
+                    vault
+                        .approve_marketplace_permission_ask(&owner, &id, source, at, 21,)
+                        .is_err()
+                );
+            }
+        }
+        assert_eq!(vault.skill_hub_provenance_count(&id)?, 2);
+        crate::test_util::authorize_readers(&vault, &["inactive-reader"]);
+        let read =
+            vault.scoped_read(crate::claim::ScopedReadActorKey::new("inactive-reader").unwrap());
+        let lines = crate::context_board::SessionReadSet::default()
+            .refresh(&read, 16)?
+            .render();
+        assert!(lines.join("\n").contains(&format!(
+                "{}/{}",
+                inactive.as_str(),
+                InstallDisposition::NotInstalled(match inactive {
+                    SkillLifecycle::Stale => InstallHoldReason::Stale,
+                    SkillLifecycle::Quarantined => InstallHoldReason::Quarantined,
+                    _ => InstallHoldReason::Superseded,
+                })
+                .as_str()
+            )));
+    }
     Ok(())
 }
 

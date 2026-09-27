@@ -509,7 +509,7 @@ fn code_free_pack_is_candidate_only_on_rules_hit() -> Result<()> {
     Ok(())
 }
 #[test]
-fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
+fn pinned_bundled_skill_scanner_signal_does_not_override_fit() -> Result<()> {
     use crate::skill_hub::{
         ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance, SkillScanReceipt,
     };
@@ -546,18 +546,21 @@ fn pinned_bundled_skill_verdict_keeps_pack_candidate() -> Result<()> {
     )?;
     vault.ingest_skill_scan_verdict(&skill, hash, &verdict, TimeRange { start: 5, end: 5 }, 5)?;
     let fit = vault.prepare_pack_install(id, &reference, &publisher, &policy())?;
-    let PackInstallDisposition::Candidate(receipt) = vault.install_pack(&fit)? else {
-        panic!("scanner rules hit");
+    let PackInstallDisposition::Installed(receipt) = vault.install_pack(&fit)? else {
+        panic!("fit-ready pack installs despite advisory scanner signal");
     };
+    assert_eq!(receipt.candidate_reason, None);
+    assert!(vault.installed_pack("alice.tools")?.is_some());
+    let stored = vault.get_skill_record(&skill)?.unwrap();
     assert_eq!(
-        receipt.candidate_reason,
-        Some(PackCandidateReason::RulesHit)
+        stored.lifecycle_status,
+        crate::skill::SkillLifecycle::Active
     );
-    assert!(vault.installed_pack("alice.tools")?.is_none());
     assert_eq!(
-        vault.get_skill_record(&skill)?.unwrap().lifecycle_status,
-        crate::skill::SkillLifecycle::Candidate
+        stored.approval_status,
+        crate::claim::ClaimApprovalStatus::Auto
     );
+    assert_bundled_source_line(&vault, &reference, &skill, "active", "installed")?;
     Ok(())
 }
 #[test]

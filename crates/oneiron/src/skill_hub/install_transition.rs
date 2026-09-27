@@ -115,10 +115,6 @@ impl InstallResult {
             {
                 return Err(invalid("permission ask is not an answerable candidate"));
             }
-            InstallDisposition::NotInstalled(_) if skill_loadable(record) => {
-                // A preexisting loadable holder may be blocked for this particular source,
-                // but must not be described as a newly installed skill.
-            }
             _ => {}
         }
         Ok(Self {
@@ -275,6 +271,35 @@ impl Vault {
             ));
         }
         self.check_hub_source_alias(txn, entity, &plan.binding.source, plan.binding.hash)?;
+        // Re-derive the transition under this writer lock. Source arrival may add
+        // aliases, but never supersedes a local lifecycle or approval decision.
+        match plan.action {
+            InstallAction::Activate(_) | InstallAction::PendingPermission
+                if record.lifecycle_status != SkillLifecycle::Candidate
+                    || record.approval_status != ClaimApprovalStatus::Auto =>
+            {
+                return Err(invalid("post-fit install state changed"));
+            }
+            InstallAction::AlreadyInstalled if !skill_loadable(&record) => {
+                return Err(invalid("previous install is no longer loadable"));
+            }
+            InstallAction::Preserve(InstallHoldReason::Stale)
+                if record.lifecycle_status != SkillLifecycle::Stale =>
+            {
+                return Err(invalid("stale holder changed"));
+            }
+            InstallAction::Preserve(InstallHoldReason::Quarantined)
+                if record.lifecycle_status != SkillLifecycle::Quarantined =>
+            {
+                return Err(invalid("quarantined holder changed"));
+            }
+            InstallAction::Preserve(InstallHoldReason::Superseded)
+                if record.lifecycle_status != SkillLifecycle::Superseded =>
+            {
+                return Err(invalid("superseded holder changed"));
+            }
+            _ => {}
+        }
         let disposition = match plan.action {
             InstallAction::Activate(_) | InstallAction::OwnerAnswer => {
                 if record.lifecycle_status != SkillLifecycle::Candidate
@@ -318,5 +343,130 @@ impl Vault {
         };
         let stored = self.read_skill_record_in_txn(txn, entity)?;
         InstallResult::finalized(&stored, disposition)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{claim::ClaimSource, skill_hub::HubPin};
+
+    #[test]
+    fn dedup_state_table_preserves_local_decisions_and_only_answers_live_candidates() -> Result<()>
+    {
+        let source = HubRef::new(EntityId::now(), "skill", HubPin::None)?;
+        let hash = SkillContentHash::from_bytes([7; 32]);
+        let binding = || InstallBinding::new(&source, hash, &SkillCapabilitySurface::default());
+        let mut record = SkillRecord::new(
+            "fixture",
+            "fixture",
+            "1",
+            ClaimApprovalStatus::Auto,
+            SkillLifecycle::Candidate,
+            ClaimSource::Imported,
+            1.0,
+            false,
+            true,
+            Vec::new(),
+            rmpv::Value::Map(Vec::new()),
+        )
+        .with_content_hash(hash);
+        for (lifecycle, approval, ready, ask) in [
+            (
+                SkillLifecycle::Candidate,
+                ClaimApprovalStatus::Auto,
+                InstallDisposition::Installed,
+                InstallDisposition::PendingPermission,
+            ),
+            (
+                SkillLifecycle::Candidate,
+                ClaimApprovalStatus::Rejected,
+                InstallDisposition::NotInstalled(InstallHoldReason::LocalApproval),
+                InstallDisposition::NotInstalled(InstallHoldReason::LocalApproval),
+            ),
+            (
+                SkillLifecycle::Candidate,
+                ClaimApprovalStatus::Proposed,
+                InstallDisposition::NotInstalled(InstallHoldReason::LocalApproval),
+                InstallDisposition::NotInstalled(InstallHoldReason::LocalApproval),
+            ),
+            (
+                SkillLifecycle::Active,
+                ClaimApprovalStatus::Auto,
+                InstallDisposition::AlreadyInstalled,
+                InstallDisposition::AlreadyInstalled,
+            ),
+            (
+                SkillLifecycle::Active,
+                ClaimApprovalStatus::Proposed,
+                InstallDisposition::NotInstalled(InstallHoldReason::UnloadableApproval),
+                InstallDisposition::NotInstalled(InstallHoldReason::UnloadableApproval),
+            ),
+            (
+                SkillLifecycle::Stale,
+                ClaimApprovalStatus::Auto,
+                InstallDisposition::NotInstalled(InstallHoldReason::Stale),
+                InstallDisposition::NotInstalled(InstallHoldReason::Stale),
+            ),
+            (
+                SkillLifecycle::Quarantined,
+                ClaimApprovalStatus::Approved,
+                InstallDisposition::NotInstalled(InstallHoldReason::Quarantined),
+                InstallDisposition::NotInstalled(InstallHoldReason::Quarantined),
+            ),
+            (
+                SkillLifecycle::Superseded,
+                ClaimApprovalStatus::Auto,
+                InstallDisposition::NotInstalled(InstallHoldReason::Superseded),
+                InstallDisposition::NotInstalled(InstallHoldReason::Superseded),
+            ),
+        ] {
+            record.lifecycle_status = lifecycle;
+            record.approval_status = approval;
+            for (fit, expected) in [(MarketplaceFit::Ready, ready), (MarketplaceFit::Ask, ask)] {
+                let plan = InstallPlan::marketplace(&record, binding(), fit, false, true);
+                let disposition = match plan.action {
+                    InstallAction::Activate(_) => InstallDisposition::Installed,
+                    InstallAction::AlreadyInstalled => InstallDisposition::AlreadyInstalled,
+                    InstallAction::PendingPermission => InstallDisposition::PendingPermission,
+                    InstallAction::Preserve(reason) => InstallDisposition::NotInstalled(reason),
+                    InstallAction::OwnerAnswer => {
+                        panic!("ordinary import cannot mint owner consent")
+                    }
+                };
+                assert_eq!(disposition, expected, "{lifecycle:?}/{approval:?}/{fit:?}");
+                if disposition.is_pending() {
+                    assert!(InstallResult::finalized(&record, disposition).is_ok());
+                } else {
+                    assert!(
+                        InstallResult::finalized(&record, InstallDisposition::PendingPermission)
+                            .is_err()
+                            || lifecycle == SkillLifecycle::Candidate
+                                && approval == ClaimApprovalStatus::Auto
+                    );
+                }
+            }
+        }
+        record.lifecycle_status = SkillLifecycle::Candidate;
+        record.approval_status = ClaimApprovalStatus::Auto;
+        for (fit, blocked, code_allowed, expected) in [
+            (
+                MarketplaceFit::Ready,
+                true,
+                true,
+                InstallHoldReason::RulesHit,
+            ),
+            (
+                MarketplaceFit::Ready,
+                false,
+                false,
+                InstallHoldReason::CodeAutoInstallOff,
+            ),
+            (MarketplaceFit::Ask, true, true, InstallHoldReason::RulesHit),
+        ] {
+            let plan = InstallPlan::marketplace(&record, binding(), fit, blocked, code_allowed);
+            assert!(matches!(plan.action, InstallAction::Preserve(reason) if reason == expected));
+        }
+        Ok(())
     }
 }
