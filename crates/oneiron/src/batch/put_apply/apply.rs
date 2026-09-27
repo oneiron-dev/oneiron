@@ -235,8 +235,6 @@ pub(in crate::batch) fn apply_put(
         crate::federation::validate_federation_grant_body_bytes(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
         crate::access_grant::validate_access_grant_body_bytes(data)?;
-    } else if entity_type == ENTITY_TYPE_CHANNEL_IDENTITY {
-        crate::channel_identity::validate_channel_identity_put_carrier(data, replicated)?;
     } else if entity_type == ENTITY_TYPE_COUNTERPARTY_CONTACT {
         crate::counterparty_contact::validate_counterparty_contact_body_bytes(data)?;
     } else if entity_type == ENTITY_TYPE_COMM_RECORD {

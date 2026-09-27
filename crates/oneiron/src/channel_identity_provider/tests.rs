@@ -1467,7 +1467,10 @@ fn gmail_runner_refuses_token_after_identity_withdrawal_at_wire_egress() -> Resu
         assert!(!wire.provider_called.get());
         assert_eq!(mailbox_cursor_snapshot(&vault, id)?, None);
         assert_eq!(
-            vault.get_channel_identity(&id)?.expect("row exists").state,
+            vault
+                .get_channel_identity(&id)?
+                .expect("row exists")
+                .state(),
             target
         );
         // The custody stays active: the refusal came from the identity-aware
