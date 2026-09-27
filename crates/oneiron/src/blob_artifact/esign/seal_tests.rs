@@ -103,8 +103,13 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
         Arc::new(Clock),
     )?;
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
     let now = crate::unix_seconds_now();
+    let clock = crate::ports::ManualClock::new(now);
+    let config = VaultConfig {
+        store_clock: clock.bundle(),
+        ..VaultConfig::default()
+    };
+    let vault = Vault::open(dir.path(), config)?;
     let at = TimeRange {
         start: now,
         end: now,
@@ -222,6 +227,10 @@ fn native_seal_verifies_before_atomic_terminal_and_retries_from_pristine_origina
     assert_eq!(vault.sweep_esign_expiry(&[id], now + 3600)?, 0);
     assert!(vault.esign_document(id)?.ready_to_seal());
     let sealed = run(vault.seal_esign_attempt(&attempt, &engine, PadesProfile::BaselineB, url))?;
+    assert_eq!(
+        EntityId::from_hex(&sealed.items[0].sealed_artifact)?.as_bytes()[0],
+        0x71
+    );
     assert_eq!(vault.esign_document(id)?.status, DocumentStatus::Completed);
     assert!(vault.verify_esign_item(id, 0, &engine)?.valid());
     let notices = AttemptQueue::new(&vault).list()?;
