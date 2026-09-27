@@ -644,3 +644,38 @@ fn conditional_push_refuses_remote_edit_racing_after_terminal_pull() -> LinearSy
     );
     Ok(())
 }
+
+#[test]
+fn working_task_pushes_authoritative_status_before_terminal_settlement() -> LinearSyncResult<()> {
+    let (_dir, vault, owner) = mirror_fixture()?;
+    let task = mirror_task(&vault, owner, "working status");
+    let tracker = ControlledTracker::default();
+    let mut adapter = LinearSyncAdapter::new(
+        VaultLinearTaskStore::new(&vault),
+        tracker.clone(),
+        tracker.clone(),
+    );
+    let (created, _) = adapter.synchronize(100)?;
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].status, LinearMirrorStatus::Linked);
+    assert_eq!(
+        tracker.state.borrow().remote[&task.to_hex()].status,
+        "queued"
+    );
+
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .mark_task_started(task, 101)
+        .expect("start work");
+    let working = adapter.tasks().task_snapshot(task)?;
+    assert_eq!(working.fields.status, "working");
+    let (pushed, _) = adapter.synchronize(102)?;
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
+    assert_eq!(
+        tracker.state.borrow().remote[&task.to_hex()].status,
+        "working"
+    );
+    assert!(adapter.tasks().dirty_tasks()?.is_empty());
+    Ok(())
+}

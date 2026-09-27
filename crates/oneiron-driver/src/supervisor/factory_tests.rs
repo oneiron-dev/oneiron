@@ -394,6 +394,7 @@ fn planner_builder_rejects_non_agent_actor() {
 #[derive(Clone, Default)]
 struct HostMirror {
     events: Arc<std::sync::Mutex<Vec<oneiron::LinearIssueChange>>>,
+    remote: Arc<std::sync::Mutex<std::collections::BTreeMap<String, oneiron::MirroredTaskFields>>>,
 }
 
 impl oneiron::LinearChangeSource for HostMirror {
@@ -415,6 +416,10 @@ impl oneiron::LinearEgress for HostMirror {
         task: oneiron::EntityId,
         fields: &oneiron::MirroredTaskFields,
     ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        self.remote
+            .lock()
+            .expect("remote state")
+            .insert(task.to_hex(), fields.clone());
         Ok(oneiron::LinearIssueChange {
             event_id: format!("create-{}", task.to_hex()),
             issue: oneiron::LinearIssueRef {
@@ -431,9 +436,19 @@ impl oneiron::LinearEgress for HostMirror {
         &mut self,
         _operation_id: [u8; 32],
         issue: &oneiron::LinearIssueRef,
-        _expected_base: &std::collections::BTreeMap<String, [u8; 32]>,
+        expected_base: &std::collections::BTreeMap<String, [u8; 32]>,
         fields: &oneiron::MirroredTaskFields,
     ) -> oneiron::LinearSyncResult<oneiron::LinearIssueChange> {
+        let mut remote = self.remote.lock().expect("remote state");
+        if remote
+            .get(&issue.issue_id)
+            .map(oneiron::MirroredTaskFields::field_hashes)
+            .as_ref()
+            != Some(expected_base)
+        {
+            return Err(oneiron::LinearSyncError::RemoteChanged);
+        }
+        remote.insert(issue.issue_id.clone(), fields.clone());
         Ok(oneiron::LinearIssueChange {
             event_id: format!("update-{}", issue.issue_id),
             issue: issue.clone(),
@@ -752,4 +767,299 @@ async fn supervisor_recovers_committed_wave_and_retries_failed_handoff() {
         handoffs.load(std::sync::atomic::Ordering::SeqCst) >= 3,
         "failed first handoff, retry, and newly ready dependent"
     );
+}
+
+#[tokio::test]
+async fn successful_wave_handoff_reopens_on_retry_and_reclaimed_lease() {
+    use oneiron::attempt_queue::{
+        AttemptQueue, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, RetryAttempt, RetryOutcome,
+    };
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0x93, oneiron::registry::ENTITY_TYPE_PERSON);
+    let epic = vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(rmpv::Value::from("epic"), None, None, Some(100))
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("epic")
+        .task_ref
+        .expect("epic id");
+    vault
+        .enqueue_wave_plan(epic, "retry work", serde_json::Value::Null, 100)
+        .expect("plan");
+    let (sent, mut claims) = tokio::sync::mpsc::unbounded_channel();
+    let factory = consolidation_factory(WriteActor::new(actor, oneiron::EdgeActorClass::Human))
+        .with_wave_planner(
+            Arc::new(HostCutPlanner {
+                calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }),
+            Box::new(move |vault, ready| {
+                for task in ready {
+                    let ClaimOutcome::Claimed(row) = AttemptQueue::new(vault).claim_kind(
+                        "tasks.realize",
+                        ClaimAttempt {
+                            lease_owner: "executor".into(),
+                            now: u64::MAX,
+                        },
+                    )?
+                    else {
+                        return Err(oneiron::Error::InvalidConfig(
+                            "missing ready attempt".into(),
+                        ));
+                    };
+                    if row.task_ref.as_deref() != Some(task.to_hex().as_str()) {
+                        return Err(oneiron::Error::InvalidConfig("wrong TASK attempt".into()));
+                    }
+                    sent.send(row)
+                        .map_err(|_| oneiron::Error::InvalidConfig("observer closed".into()))?;
+                }
+                Ok(())
+            }),
+        );
+    let (push, wake, hint) = PushTick::channel(crate::DEFAULT_SESSION_IDLE_FLOOR_SECS * 1_000);
+    let supervisor = WakeSupervisor::new(&vault, push, factory, test_config());
+    let stop = supervisor.shutdown_handle();
+    let (report, ()) = tokio::join!(supervisor.run(), async {
+        let first = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+            .await
+            .expect("initial handoff timeout")
+            .expect("initial claim");
+        let queue = AttemptQueue::new(&vault);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs();
+        let RetryOutcome::Retried(successor) = queue
+            .retry(RetryAttempt {
+                id: first.id,
+                lease_owner: "executor".into(),
+                attempt_count: first.attempt_count,
+                now,
+                backoff_until: now + 1,
+                last_error: Some("retry".into()),
+            })
+            .expect("schedule retry")
+        else {
+            panic!("retry outcome");
+        };
+        let second = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+            .await
+            .expect("scheduled retry handoff timeout")
+            .expect("retry claim");
+        assert_eq!(second.id, successor.id);
+        assert_eq!(second.task_ref, first.task_ref);
+        assert_eq!(second.retry_of, Some(first.id));
+        assert!(
+            claims.try_recv().is_err(),
+            "claim notification cannot re-dispatch a leased attempt"
+        );
+        queue
+            .cleanup_leases(CleanupAttemptLeases {
+                now: u64::MAX,
+                lease_timeout_secs: 1,
+            })
+            .expect("reclaim expired lease");
+        let third = tokio::time::timeout(Duration::from_secs(5), claims.recv())
+            .await
+            .expect("reclaimed lease handoff timeout")
+            .expect("reclaimed claim");
+        assert_eq!(third.id, second.id, "reclaim reuses the same row");
+        assert!(
+            third.attempt_count > second.attempt_count,
+            "reclaim raises the lease generation"
+        );
+        assert_eq!(third.task_ref, first.task_ref);
+        stop.shutdown();
+    });
+    drop(wake);
+    drop(hint);
+    assert_eq!(report.passes_completed, 0);
+}
+
+#[test]
+fn mirror_pushes_working_state_before_task_settles() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+    use oneiron::{LinearMirrorStatus, LinearSyncAdapter, LinearTaskStore};
+
+    let (_dir, vault) = open_vault();
+    let actor = seed_actor(&vault, 0x94, oneiron::registry::ENTITY_TYPE_PERSON);
+    let task = vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .tasks_create(
+            &TaskCreateSpec::new(
+                rmpv::Value::from("work"),
+                Some("Work".into()),
+                None,
+                Some(100),
+            )
+            .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+        )
+        .expect("task")
+        .task_ref
+        .expect("task id");
+    let mirror = HostMirror::default();
+    let mut adapter = LinearSyncAdapter::new(
+        oneiron::linear_sync::VaultLinearTaskStore::new(&vault),
+        mirror.clone(),
+        mirror.clone(),
+    );
+    adapter.synchronize(100).expect("initial queued mirror");
+    assert_eq!(
+        mirror.remote.lock().expect("remote")[&task.to_hex()].status,
+        "queued"
+    );
+    vault
+        .memory(actor, oneiron::EdgeActorClass::Human)
+        .mark_task_started(task, 101)
+        .expect("start work");
+    assert_eq!(
+        adapter
+            .tasks()
+            .task_snapshot(task)
+            .expect("working snapshot")
+            .fields
+            .status,
+        "working"
+    );
+    let (pushed, _) = adapter.synchronize(102).expect("publish working status");
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
+    assert_eq!(
+        mirror.remote.lock().expect("remote")[&task.to_hex()].status,
+        "working"
+    );
+    assert!(adapter.tasks().dirty_tasks().expect("outbox").is_empty());
+}
+
+#[test]
+fn mirror_resolves_original_title_under_remote_cas_with_and_without_later_event() {
+    use oneiron::task_verb::{TaskAssignee, TaskCreateSpec};
+    use oneiron::{LinearMirrorStatus, LinearSyncAdapter, LinearTaskStore};
+    for unrelated in [false, true] {
+        let (_dir, vault) = open_vault();
+        let actor = seed_actor(
+            &vault,
+            if unrelated { 0x96 } else { 0x95 },
+            oneiron::registry::ENTITY_TYPE_PERSON,
+        );
+        let task = vault
+            .memory(actor, oneiron::EdgeActorClass::Human)
+            .tasks_create(
+                &TaskCreateSpec::new(
+                    rmpv::Value::from("work"),
+                    Some("Base".into()),
+                    None,
+                    Some(100),
+                )
+                .with_assignee(TaskAssignee::Peer { actor_ref: actor }),
+            )
+            .expect("task")
+            .task_ref
+            .expect("task id");
+        let mirror = HostMirror::default();
+        let mut adapter = LinearSyncAdapter::new(
+            oneiron::linear_sync::VaultLinearTaskStore::new(&vault),
+            mirror.clone(),
+            mirror.clone(),
+        );
+        adapter.synchronize(100).expect("initial Base link");
+        let link = adapter.tasks().link(task).expect("link").expect("linked");
+        let mut local = adapter
+            .tasks()
+            .task_snapshot(task)
+            .expect("snapshot")
+            .fields;
+        local.title = "Engine".into();
+        let old_revision = adapter
+            .tasks()
+            .task_snapshot(task)
+            .expect("revision")
+            .revision;
+        adapter
+            .tasks_mut()
+            .apply_issue_fields(task, old_revision, &local, 101)
+            .expect("local edit");
+        let mut tracker = local.clone();
+        tracker.title = "Tracker".into();
+        mirror
+            .remote
+            .lock()
+            .expect("remote")
+            .insert(task.to_hex(), tracker.clone());
+        mirror
+            .events
+            .lock()
+            .expect("events")
+            .push(oneiron::LinearIssueChange {
+                event_id: "conflict".into(),
+                issue: link.issue.clone(),
+                updated_at_ms: 1500,
+                fields: tracker.clone(),
+            });
+        let (push, pull) = adapter.synchronize(102).expect("surface conflict");
+        assert_eq!(push[0].status, LinearMirrorStatus::Conflict);
+        assert_eq!(pull.conflicts.len(), 1);
+        let mut original = adapter
+            .tasks()
+            .task_snapshot(task)
+            .expect("conflicted")
+            .fields;
+        original.title = "Base".into();
+        let current = adapter
+            .tasks()
+            .task_snapshot(task)
+            .expect("revision")
+            .revision;
+        adapter
+            .tasks_mut()
+            .apply_issue_fields(task, current, &original, 103)
+            .expect("restore original title");
+        if unrelated {
+            tracker.status = "in_review".into();
+            mirror
+                .remote
+                .lock()
+                .expect("remote")
+                .insert(task.to_hex(), tracker.clone());
+            mirror
+                .events
+                .lock()
+                .expect("events")
+                .push(oneiron::LinearIssueChange {
+                    event_id: "unrelated-status".into(),
+                    issue: link.issue,
+                    updated_at_ms: 1600,
+                    fields: tracker,
+                });
+        }
+        let (pushed, _) = adapter.synchronize(104).expect("conditional resolution");
+        assert_eq!(pushed.len(), 1);
+        assert_eq!(pushed[0].status, LinearMirrorStatus::Applied);
+        assert_eq!(
+            mirror.remote.lock().expect("remote")[&task.to_hex()].title,
+            "Base"
+        );
+        assert_eq!(
+            adapter
+                .tasks()
+                .task_snapshot(task)
+                .expect("local resolution")
+                .fields
+                .title,
+            "Base"
+        );
+        assert!(
+            adapter
+                .tasks()
+                .link(task)
+                .expect("settled link")
+                .expect("link")
+                .unresolved_conflicts
+                .is_empty()
+        );
+        assert!(adapter.tasks().dirty_tasks().expect("outbox").is_empty());
+    }
 }

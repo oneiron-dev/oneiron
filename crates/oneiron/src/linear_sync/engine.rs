@@ -178,6 +178,13 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         decision
             .conflicts
             .retain(|conflict| !pending_resolution.contains(&conflict.field));
+        // Returning to the ORIGINAL common base is still an explicit local
+        // resolution, not an issue-owned edit. Attribution against that old
+        // base alone would otherwise adopt the tracker title and erase it.
+        decision
+            .issue_wins
+            .retain(|field| !pending_resolution.contains(*field));
+        decision.issue_changed = !decision.issue_wins.is_empty();
         let mut held_base_conflicts = decision.conflicts.clone();
         held_base_conflicts.extend(
             link.unresolved_conflicts
@@ -345,7 +352,12 @@ impl<T: LinearTaskStore, I: LinearChangeSource, O: LinearEgress> LinearSyncAdapt
         // not a gate because an inbound merge can retain a pending local edit.
         let stale_snapshot = snapshot.revision < link.task_revision;
         // Base hashes decide whether current fields are already on the tracker.
-        let unchanged = snapshot.fields.field_hashes() == link.base_field_hashes;
+        let pending_resolution = link
+            .unresolved_conflicts
+            .iter()
+            .any(|conflict| snapshot.fields.field_value(&conflict.field) != conflict.task_value);
+        let unchanged =
+            !pending_resolution && snapshot.fields.field_hashes() == link.base_field_hashes;
         let repeat_operation = operation_id == link.last_operation_id;
         if stale_snapshot || unchanged || repeat_operation {
             return Ok(mirror_receipt(

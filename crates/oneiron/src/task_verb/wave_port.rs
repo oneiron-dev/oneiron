@@ -21,6 +21,19 @@ pub struct WaveDispatchPage {
     pub exhausted: bool,
 }
 
+/// Dispatch identity for one live wave TASK. A callback is idempotent by TASK
+/// for external assignees and by attempt plus generation for local work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaveDispatchGeneration {
+    External,
+    Attempt {
+        id: crate::attempt_queue::AttemptId,
+        generation: u32,
+    },
+    /// Scheduled retry: do not dispatch before its due time, but arm a wake.
+    DueAt(u64),
+}
+
 pub struct VaultWaveTaskPort<'a> {
     vault: &'a Vault,
     actor: EntityId,
@@ -303,6 +316,56 @@ impl Vault {
             next_after: scanned.last().copied(),
             exhausted: scanned.len() < limit,
         })
+    }
+
+    /// Point-read a TASK's current handoff identity. A queued retry has a
+    /// new id; lease reclaim retains its id but raises its generation. Leased
+    /// attempts are owned already and cannot be handed off a second time.
+    pub fn wave_dispatch_generation(
+        &self,
+        task: EntityId,
+        now: u64,
+    ) -> crate::Result<Option<WaveDispatchGeneration>> {
+        let body = super::wire_decode::task_verb_body(self, task)?.ok_or(Error::EntityNotFound)?;
+        let route_key = super::create_validation::task_route_dedupe_key(task);
+        let route = match body.assignee {
+            None | Some(TaskAssignee::Dreamer) => Some(("tasks.realize", route_key)),
+            Some(TaskAssignee::AgentDef { .. }) => Some((
+                crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
+                format!(
+                    "{}:{route_key}",
+                    crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
+                ),
+            )),
+            Some(TaskAssignee::Peer { .. }) | Some(TaskAssignee::Child { .. }) => None,
+            Some(TaskAssignee::Human { .. }) => return Ok(None),
+        };
+        let Some((kind, key)) = route else {
+            return Ok(Some(WaveDispatchGeneration::External));
+        };
+        let Some(row) = AttemptQueue::new(self).pending_task_route(kind, &key, task)? else {
+            return Ok(None);
+        };
+        match row.state {
+            crate::attempt_queue::AttemptState::Queued => {
+                Ok(Some(WaveDispatchGeneration::Attempt {
+                    id: row.id,
+                    generation: row.attempt_count,
+                }))
+            }
+            crate::attempt_queue::AttemptState::Scheduled => {
+                let due = row.scheduled_at.or(row.backoff_until).unwrap_or(now);
+                if due > now {
+                    Ok(Some(WaveDispatchGeneration::DueAt(due)))
+                } else {
+                    Ok(Some(WaveDispatchGeneration::Attempt {
+                        id: row.id,
+                        generation: row.attempt_count,
+                    }))
+                }
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Queue a planning attempt. Planning itself remains host/agent code.

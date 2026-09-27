@@ -1,4 +1,5 @@
 //! Vault storage for the tracker mirror: replicated fields, local OCC and CAS links.
+use super::TaskExecutionState;
 use super::wire_decode::{task_body_has_typed_subkind, task_verb_body_in};
 use super::wire_encode::encode_task_verb_body;
 use crate::error::{Error, Result};
@@ -90,9 +91,14 @@ impl<'v> VaultLinearTaskStore<'v> {
             status: "queued".to_owned(),
         });
         fields.title = body.label.clone().unwrap_or_default();
-        if let Some(terminal) = body.terminal() {
-            fields.status = terminal.disposition.as_str().to_owned();
-        }
+        // Execution facts win over the last imported tracker token. Inbound
+        // status remains a mirror field; it never authors Working or Terminal.
+        fields.status = match body.state.as_ref() {
+            Some(TaskExecutionState::Working { .. }) => "working".to_owned(),
+            Some(TaskExecutionState::Interrupted { .. }) => "interrupted".to_owned(),
+            Some(TaskExecutionState::Terminal(record)) => record.disposition.as_str().to_owned(),
+            None | Some(TaskExecutionState::Queued) => fields.status,
+        };
         Ok(TaskMirrorSnapshot {
             task_ref: task,
             issue: link.as_ref().map(|l| l.issue.clone()),

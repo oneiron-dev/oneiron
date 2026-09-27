@@ -1364,7 +1364,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 4
      }
     },
@@ -32633,12 +32633,14 @@
      "kind": "src",
      "notable": [
       "VaultWaveTaskPort",
+      "WaveDispatchGeneration",
       "WaveDispatchPage"
      ],
      "path": "src/task_verb/wave_port.rs",
      "purpose": "Vault-backed, atomic wave plan application through the ordinary TASK doors",
      "surface": {
-      "fn": 4,
+      "enum": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -37572,7 +37574,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "src/supervisor/factory_tests.rs",

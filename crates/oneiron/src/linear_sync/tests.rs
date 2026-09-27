@@ -960,8 +960,13 @@ impl LinearEgress for CasEgress {
 
 #[test]
 fn resolved_conflict_uses_remote_snapshot_not_old_merge_base_for_cas() {
-    for resolution in ["Tracker", "Agreed"] {
-        let task = task_id(if resolution == "Tracker" { 0xa1 } else { 0xa2 });
+    for (seed, resolution, unrelated_event) in [
+        (0xa1, "Tracker", false),
+        (0xa2, "Agreed", true),
+        (0xa3, "Ship the wave", false),
+        (0xa4, "Ship the wave", true),
+    ] {
+        let task = task_id(seed);
         let initial = task_fields();
         let remote = std::rc::Rc::new(std::cell::RefCell::new(initial.clone()));
         let updates = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -995,9 +1000,9 @@ fn resolved_conflict_uses_remote_snapshot_not_old_merge_base_for_cas() {
         adapter
             .tasks_mut()
             .edit(task, |fields| fields.title = resolution.into());
-        if resolution == "Agreed" {
-            // A later unrelated tracker event must not re-pin this intentional
-            // third-value resolution while its conflicting title is unchanged.
+        if unrelated_event {
+            // An unrelated tracker event must neither re-pin a third-value
+            // resolution nor overwrite a return to the original common base.
             incoming.status = "in_review".into();
             *remote.borrow_mut() = incoming.clone();
             adapter
@@ -1017,6 +1022,12 @@ fn resolved_conflict_uses_remote_snapshot_not_old_merge_base_for_cas() {
                 initial.field_hashes()[LINEAR_FIELD_TITLE]
             );
             assert_eq!(pending.remote_field_hashes, incoming.field_hashes());
+            assert_eq!(
+                adapter.tasks().snapshot(task).fields.title,
+                resolution,
+                "unrelated inbound event must preserve local resolution"
+            );
+            assert_eq!(adapter.tasks().snapshot(task).fields.status, "in_review");
         }
         let receipt = adapter
             .push_task(task, 30)

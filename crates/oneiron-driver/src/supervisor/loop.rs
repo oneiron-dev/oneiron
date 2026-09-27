@@ -1,5 +1,5 @@
 //! Biased-select supervisor loop with panic containment and backoff.
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -8,6 +8,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use crate::WaveHost;
+use oneiron::task_verb::WaveDispatchGeneration;
 use oneiron::{AttemptQueue, EntityId, Vault, WakeCancellation, WakePassReport, WakePassStop};
 use tokio::sync::{Semaphore, watch};
 
@@ -169,10 +170,12 @@ where
         let mut wave_plan_pending = wave_planner.is_some();
         let mut wave_scan_pending = wave_planner.is_some();
         let mut scan_after: Option<EntityId> = None;
-        // Delivery is at least once across a process restart, so the host
-        // callback must be idempotent by TASK id. Within one process this set
-        // prevents its own claim/write notifications from redelivering work.
-        let mut delivered = BTreeSet::new();
+        // The last successfully handed-off attempt generation per TASK. A
+        // retry moves its dedupe index to a NEW id; lease reclaim requeues the
+        // SAME id at a higher generation. Either must reach the dispatcher.
+        // External assignees have no local attempt: their TASK id is the key.
+        let mut delivered = BTreeMap::<EntityId, WaveDispatchGeneration>::new();
+        let mut next_wave_due: Option<u64> = None;
         let mut dispatch_backoff = RestartBackoff::new(config.backoff);
 
         loop {
@@ -190,6 +193,7 @@ where
                             // Scan the durable TASK plane, not just the new
                             // receipt: a crash after plan commit still has work.
                             scan_after = None;
+                            next_wave_due = None;
                             wave_scan_pending = true;
                             wave_plan_pending = true;
                         }
@@ -219,18 +223,27 @@ where
                     let ready = host
                         .ready_to_dispatch(&page.task_refs)
                         .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;
-                    let pending: Vec<_> = ready
-                        .into_iter()
-                        .filter(|task| !delivered.contains(task))
-                        .collect();
-                    if !pending.is_empty() {
-                        factory.dispatch_wave_ready(vault, &pending)?;
+                    for task in ready {
+                        match vault.wave_dispatch_generation(task, now_secs())? {
+                            None => {} // Already leased/settled; no second handoff.
+                            Some(WaveDispatchGeneration::DueAt(due)) => {
+                                next_wave_due = Some(next_wave_due.map_or(due, |old| old.min(due)));
+                            }
+                            Some(generation) => {
+                                if delivered.get(&task) == Some(&generation) {
+                                    continue;
+                                }
+                                // One TASK per callback: a partial batch success
+                                // cannot be lost when a later callback fails.
+                                factory.dispatch_wave_ready(vault, &[task])?;
+                                delivered.insert(task, generation);
+                            }
+                        }
                     }
-                    Ok((page, pending))
+                    Ok(page)
                 });
                 match result {
-                    Ok((page, handed_off)) => {
-                        delivered.extend(handed_off);
+                    Ok(page) => {
                         dispatch_backoff.reset();
                         scan_after = page.next_after;
                         wave_scan_pending = !page.exhausted;
@@ -268,6 +281,19 @@ where
                         wave_plan_pending = true;
                         wave_scan_pending = true;
                         scan_after = None;
+                        next_wave_due = None;
+                        continue;
+                    }
+                    () = async {
+                        if let Some(due) = next_wave_due {
+                            tokio::time::sleep(Duration::from_secs(due.saturating_sub(now_secs()))).await;
+                        } else {
+                            std::future::pending::<()>().await;
+                        }
+                    }, if wave_planner.is_some() => {
+                        wave_scan_pending = true;
+                        scan_after = None;
+                        next_wave_due = None;
                         continue;
                     }
                     tick = ticks.next_tick() => match tick {
