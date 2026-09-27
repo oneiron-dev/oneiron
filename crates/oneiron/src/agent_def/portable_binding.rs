@@ -200,6 +200,7 @@ fn read_portable_knowledge(
             continue;
         }
         claims.push(ExportEntity {
+            short_ref: None,
             id: row_id.to_hex(),
             entity_type: header.entity_type,
             occurred_start: header.occurred_start,

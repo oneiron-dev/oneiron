@@ -30,6 +30,7 @@ pub(crate) struct ExportSnapshot {
 
 pub(crate) struct ExportSnapshotEntity {
     pub(crate) id: EntityId,
+    pub(crate) short_ref: Option<String>,
     pub(crate) header: EntityMetadataHeader,
     pub(crate) body: Vec<u8>,
     pub(crate) tainted: bool,
@@ -40,11 +41,23 @@ impl Vault {
     /// Live off-record overlay rows, deleted shells, archive tombstones, and
     /// credential custody rows are excluded. No caller can disable nulling.
     pub fn export_whole_vault(&self, format: PackFormat) -> Result<WholeVaultExport> {
+        self.export_whole_vault_with_admission(format, |_| Ok(()))
+    }
+
+    /// The actor facade supplies an owner admission evaluated in the SAME
+    /// snapshot as the rows. The host-level Vault export retains its existing
+    /// direct door; transport callers must use the admitted memory facade.
+    pub(crate) fn export_whole_vault_with_admission<E: From<Error>>(
+        &self,
+        format: PackFormat,
+        admit: impl FnOnce(&heed::RoTxn<'_>) -> std::result::Result<(), E>,
+    ) -> std::result::Result<WholeVaultExport, E> {
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
         )?;
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
-        let rtxn = self.store.env.read_txn()?;
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+        admit(&rtxn)?;
         let mut entities = Vec::new();
         let mut included = BTreeSet::new();
         let mut skill_packages = BTreeMap::new();
@@ -89,7 +102,7 @@ impl Vault {
             {
                 let record = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
                 if record.content_hash != Some(package.content_hash()?) {
-                    return Err(Error::CorruptedIndex("stored skill package identity drift"));
+                    return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
                 skill_packages.insert(id, package);
             }
@@ -124,10 +137,39 @@ impl Vault {
                 }
             }
             included.insert(id);
+            let short_ref =
+                crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &rtxn, &id)?
+                    .map(|(name, hash)| format!("{name}:{hash:02x}"));
+            // The entity-document head owns committed text after migration or
+            // stream finalization; the row then holds only a pointer. Project
+            // it under this snapshot transaction before the NOTE-specific
+            // document and the serializer's unconditional credential nulling.
+            // In base mode there are no EntityDoc heads to resolve.
+            #[cfg(feature = "sync")]
+            let resolved = crate::entity_doc::resolve_record_body(
+                &self.store,
+                &rtxn,
+                &id,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            #[cfg(feature = "sync")]
+            let body = resolved.as_slice();
+            #[cfg(not(feature = "sync"))]
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            // Historical/archive-only NOTE rows may intentionally carry a
+            // different body. Only the NOTE codec's live rows use its editor.
+            let body = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+                && crate::note::decode_note_body_using(body, crate::note::NoteKind::wire).is_ok()
+            {
+                crate::note::live_body_in_txn(&self.store, &rtxn, &id, header.entity_type, body)?
+            } else {
+                std::borrow::Cow::Borrowed(body)
+            };
             entities.push(ExportSnapshotEntity {
                 id,
+                short_ref,
                 header,
-                body: raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
+                body: body.into_owned(),
                 tainted,
             });
         }
@@ -183,5 +225,6 @@ impl Vault {
             },
             format,
         )
+        .map_err(E::from)
     }
 }

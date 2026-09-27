@@ -83,7 +83,7 @@ pub(in crate::sync) fn admit_document_write_in_txn(
     selector: &SyncSelector,
 ) -> Result<()> {
     let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
-    admit_selected_in_txn(vault, txn, id, scope, selector, &admission)
+    admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
 /// Whether `id` sits in the closed subgraph `admission` resolved, read from
@@ -92,14 +92,12 @@ pub(super) fn admit_selected_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-    scope: FederationGrantScope,
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
     let selection = StoredSelection {
         vault,
         txn,
-        scope,
         selector,
         admission,
     };
@@ -149,7 +147,6 @@ pub(super) fn admit_selected_in_txn(
 struct StoredSelection<'a, 'env> {
     vault: &'a Vault,
     txn: &'a heed::RoTxn<'env>,
-    scope: FederationGrantScope,
     selector: &'a SyncSelector,
     admission: &'a DocumentGrant,
 }
@@ -213,7 +210,6 @@ impl StoredSelection<'_, '_> {
         let Some(decision) = entity_selector_decision(
             self.vault,
             (&id, &raw),
-            self.scope,
             self.selector,
             &Default::default(),
             self.admission.position.as_scope(),
