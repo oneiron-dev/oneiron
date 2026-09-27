@@ -72,6 +72,7 @@ def test_ask_wait_resumes_only_once_in_both_orders(agent_memory, answer_first):
     settled = ready["Ready"]
     assert settled["decision"] == {"first": answer}
     assert settled["coverage"]["met"] is True
+    assert settled["effect_authorization"] == "not_evaluated_by_ask"
     assert settled["settlement"]["revision"] == 1
     assert len(settled["settlement"]["outcome_answer_ref"]) == 32
     # The step resumed once; a later wait reads the same settled result.
@@ -88,6 +89,19 @@ def test_ask_wait_resumes_only_once_in_both_orders(agent_memory, answer_first):
     # The outcome reader needs a scoped read grant on the outcome fact, and
     # the ask id is never one. With no grant the owner gets no pair.
     assert memory.tasks.outcomes(handle) == []
+
+
+def test_short_ask_accepts_person_set_and_omission_with_a_finite_cutoff(agent_memory):
+    memory, owner, result, question = agent_memory
+    what = {"reference": {"turn": question}, "revision": 1, "options": {}, "context_refs": []}
+    receipt = memory.tasks.ask(owner, what)
+    assert memory.tasks.ask([owner], what)["handle"] == receipt["handle"]
+    assert memory.tasks.ask(None, {**what, "revision": 2})["handle"] != receipt["handle"]
+    answer = memory.tasks.answer(receipt["handle"], {"result_ref": result})
+    settled = memory.tasks.wait(receipt["handle"])["Ready"]
+    assert settled["decision"] == {"first": answer}
+    assert settled["settlement"]["effective"]["until"] > 0
+    assert settled["effect_authorization"] == "not_evaluated_by_ask"
 
 
 def test_task_burst_is_admitted_not_rate_refused(agent_memory):

@@ -77,6 +77,10 @@ fn external_ask_wait_orders_resume_only_the_calling_step_once() -> Result<()> {
         let answer = memory.tasks_answer(&receipt.handle, &TaskAskWord::new(owner))?;
         let result = settled(&memory, receipt.handle);
         assert_eq!(result.decision, TaskAskDecision::First(answer));
+        assert_eq!(
+            result.effect_authorization,
+            TaskAskEffectAuthorization::NotEvaluatedByAsk
+        );
         let expected = TaskAskWait::Ready(Box::new(result));
         for binding in [Some("step"), Some("step"), None] {
             assert_eq!(memory.tasks_wait(receipt.handle, binding)?, expected);
@@ -1432,6 +1436,102 @@ fn omitted_task_ref_is_refused_when_two_governed_tasks_could_bind() -> Result<()
         .tasks_ask(&spec)
         .expect_err("two governed tasks cannot both bind one ask");
     assert_eq!(refused.code, crate::memory::MEMORY_CODE_BAD_REQUEST);
+    Ok(())
+}
+
+#[test]
+fn omitted_short_target_uses_verified_human_task_owner_not_agent_actor() -> Result<()> {
+    let (_dir, vault) = super::tests::support::open_vault();
+    let human = vault.ensure_embedded_owner_actor()?;
+    let agent = super::tests::support::own_agent(&vault);
+    let question = super::tests::support::consult_turn(&vault, 0x81);
+    let agent_memory = vault.memory(agent, EdgeActorClass::Agent);
+    let input = serde_json::json!({
+        "what": {"reference": question, "revision": 1, "options": {}, "context_refs": []}
+    });
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST
+    );
+    // An own-auto agent may choose a foreign `owner_ref` at tasks.create,
+    // but that owner proof is not an authenticated human assignment.
+    let forged = agent_memory.tasks_create(
+        &TaskCreateSpec::new(
+            rmpv::Value::from("agent-nominated owner"),
+            None,
+            Some(human),
+            None,
+        )
+        .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(forged.effected);
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    // A genuine human assignment to B is not a principal binding for A,
+    // even if a public raw TASK rewrite later retargets its mutable body.
+    let other_agent = EntityId::now();
+    super::tests::support::put_person(&vault, other_agent);
+    let for_other = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("other agent"), None, None, None).with_assignee(
+            TaskAssignee::Peer {
+                actor_ref: other_agent,
+            },
+        ),
+    )?;
+    let other_task = for_other.task_ref.expect("human assignment for B");
+    let mut rewritten =
+        super::wire_decode::task_verb_body(&vault, other_task)?.expect("typed task body");
+    rewritten.assignee = Some(TaskAssignee::Peer { actor_ref: agent });
+    let rewritten_bytes = super::wire_encode::encode_task_verb_body(rewritten);
+    let now = crate::unix_seconds_now() + 5;
+    vault.put_entity(
+        &other_task,
+        crate::registry::ENTITY_TYPE_TASK,
+        crate::temporal::TimeRange {
+            start: now,
+            end: now,
+        },
+        now,
+        &rewritten_bytes,
+    )?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, other_task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Peer { actor_ref: agent }),
+    );
+    assert_eq!(
+        crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input.clone())
+            .unwrap_err()
+            .code,
+        crate::memory::MEMORY_CODE_BAD_REQUEST,
+    );
+    let assignment = vault.memory(human, EdgeActorClass::Human).tasks_create(
+        &TaskCreateSpec::new(rmpv::Value::from("owned assignment"), None, None, None)
+            .with_assignee(TaskAssignee::Peer { actor_ref: agent }),
+    )?;
+    assert!(assignment.effected);
+    let receipt = crate::task_verb::sdk::invoke(&agent_memory, "tasks.ask", input)?;
+    let handle: TaskAskHandle = serde_json::from_value(receipt["handle"].clone())?;
+    let task: EntityId = serde_json::from_value(receipt["task_refs"][0].clone())?;
+    assert_eq!(
+        super::wire_decode::task_verb_body(&vault, task)?
+            .unwrap()
+            .assignee,
+        Some(TaskAssignee::Human { actor_ref: human })
+    );
+    let answer = vault
+        .memory(human, EdgeActorClass::Human)
+        .tasks_answer(&handle, &TaskAskWord::new(human))?;
+    let result = settled(&agent_memory, handle);
+    assert_eq!(result.decision, TaskAskDecision::First(answer));
+    assert_eq!(result.coverage.responded, [human].into());
     Ok(())
 }
 

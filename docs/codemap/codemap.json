@@ -31205,7 +31205,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "TaskAuthorityFact",
@@ -31216,7 +31216,7 @@
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -31300,6 +31300,7 @@
       "TaskAskDecision",
       "TaskAskDefault",
       "TaskAskDisagree",
+      "TaskAskEffectAuthorization",
       "TaskAskElectorate",
       "TaskAskEvidence",
       "TaskAskEvidenceReason",
@@ -31327,7 +31328,7 @@
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
       "crate-vis": 2,
-      "enum": 14,
+      "enum": 15,
       "fn": 5,
       "struct": 17
      }
@@ -31676,7 +31677,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BoardExpandRequest",
@@ -31690,6 +31691,8 @@
       "RoomEntry",
       "RoomRequest",
       "TaskAnswerRequest",
+      "TaskAskRequest",
+      "TaskAskShort",
       "TaskCreateRequest",
       "TaskRequest",
       "TaskWaitRequest"
@@ -31697,7 +31700,8 @@
      "path": "src/task_verb/sdk.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "struct": 14
+      "enum": 1,
+      "struct": 15
      }
     },
     {
@@ -35347,7 +35351,7 @@
     "task_authority": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Replicated TASK authority: owner proof, cancellation, and acknowledgement as immutable companion TASK entities"
     },
@@ -35471,7 +35475,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 9,
+   "over_bar": 10,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 2094,
    "test_files": 718

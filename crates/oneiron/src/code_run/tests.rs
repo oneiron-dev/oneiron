@@ -3086,6 +3086,7 @@ fn coordination_effects_and_outcomes_round_trip_through_replay_wire() {
         word_ref: EntityId::now(),
     };
     let ask_result = crate::task_verb::TaskAskResult {
+        effect_authorization: crate::task_verb::TaskAskEffectAuthorization::NotEvaluatedByAsk,
         coverage: crate::task_verb::TaskAskCoverage {
             met: true,
             required: 1,

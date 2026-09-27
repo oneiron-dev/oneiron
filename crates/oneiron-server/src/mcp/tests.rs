@@ -4229,7 +4229,41 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
             continue;
         }
         let input = oneiron::task_verb::sdk::input_schema(name).expect("input schema");
-        assert_eq!(input["type"], "object", "{name}");
+        if name == "tasks.ask" {
+            let branches = input["anyOf"]
+                .as_array()
+                .expect("rich and short ask branches");
+            assert_eq!(branches.len(), 2);
+            let rich = branches
+                .iter()
+                .find(|branch| {
+                    branch["required"]
+                        .as_array()
+                        .is_some_and(|fields| fields.contains(&json!("intent_key")))
+                })
+                .expect("rich");
+            let short = branches
+                .iter()
+                .find(|branch| {
+                    branch["required"]
+                        .as_array()
+                        .is_some_and(|fields| !fields.contains(&json!("intent_key")))
+                })
+                .expect("short");
+            for branch in [rich, short] {
+                assert_eq!(branch["type"], "object");
+                assert_eq!(branch["additionalProperties"], false);
+                assert!(
+                    branch["required"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!("what"))
+                );
+            }
+            assert!(short["properties"].get("intent_key").is_none());
+        } else {
+            assert_eq!(input["type"], "object", "{name}");
+        }
         if row["mcp"] == "none" {
             assert!(oneiron::task_verb::sdk::mcp_arguments_schema(name).is_none());
             assert!(surface.resolve(name).is_none());
@@ -4278,6 +4312,30 @@ fn agent_verb_schemas_follow_manifest_inputs_and_argument_paths() {
                 assert_eq!(shipped, expected, "{name}.{field}");
             }
         }
+    }
+    let ask = oneiron::task_verb::sdk::input_schema("tasks.ask").unwrap();
+    let question =
+        json!({"reference":{"turn": ACTOR_ID},"revision":1,"options":{},"context_refs":[]});
+    let short = json!({"what":question,"who":{"people":[ACTOR_ID]}});
+    let rich = json!({"intent_key":"rich-collect","what":question,"decide":null});
+    for value in [&short, &rich] {
+        assert!(draft2020_12_accepts(ask, value));
+        assert!(
+            serde_json::from_value::<oneiron::task_verb::sdk::TaskAskRequest>(value.clone())
+                .is_ok()
+        );
+    }
+    for invalid in [
+        json!({"who":{"people":[ACTOR_ID]}}),
+        json!({"intent_key":"rich-no-question"}),
+        json!({"what":question,"decide":null}),
+        json!({"what":question,"need":{"count":1,"of":"any"}}),
+        json!({"what":question,"on_disagree":{"branch":"hold","surface":"card"}}),
+    ] {
+        assert!(!draft2020_12_accepts(ask, &invalid));
+        assert!(
+            serde_json::from_value::<oneiron::task_verb::sdk::TaskAskRequest>(invalid).is_err()
+        );
     }
     assert!(oneiron::task_verb::sdk::input_schema("tasks.missing").is_none());
     assert!(oneiron::task_verb::sdk::mcp_arguments_schema("tasks.missing").is_none());
