@@ -77,12 +77,21 @@ fn snippet_requires_solved_slots_and_explicit_real_zone() {
         booking_snippet_links(&mask, &selected, "America/Vancouver", &page, &url).expect("links");
     assert_eq!(links.len(), 2);
     assert!(
-        links
-            .iter()
-            .all(|link| link.label.contains(" America/Vancouver (")
-                && link.label.ends_with(" UTC)")
-                && link.href == url)
+        links.iter().all(
+            |link| link.label.contains(" America/Vancouver (") && link.label.ends_with(" UTC)")
+        )
     );
+    assert_ne!(links[0].href, links[1].href);
+    for (link, start) in links.iter().zip(selected) {
+        assert_eq!(
+            booking_snippet_selection_from_url(&link.href, &page),
+            Some(BookingSnippetSelection {
+                event_type: mask.event_type.clone(),
+                start_utc: start,
+                visitor_tz: "America/Vancouver".to_owned(),
+            })
+        );
+    }
     for rejected in [
         vec![],
         vec![selected[0], selected[0]],
@@ -153,4 +162,40 @@ fn snippet_disambiguates_the_two_instants_in_a_fall_back_fold() {
         links[0].label, links[1].label,
         "UTC instants distinguish fold"
     );
+    assert_ne!(
+        links[0].href, links[1].href,
+        "click targets distinguish fold"
+    );
+    for (link, start) in links.iter().zip([first, first + 3_600]) {
+        assert_eq!(
+            booking_snippet_selection_from_url(&link.href, &token),
+            Some(BookingSnippetSelection {
+                event_type: mask.event_type.clone(),
+                start_utc: start,
+                visitor_tz: "America/New_York".to_owned(),
+            })
+        );
+    }
+}
+
+#[test]
+fn snippet_hint_escapes_event_type_and_rejects_forged_query_keys() {
+    let mut mask = mask();
+    mask.event_type = EventTypeKey("intro & consult".into());
+    let token = PublicBookingPageToken(format!("bkp_{}", "ab".repeat(16)));
+    let url = format!("https://book.example.test/{}", token.0);
+    let link = booking_snippet_links(&mask, &[mask.slots[0].start_utc], "UTC", &token, &url)
+        .expect("escaped hint")
+        .remove(0);
+    assert!(link.href.contains("event_type=intro%20%26%20consult"));
+    assert_eq!(
+        booking_snippet_selection_from_url(&link.href, &token)
+            .unwrap()
+            .event_type,
+        mask.event_type
+    );
+    assert!(
+        booking_snippet_selection_from_url(&format!("{}&start_utc=0", link.href), &token).is_none()
+    );
+    assert!(booking_snippet_selection_from_url(&link.href.replace("%26", "&"), &token).is_none());
 }

@@ -4315,19 +4315,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingFaq",
       "BookingLandingContent",
       "BookingSlotPreview",
-      "BookingSnippetLink"
+      "BookingSnippetLink",
+      "BookingSnippetSelection"
      ],
      "path": "src/booking/conversion.rs",
      "purpose": "Renderer-neutral booking conversion data, derived only from public slots and owner copy",
      "surface": {
-      "fn": 3,
-      "struct": 4
+      "fn": 4,
+      "struct": 5
      }
     },
     {
@@ -4805,7 +4806,7 @@
      "path": "src/booking/mod.rs",
      "purpose": "Engine-generic booking module",
      "surface": {
-      "mod": 15,
+      "mod": 13,
       "re-export": 12
      }
     },

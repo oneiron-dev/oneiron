@@ -12,14 +12,14 @@ pub mod anti_abuse;
 pub mod companion_preset;
 pub mod config;
 pub mod constraint;
-pub mod conversion;
+mod conversion;
 pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
 pub mod lifecycle;
 pub mod public_lens;
 pub mod publication;
-pub mod reminder;
+mod reminder;
 pub mod solver;
 #[cfg(test)]
 mod tests;
@@ -48,7 +48,8 @@ pub use constraint::{
 };
 pub use conversion::{
     BookingFaq, BookingLandingContent, BookingSlotPreview, BookingSnippetLink,
-    booking_slot_preview, booking_snippet_links,
+    BookingSnippetSelection, booking_slot_preview, booking_snippet_links,
+    booking_snippet_selection_from_url,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,

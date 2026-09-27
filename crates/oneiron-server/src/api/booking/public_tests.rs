@@ -456,6 +456,64 @@ async fn public_booking_only_owner_writes_publish_and_exact_presentation_updates
 }
 
 #[tokio::test]
+async fn landing_serialized_bound_matches_owner_write_and_public_render() {
+    use oneiron::booking::{BookingFaq, BookingLandingContent};
+    let fixture = Fixture::unpublished();
+    let now = now_secs().expect("clock");
+    let mut input = publication_input(fixture.page, true, 1, now + 86_400);
+    let owner = fixture.server.vault.memory(id(0x77), EdgeActorClass::Human);
+    let mut landing = BookingLandingContent {
+        photo_path: None,
+        intro: "\"".repeat(2048),
+        faq: (0..8)
+            .map(|_| BookingFaq {
+                question: "Q".to_owned(),
+                answer: "\"".repeat(1024),
+            })
+            .collect(),
+        prep_path: None,
+        preconfirm_field_keys: Vec::new(),
+    };
+    assert!(serde_json::to_string(&landing).expect("JSON").len() > 16_384);
+    input.value["landing"] = serde_json::to_value(&landing).expect("value");
+    assert!(
+        owner.claim_upsert(&input).is_err(),
+        "non-renderable owner write must fail"
+    );
+    // Remove only escaped quote bytes to reach exactly the LensText ceiling.
+    let mut excess = serde_json::to_string(&landing).expect("JSON").len() - 16_384;
+    for faq in landing.faq.iter_mut().rev() {
+        let drop = (excess / 2).min(faq.answer.len() - 1);
+        faq.answer.truncate(faq.answer.len() - drop);
+        excess -= 2 * drop;
+    }
+    if excess == 1 {
+        let answer = &mut landing.faq[0].answer;
+        answer.replace_range(..1, "x");
+    }
+    assert_eq!(
+        serde_json::to_string(&landing)
+            .expect("boundary JSON")
+            .len(),
+        16_384
+    );
+    input.value["landing"] = serde_json::to_value(&landing).expect("value");
+    owner
+        .claim_upsert(&input)
+        .expect("renderable boundary writes");
+    let response = fixture
+        .route(
+            "GET",
+            &format!("/public/booking/{}", fixture.token),
+            Value::Null,
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let public: Value = serde_json::from_slice(&bytes(response).await).expect("public page");
+    assert_eq!(public["model"]["landing"], input.value["landing"]);
+}
+
+#[tokio::test]
 async fn public_booking_requires_real_peer_context_not_forwarding_headers() {
     let fixture = Fixture::new();
     let path = format!("/public/booking/{}", fixture.token);

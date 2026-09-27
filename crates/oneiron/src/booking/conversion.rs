@@ -2,10 +2,13 @@
 //!
 //! These are presentation hints, not another availability or booking authority.
 
+use std::fmt::Write;
+
 use serde::{Deserialize, Serialize};
 
-use super::{BookingError, PublicBookingPageToken, RankedSlot, SlotMask};
+use super::{BookingError, EventTypeKey, PublicBookingPageToken, RankedSlot, SlotMask};
 use crate::calendar::tz::utc_to_wall;
+use crate::lens::LensText;
 
 /// Owner-authored content. A host chooses layout, localization and assets.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +60,17 @@ impl BookingLandingContent {
                 "public booking landing content is invalid or exceeds bounds".to_owned(),
             ));
         }
+        // The public lens stores the entire object in one JSON MetaLine value.
+        // Check those exact serialized bytes at the owner write/read door too:
+        // raw length alone misses escaping of quotes and control characters.
+        let json = serde_json::to_string(self).map_err(|_| {
+            BookingError::InvalidConfig("public booking landing content cannot encode".to_owned())
+        })?;
+        LensText::new(json).map_err(|_| {
+            BookingError::InvalidConfig(
+                "public booking landing content exceeds lens bounds".to_owned(),
+            )
+        })?;
         Ok(())
     }
 }
@@ -111,6 +125,16 @@ pub struct BookingSnippetLink {
     pub href: String,
 }
 
+/// An inert, URL-carried choice. The host may use it to focus a page but must
+/// re-solve and revalidate before any hold or confirm; it is not authority.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookingSnippetSelection {
+    pub event_type: EventTypeKey,
+    pub start_utc: u64,
+    pub visitor_tz: String,
+}
+
 /// Generate one or two concrete linked times, never a naked URL or an
 /// unverified wall-clock guess. This does not reserve the selected slots.
 /// The trusted host supplies the public-face URL and renders copy around these
@@ -124,41 +148,20 @@ pub fn booking_snippet_links(
 ) -> Result<Vec<BookingSnippetLink>, BookingError> {
     if !(1..=2).contains(&selected_start_utc.len())
         || selected_start_utc.len() == 2 && selected_start_utc[0] == selected_start_utc[1]
-        || !page_token.0.strip_prefix("bkp_").is_some_and(|hex| {
-            hex.len() == 32
-                && hex
-                    .bytes()
-                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        })
     {
         return Err(BookingError::Surface(
             "invalid booking snippet selection".to_owned(),
         ));
     }
     // The trusted host supplies its public-face URL, never the per-vault JSON
-    // route. Require an HTTPS origin, inert path, and this exact capability.
-    let valid_url = public_page_url
-        .strip_prefix("https://")
-        .and_then(|rest| rest.split_once('/'))
-        .is_some_and(|(host, path)| {
-            !host.is_empty()
-                && host.contains('.')
-                && host.split('.').all(|label| {
-                    !label.is_empty()
-                        && label
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                })
-                && path.rsplit('/').next() == Some(page_token.0.as_str())
-                && !path.starts_with('/')
-                && !path.starts_with("public/booking/")
-                && path
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'))
-        });
-    if !valid_url {
+    // route. A query hint is added only after validating its exact capability.
+    if !valid_public_page_url(public_page_url, page_token)
+        || mask.event_type.0.trim().is_empty()
+        || mask.event_type.0.len() > 64
+        || visitor_tz.len() > 64
+    {
         return Err(BookingError::Surface(
-            "invalid public-face booking URL".to_owned(),
+            "invalid public-face booking URL or hint".to_owned(),
         ));
     }
     super::project_at_rung(
@@ -192,10 +195,104 @@ pub fn booking_snippet_links(
                     wall.y, wall.mo, wall.d, wall.h, wall.mi,
                     utc.y, utc.mo, utc.d, utc.h, utc.mi
                 ),
-                href: public_page_url.to_owned(),
+                href: format!(
+                    "{public_page_url}?event_type={}&start_utc={}&visitor_tz={}",
+                    encode_component(&mask.event_type.0),
+                    slot.start_utc,
+                    encode_component(visitor_tz),
+                ),
             })
         })
         .collect()
+}
+
+/// Decode only this exact hint contract; the returned choice is not a booking
+/// grant. A host still checks live availability and the lifecycle writer before
+/// holding or confirming, even if it preselects the time in its own UI.
+#[must_use]
+pub fn booking_snippet_selection_from_url(
+    href: &str,
+    page_token: &PublicBookingPageToken,
+) -> Option<BookingSnippetSelection> {
+    let (page_url, query) = href.split_once('?')?;
+    if !valid_public_page_url(page_url, page_token) {
+        return None;
+    }
+    let mut parts = query.split('&');
+    let event_type = decode_component(parts.next()?.strip_prefix("event_type=")?)?;
+    let start_utc = parts.next()?.strip_prefix("start_utc=")?.parse().ok()?;
+    let visitor_tz = decode_component(parts.next()?.strip_prefix("visitor_tz=")?)?;
+    if parts.next().is_some()
+        || event_type.trim().is_empty()
+        || event_type.len() > 64
+        || visitor_tz.len() > 64
+        || utc_to_wall(start_utc, &visitor_tz).is_err()
+    {
+        return None;
+    }
+    Some(BookingSnippetSelection {
+        event_type: EventTypeKey(event_type),
+        start_utc,
+        visitor_tz,
+    })
+}
+
+fn valid_public_page_url(url: &str, page_token: &PublicBookingPageToken) -> bool {
+    let Some(hex) = page_token.0.strip_prefix("bkp_") else {
+        return false;
+    };
+    if hex.len() != 32
+        || !hex
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
+        return false;
+    }
+    url.strip_prefix("https://")
+        .and_then(|rest| rest.split_once('/'))
+        .is_some_and(|(host, path)| {
+            !host.is_empty()
+                && host.contains('.')
+                && host.split('.').all(|label| {
+                    !label.is_empty()
+                        && label
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                })
+                && path.rsplit('/').next() == Some(page_token.0.as_str())
+                && !path.starts_with('/')
+                && !path.starts_with("public/booking/")
+                && path
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-'))
+        })
+}
+
+fn encode_component(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").expect("string formatting cannot fail");
+        }
+    }
+    encoded
+}
+
+fn decode_component(value: &str) -> Option<String> {
+    let mut decoded = Vec::with_capacity(value.len());
+    let mut input = value.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let pair = [input.next()?, input.next()?];
+            decoded.push(u8::from_str_radix(std::str::from_utf8(&pair).ok()?, 16).ok()?);
+        } else {
+            decoded.push(byte);
+        }
+    }
+    let decoded = String::from_utf8(decoded).ok()?;
+    (encode_component(&decoded) == value).then_some(decoded)
 }
 
 #[cfg(test)]
